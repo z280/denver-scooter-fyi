@@ -1,0 +1,5 @@
+# Cloudflare Pages (Direct Upload) project config.
+# The site is fully static; there are no Functions or bindings.
+name = "denver-scooter-fyi"
+compatibility_date = "2025-05-30"
+pages_build_output_dir = "dist"

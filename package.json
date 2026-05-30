@@ -1,0 +1,21 @@
+{
+  "name": "denver-scooter-fyi",
+  "version": "1.0.0",
+  "description": "Live interactive map of every Denver Veo scooter and e-bike.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@protomaps/basemaps": "^5.2.0",
+    "maplibre-gl": "^5.6.0",
+    "pmtiles": "^4.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

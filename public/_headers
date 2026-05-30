@@ -1,0 +1,16 @@
+# Cloudflare Pages serves HTTP Range requests for static files automatically,
+# which is what pmtiles needs. These rules just tune caching.
+
+# Vite fingerprints these filenames, so they can be cached forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Self-hosted basemap glyphs and sprites change only when regenerated.
+/fonts/*
+  Cache-Control: public, max-age=604800
+/sprites/*
+  Cache-Control: public, max-age=604800
+
+# The basemap archive has a stable name; cache a day so a regen propagates.
+/denver.pmtiles
+  Cache-Control: public, max-age=86400

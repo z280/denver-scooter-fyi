@@ -1,0 +1,46 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-flight run when a newer commit lands on the same ref.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # tsc --noEmit + vite build. Fails the run on any type error.
+      - run: npm run build
+
+      # Direct Upload of dist/. Push to main -> production deploy. A PR deploys
+      # to a stable per-PR preview URL. The --branch value is built only from
+      # the PR number (an integer) and the literal "main", never from the
+      # branch name, so there is no shell-injection surface.
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name=denver-scooter-fyi
+            --branch=${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'main' }}
