@@ -2,6 +2,7 @@ import maplibregl, {
   type Map as MLMap,
   type GeoJSONSource,
   type LngLatBoundsLike,
+  type FilterSpecification,
 } from "maplibre-gl";
 import {
   fetchBoundary,
@@ -93,6 +94,23 @@ export class Overlays {
     const vis = on ? "visible" : "none";
     this.map.setLayoutProperty(fillId(layer), "visibility", vis);
     this.map.setLayoutProperty(lineId(layer), "visibility", vis);
+  }
+
+  /**
+   * Restrict the overlay's polygons to a specific set of region_names.
+   * Pass null to clear the filter (show every region of the layer).
+   */
+  async setSubset(
+    layer: BoundaryLayer,
+    regionNames: string[] | null,
+  ): Promise<void> {
+    await this.ensureLayer(layer);
+    const filter: FilterSpecification | null =
+      regionNames === null
+        ? null
+        : ["in", ["get", "region_name"], ["literal", regionNames]];
+    this.map.setFilter(fillId(layer), filter);
+    this.map.setFilter(lineId(layer), filter);
   }
 
   /** Color one layer's regions by live device density (or clear when null). */

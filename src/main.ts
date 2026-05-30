@@ -211,9 +211,25 @@ function wireAreaFilter(): void {
     status: need("area-filter-status"),
     clear: need<HTMLButtonElement>("area-filter-clear"),
   };
+  // The overlay layer the area filter currently "owns" — when it changes (or
+  // becomes null), we release the prior layer: clear its subset filter and
+  // turn its checkbox off, so manually re-enabling it shows all polygons.
+  let managed: BoundaryLayer | null = null;
+
   new AreaFilter(overlays, elements, (state) => {
     devices.setAreaFilter(state.polygons);
-    if (state.activatedOverlay) setOverlayChecked(state.activatedOverlay, true);
+
+    const nextLayer = state.display?.layer ?? null;
+    if (managed && managed !== nextLayer) {
+      void overlays.setSubset(managed, null);
+      setOverlayChecked(managed, false);
+    }
+    if (state.display) {
+      void overlays.setSubset(state.display.layer, state.display.subset);
+      setOverlayChecked(state.display.layer, true);
+    }
+    managed = nextLayer;
+
     clusters.update(devices.visibleFeatures());
   });
 }

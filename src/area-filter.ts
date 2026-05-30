@@ -17,8 +17,13 @@ export interface AreaFilterElements {
 export interface AreaFilterState {
   /** Indexed polygons to test devices against. null = no area filter active. */
   polygons: IndexedFeature<BoundaryProperties>[] | null;
-  /** Overlay to auto-enable (signaled once on transition to active). */
-  activatedOverlay: BoundaryLayer | null;
+  /**
+   * Overlay to display. `subset` is the list of region_names to show; null
+   * means show every region of the layer (used for v1/v2 which select all).
+   * `display: null` means no overlay is filter-managed right now (main.ts
+   * should release whatever it was previously managing).
+   */
+  display: { layer: BoundaryLayer; subset: string[] | null } | null;
 }
 
 /** Layers where any selection means "all regions of that layer". */
@@ -52,8 +57,8 @@ export class AreaFilter {
     this.enabled = this.el.enable.checked;
     this.el.body.hidden = !this.enabled;
     if (!this.enabled) {
-      // Disabling the filter just clears the device filter — overlay state is
-      // user-owned and intentionally left alone.
+      // Disabling the filter releases the managed overlay too. main.ts will
+      // see display:null and turn the prior overlay off + clear its subset.
       this.emit(null);
     } else {
       this.recomputeAndEmit();
@@ -81,7 +86,10 @@ export class AreaFilter {
       this.el.multi.hidden = true;
       this.el.clear.hidden = true;
       this.showStatus(`Filtering to all ${indexed.length} regions.`);
-      this.emitActive(indexed, this.category);
+      this.onChange({
+        polygons: indexed,
+        display: { layer: this.category, subset: null },
+      });
     } else {
       this.renderOptions(indexed);
       this.el.multi.hidden = false;
@@ -170,7 +178,11 @@ export class AreaFilter {
     }
     if (ALL_OR_NOTHING.has(this.category)) {
       const indexed = this.indexed.get(this.category) ?? [];
-      this.emitActive(indexed, this.category);
+      // v1/v2 show every region of the layer — no subset filter.
+      this.onChange({
+        polygons: indexed,
+        display: { layer: this.category, subset: null },
+      });
       return;
     }
     if (this.selected.size === 0) {
@@ -182,26 +194,26 @@ export class AreaFilter {
     const byName = this.byName.get(this.category);
     if (!byName) return;
     const polys: IndexedFeature<BoundaryProperties>[] = [];
+    const subset: string[] = [];
     for (const name of this.selected) {
       const f = byName.get(name);
-      if (f) polys.push(f);
+      if (f) {
+        polys.push(f);
+        subset.push(name);
+      }
     }
     this.showStatus(
       `${this.selected.size} selected — showing devices inside.`,
     );
     this.el.clear.hidden = false;
-    this.emitActive(polys, this.category);
-  }
-
-  private emitActive(
-    polygons: IndexedFeature<BoundaryProperties>[],
-    layer: BoundaryLayer,
-  ): void {
-    this.onChange({ polygons, activatedOverlay: layer });
+    this.onChange({
+      polygons: polys,
+      display: { layer: this.category, subset },
+    });
   }
 
   private emit(polygons: AreaFilterState["polygons"]): void {
-    this.onChange({ polygons, activatedOverlay: null });
+    this.onChange({ polygons, display: null });
   }
 
   private showStatus(text: string): void {
