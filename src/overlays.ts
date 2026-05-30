@@ -49,7 +49,14 @@ export class Overlays {
     }
     if (!this.loaded.has(layer)) {
       const def = OVERLAY_BY_LAYER[layer];
-      this.map.addSource(srcId(layer), { type: "geojson", data });
+      // promoteId is required for setFeatureState to bind: MapLibre ignores
+      // string top-level `id` on GeoJSON features (only numeric ids are kept),
+      // so without this the choropleth state never reaches the renderer.
+      this.map.addSource(srcId(layer), {
+        type: "geojson",
+        data,
+        promoteId: "region_name",
+      });
       this.map.addLayer(
         {
           id: fillId(layer),
