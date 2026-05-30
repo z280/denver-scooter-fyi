@@ -1,5 +1,8 @@
 import maplibregl, { type Map as MLMap, type LngLatLike } from "maplibre-gl";
-import type { DevicesResponse } from "./api.ts";
+import type { BoundaryProperties, DevicesResponse } from "./api.ts";
+import type { Overlays } from "./overlays.ts";
+import { indexFeature, pointInFeature, type IndexedFeature } from "./geo.ts";
+import { prettyRegion } from "./util.ts";
 
 // 30 ft in meters. Tuned for volunteers placing cards on physically-clumped devices.
 const EPS_METERS = 9.144;
@@ -107,24 +110,55 @@ export class Clusters {
   private features: DevicesResponse["features"] = [];
   private minCount: number;
   private popup: maplibregl.Popup | null = null;
+  private enabled = false;
+  private cnIndex: IndexedFeature<BoundaryProperties>[] | null = null;
 
   constructor(
     private readonly map: MLMap,
     private readonly listEl: HTMLElement,
     private readonly minInput: HTMLInputElement,
+    private readonly findBtn: HTMLButtonElement,
+    private readonly overlays: Overlays,
   ) {
     this.minCount = Math.max(2, parseInt(this.minInput.value, 10) || 15);
     this.minInput.addEventListener("change", () => {
       const v = parseInt(this.minInput.value, 10);
       if (!Number.isFinite(v) || v < 2) return;
       this.minCount = v;
-      this.render();
+      if (this.enabled) this.render();
     });
+    this.findBtn.addEventListener("click", () => void this.activate());
+    this.renderIdle();
   }
 
+  /** Called by main.ts whenever the visible device set changes. */
   update(features: DevicesResponse["features"]): void {
     this.features = features;
-    this.render();
+    if (this.enabled) this.render();
+  }
+
+  private async activate(): Promise<void> {
+    this.findBtn.disabled = true;
+    try {
+      if (!this.cnIndex) {
+        const resp = await this.overlays.loadBoundary("community_network");
+        this.cnIndex = resp.features.map((f) => indexFeature(f));
+      }
+      this.enabled = true;
+      this.render();
+    } catch (e) {
+      console.error("cluster activation failed", e);
+    } finally {
+      this.findBtn.disabled = false;
+    }
+  }
+
+  private renderIdle(): void {
+    this.listEl.replaceChildren();
+    const li = document.createElement("li");
+    li.className = "cluster-list__empty";
+    li.textContent = "Click the search button to find clusters.";
+    this.listEl.append(li);
   }
 
   private render(): void {
@@ -149,15 +183,36 @@ export class Clusters {
       count.className = "cluster-item__count";
       count.textContent = String(c.count);
 
+      const text = document.createElement("span");
+      text.className = "cluster-item__text";
+
+      const region = document.createElement("span");
+      region.className = "cluster-item__region";
+      region.textContent = this.regionForPoint(c.lng, c.lat) ?? "Outside Denver";
+
       const meta = document.createElement("span");
       meta.className = "cluster-item__meta";
       meta.textContent = `${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
 
-      btn.append(count, meta);
+      text.append(region, meta);
+      btn.append(count, text);
       btn.addEventListener("click", () => this.go(c));
       li.append(btn);
       this.listEl.append(li);
     }
+  }
+
+  private regionForPoint(lng: number, lat: number): string | null {
+    if (!this.cnIndex) return null;
+    for (const f of this.cnIndex) {
+      if (pointInFeature(lng, lat, f)) {
+        return prettyRegion(
+          f.feature.properties.region_name,
+          "community_network",
+        );
+      }
+    }
+    return null;
   }
 
   private go(c: FoundCluster): void {
@@ -178,7 +233,16 @@ export class Clusters {
 
     const countEl = document.createElement("div");
     countEl.className = "cluster-popup__count";
-    countEl.textContent = `${c.count} scooters here`;
+    countEl.textContent = `${c.count} devices here`;
+    root.append(countEl);
+
+    const regionName = this.regionForPoint(c.lng, c.lat);
+    if (regionName) {
+      const reg = document.createElement("div");
+      reg.className = "cluster-popup__region";
+      reg.textContent = regionName;
+      root.append(reg);
+    }
 
     const link = document.createElement("a");
     link.className = "cluster-popup__link";
@@ -186,8 +250,7 @@ export class Clusters {
     link.target = "_blank";
     link.rel = "noopener";
     link.textContent = "Open in Maps ↗";
-
-    root.append(countEl, link);
+    root.append(link);
 
     this.popup = new maplibregl.Popup({ closeButton: true, offset: 14 })
       .setLngLat(center)

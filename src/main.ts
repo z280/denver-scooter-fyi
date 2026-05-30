@@ -8,6 +8,7 @@ import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
+import { AreaFilter, type AreaFilterElements } from "./area-filter.ts";
 import { OVERLAYS, REFRESH_MS } from "./config.ts";
 
 function need<T extends HTMLElement>(id: string): T {
@@ -25,7 +26,13 @@ const clusters = new Clusters(
   map,
   need("cluster-list"),
   need<HTMLInputElement>("cluster-min"),
+  need<HTMLButtonElement>("cluster-find"),
+  overlays,
 );
+
+// Populated by buildLayerToggles so AreaFilter can programmatically check
+// the matching overlay box when the user picks a category.
+const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
 const devicesPromise = fetchDevices().catch((e) => {
@@ -41,11 +48,12 @@ map.on("load", async () => {
   wireChoropleth();
   wireNeighborhoodSearch();
   wireResponsivePanel();
+  wireAreaFilter();
 
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
-    clusters.update(resp.features);
+    clusters.update(devices.visibleFeatures());
     freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
   } else {
     freshness.error();
@@ -89,7 +97,16 @@ function buildLayerToggles(): void {
     label.append(input, swatch, text);
     li.append(label);
     list.append(li);
+    layerInputs.set(def.layer, input);
   }
+}
+
+/** Programmatically enable an overlay (used when the area filter activates). */
+function setOverlayChecked(layer: BoundaryLayer, checked: boolean): void {
+  const cb = layerInputs.get(layer);
+  if (!cb || cb.checked === checked) return;
+  cb.checked = checked;
+  cb.dispatchEvent(new Event("change"));
 }
 
 function wireDeviceFilter(): void {
@@ -103,6 +120,7 @@ function wireDeviceFilter(): void {
       b.setAttribute("aria-checked", String(on));
     }
     devices.setFilter(btn.dataset.filter as DeviceFilter);
+    clusters.update(devices.visibleFeatures());
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => select(btn));
@@ -182,6 +200,24 @@ function wireNeighborhoodSearch(): void {
   });
 }
 
+function wireAreaFilter(): void {
+  const elements: AreaFilterElements = {
+    enable: need<HTMLInputElement>("area-filter-enable"),
+    body: need("area-filter-body"),
+    category: need<HTMLSelectElement>("area-filter-category"),
+    multi: need("area-filter-multi"),
+    search: need<HTMLInputElement>("area-filter-search"),
+    options: need("area-filter-options"),
+    status: need("area-filter-status"),
+    clear: need<HTMLButtonElement>("area-filter-clear"),
+  };
+  new AreaFilter(overlays, elements, (state) => {
+    devices.setAreaFilter(state.polygons);
+    if (state.activatedOverlay) setOverlayChecked(state.activatedOverlay, true);
+    clusters.update(devices.visibleFeatures());
+  });
+}
+
 function wireResponsivePanel(): void {
   const toggle = need<HTMLButtonElement>("controls-toggle");
   const close = need<HTMLButtonElement>("controls-close");
@@ -218,7 +254,7 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevices(inFlight.signal);
       devices.setData(resp);
-      clusters.update(resp.features);
+      clusters.update(devices.visibleFeatures());
       freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
       void overlays.refreshChoropleth();
     } catch (e) {

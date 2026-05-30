@@ -2,8 +2,10 @@ import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
 import type { DevicesResponse, FormFactor } from "./api.ts";
 import { DEVICE_COLORS } from "./config.ts";
 import { emptyFC } from "./util.ts";
+import { pointInAny, type IndexedFeature } from "./geo.ts";
 
 export type DeviceFilter = "all" | "scooter" | "bicycle";
+export type AreaFilter = IndexedFeature[] | null;
 
 const SRC = "devices";
 const CLUSTER_LAYER = "device-clusters";
@@ -21,6 +23,7 @@ const FORM_LABEL: Record<FormFactor, string> = {
 export class Devices {
   private all: DevicesResponse | null = null;
   private filter: DeviceFilter = "all";
+  private areaFilter: AreaFilter = null;
   private popup: maplibregl.Popup | null = null;
 
   constructor(private readonly map: Map) {}
@@ -172,14 +175,38 @@ export class Devices {
     this.apply();
   }
 
+  /** Restrict to devices inside any of these indexed polygons (null = no area filter). */
+  setAreaFilter(areas: AreaFilter): void {
+    this.areaFilter = areas;
+    this.apply();
+  }
+
+  /** Get the currently-shown feature subset (for downstream tools like the cluster finder). */
+  visibleFeatures(): DevicesResponse["features"] {
+    if (!this.all) return [];
+    return this.filtered();
+  }
+
+  private filtered(): DevicesResponse["features"] {
+    if (!this.all) return [];
+    let feats = this.all.features;
+    if (this.filter !== "all") {
+      feats = feats.filter((f) => f.properties.form_factor === this.filter);
+    }
+    if (this.areaFilter && this.areaFilter.length > 0) {
+      const polys = this.areaFilter;
+      feats = feats.filter((f) => {
+        const [lng, lat] = f.geometry.coordinates;
+        return pointInAny(lng, lat, polys);
+      });
+    }
+    return feats;
+  }
+
   private apply(): void {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     if (!src || !this.all) return;
-    const features =
-      this.filter === "all"
-        ? this.all.features
-        : this.all.features.filter((f) => f.properties.form_factor === this.filter);
-    src.setData({ type: "FeatureCollection", features });
+    src.setData({ type: "FeatureCollection", features: this.filtered() });
   }
 }
 

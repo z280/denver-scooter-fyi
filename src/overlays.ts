@@ -40,13 +40,19 @@ export class Overlays {
     private readonly legendEl: HTMLElement,
   ) {}
 
-  /** Lazy-load a boundary layer's geometry and add its (hidden) fill + line layers. */
-  private async ensureLayer(layer: BoundaryLayer): Promise<BoundaryResponse> {
+  /** Fetch (and cache) a boundary layer's data without touching the map. */
+  async loadBoundary(layer: BoundaryLayer): Promise<BoundaryResponse> {
     let data = this.cache.get(layer);
     if (!data) {
       data = await fetchBoundary(layer);
       this.cache.set(layer, data);
     }
+    return data;
+  }
+
+  /** Lazy-load a boundary layer's geometry and add its (hidden) fill + line layers. */
+  private async ensureLayer(layer: BoundaryLayer): Promise<BoundaryResponse> {
+    const data = await this.loadBoundary(layer);
     if (!this.loaded.has(layer)) {
       const def = OVERLAY_BY_LAYER[layer];
       // promoteId is required for setFeatureState to bind: MapLibre ignores

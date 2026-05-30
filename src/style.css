@@ -18,6 +18,12 @@
   box-sizing: border-box;
 }
 
+/* The `hidden` HTML attribute's UA `display: none` loses to any class with
+   a `display:` rule (same specificity, later wins). This restores it. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -108,6 +114,119 @@ body {
   letter-spacing: 0.04em;
   color: var(--fg-muted);
   margin: 0 0 8px;
+}
+
+/* ---------- Section headings ---------- */
+.panel-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.panel-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+.section-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 0 0 10px;
+}
+
+/* ---------- Toggle switch (additional filters enable) ---------- */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg);
+  user-select: none;
+}
+.switch input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #cfd5de;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  flex: 0 0 auto;
+}
+.switch input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+.switch input[type="checkbox"]:checked {
+  background: var(--accent);
+}
+.switch input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+}
+
+/* ---------- Area filter ---------- */
+.area-filter-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.area-filter-by {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.area-multi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.area-options {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+.area-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg);
+}
+.area-option:hover {
+  background: rgba(0, 114, 178, 0.06);
+}
+.area-option input[type="checkbox"] {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.area-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 
 /* ---------- Segmented device filter ---------- */
@@ -222,21 +341,46 @@ body {
 }
 .finder-controls {
   display: flex;
-  align-items: center;
+  align-items: end;
   gap: 8px;
   margin-bottom: 8px;
-  font-size: 13px;
-  color: var(--fg-muted);
 }
-.finder-controls input {
-  flex: 0 0 64px;
-  width: 64px;
+.finder-min {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  flex: 1 1 auto;
+}
+.finder-min input {
+  width: 72px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   font: inherit;
   color: var(--fg);
   background: #fff;
+}
+.cluster-find-btn {
+  flex: 0 0 auto;
+  height: 32px;
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cluster-find-btn:hover {
+  filter: brightness(1.05);
+}
+.cluster-find-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 .cluster-list {
   list-style: none;
@@ -255,7 +399,7 @@ body {
 }
 .cluster-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   width: 100%;
   text-align: left;
@@ -277,11 +421,25 @@ body {
   font-size: 15px;
   min-width: 30px;
   color: var(--accent);
+  flex: 0 0 auto;
+}
+.cluster-item__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.cluster-item__region {
+  font-size: 13px;
 }
 .cluster-item__meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
+}
+.cluster-popup__region {
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 .cluster-popup {
   display: flex;
