@@ -520,6 +520,29 @@ body {
   color: var(--accent);
 }
 
+/* ---------- Brand link (bottom-left, beside zoom controls) ---------- */
+.brand-link {
+  position: fixed;
+  bottom: 10px;
+  /* MapLibre's bottom-left controls are ~10px from the edge and ~30px wide;
+     leave room for both the nav (+/-) and the compact attribution. */
+  left: 56px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(20, 30, 50, 0.12);
+  line-height: 0;
+}
+.brand-link img {
+  display: block;
+  height: 22px;
+  width: auto;
+}
+
 /* ---------- Compliance gauge ---------- */
 .compliance {
   position: fixed;
