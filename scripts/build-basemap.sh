@@ -22,7 +22,7 @@ MAXZOOM="15"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLING="$ROOT/.tooling"
-OUT="$ROOT/public/denver.pmtiles"
+OUT="$ROOT/basemap/denver.pmtiles"
 CLI="$TOOLING/pmtiles"
 
 os="$(uname -s)"            # Darwin | Linux
@@ -75,3 +75,8 @@ echo "Extracting Denver from $SRC (bbox=$BBOX maxzoom=$MAXZOOM) ..."
 
 echo "Wrote $OUT"
 ls -lh "$OUT"
+echo
+echo "Commit the archive, then publish it to R2 (the app loads it from there):"
+echo "  CLOUDFLARE_ACCOUNT_ID=032e52cb6909be01a6bce1a4f573e2d8 \\"
+echo "  npx wrangler r2 object put denver-scooter-fyi-basemap/denver.pmtiles \\"
+echo "    --file=$OUT --content-type=application/octet-stream --remote"

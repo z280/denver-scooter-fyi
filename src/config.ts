@@ -7,6 +7,13 @@ export const DENVER_BOUNDS: LngLatBoundsLike = [
   [-104.6, 39.91],
 ];
 
+// Self-hosted basemap archive. It lives on R2, not on Pages with the rest of
+// the static assets, because pmtiles needs HTTP Range requests and Cloudflare
+// Pages does not serve them — it returns the whole file, which makes the
+// pmtiles client throw. R2 serves 206 Partial Content (CORS in r2-cors.json).
+export const BASEMAP_PMTILES_URL =
+  "https://pub-0eac47b8fe1545b794aabed7f91694ac.r2.dev/denver.pmtiles";
+
 /** Device positions repoll cadence. Upstream only updates every ~10 min. */
 export const REFRESH_MS = 90_000;
 

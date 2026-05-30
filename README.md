@@ -33,8 +33,9 @@ self-hosted vector basemap.
 - [MapLibre GL JS](https://maplibre.org/) 5 for rendering, clustering, and
   feature-state choropleths.
 - [PMTiles](https://docs.protomaps.com/pmtiles/) + [@protomaps/basemaps](https://github.com/protomaps/basemaps)
-  for a self-hosted vector basemap (archive, fonts, and sprites are vendored in
-  `public/` — zero runtime third-party requests, no API key).
+  for a self-hosted vector basemap. Glyphs and sprites are vendored in
+  `public/`; the `.pmtiles` archive is served from Cloudflare R2 (see below).
+  No third-party tile API, no API key.
 
 ## Local development
 
@@ -60,19 +61,35 @@ npm run build    # tsc --noEmit + vite build  ->  dist/
 npm run preview  # serve the production build locally
 ```
 
-## Regenerating the basemap
+## The basemap (R2-hosted)
 
-`public/denver.pmtiles` (~21 MB) is a clipped extract of the Protomaps planet
-build, committed to the repo as the source of truth. To refresh it:
+`basemap/denver.pmtiles` (~21 MB) is a clipped extract of the Protomaps planet
+build, committed to the repo as the source of truth. The app does **not** load
+it from Pages — Cloudflare Pages does not serve HTTP Range requests, and the
+pmtiles client requires them (it throws when the server returns the whole file
+instead of a `206`). So the archive is hosted on **Cloudflare R2**, which serves
+`206 Partial Content`, and the app fetches it directly from the bucket's public
+URL (`BASEMAP_PMTILES_URL` in [src/config.ts](src/config.ts)). Glyphs and sprites
+do not need Range requests and stay vendored under `public/`.
+
+R2 bucket: `denver-scooter-fyi-basemap`. CORS lives in
+[r2-cors.json](r2-cors.json) (allows cross-origin GET + `Range`). Apply it with:
 
 ```bash
-scripts/build-basemap.sh            # uses the newest available daily build
+npx wrangler r2 bucket cors set denver-scooter-fyi-basemap --file=r2-cors.json
+```
+
+To regenerate and republish the archive:
+
+```bash
+scripts/build-basemap.sh            # newest available daily build -> basemap/denver.pmtiles
 scripts/build-basemap.sh 20260515   # or pin a specific build date
+# the script prints the exact `wrangler r2 object put ... --remote` upload command
 ```
 
 The script downloads the `pmtiles` CLI into `.tooling/` (gitignored) and clips
 to the map's bounding box. Upstream daily builds rotate out after ~3 months,
-which is exactly why the archive is committed rather than fetched at build time.
+which is why the archive is committed rather than fetched at build time.
 
 ## Deployment
 
@@ -101,10 +118,11 @@ exact commands):
 ## Project structure
 
 ```
-public/            vendored basemap: denver.pmtiles, fonts/, sprites/, _headers
+basemap/           denver.pmtiles source of truth (uploaded to R2, not to Pages)
+public/            vendored glyphs + sprites + _headers (deployed to Pages)
 src/
   api.ts           typed client for the data.scooter.fyi API
-  config.ts        bounds, refresh cadence, colors, overlay definitions
+  config.ts        bounds, refresh cadence, colors, overlays, basemap URL
   map.ts           MapLibre map + Protomaps style
   devices.ts       device source, clustering, popups, type filter
   overlays.ts      boundary layers, choropleth, neighborhood highlight
@@ -114,7 +132,9 @@ src/
   style.css        all styling
 index.html         markup + control panel
 vite.config.ts     build config + dev API proxy
-wrangler.toml       Cloudflare Pages project config
+wrangler.toml      Cloudflare Pages project config
+r2-cors.json       R2 bucket CORS policy for the basemap
+scripts/           build-basemap.sh (regenerate + republish the pmtiles)
 ```
 
 ## Out of scope

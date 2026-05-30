@@ -1,7 +1,7 @@
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { layers, namedFlavor } from "@protomaps/basemaps";
-import { DENVER_BOUNDS } from "./config.ts";
+import { DENVER_BOUNDS, BASEMAP_PMTILES_URL } from "./config.ts";
 
 const BASEMAP_SOURCE = "protomaps";
 
@@ -21,7 +21,7 @@ function buildStyle(): StyleSpecification {
     sources: {
       [BASEMAP_SOURCE]: {
         type: "vector",
-        url: `pmtiles://${asset("denver.pmtiles")}`,
+        url: `pmtiles://${BASEMAP_PMTILES_URL}`,
         attribution:
           '<a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a> © <a href="https://openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>',
       },
