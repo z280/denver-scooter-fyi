@@ -7,6 +7,7 @@ import { Devices, type DeviceFilter } from "./devices.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
+import { Clusters } from "./clusters.ts";
 import { OVERLAYS, REFRESH_MS } from "./config.ts";
 
 function need<T extends HTMLElement>(id: string): T {
@@ -20,6 +21,11 @@ if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const devices = new Devices(map);
 const overlays = new Overlays(map, need("choropleth-legend"));
 const freshness = new Freshness(need("freshness"), need("freshness-text"));
+const clusters = new Clusters(
+  map,
+  need("cluster-list"),
+  need<HTMLInputElement>("cluster-min"),
+);
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
 const devicesPromise = fetchDevices().catch((e) => {
@@ -39,6 +45,7 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
+    clusters.update(resp.features);
     freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
   } else {
     freshness.error();
@@ -211,6 +218,7 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevices(inFlight.signal);
       devices.setData(resp);
+      clusters.update(resp.features);
       freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
       void overlays.refreshChoropleth();
     } catch (e) {

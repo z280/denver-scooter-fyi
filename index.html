@@ -66,6 +66,16 @@
         <div id="choropleth-legend" class="legend" hidden></div>
       </section>
 
+      <section class="control-group" aria-labelledby="finder-label">
+        <h2 id="finder-label" class="control-label">Find dense scooter clusters</h2>
+        <p class="finder-help">Groups of scooters within 30&nbsp;ft of each other.</p>
+        <label class="finder-controls">
+          <span>Minimum count</span>
+          <input id="cluster-min" type="number" min="2" max="200" step="1" value="15" />
+        </label>
+        <ol id="cluster-list" class="cluster-list" aria-live="polite"></ol>
+      </section>
+
       <section class="control-group" aria-labelledby="search-label">
         <h2 id="search-label" class="control-label">Find a neighborhood</h2>
         <input
