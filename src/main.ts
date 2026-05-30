@@ -47,7 +47,7 @@ map.on("load", async () => {
   wireDeviceFilter();
   wireChoropleth();
   wireNeighborhoodSearch();
-  wireResponsivePanel();
+  wireDrawers();
   wireAreaFilter();
 
   const resp = await devicesPromise;
@@ -218,26 +218,58 @@ function wireAreaFilter(): void {
   });
 }
 
-function wireResponsivePanel(): void {
-  const toggle = need<HTMLButtonElement>("controls-toggle");
-  const close = need<HTMLButtonElement>("controls-close");
-  const panel = need("controls-panel");
-
-  const setOpen = (open: boolean) => {
-    panel.classList.toggle("is-open", open);
-    toggle.setAttribute("aria-expanded", String(open));
-  };
-  toggle.addEventListener("click", () =>
-    setOpen(!panel.classList.contains("is-open")),
+function wireDrawers(): void {
+  const tabs = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".drawer-tab"),
   );
-  close.addEventListener("click", () => {
-    setOpen(false);
-    toggle.focus();
-  });
+  const drawers = new Map<string, HTMLElement>();
+  for (const tab of tabs) {
+    const id = tab.dataset.drawer;
+    if (!id) continue;
+    const drawer = document.getElementById(`drawer-${id}`);
+    if (drawer) drawers.set(id, drawer);
+  }
+
+  let active: string | null = null;
+
+  const setActive = (id: string | null): void => {
+    active = id;
+    for (const tab of tabs) {
+      const isActive = tab.dataset.drawer === id;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-pressed", String(isActive));
+    }
+    for (const [drawerId, drawer] of drawers) {
+      const open = drawerId === id;
+      drawer.classList.toggle("is-open", open);
+      drawer.setAttribute("aria-hidden", String(!open));
+    }
+  };
+
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => {
+      const id = tab.dataset.drawer ?? null;
+      setActive(active === id ? null : id);
+    });
+  }
+
+  for (const drawer of drawers.values()) {
+    const closeBtn = drawer.querySelector<HTMLButtonElement>(".drawer-close");
+    closeBtn?.addEventListener("click", () => {
+      const id = drawer.id.replace(/^drawer-/, "");
+      setActive(null);
+      // Return focus to the tab so keyboard users don't lose their place.
+      const tab = tabs.find((t) => t.dataset.drawer === id);
+      tab?.focus();
+    });
+  }
+
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && panel.classList.contains("is-open")) {
-      setOpen(false);
-      toggle.focus();
+    if (e.key === "Escape" && active) {
+      const lastActive = active;
+      setActive(null);
+      const tab = tabs.find((t) => t.dataset.drawer === lastActive);
+      tab?.focus();
     }
   });
 }

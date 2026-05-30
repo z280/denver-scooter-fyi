@@ -12,35 +12,67 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛴%3C/text%3E%3C/svg%3E" />
   </head>
   <body>
-    <a class="skip-link" href="#controls-panel">Skip to map controls</a>
+    <a class="skip-link" href="#drawer-tabs">Skip to map controls</a>
 
     <div id="map" role="application" aria-label="Map of Denver Veo scooters and e-bikes"></div>
 
-    <!-- Mobile controls toggle (hamburger) -->
-    <button
-      id="controls-toggle"
-      class="controls-toggle"
-      aria-expanded="false"
-      aria-controls="controls-panel"
-      aria-label="Open map filters and layers"
-    >
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
-      </svg>
-      <span>Filters</span>
-    </button>
+    <h1 class="sr-only">Denver Veo Live Map</h1>
 
-    <!-- Left controls panel -->
-    <aside id="controls-panel" class="controls-panel" aria-label="Map filters and layers">
-      <header class="panel-header">
-        <h1 class="panel-title">Denver Veo Live Map</h1>
-        <button id="controls-close" class="panel-close" aria-label="Close panel">&times;</button>
+    <!-- Left activity bar: always-visible icon tabs that toggle drawers. -->
+    <nav id="drawer-tabs" class="drawer-tabs" aria-label="Map control sections">
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="filters"
+        aria-pressed="false"
+        aria-controls="drawer-filters"
+        title="Filters"
+      >
+        <!-- Funnel / sieve -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+        <span class="sr-only">Filters</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="overlays"
+        aria-pressed="false"
+        aria-controls="drawer-overlays"
+        title="Overlays"
+      >
+        <!-- Stacked layers -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
+        <span class="sr-only">Overlays</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="tools"
+        aria-pressed="false"
+        aria-controls="drawer-tools"
+        title="Tools"
+      >
+        <!-- Wrench -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.121 2.121 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        </svg>
+        <span class="sr-only">Tools</span>
+      </button>
+    </nav>
+
+    <!-- ---------- Filters drawer ---------- -->
+    <aside class="drawer" id="drawer-filters" aria-labelledby="drawer-filters-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-filters-h">Filters</h2>
+        <button class="drawer-close" type="button" aria-label="Close Filters">&times;</button>
       </header>
-
-      <!-- ---------- Filters ---------- -->
-      <section class="panel-section" aria-labelledby="sec-filters">
-        <h2 id="sec-filters" class="section-heading">Filters</h2>
-
+      <div class="drawer-body">
         <section class="control-group" aria-labelledby="device-filter-label">
           <h3 id="device-filter-label" class="control-label">Device type</h3>
           <div class="segmented" role="radiogroup" aria-labelledby="device-filter-label">
@@ -82,12 +114,16 @@
             <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
           </div>
         </section>
-      </section>
+      </div>
+    </aside>
 
-      <!-- ---------- Overlays ---------- -->
-      <section class="panel-section" aria-labelledby="sec-overlays">
-        <h2 id="sec-overlays" class="section-heading">Overlays</h2>
-
+    <!-- ---------- Overlays drawer ---------- -->
+    <aside class="drawer" id="drawer-overlays" aria-labelledby="drawer-overlays-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-overlays-h">Overlays</h2>
+        <button class="drawer-close" type="button" aria-label="Close Overlays">&times;</button>
+      </header>
+      <div class="drawer-body">
         <section class="control-group" aria-labelledby="layers-label">
           <h3 id="layers-label" class="control-label">Boundary overlays</h3>
           <ul class="layer-list" id="layer-list">
@@ -107,12 +143,16 @@
           </select>
           <div id="choropleth-legend" class="legend" hidden></div>
         </section>
-      </section>
+      </div>
+    </aside>
 
-      <!-- ---------- Tools ---------- -->
-      <section class="panel-section" aria-labelledby="sec-tools">
-        <h2 id="sec-tools" class="section-heading">Tools</h2>
-
+    <!-- ---------- Tools drawer ---------- -->
+    <aside class="drawer" id="drawer-tools" aria-labelledby="drawer-tools-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-tools-h">Tools</h2>
+        <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
+      </header>
+      <div class="drawer-body">
         <section class="control-group" aria-labelledby="search-label">
           <h3 id="search-label" class="control-label">Find a neighborhood</h3>
           <input
@@ -150,14 +190,12 @@
           </div>
           <ol id="cluster-list" class="cluster-list" aria-live="polite"></ol>
         </section>
-      </section>
 
-      <footer class="panel-footer">
-        <p>
+        <p class="drawer-footnote">
           Data: <a href="https://data.scooter.fyi" rel="noopener">data.scooter.fyi</a>.
           Positions refresh every 90s.
         </p>
-      </footer>
+      </div>
     </aside>
 
     <!-- Compliance gauge (top-right) -->
