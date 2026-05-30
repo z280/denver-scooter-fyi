@@ -534,7 +534,8 @@ body {
 }
 .brand-link img {
   display: block;
-  height: 28px;
+  /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
+  height: 60px;
   width: auto;
 }
 
