@@ -35,6 +35,11 @@ export interface DeviceProperties {
   current_range_meters?: number | null;
   /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
   propulsion_type?: PropulsionType | null;
+  // ----- Client-derived fields (not on the wire). The map enriches each
+  // device with a battery_percent (0–100) computed against the
+  // observed-max range for its propulsion type, since the API doesn't
+  // yet expose per-type `max_range_meters`.
+  battery_percent?: number;
   // ----- Private fields (only populated via /api/v1/private/devices/current
   // when the user is signed in via map-auth). Undefined on public fetches.
   vehicle_plate?: string;
