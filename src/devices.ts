@@ -7,7 +7,9 @@ import {
   computeBatteryThresholds,
   bucketFor,
   BATTERY_COLOR,
+  BATTERY_GLYPH,
   BATTERY_MISSING_COLOR,
+  BATTERY_TEXT_COLOR,
   type BatteryBucket,
   type BatteryThresholds,
 } from "./battery.ts";
@@ -61,6 +63,8 @@ export class Devices {
   constructor(private readonly map: Map) {}
 
   addLayers(): void {
+    registerDeviceIcons(this.map);
+
     this.map.addSource(SRC, {
       type: "geojson",
       data: emptyFC(),
@@ -109,25 +113,24 @@ export class Devices {
 
     this.map.addLayer({
       id: POINT_LAYER,
-      type: "circle",
+      type: "symbol",
       source: SRC,
       filter: ["!", ["has", "point_count"]],
-      paint: {
-        "circle-color": colorByType(),
-        "circle-radius": [
+      layout: {
+        "icon-image": iconByType(),
+        "icon-size": [
           "interpolate",
           ["linear"],
           ["zoom"],
           10,
-          3,
+          0.55,
           14,
-          5,
+          0.85,
           17,
-          7,
+          1.1,
         ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1,
-        "circle-opacity": 0.95,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
       },
     });
 
@@ -442,19 +445,19 @@ export class Devices {
     this.applyPaint();
   }
 
-  /** Push the current color-by mode into the point-layer paint property.
+  /** Push the current display mode into the point-layer's icon expression.
    *  Cheap to call repeatedly; the map only redraws if the expression
    *  actually changed. */
   private applyPaint(): void {
     const expr =
       this.colorMode === "range" && this.thresholds
-        ? colorByRange(this.thresholds)
-        : colorByType();
+        ? iconByRange(this.thresholds)
+        : iconByType();
     try {
-      this.map.setPaintProperty(POINT_LAYER, "circle-color", expr);
+      this.map.setLayoutProperty(POINT_LAYER, "icon-image", expr);
     } catch {
-      // Layer might not be added yet (early calls); next addLayers will
-      // pick up the right paint via colorByType() default.
+      // Layer might not be added yet (early calls); addLayers will install
+      // the default iconByType() expression.
     }
   }
 
@@ -486,38 +489,120 @@ export class Devices {
   }
 }
 
-/** Per-form-factor color expression — the original default look. */
-function colorByType(): maplibregl.ExpressionSpecification {
+/** Per-form-factor icon expression — the default "Device type" display. */
+function iconByType(): maplibregl.ExpressionSpecification {
   return [
     "match",
     ["get", "form_factor"],
     "scooter",
-    DEVICE_COLORS.scooter,
+    "dev-scooter",
     "bicycle",
-    DEVICE_COLORS.bicycle,
-    DEVICE_COLORS.unknown,
+    "dev-bicycle",
+    "dev-unknown",
   ];
 }
 
-/** Quartile-based color expression for the "Color by Range" mode. Devices
- *  without a numeric range are painted in the neutral missing color. */
-function colorByRange(
+/** Quartile-based icon expression for the "Range" display. Devices without
+ *  a numeric range fall through to the neutral missing icon. */
+function iconByRange(
   t: BatteryThresholds,
 ): maplibregl.ExpressionSpecification {
   // coalesce(null) → -1 so step's "below first stop" branch catches it.
   return [
     "step",
     ["to-number", ["coalesce", ["get", "current_range_meters"], -1]],
-    BATTERY_MISSING_COLOR,
+    "dev-batt-missing",
     0,
-    BATTERY_COLOR[0],
+    "dev-batt-0",
     t.p25,
-    BATTERY_COLOR[1],
+    "dev-batt-1",
     t.p50,
-    BATTERY_COLOR[2],
+    "dev-batt-2",
     t.p75,
-    BATTERY_COLOR[3],
+    "dev-batt-3",
   ];
+}
+
+/** Register the eight device-marker icons on the map's image atlas. Each
+ *  is a small circular badge: type-mode icons hold a 🛴/🚲/❓ emoji on a
+ *  white field; range-mode icons hold a battery bar glyph on the bucket's
+ *  signature color. Idempotent (safe to call after style reloads). */
+function registerDeviceIcons(map: Map): void {
+  const typeIcons: Array<[string, string]> = [
+    ["dev-scooter", "🛴"],
+    ["dev-bicycle", "🚲"],
+    ["dev-unknown", "❓"],
+  ];
+  for (const [id, emoji] of typeIcons) {
+    if (map.hasImage(id)) continue;
+    map.addImage(id, makeEmojiBadge(emoji), { pixelRatio: 2 });
+  }
+  const rangeIcons: Array<[string, string, string, string]> = [
+    ["dev-batt-0", BATTERY_GLYPH[0], BATTERY_COLOR[0], BATTERY_TEXT_COLOR[0]],
+    ["dev-batt-1", BATTERY_GLYPH[1], BATTERY_COLOR[1], BATTERY_TEXT_COLOR[1]],
+    ["dev-batt-2", BATTERY_GLYPH[2], BATTERY_COLOR[2], BATTERY_TEXT_COLOR[2]],
+    ["dev-batt-3", BATTERY_GLYPH[3], BATTERY_COLOR[3], BATTERY_TEXT_COLOR[3]],
+    ["dev-batt-missing", "?", BATTERY_MISSING_COLOR, "#ffffff"],
+  ];
+  for (const [id, glyph, bg, fg] of rangeIcons) {
+    if (map.hasImage(id)) continue;
+    map.addImage(id, makeGlyphBadge(glyph, bg, fg), { pixelRatio: 2 });
+  }
+}
+
+/** White circular badge holding a centered emoji, used in "Device type"
+ *  display mode. Drawn at 2× pixel density so it stays crisp on retina. */
+function makeEmojiBadge(emoji: string): ImageData {
+  const px = 64; // 32 logical px at pixelRatio 2
+  const ctx = newCanvasCtx(px);
+  drawCircleBg(ctx, px, "#ffffff", "#374151", 2.5);
+  ctx.fillStyle = "#000";
+  ctx.font = `${Math.round(px * 0.55)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(emoji, px / 2, px / 2 + px * 0.03);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+/** Colored circular badge holding a centered text glyph, used in "Range"
+ *  display mode for the four battery buckets (and a gray "?" for missing). */
+function makeGlyphBadge(glyph: string, bg: string, fg: string): ImageData {
+  const px = 64;
+  const ctx = newCanvasCtx(px);
+  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
+  ctx.fillStyle = fg;
+  ctx.font = `bold ${Math.round(px * 0.7)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(glyph, px / 2, px / 2 + px * 0.04);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+function newCanvasCtx(px: number): CanvasRenderingContext2D {
+  const c = document.createElement("canvas");
+  c.width = px;
+  c.height = px;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable for marker icon");
+  return ctx;
+}
+
+function drawCircleBg(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  fill: string,
+  stroke: string,
+  strokeWidth: number,
+): void {
+  const cx = px / 2;
+  const r = px / 2 - strokeWidth;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = strokeWidth;
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 }
 
 /** Approximate a great-circle of `radiusMeters` around (lng, lat) as a

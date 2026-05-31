@@ -20,14 +20,31 @@ export interface BatteryThresholds {
   uniqueCount: number;
 }
 
+/** Bottom→top rising-bar glyphs, one per bucket. Used both inside on-map
+ *  markers and in the filter button labels. */
+export const BATTERY_GLYPH: Record<BatteryBucket, string> = {
+  0: "▁",
+  1: "▃",
+  2: "▅",
+  3: "█",
+};
+
+/** Bottom→top face emojis, one per bucket. */
+export const BATTERY_FACE: Record<BatteryBucket, string> = {
+  0: "😢",
+  1: "😐",
+  2: "🙂",
+  3: "😁",
+};
+
 /** Bottom→top labels, one per bucket. Combines a fill glyph (ordinal) with
  *  a face emoji (affective) so the scale reads left-to-right as both
  *  "fuller" and "happier." */
 export const BATTERY_LABEL: Record<BatteryBucket, string> = {
-  0: "▁ 😢",
-  1: "▃ 😐",
-  2: "▅ 🙂",
-  3: "█ 😁",
+  0: `${BATTERY_GLYPH[0]} ${BATTERY_FACE[0]}`,
+  1: `${BATTERY_GLYPH[1]} ${BATTERY_FACE[1]}`,
+  2: `${BATTERY_GLYPH[2]} ${BATTERY_FACE[2]}`,
+  3: `${BATTERY_GLYPH[3]} ${BATTERY_FACE[3]}`,
 };
 
 /** Bottom→top fill colors for the segmented filter UI and the Range
@@ -41,6 +58,15 @@ export const BATTERY_COLOR: Record<BatteryBucket, string> = {
 
 /** Color used on the Range colorize-by map for devices missing range data. */
 export const BATTERY_MISSING_COLOR = "#9aa4ad";
+
+/** Foreground (text/glyph) color to use on top of each bucket's background,
+ *  picked for legibility. Mirrors the on-button color rules in style.css. */
+export const BATTERY_TEXT_COLOR: Record<BatteryBucket, string> = {
+  0: "#ffffff",
+  1: "#3a2a00",
+  2: "#1f3a14",
+  3: "#ffffff",
+};
 
 /**
  * Compute quartile thresholds over the unique non-null, finite range values.
