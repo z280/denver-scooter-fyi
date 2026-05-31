@@ -35,6 +35,11 @@ export interface DeviceProperties {
   current_range_meters?: number | null;
   /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
   propulsion_type?: PropulsionType | null;
+  // ----- Client-derived fields (not on the wire). The map enriches each
+  // device with a battery_percent (0–100) computed against the
+  // observed-max range for its propulsion type, since the API doesn't
+  // yet expose per-type `max_range_meters`.
+  battery_percent?: number;
   // ----- Private fields (only populated via /api/v1/private/devices/current
   // when the user is signed in via map-auth). Undefined on public fetches.
   vehicle_plate?: string;
@@ -91,6 +96,19 @@ export interface ComplianceResponse {
   compliance_v1_pass: boolean;
   compliance_v2_pass: boolean;
   computed_at: string;
+}
+
+/** Live "right now" citywide metrics from the most recent 10-minute cycle.
+ *  Companion to ComplianceResponse: the daily SLA value is the binding
+ *  contractual metric, but this is the up-to-the-minute readout. */
+export interface SnapshotMetadataResponse {
+  cycle_id: string;
+  snapshot_time: string;
+  total_devices_denver: number;
+  total_devices_v1: number;
+  total_devices_v2: number;
+  percent_all_devices_v1: number | null;
+  percent_all_devices_v2: number | null;
 }
 
 /** Returned when an endpoint has no data yet (503 cold-start). */
@@ -197,4 +215,11 @@ export function fetchCompliance(
   signal?: AbortSignal,
 ): Promise<ComplianceResponse> {
   return getJSON<ComplianceResponse>("/api/v1/compliance/daily/latest", signal);
+}
+
+/** Most-recent 10-minute cycle's citywide metrics ("right now" view). */
+export function fetchLatestSnapshot(
+  signal?: AbortSignal,
+): Promise<SnapshotMetadataResponse> {
+  return getJSON<SnapshotMetadataResponse>("/api/v1/snapshots/latest", signal);
 }

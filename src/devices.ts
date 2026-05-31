@@ -1,5 +1,10 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
-import type { DevicesResponse, FormFactor, PropulsionType } from "./api.ts";
+import type {
+  DeviceProperties,
+  DevicesResponse,
+  FormFactor,
+  PropulsionType,
+} from "./api.ts";
 import { DEVICE_COLORS } from "./config.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
@@ -8,6 +13,7 @@ import {
   bucketFor,
   BATTERY_COLOR,
   BATTERY_MISSING_COLOR,
+  BATTERY_TEXT_COLOR,
   type BatteryBucket,
   type BatteryThresholds,
 } from "./battery.ts";
@@ -61,6 +67,8 @@ export class Devices {
   constructor(private readonly map: Map) {}
 
   addLayers(): void {
+    registerDeviceIcons(this.map);
+
     this.map.addSource(SRC, {
       type: "geojson",
       data: emptyFC(),
@@ -109,25 +117,50 @@ export class Devices {
 
     this.map.addLayer({
       id: POINT_LAYER,
-      type: "circle",
+      type: "symbol",
       source: SRC,
       filter: ["!", ["has", "point_count"]],
-      paint: {
-        "circle-color": colorByType(),
-        "circle-radius": [
+      layout: {
+        "icon-image": iconByType(),
+        "icon-size": [
           "interpolate",
           ["linear"],
           ["zoom"],
           10,
-          3,
+          0.55,
           14,
-          5,
+          0.85,
           17,
-          7,
+          1.1,
         ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1,
-        "circle-opacity": 0.95,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        // Text overlay is empty in "Device type" mode; applyPaint() swaps
+        // these in/out when the user toggles to "Range" mode so the
+        // percentage renders inside the colored badge.
+        "text-field": "",
+        "text-font": ["Noto Sans Medium"],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          7,
+          14,
+          10.5,
+          17,
+          13,
+        ],
+        "text-anchor": "center",
+        "text-offset": [0, 0],
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        "text-padding": 0,
+      },
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "rgba(0,0,0,0.25)",
+        "text-halo-width": 0.6,
       },
     });
 
@@ -352,12 +385,21 @@ export class Devices {
   }
 
   setData(resp: DevicesResponse): void {
+    // The upstream API doesn't yet expose `max_range_meters`, so we derive
+    // the maximum *observed* range per propulsion type from the fleet
+    // itself and treat that as the type's effective full-charge baseline.
+    // Each feature gains a `battery_percent` (0–100) property used by both
+    // the marker text and the quartile thresholds, so colors and numbers
+    // tell the same story. When the API ships max_range_meters this can
+    // collapse to a one-line lookup.
+    annotateBatteryPercent(resp.features);
+
     this.all = resp;
     // Recompute battery thresholds from the freshly-arrived fleet so the
     // quartile buckets track real-time vendor data. This happens before
     // apply() so paint expressions in colorBy=range use the new thresholds.
     this.thresholds = computeBatteryThresholds(
-      resp.features.map((f) => asNumber(f.properties.current_range_meters)),
+      resp.features.map((f) => asNumber(f.properties.battery_percent)),
     );
     for (const cb of this.listeners) cb(this.thresholds);
     this.apply();
@@ -419,8 +461,8 @@ export class Devices {
         feats = [];
       } else {
         feats = feats.filter((f) => {
-          const meters = asNumber(f.properties.current_range_meters);
-          const b = bucketFor(meters, t);
+          const pct = asNumber(f.properties.battery_percent);
+          const b = bucketFor(pct, t);
           return b !== null && allowed.has(b);
         });
       }
@@ -442,19 +484,28 @@ export class Devices {
     this.applyPaint();
   }
 
-  /** Push the current color-by mode into the point-layer paint property.
-   *  Cheap to call repeatedly; the map only redraws if the expression
-   *  actually changed. */
+  /** Push the current display mode into the point-layer's icon + text
+   *  expressions. In "Range" mode each marker is a colored bucket disc
+   *  with the percentage rendered inside; in "Device type" mode it's the
+   *  emoji badge with no text. Cheap to call repeatedly. */
   private applyPaint(): void {
-    const expr =
-      this.colorMode === "range" && this.thresholds
-        ? colorByRange(this.thresholds)
-        : colorByType();
+    const rangeMode = this.colorMode === "range" && this.thresholds;
+    const iconExpr = rangeMode
+      ? iconByRange(this.thresholds!)
+      : iconByType();
+    const textExpr: maplibregl.ExpressionSpecification | string = rangeMode
+      ? textByPercent()
+      : "";
+    const textColorExpr: maplibregl.ExpressionSpecification | string = rangeMode
+      ? textColorByBucket(this.thresholds!)
+      : "#ffffff";
     try {
-      this.map.setPaintProperty(POINT_LAYER, "circle-color", expr);
+      this.map.setLayoutProperty(POINT_LAYER, "icon-image", iconExpr);
+      this.map.setLayoutProperty(POINT_LAYER, "text-field", textExpr);
+      this.map.setPaintProperty(POINT_LAYER, "text-color", textColorExpr);
     } catch {
-      // Layer might not be added yet (early calls); next addLayers will
-      // pick up the right paint via colorByType() default.
+      // Layer might not be added yet (early calls); addLayers will install
+      // the default iconByType() expression.
     }
   }
 
@@ -486,38 +537,205 @@ export class Devices {
   }
 }
 
-/** Per-form-factor color expression — the original default look. */
-function colorByType(): maplibregl.ExpressionSpecification {
+/** Per-form-factor icon expression — the default "Device type" display. */
+function iconByType(): maplibregl.ExpressionSpecification {
   return [
     "match",
     ["get", "form_factor"],
     "scooter",
-    DEVICE_COLORS.scooter,
+    "dev-scooter",
     "bicycle",
-    DEVICE_COLORS.bicycle,
-    DEVICE_COLORS.unknown,
+    "dev-bicycle",
+    "dev-unknown",
   ];
 }
 
-/** Quartile-based color expression for the "Color by Range" mode. Devices
- *  without a numeric range are painted in the neutral missing color. */
-function colorByRange(
+/** Quartile-based icon expression for the "Range" display. Reads the
+ *  pre-annotated battery_percent (see annotateBatteryPercent). Devices
+ *  without a percentage fall through to the neutral missing icon. */
+function iconByRange(
   t: BatteryThresholds,
 ): maplibregl.ExpressionSpecification {
   // coalesce(null) → -1 so step's "below first stop" branch catches it.
   return [
     "step",
-    ["to-number", ["coalesce", ["get", "current_range_meters"], -1]],
-    BATTERY_MISSING_COLOR,
+    ["to-number", ["coalesce", ["get", "battery_percent"], -1]],
+    "dev-batt-missing",
     0,
-    BATTERY_COLOR[0],
+    "dev-batt-0",
     t.p25,
-    BATTERY_COLOR[1],
+    "dev-batt-1",
     t.p50,
-    BATTERY_COLOR[2],
+    "dev-batt-2",
     t.p75,
-    BATTERY_COLOR[3],
+    "dev-batt-3",
   ];
+}
+
+/** Text-field expression for the "Range" display: e.g. "73%". Empty
+ *  string when the device has no usable battery_percent so the gray
+ *  missing badge shows alone. */
+function textByPercent(): maplibregl.ExpressionSpecification {
+  return [
+    "case",
+    ["has", "battery_percent"],
+    ["concat", ["to-string", ["get", "battery_percent"]], "%"],
+    "",
+  ];
+}
+
+/** Per-bucket text color so the percentage stays legible on each
+ *  background. Mirrors BATTERY_TEXT_COLOR. */
+function textColorByBucket(
+  t: BatteryThresholds,
+): maplibregl.ExpressionSpecification {
+  return [
+    "step",
+    ["to-number", ["coalesce", ["get", "battery_percent"], -1]],
+    "#ffffff", // missing → white (gray badge)
+    0,
+    BATTERY_TEXT_COLOR[0],
+    t.p25,
+    BATTERY_TEXT_COLOR[1],
+    t.p50,
+    BATTERY_TEXT_COLOR[2],
+    t.p75,
+    BATTERY_TEXT_COLOR[3],
+  ];
+}
+
+/** Walk the fleet, derive a per-propulsion-type max range from the
+ *  observed values, and attach a `battery_percent` (0–100 int) to each
+ *  feature that has both a numeric current range and a propulsion type.
+ *  Mutates the input — call once on each fresh DevicesResponse. */
+function annotateBatteryPercent(
+  features: DevicesResponse["features"],
+): void {
+  const maxByType: Record<string, number> = {};
+  for (const f of features) {
+    const r = asNumber(f.properties.current_range_meters);
+    const pt = f.properties.propulsion_type;
+    if (r === null || !pt) continue;
+    if (!(pt in maxByType) || r > maxByType[pt]) maxByType[pt] = r;
+  }
+  for (const f of features) {
+    const props = f.properties as DeviceProperties & {
+      battery_percent?: number;
+    };
+    // Clear stale values from a prior fetch so missing devices don't
+    // carry over a phantom percentage.
+    delete props.battery_percent;
+    const r = asNumber(props.current_range_meters);
+    const pt = props.propulsion_type;
+    if (r === null || !pt) continue;
+    const max = maxByType[pt];
+    if (!max || max <= 0) continue;
+    const pct = Math.round((r / max) * 100);
+    if (!Number.isFinite(pct)) continue;
+    props.battery_percent = Math.max(0, Math.min(100, pct));
+  }
+}
+
+/** Register the eight device-marker icons on the map's image atlas. Each
+ *  is a small circular badge: type-mode icons hold a 🛴/🚲/❓ emoji on a
+ *  white field; range-mode icons hold a battery bar glyph on the bucket's
+ *  signature color. Idempotent (safe to call after style reloads). */
+function registerDeviceIcons(map: Map): void {
+  const typeIcons: Array<[string, string]> = [
+    ["dev-scooter", "🛴"],
+    ["dev-bicycle", "🚲"],
+    ["dev-unknown", "❓"],
+  ];
+  for (const [id, emoji] of typeIcons) {
+    if (map.hasImage(id)) continue;
+    map.addImage(id, makeEmojiBadge(emoji), { pixelRatio: 2 });
+  }
+  // The four bucket badges are blank colored discs — the percentage text
+  // is rendered on top via the symbol layer's text-field. Missing keeps
+  // its inscribed "?" since there's no percentage to overlay.
+  const bucketBgs: Array<[string, string]> = [
+    ["dev-batt-0", BATTERY_COLOR[0]],
+    ["dev-batt-1", BATTERY_COLOR[1]],
+    ["dev-batt-2", BATTERY_COLOR[2]],
+    ["dev-batt-3", BATTERY_COLOR[3]],
+  ];
+  for (const [id, bg] of bucketBgs) {
+    if (map.hasImage(id)) continue;
+    map.addImage(id, makeBlankBadge(bg), { pixelRatio: 2 });
+  }
+  if (!map.hasImage("dev-batt-missing")) {
+    map.addImage(
+      "dev-batt-missing",
+      makeGlyphBadge("?", BATTERY_MISSING_COLOR, "#ffffff"),
+      { pixelRatio: 2 },
+    );
+  }
+}
+
+/** White circular badge holding a centered emoji, used in "Device type"
+ *  display mode. Drawn at 2× pixel density so it stays crisp on retina. */
+function makeEmojiBadge(emoji: string): ImageData {
+  const px = 64; // 32 logical px at pixelRatio 2
+  const ctx = newCanvasCtx(px);
+  drawCircleBg(ctx, px, "#ffffff", "#374151", 2.5);
+  ctx.fillStyle = "#000";
+  ctx.font = `${Math.round(px * 0.55)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(emoji, px / 2, px / 2 + px * 0.03);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+/** Blank colored circle used as the background for the four "Range"
+ *  buckets; the percentage text rides on top via the symbol layer's
+ *  text-field. */
+function makeBlankBadge(bg: string): ImageData {
+  const px = 64;
+  const ctx = newCanvasCtx(px);
+  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+/** Colored circular badge holding a centered text glyph. Used for the
+ *  "?" missing-range badge (and previously for the bucket glyphs before
+ *  the text-overlay redesign). */
+function makeGlyphBadge(glyph: string, bg: string, fg: string): ImageData {
+  const px = 64;
+  const ctx = newCanvasCtx(px);
+  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
+  ctx.fillStyle = fg;
+  ctx.font = `bold ${Math.round(px * 0.7)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(glyph, px / 2, px / 2 + px * 0.04);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+function newCanvasCtx(px: number): CanvasRenderingContext2D {
+  const c = document.createElement("canvas");
+  c.width = px;
+  c.height = px;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable for marker icon");
+  return ctx;
+}
+
+function drawCircleBg(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  fill: string,
+  stroke: string,
+  strokeWidth: number,
+): void {
+  const cx = px / 2;
+  const r = px / 2 - strokeWidth;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = strokeWidth;
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 }
 
 /** Approximate a great-circle of `radiusMeters` around (lng, lat) as a
