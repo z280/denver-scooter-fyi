@@ -93,6 +93,19 @@ export interface ComplianceResponse {
   computed_at: string;
 }
 
+/** Live "right now" citywide metrics from the most recent 10-minute cycle.
+ *  Companion to ComplianceResponse: the daily SLA value is the binding
+ *  contractual metric, but this is the up-to-the-minute readout. */
+export interface SnapshotMetadataResponse {
+  cycle_id: string;
+  snapshot_time: string;
+  total_devices_denver: number;
+  total_devices_v1: number;
+  total_devices_v2: number;
+  percent_all_devices_v1: number | null;
+  percent_all_devices_v2: number | null;
+}
+
 /** Returned when an endpoint has no data yet (503 cold-start). */
 export class NoDataError extends Error {
   readonly status: number;
@@ -197,4 +210,11 @@ export function fetchCompliance(
   signal?: AbortSignal,
 ): Promise<ComplianceResponse> {
   return getJSON<ComplianceResponse>("/api/v1/compliance/daily/latest", signal);
+}
+
+/** Most-recent 10-minute cycle's citywide metrics ("right now" view). */
+export function fetchLatestSnapshot(
+  signal?: AbortSignal,
+): Promise<SnapshotMetadataResponse> {
+  return getJSON<SnapshotMetadataResponse>("/api/v1/snapshots/latest", signal);
 }
