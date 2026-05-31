@@ -20,12 +20,14 @@ export interface BatteryThresholds {
   uniqueCount: number;
 }
 
-/** Bottom→top emoji labels, one per bucket. */
+/** Bottom→top labels, one per bucket. Combines a fill glyph (ordinal) with
+ *  a face emoji (affective) so the scale reads left-to-right as both
+ *  "fuller" and "happier." */
 export const BATTERY_LABEL: Record<BatteryBucket, string> = {
-  0: ":-(",
-  1: ":-|",
-  2: ":-)",
-  3: ":D",
+  0: "░ 😢",
+  1: "▒ 😐",
+  2: "▓ 🙂",
+  3: "█ 😁",
 };
 
 /** Bottom→top fill colors for the segmented filter UI and the Range
