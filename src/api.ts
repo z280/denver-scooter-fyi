@@ -131,11 +131,14 @@ export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
 
 /**
  * Same shape as fetchDevices but goes through the private endpoint when the
- * user is signed in via map-auth. Falls back to the public endpoint on any
- * auth failure (NO_AUTH / TOKEN_REJECTED), so the caller doesn't have to
- * branch — they get the richest data the current session allows. The
- * caller can still inspect `features[i].properties.vehicle_plate` etc. to
- * tell whether private fields came back.
+ * user is signed in via map-auth. Falls back to the public endpoint **only**
+ * for failure modes that map cleanly to "auth not usable right now":
+ * NO_AUTH, TOKEN_REJECTED, and 5xx server errors. Any other error
+ * (4xx other than 401, malformed responses, etc.) is rethrown so a
+ * misconfiguration is visible to the caller and not silently masked by
+ * degraded public data. The caller can inspect
+ * `features[i].properties.vehicle_plate` etc. to tell whether private
+ * fields came back.
  *
  * On TOKEN_REJECTED, the helper has already cleared sessionStorage; the
  * caller should observe `isAuthenticated()` going false and re-render the
@@ -151,10 +154,21 @@ export async function fetchDevicesAuto(
       headers: { Accept: "application/json" },
     });
   } catch (e) {
-    const err = e as { code?: string; name?: string };
+    const err = e as { code?: string; name?: string; status?: number };
     if (err?.name === "AbortError") throw e;
-    // TOKEN_REJECTED / NO_AUTH / 5xx — fall back to public so the map still
-    // renders something. apiFetch already cleared the session on 401.
+    // Fall back to public when the failure is "auth not usable" or "server
+    // having a moment". Everything else (403 / 404 / other 4xx, network or
+    // CORS errors which surface as TypeError with no `code`, malformed
+    // responses) gets rethrown so it doesn't silently degrade behind a
+    // working-looking public fetch.
+    const fallbackable =
+      err?.code === "NO_AUTH" ||
+      err?.code === "TOKEN_REJECTED" ||
+      (err?.code === "HTTP_ERROR" &&
+        typeof err.status === "number" &&
+        err.status >= 500 &&
+        err.status < 600);
+    if (!fallbackable) throw e;
     return fetchDevices(signal);
   }
 }
