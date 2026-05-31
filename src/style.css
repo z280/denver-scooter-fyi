@@ -539,19 +539,9 @@ body {
   width: auto;
 }
 
-/* ---------- Compliance gauge ---------- */
+/* ---------- Compliance gauge (rendered inside its drawer) ---------- */
 .compliance {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 30;
-  width: 248px;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 12px 14px;
+  /* No fixed positioning — flows inside .drawer-body. */
 }
 .compliance-loading {
   font-size: 12.5px;
@@ -720,11 +710,6 @@ body {
   .drawer {
     width: calc(100vw - 84px);
     max-width: 360px;
-  }
-  .compliance {
-    width: min(248px, calc(100vw - 86px));
-    top: 12px;
-    right: 12px;
   }
   .freshness {
     bottom: 12px;

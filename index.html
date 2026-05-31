@@ -64,6 +64,21 @@
         </svg>
         <span class="sr-only">Tools</span>
       </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="compliance"
+        aria-pressed="false"
+        aria-controls="drawer-compliance"
+        title="Equity Compliance"
+      >
+        <!-- Double check -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 7 17l-5-5" />
+          <path d="m22 10-7.5 7.5L13 16" />
+        </svg>
+        <span class="sr-only">Equity Compliance</span>
+      </button>
     </nav>
 
     <!-- ---------- Filters drawer ---------- -->
@@ -198,10 +213,18 @@
       </div>
     </aside>
 
-    <!-- Compliance gauge (top-right) -->
-    <div id="compliance" class="compliance" role="status" aria-live="polite" aria-label="Daily compliance status">
-      <div class="compliance-loading">Loading compliance…</div>
-    </div>
+    <!-- ---------- Equity Compliance drawer ---------- -->
+    <aside class="drawer" id="drawer-compliance" aria-labelledby="drawer-compliance-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-compliance-h">Equity Compliance</h2>
+        <button class="drawer-close" type="button" aria-label="Close Equity Compliance">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <div id="compliance" class="compliance" role="status" aria-live="polite" aria-label="Daily compliance status">
+          <div class="compliance-loading">Loading compliance…</div>
+        </div>
+      </div>
+    </aside>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a
