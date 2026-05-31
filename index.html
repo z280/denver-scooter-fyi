@@ -79,6 +79,22 @@
         </svg>
         <span class="sr-only">Equity Compliance</span>
       </button>
+      <button
+        class="drawer-tab is-hidden"
+        type="button"
+        data-drawer="person"
+        aria-pressed="false"
+        aria-controls="drawer-person"
+        title="Account"
+        hidden
+      >
+        <!-- Person -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        <span class="sr-only">Account</span>
+      </button>
     </nav>
 
     <!-- ---------- Filters drawer ---------- -->
@@ -90,11 +106,32 @@
       <div class="drawer-body">
         <section class="control-group" aria-labelledby="device-filter-label">
           <h3 id="device-filter-label" class="control-label">Device type</h3>
-          <div class="segmented" role="radiogroup" aria-labelledby="device-filter-label">
+          <div id="device-filter-seg" class="segmented" role="radiogroup" aria-labelledby="device-filter-label">
             <button class="seg-btn is-active" role="radio" aria-checked="true" data-filter="all">All</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-filter="scooter">Scooters</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-filter="bicycle">E-bikes</button>
           </div>
+        </section>
+
+        <section class="control-group">
+          <h3 class="control-label">Availability</h3>
+          <label class="switch">
+            <input type="checkbox" id="hide-unavailable" />
+            <span>Hide Reserved &amp; Out of Service</span>
+          </label>
+        </section>
+
+        <section class="control-group" aria-labelledby="battery-filter-label">
+          <h3 id="battery-filter-label" class="control-label">Battery state</h3>
+          <div id="battery-filter" class="battery-filter" role="group" aria-labelledby="battery-filter-label">
+            <button class="batt-btn" type="button" data-bucket="0" aria-pressed="false" title="Bottom 25% of range">:-(</button>
+            <button class="batt-btn" type="button" data-bucket="1" aria-pressed="false" title="25–50% of range">:-|</button>
+            <button class="batt-btn" type="button" data-bucket="2" aria-pressed="false" title="50–75% of range">:-)</button>
+            <button class="batt-btn" type="button" data-bucket="3" aria-pressed="false" title="Top 25% of range">:D</button>
+          </div>
+          <p id="battery-filter-hint" class="battery-filter__hint" hidden>
+            Not enough range data yet to bucket.
+          </p>
         </section>
 
         <section class="control-group" aria-labelledby="area-filter-label">
@@ -168,6 +205,14 @@
         <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
       </header>
       <div class="drawer-body">
+        <section class="control-group" aria-labelledby="color-by-label">
+          <h3 id="color-by-label" class="control-label">Color by</h3>
+          <div id="color-by-seg" class="segmented" role="radiogroup" aria-labelledby="color-by-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-color="type">Device type</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-color="range">Range</button>
+          </div>
+        </section>
+
         <section class="control-group" aria-labelledby="search-label">
           <h3 id="search-label" class="control-label">Find a neighborhood</h3>
           <input
@@ -230,6 +275,19 @@
         <div id="compliance" class="compliance" role="status" aria-live="polite" aria-label="Daily compliance status">
           <div class="compliance-loading">Loading compliance…</div>
         </div>
+      </div>
+    </aside>
+
+    <!-- ---------- Account drawer (hidden until unlocked) ---------- -->
+    <aside class="drawer" id="drawer-person" aria-labelledby="drawer-person-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-person-h">Account</h2>
+        <button class="drawer-close" type="button" aria-label="Close Account">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <section class="control-group" id="account-body" aria-live="polite">
+          <!-- populated by wireAccount() in main.ts -->
+        </section>
       </div>
     </aside>
 

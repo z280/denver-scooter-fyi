@@ -1,6 +1,8 @@
 // Typed client for the data.scooter.fyi public API.
 // Contract: https://raw.githubusercontent.com/z280/veo-audit/main/API.md
 
+import { apiFetch, isAuthenticated } from "./map-auth.js";
+
 // In production, the browser calls the API directly (CORS allows denver.scooter.fyi).
 // In local dev, requests go through the Vite proxy (see vite.config.ts) because the
 // API's CORS allowlist does not include localhost.
@@ -15,10 +17,30 @@ export type BoundaryLayer =
   | "council_district"
   | "community_network";
 
+export type PropulsionType = "electric" | "electric_assist" | "human";
+
 export interface DeviceProperties {
   device_id: string;
   form_factor: FormFactor;
   spatial_status: string;
+  // ----- Public per-device fields (always potentially present on
+  // /api/v1/devices/current; values may still be null when upstream omits them).
+  /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
+  vehicle_identifier?: string | null;
+  /** True when the scooter is out of service (low battery, fault, impound). */
+  is_disabled?: boolean | null;
+  /** True when a rider has the scooter on hold during the reservation window. */
+  is_reserved?: boolean | null;
+  /** Estimated remaining range in meters. Null for pedal-only bikes. */
+  current_range_meters?: number | null;
+  /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
+  propulsion_type?: PropulsionType | null;
+  // ----- Private fields (only populated via /api/v1/private/devices/current
+  // when the user is signed in via map-auth). Undefined on public fetches.
+  vehicle_plate?: string;
+  first_observed_at_location?: string;
+  number_failed_starts?: number;
+  first_ever_observed_at?: string;
 }
 
 export interface DevicesResponse {
@@ -102,9 +124,39 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** Every Denver device's current position (no form_factor filter — filtered client-side). */
+/** Every Denver device's current position via the public endpoint. */
 export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
   return getJSON<DevicesResponse>("/api/v1/devices/current", signal);
+}
+
+/**
+ * Same shape as fetchDevices but goes through the private endpoint when the
+ * user is signed in via map-auth. Falls back to the public endpoint on any
+ * auth failure (NO_AUTH / TOKEN_REJECTED), so the caller doesn't have to
+ * branch — they get the richest data the current session allows. The
+ * caller can still inspect `features[i].properties.vehicle_plate` etc. to
+ * tell whether private fields came back.
+ *
+ * On TOKEN_REJECTED, the helper has already cleared sessionStorage; the
+ * caller should observe `isAuthenticated()` going false and re-render the
+ * Account UI / prompt to sign back in.
+ */
+export async function fetchDevicesAuto(
+  signal?: AbortSignal,
+): Promise<DevicesResponse> {
+  if (!isAuthenticated()) return fetchDevices(signal);
+  try {
+    return await apiFetch<DevicesResponse>("/api/v1/private/devices/current", {
+      signal,
+      headers: { Accept: "application/json" },
+    });
+  } catch (e) {
+    const err = e as { code?: string; name?: string };
+    if (err?.name === "AbortError") throw e;
+    // TOKEN_REJECTED / NO_AUTH / 5xx — fall back to public so the map still
+    // renders something. apiFetch already cleared the session on 401.
+    return fetchDevices(signal);
+  }
 }
 
 /** Full GeoJSON polygons for one boundary layer (CDN-cached 24h; fetch once). */

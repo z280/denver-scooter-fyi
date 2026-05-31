@@ -108,6 +108,9 @@ body {
   background: var(--accent);
   color: var(--accent-ink);
 }
+.drawer-tab.is-hidden {
+  display: none;
+}
 
 /* ---------- Drawers (slide in from behind the tab strip) ---------- */
 .drawer {
@@ -286,10 +289,9 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- Segmented device filter ---------- */
+/* ---------- Segmented control (shared by Filters > Device type and Tools > Color by) ---------- */
 .segmented {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 4px;
   background: #eef1f5;
   border-radius: 9px;
@@ -305,11 +307,67 @@ body {
   color: var(--fg-muted);
   border-radius: 6px;
   cursor: pointer;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .seg-btn.is-active {
   background: #fff;
   color: var(--fg);
   box-shadow: 0 1px 3px rgba(20, 30, 50, 0.18);
+}
+
+/* ---------- Battery quartile filter ---------- */
+.battery-filter {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.batt-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 7px 4px;
+  font-size: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  color: var(--fg);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease, transform 0.05s ease, border-color 0.1s ease;
+}
+.batt-btn:hover:not([disabled]) {
+  border-color: var(--accent);
+}
+.batt-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Each bucket lights up to its on-map color when selected. */
+.batt-btn[data-bucket="0"].is-active {
+  background: #c62828;
+  color: #fff;
+  border-color: #c62828;
+}
+.batt-btn[data-bucket="1"].is-active {
+  background: #f5b400;
+  color: #3a2a00;
+  border-color: #f5b400;
+}
+.batt-btn[data-bucket="2"].is-active {
+  background: #7ec850;
+  color: #1f3a14;
+  border-color: #7ec850;
+}
+.batt-btn[data-bucket="3"].is-active {
+  background: #1b8a3f;
+  color: #fff;
+  border-color: #1b8a3f;
+}
+.battery-filter__hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-style: italic;
 }
 
 /* ---------- Layer toggles ---------- */
@@ -540,6 +598,79 @@ body {
   align-items: center;
   line-height: 0;
 }
+
+/* ---------- Account drawer login placeholder ---------- */
+.login-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-btn[disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.login-btn--secondary {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--border);
+}
+.login-btn--secondary:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.account-intro {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  line-height: 1.4;
+}
+.account-status {
+  margin-bottom: 12px;
+}
+.account-status__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+}
+.account-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pass);
+  box-shadow: 0 0 0 3px rgba(27, 138, 63, 0.18);
+}
+.account-status__expiry {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+/* ---------- SOS readout popup ---------- */
+.sos-popup {
+  position: fixed;
+  bottom: 52px;
+  right: 12px;
+  z-index: 40;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--fg);
+  white-space: nowrap;
+  pointer-events: none;
+}
 .brand-link img {
   display: block;
   /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
@@ -659,6 +790,11 @@ body {
   border: 1px solid var(--border);
   border-radius: 999px;
   box-shadow: var(--shadow);
+  /* Disable iOS double-tap zoom, tap highlight, and text selection so the
+     SOS gesture target feels button-like. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 .freshness-dot {
   width: 8px;
@@ -703,6 +839,63 @@ body {
 .device-popup__meta code {
   font-size: 12px;
   word-break: break-all;
+}
+.device-popup__action {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0 0 0 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.device-popup__action:hover {
+  text-decoration: none;
+}
+.device-popup__statuses {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.device-popup__status {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.device-popup__status--disabled {
+  color: var(--fail);
+  background: rgba(198, 40, 40, 0.08);
+}
+.device-popup__status--reserved {
+  color: #8a6d00;
+  background: rgba(255, 196, 0, 0.14);
+}
+.device-popup__authed {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.device-popup__authed-tag {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.device-popup__authed .device-popup__meta {
+  margin-top: 6px;
 }
 
 /* ---------- Focus visibility ---------- */
