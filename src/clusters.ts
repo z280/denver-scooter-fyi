@@ -129,15 +129,6 @@ function findClusters(
   return out;
 }
 
-// Region layers that fully tile Denver — a cluster outside them really is
-// outside the city. The equity layers (v1/v2) cover only part of the city, so
-// "outside" there just means "not in a disadvantaged area."
-const FULL_COVERAGE: ReadonlySet<BoundaryLayer> = new Set([
-  "neighborhood",
-  "council_district",
-  "community_network",
-]);
-
 export class Clusters {
   private features: DevicesResponse["features"] = [];
   private minCount: number;
@@ -254,8 +245,9 @@ export class Clusters {
 
       const region = document.createElement("span");
       region.className = "cluster-item__region";
-      region.textContent =
-        this.regionForPoint(c.lng, c.lat) ?? this.outsideLabel();
+      // Both selectable layers (City Regions, Neighborhoods) tile the whole
+      // city, so falling outside every region means it's outside Denver.
+      region.textContent = this.regionForPoint(c.lng, c.lat) ?? "Outside Denver";
 
       const meta = document.createElement("span");
       meta.className = "cluster-item__meta";
@@ -277,13 +269,6 @@ export class Clusters {
       }
     }
     return null;
-  }
-
-  /** Fallback label for clusters that fall outside every region of the layer. */
-  private outsideLabel(): string {
-    return FULL_COVERAGE.has(this.regionLayer)
-      ? "Outside Denver"
-      : "Not in a mapped area";
   }
 
   private go(c: FoundCluster): void {
