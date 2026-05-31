@@ -182,13 +182,18 @@ export class Clusters {
   }
 
   private async ensureRegionIndex(): Promise<void> {
-    let idx = this.indexCache.get(this.regionLayer);
+    // Capture the target layer up front: the dropdown can change during the
+    // await, so reading this.regionLayer afterward could cache the response
+    // under the wrong key and label clusters against the wrong boundary.
+    const layer = this.regionLayer;
+    let idx = this.indexCache.get(layer);
     if (!idx) {
-      const resp = await this.overlays.loadBoundary(this.regionLayer);
+      const resp = await this.overlays.loadBoundary(layer);
       idx = resp.features.map((f) => indexFeature(f));
-      this.indexCache.set(this.regionLayer, idx);
+      this.indexCache.set(layer, idx);
     }
-    this.regionIndex = idx;
+    // Only adopt this index if its layer is still the active selection.
+    if (layer === this.regionLayer) this.regionIndex = idx;
   }
 
   /** Called by main.ts whenever the visible device set changes. */
