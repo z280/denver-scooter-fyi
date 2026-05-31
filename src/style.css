@@ -656,30 +656,56 @@ body {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate {
-  width: 40px;
-  height: 40px;
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate {
+  width: 48px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   color: var(--fg-muted);
 }
 /* Replace the default sprite icon with our own currentColor SVG so we can
-   tint it muted (off) vs. accent blue (active) via CSS. */
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate .maplibregl-ctrl-icon {
+   tint it muted (off) vs. accent blue (active) via CSS. The selector matches
+   every geolocate state to outweigh MapLibre's per-state background-image
+   rules, which would otherwise paint their own icon through our mask. */
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate .maplibregl-ctrl-icon,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error .maplibregl-ctrl-icon,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error .maplibregl-ctrl-icon {
+  width: 24px;
+  height: 24px;
   background-image: none;
   background-color: currentColor;
   -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 22px 22px;
   mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 22px 22px;
 }
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate:hover {
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate::after {
+  content: "OFF";
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: currentColor;
+}
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active::after,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error::after,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background::after,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error::after,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting::after {
+  content: "ON";
+}
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate:hover {
   background: rgba(0, 114, 178, 0.08);
   color: var(--fg);
 }
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active,
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active-error,
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-background,
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-background-error {
-  color: var(--accent);
-}
-.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-waiting {
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error,
+.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting {
   color: var(--accent);
 }
 
