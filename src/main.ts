@@ -1,15 +1,21 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
-import { fetchDevices, type BoundaryLayer } from "./api.ts";
+import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
 import { createMap } from "./map.ts";
-import { Devices, type DeviceFilter } from "./devices.ts";
+import {
+  Devices,
+  type ColorMode,
+  type DeviceFilter,
+} from "./devices.ts";
+import { type BatteryBucket } from "./battery.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
 import { AreaFilter, type AreaFilterElements } from "./area-filter.ts";
 import { OVERLAYS, REFRESH_MS } from "./config.ts";
+import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -36,16 +42,21 @@ const clusters = new Clusters(
 const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
-const devicesPromise = fetchDevices().catch((e) => {
+const devicesPromise = fetchDevicesAuto().catch((e) => {
   console.error("initial device fetch failed", e);
   return null;
 });
 void renderCompliance(need("compliance"));
+wireSecretUnlock();
+wireAccount();
 
 map.on("load", async () => {
   devices.addLayers();
   buildLayerToggles();
   wireDeviceFilter();
+  wireHideUnavailable();
+  wireBatteryFilter();
+  wireColorBy();
   wireChoropleth();
   wireNeighborhoodSearch();
   wireDrawers();
@@ -111,8 +122,13 @@ function setOverlayChecked(layer: BoundaryLayer, checked: boolean): void {
 }
 
 function wireDeviceFilter(): void {
+  // Scope to the device-filter segmented widget so other .seg-btn groups
+  // (e.g. the Color-by toggle in Tools) aren't swept up by the global
+  // selector this used to use.
   const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(".seg-btn"),
+    document.querySelectorAll<HTMLButtonElement>(
+      "#device-filter-seg .seg-btn",
+    ),
   );
   const select = (btn: HTMLButtonElement) => {
     for (const b of btns) {
@@ -122,6 +138,93 @@ function wireDeviceFilter(): void {
     }
     devices.setFilter(btn.dataset.filter as DeviceFilter);
     clusters.update(devices.visibleFeatures());
+  };
+  btns.forEach((btn, i) => {
+    btn.addEventListener("click", () => select(btn));
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = btns[(i + 1) % btns.length];
+        next.focus();
+        select(next);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = btns[(i - 1 + btns.length) % btns.length];
+        prev.focus();
+        select(prev);
+      }
+    });
+  });
+}
+
+function wireHideUnavailable(): void {
+  const cb = need<HTMLInputElement>("hide-unavailable");
+  cb.addEventListener("change", () => {
+    devices.setHideUnavailable(cb.checked);
+    clusters.update(devices.visibleFeatures());
+  });
+}
+
+function wireBatteryFilter(): void {
+  const root = need("battery-filter");
+  const hint = need("battery-filter-hint");
+  const btns = Array.from(
+    root.querySelectorAll<HTMLButtonElement>(".batt-btn"),
+  );
+  const selected = new Set<BatteryBucket>();
+
+  const push = (): void => {
+    devices.setBatteryFilter(selected.size > 0 ? new Set(selected) : null);
+    clusters.update(devices.visibleFeatures());
+  };
+
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      const b = Number(btn.dataset.bucket) as BatteryBucket;
+      if (selected.has(b)) {
+        selected.delete(b);
+        btn.setAttribute("aria-pressed", "false");
+        btn.classList.remove("is-active");
+      } else {
+        selected.add(b);
+        btn.setAttribute("aria-pressed", "true");
+        btn.classList.add("is-active");
+      }
+      push();
+    });
+  }
+
+  // Disable the whole widget until the fleet returns enough unique range
+  // values to make four buckets. Re-render whenever thresholds change.
+  devices.onThresholdsChange((t) => {
+    const enabled = t !== null;
+    for (const btn of btns) btn.disabled = !enabled;
+    hint.hidden = enabled;
+    if (!enabled && selected.size > 0) {
+      // Drop any latent selection so the user isn't left with a hidden,
+      // active filter when data arrives sparse.
+      selected.clear();
+      for (const btn of btns) {
+        btn.setAttribute("aria-pressed", "false");
+        btn.classList.remove("is-active");
+      }
+      push();
+    }
+  });
+}
+
+function wireColorBy(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#color-by-seg .seg-btn"),
+  );
+  const select = (btn: HTMLButtonElement) => {
+    for (const b of btns) {
+      const on = b === btn;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", String(on));
+    }
+    devices.setColorMode((btn.dataset.color as ColorMode) || "type");
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => select(btn));
@@ -291,6 +394,241 @@ function wireDrawers(): void {
   });
 }
 
+// ---------- Secret unlock ----------
+
+// Reveal the Account drawer tab when the user taps an SOS morse pattern
+// (... --- ...) on the freshness pill. A short press is a dot (< 300ms), a
+// long press is a dash (>= 300ms). Idle > 2.5s resets. Right-clicking the
+// pill (desktop) or holding it for 2s (mobile) opens a live readout of the
+// detected pattern that auto-hides 2.4s after the last activity.
+function wireSecretUnlock(): void {
+  const target = document.getElementById("freshness");
+  const tab = document.querySelector<HTMLButtonElement>(
+    '.drawer-tab[data-drawer="person"]',
+  );
+  if (!target || !tab) return;
+
+  const TARGET = "...---...";
+  const DOT_MAX_MS = 300;
+  const RESET_MS = 2500;
+  const POPUP_HIDE_MS = 2400;
+  const LONG_PRESS_MS = 2000;
+
+  let buffer = "";
+  let pressStart = 0;
+  let resetTimer: number | undefined;
+  let popupTimer: number | undefined;
+  let longPressTimer: number | undefined;
+  let longPressTriggered = false;
+
+  const popup = document.createElement("div");
+  popup.className = "sos-popup";
+  popup.setAttribute("role", "status");
+  popup.setAttribute("aria-live", "polite");
+  popup.hidden = true;
+  document.body.appendChild(popup);
+
+  const renderPopup = (): void => {
+    if (popup.hidden) return;
+    const symbols = buffer.length
+      ? buffer.split("").join(" ")
+      : "(awaiting taps)";
+    popup.textContent = symbols;
+  };
+  const showPopup = (): void => {
+    popup.hidden = false;
+    renderPopup();
+    scheduleHide();
+  };
+  const hidePopup = (): void => {
+    popup.hidden = true;
+  };
+  const scheduleHide = (): void => {
+    window.clearTimeout(popupTimer);
+    popupTimer = window.setTimeout(hidePopup, POPUP_HIDE_MS);
+  };
+
+  const reset = (): void => {
+    buffer = "";
+    renderPopup();
+  };
+  const scheduleReset = (): void => {
+    window.clearTimeout(resetTimer);
+    resetTimer = window.setTimeout(reset, RESET_MS);
+  };
+
+  target.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    showPopup();
+  });
+
+  target.addEventListener("pointerdown", (e) => {
+    // Only react to primary button / touch / pen.
+    if (e.button !== undefined && e.button !== 0) return;
+    pressStart = performance.now();
+    longPressTriggered = false;
+    window.clearTimeout(resetTimer);
+    window.clearTimeout(longPressTimer);
+    // Mobile-friendly alternative to right-click: holding 2s opens the popup.
+    longPressTimer = window.setTimeout(() => {
+      longPressTriggered = true;
+      showPopup();
+    }, LONG_PRESS_MS);
+  });
+
+  target.addEventListener("pointerup", (e) => {
+    window.clearTimeout(longPressTimer);
+    if (pressStart === 0) return;
+    if (longPressTriggered) {
+      // The hold was a "show popup" gesture, not a tap — don't record it.
+      pressStart = 0;
+      longPressTriggered = false;
+      e.preventDefault();
+      return;
+    }
+    const duration = performance.now() - pressStart;
+    pressStart = 0;
+    buffer += duration < DOT_MAX_MS ? "." : "-";
+    // Keep only the trailing window we care about.
+    if (buffer.length > TARGET.length) {
+      buffer = buffer.slice(-TARGET.length);
+    }
+    if (!popup.hidden) {
+      renderPopup();
+      scheduleHide();
+    }
+    if (buffer === TARGET) {
+      reset();
+      hidePopup();
+      revealAccountTab();
+      tab.focus();
+    } else {
+      scheduleReset();
+    }
+    e.preventDefault();
+  });
+
+  // Cancel an in-flight press if the pointer leaves the element.
+  target.addEventListener("pointercancel", () => {
+    window.clearTimeout(longPressTimer);
+    pressStart = 0;
+    longPressTriggered = false;
+    scheduleReset();
+  });
+}
+
+/** Make the Account tab visible. Called either on SOS unlock or, for users
+ *  who are already signed in (e.g. after the auth-callback redirect lands
+ *  back here on next page load), at startup so they keep access to the
+ *  drawer without re-doing the secret gesture. */
+function revealAccountTab(): void {
+  const tab = document.querySelector<HTMLButtonElement>(
+    '.drawer-tab[data-drawer="person"]',
+  );
+  if (!tab) return;
+  tab.classList.remove("is-hidden");
+  tab.removeAttribute("hidden");
+}
+
+// ---------- Account drawer ----------
+
+// Renders the Account drawer body based on map-auth state and keeps the
+// expiry countdown live. Also wires sign-in / sign-out handlers.
+function wireAccount(): void {
+  const body = document.getElementById("account-body");
+  if (!body) return;
+
+  // If the user is already signed in (most common after the auth-callback
+  // redirect lands them back on "/" with a fresh sessionStorage blob), the
+  // hidden tab gate would otherwise lock them out of their own controls.
+  if (isAuthenticated()) revealAccountTab();
+
+  let countdownTimer: number | undefined;
+
+  const formatRemaining = (expiresIso: string): string => {
+    const ms = new Date(expiresIso).getTime() - Date.now();
+    if (ms <= 0) return "expired";
+    const totalMin = Math.floor(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
+  const el = <K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className?: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  const render = (): void => {
+    window.clearTimeout(countdownTimer);
+    body.replaceChildren();
+    const auth = getAuth();
+    if (auth) {
+      const status = el("div", "account-status");
+      const row = el("div", "account-status__row");
+      row.append(
+        el("span", "account-status__dot"),
+        el("strong", undefined, "Signed in"),
+      );
+      const expiryP = el("p", "account-status__expiry");
+      expiryP.append(
+        document.createTextNode("Session expires in "),
+        el("span", undefined, formatRemaining(auth.expires)),
+      );
+      status.append(row, expiryP);
+      const signoutBtn = el(
+        "button",
+        "login-btn login-btn--secondary",
+        "Sign out",
+      );
+      signoutBtn.type = "button";
+      signoutBtn.addEventListener("click", async () => {
+        signoutBtn.disabled = true;
+        signoutBtn.textContent = "Signing out…";
+        try {
+          await signOut();
+        } finally {
+          // Reload so all data refetches drop back to the public endpoint
+          // and the UI resets cleanly to the unauthenticated state.
+          location.reload();
+        }
+      });
+      body.append(status, signoutBtn);
+      // Re-render once a minute to keep the countdown current.
+      countdownTimer = window.setTimeout(render, 60_000);
+    } else {
+      const intro = el("p", "account-intro");
+      intro.append(
+        document.createTextNode("Sign in with your "),
+        el("strong", undefined, "scooter-club"),
+        document.createTextNode(
+          " GitHub account to unlock per-scooter plate numbers, dwell time, and start-attempt history.",
+        ),
+      );
+      const signinBtn = el("button", "login-btn", "Sign in with GitHub");
+      signinBtn.type = "button";
+      signinBtn.addEventListener("click", () => {
+        // Come back to wherever we were after the GitHub round-trip.
+        signIn(location.pathname + location.search);
+      });
+      body.append(intro, signinBtn);
+    }
+  };
+
+  render();
+
+  // If the session expires mid-tab (or apiFetch cleared it after a 401),
+  // the visible state will drift. Re-check on focus so the UI catches up.
+  window.addEventListener("focus", render);
+}
+
 // ---------- Refresh loop ----------
 
 function startRefreshLoop(): void {
@@ -301,7 +639,7 @@ function startRefreshLoop(): void {
     inFlight?.abort();
     inFlight = new AbortController();
     try {
-      const resp = await fetchDevices(inFlight.signal);
+      const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
       clusters.update(devices.visibleFeatures());
       freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
