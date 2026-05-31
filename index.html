@@ -170,6 +170,16 @@
         <section class="control-group" aria-labelledby="finder-label">
           <h3 id="finder-label" class="control-label">Find dense device clusters</h3>
           <p class="finder-help">Groups of devices within 30&nbsp;ft of each other.</p>
+          <label class="finder-region">
+            <span>Label clusters by</span>
+            <select id="cluster-region-layer" class="select">
+              <option value="community_network" selected>City Regions</option>
+              <option value="neighborhood">Neighborhoods</option>
+              <option value="council_district">City Council Districts</option>
+              <option value="v1">Disadvantaged Areas (v1)</option>
+              <option value="v2">Disadvantaged Areas (v2)</option>
+            </select>
+          </label>
           <div class="finder-controls">
             <label class="finder-min">
               <span>Minimum count</span>
