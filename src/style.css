@@ -642,6 +642,47 @@ body {
   color: var(--fg-muted);
 }
 
+/* ---------- Geolocate button (top-right) ---------- */
+.maplibregl-ctrl-top-right {
+  top: 12px;
+  right: 12px;
+}
+.maplibregl-ctrl-top-right .maplibregl-ctrl {
+  margin: 0;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate {
+  width: 40px;
+  height: 40px;
+  color: var(--fg-muted);
+}
+/* Replace the default sprite icon with our own currentColor SVG so we can
+   tint it muted (off) vs. accent blue (active) via CSS. */
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate .maplibregl-ctrl-icon {
+  background-image: none;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M12 2v3'/><path d='M12 19v3'/><path d='M2 12h3'/><path d='M19 12h3'/></svg>") no-repeat center / 22px 22px;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M12 2v3'/><path d='M12 19v3'/><path d='M2 12h3'/><path d='M19 12h3'/></svg>") no-repeat center / 22px 22px;
+}
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate:hover {
+  background: rgba(0, 114, 178, 0.08);
+  color: var(--fg);
+}
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active,
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-active-error,
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-background,
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-background-error {
+  color: var(--accent);
+}
+.maplibregl-ctrl-top-right .maplibregl-ctrl-geolocate-waiting {
+  color: var(--accent);
+}
+
 /* ---------- Freshness footer ---------- */
 .freshness {
   position: fixed;
