@@ -27,6 +27,7 @@ const clusters = new Clusters(
   need("cluster-list"),
   need<HTMLInputElement>("cluster-min"),
   need<HTMLButtonElement>("cluster-find"),
+  need<HTMLSelectElement>("cluster-region-layer"),
   overlays,
 );
 
