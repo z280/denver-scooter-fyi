@@ -58,6 +58,15 @@ export function createMap(container: string): maplibregl.Map {
     new maplibregl.AttributionControl({ compact: true }),
     "bottom-left",
   );
+  map.addControl(
+    new maplibregl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserLocation: true,
+      showAccuracyCircle: true,
+    }),
+    "top-right",
+  );
 
   return map;
 }
