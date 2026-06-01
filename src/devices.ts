@@ -47,9 +47,9 @@ export class Devices {
   /** Null = no battery filter. Empty set = filter is "on" but excludes
    *  everything. Set of bucket indices = restrict to those buckets. */
   private batteryBuckets: Set<BatteryBucket> | null = null;
-  /** Inclusive minimum on `current_range_meters`; null = no floor. Devices
-   *  without a numeric range fail the filter when a floor is set. */
-  private minRangeMeters: number | null = null;
+  /** Inclusive [min, max] window on `current_range_meters`; null = no window.
+   *  Devices without a numeric range are dropped when the window is set. */
+  private rangeWindow: { min: number; max: number } | null = null;
   private colorMode: ColorMode = "type";
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
@@ -60,6 +60,9 @@ export class Devices {
   /** Observers notified after every apply() — used by the battery filter
    *  UI to enable/disable buttons when thresholds become (un)available. */
   private listeners = new Set<(t: BatteryThresholds | null) => void>();
+  /** Filter-change observers, fired after every apply(). Used by the range
+   *  slider to redraw its backing histogram when other filters move. */
+  private filterListeners = new Set<() => void>();
 
   constructor(private readonly map: Map) {}
 
@@ -390,11 +393,27 @@ export class Devices {
     this.apply();
   }
 
-  /** Hide any device whose `current_range_meters` is below `meters`. Devices
-   *  reporting no range are also hidden. Pass null to clear. */
-  setMinRangeMeters(meters: number | null): void {
-    this.minRangeMeters = meters;
+  /** Restrict to devices whose `current_range_meters` falls in [min, max]
+   *  (inclusive). Devices reporting no range are dropped. Pass null to clear. */
+  setRangeWindow(window: { min: number; max: number } | null): void {
+    this.rangeWindow = window;
     this.apply();
+  }
+
+  /** Subscribe to filter-change notifications. Fired after every apply(),
+   *  including data refreshes. Returns an unsubscribe. */
+  onFilterChange(cb: () => void): () => void {
+    this.filterListeners.add(cb);
+    return () => this.filterListeners.delete(cb);
+  }
+
+  /** Snapshot of features that pass every filter EXCEPT the range window.
+   *  Used by the range slider so its backing histogram reflects the
+   *  population the slider can choose from rather than collapsing as the
+   *  user drags. */
+  featuresExcludingRange(): DevicesResponse["features"] {
+    if (!this.all) return [];
+    return this.filtered({ skipRange: true });
   }
 
   setColorMode(mode: ColorMode): void {
@@ -408,7 +427,7 @@ export class Devices {
     return this.filtered();
   }
 
-  private filtered(): DevicesResponse["features"] {
+  private filtered(opts?: { skipRange?: boolean }): DevicesResponse["features"] {
     if (!this.all) return [];
     let feats = this.all.features;
     if (this.filter !== "all") {
@@ -435,11 +454,11 @@ export class Devices {
         });
       }
     }
-    if (this.minRangeMeters !== null) {
-      const floor = this.minRangeMeters;
+    if (this.rangeWindow && !opts?.skipRange) {
+      const { min, max } = this.rangeWindow;
       feats = feats.filter((f) => {
         const m = asNumber(f.properties.current_range_meters);
-        return m !== null && m >= floor;
+        return m !== null && m >= min && m <= max;
       });
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
@@ -457,6 +476,7 @@ export class Devices {
     if (!src || !this.all) return;
     src.setData({ type: "FeatureCollection", features: this.filtered() });
     this.applyPaint();
+    for (const cb of this.filterListeners) cb();
   }
 
   /** Push the current color-by mode into the point-layer paint property.

@@ -56,7 +56,7 @@ map.on("load", async () => {
   wireDeviceFilter();
   wireHideUnavailable();
   wireBatteryFilter();
-  wireRangeFloor();
+  wireRangeSlider();
   wireColorBy();
   wireChoropleth();
   wireNeighborhoodSearch();
@@ -215,36 +215,201 @@ function wireBatteryFilter(): void {
   });
 }
 
-// Authenticated-only switch that hides any device with current_range_meters
-// below 40 km. Reveals itself if the user is already signed in; otherwise
-// stays tucked away so unauthed visitors don't see a control they can't trust.
-function wireRangeFloor(): void {
-  const FLOOR_METERS = 40_000;
-  const section = document.getElementById("range-floor-section");
-  const cb = document.getElementById("range-floor-enable") as
+// Dual-handle range slider with a silhouette histogram backing it. The
+// histogram reflects the population that would be visible BEFORE the range
+// filter is applied (so other filters — device type, area, battery bucket —
+// reshape it but dragging the handles doesn't make it collapse). The
+// selected band is drawn brighter than the surrounding distribution.
+function wireRangeSlider(): void {
+  const STEP_METERS = 500;
+  // Conservative upper bound; the actual maximum tracks the visible fleet
+  // and gets clamped in recomputeBounds().
+  let trackMaxMeters = 50_000;
+
+  const enable = document.getElementById("range-slider-enable") as
     | HTMLInputElement
     | null;
-  if (!section || !cb) return;
+  const body = document.getElementById("range-slider-body");
+  const minInput = document.getElementById("range-slider-min") as
+    | HTMLInputElement
+    | null;
+  const maxInput = document.getElementById("range-slider-max") as
+    | HTMLInputElement
+    | null;
+  const fill = document.getElementById("range-slider-fill");
+  const canvas = document.getElementById("range-slider-hist") as
+    | HTMLCanvasElement
+    | null;
+  const minLabel = document.getElementById("range-slider-min-label");
+  const maxLabel = document.getElementById("range-slider-max-label");
+  if (
+    !enable ||
+    !body ||
+    !minInput ||
+    !maxInput ||
+    !fill ||
+    !canvas ||
+    !minLabel ||
+    !maxLabel
+  ) {
+    return;
+  }
 
-  if (isAuthenticated()) section.hidden = false;
+  const fmt = (m: number): string => `${(m / 1000).toFixed(1)} km`;
 
-  cb.addEventListener("change", () => {
-    devices.setMinRangeMeters(cb.checked ? FLOOR_METERS : null);
-    clusters.update(devices.visibleFeatures());
-  });
-
-  // Auth state can change mid-tab (sign-in callback lands on the same page,
-  // sign-out reloads). Re-evaluate on focus so the section appears without
-  // a manual refresh, and stand down the filter on sign-out.
-  window.addEventListener("focus", () => {
-    const authed = isAuthenticated();
-    section.hidden = !authed;
-    if (!authed && cb.checked) {
-      cb.checked = false;
-      devices.setMinRangeMeters(null);
-      clusters.update(devices.visibleFeatures());
+  // Recompute slider bounds from the *unfiltered-by-range* fleet so the
+  // track always spans the achievable values. Round up to a nice km boundary.
+  const recomputeBounds = (): void => {
+    const feats = devices.featuresExcludingRange();
+    let max = 0;
+    for (const f of feats) {
+      const r = Number(f.properties.current_range_meters);
+      if (Number.isFinite(r) && r > max) max = r;
     }
+    const newMax = Math.max(1000, Math.ceil(max / 1000) * 1000);
+    if (newMax === trackMaxMeters) return;
+    trackMaxMeters = newMax;
+    for (const inp of [minInput, maxInput]) {
+      inp.min = "0";
+      inp.max = String(trackMaxMeters);
+      inp.step = String(STEP_METERS);
+    }
+    // Clamp current selection to new track.
+    if (Number(maxInput.value) > trackMaxMeters) {
+      maxInput.value = String(trackMaxMeters);
+    }
+    if (Number(minInput.value) > trackMaxMeters) {
+      minInput.value = String(trackMaxMeters);
+    }
+  };
+
+  for (const inp of [minInput, maxInput]) {
+    inp.min = "0";
+    inp.max = String(trackMaxMeters);
+    inp.step = String(STEP_METERS);
+  }
+  minInput.value = "0";
+  maxInput.value = String(trackMaxMeters);
+
+  const pushFilter = (): void => {
+    const min = Number(minInput.value);
+    const max = Number(maxInput.value);
+    if (!enable.checked) {
+      devices.setRangeWindow(null);
+    } else {
+      devices.setRangeWindow({ min, max });
+    }
+    clusters.update(devices.visibleFeatures());
+  };
+
+  const renderHandles = (): void => {
+    const min = Number(minInput.value);
+    const max = Number(maxInput.value);
+    const lo = Math.min(min, max);
+    const hi = Math.max(min, max);
+    const a = (lo / trackMaxMeters) * 100;
+    const b = (hi / trackMaxMeters) * 100;
+    fill.style.left = `${a}%`;
+    fill.style.right = `${100 - b}%`;
+    minLabel.textContent = fmt(lo);
+    maxLabel.textContent = fmt(hi);
+  };
+
+  // Draw the population distribution behind the slider track. Bars inside
+  // the selected window paint brighter than the surrounding silhouette so
+  // the active band reads at a glance.
+  const renderHistogram = (): void => {
+    const feats = devices.featuresExcludingRange();
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || canvas.offsetWidth || 220;
+    const cssH = canvas.clientHeight || 36;
+    const w = Math.max(1, Math.floor(cssW * dpr));
+    const h = Math.max(1, Math.floor(cssH * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+
+    const BINS = 60;
+    const bins = new Uint32Array(BINS);
+    let peak = 0;
+    for (const f of feats) {
+      const r = Number(f.properties.current_range_meters);
+      if (!Number.isFinite(r) || r < 0) continue;
+      const idx = Math.min(BINS - 1, Math.floor((r / trackMaxMeters) * BINS));
+      const n = ++bins[idx];
+      if (n > peak) peak = n;
+    }
+    if (peak === 0) return;
+
+    const lo = Math.min(Number(minInput.value), Number(maxInput.value));
+    const hi = Math.max(Number(minInput.value), Number(maxInput.value));
+    const binW = w / BINS;
+    for (let i = 0; i < BINS; i++) {
+      const bh = (bins[i] / peak) * (h - 2);
+      const x = i * binW;
+      // Bin centre as a fraction of the track, in the same coord space as
+      // the handles, so we shade by membership in the selected window.
+      const binCentreMeters = ((i + 0.5) / BINS) * trackMaxMeters;
+      const inWindow = binCentreMeters >= lo && binCentreMeters <= hi;
+      ctx.fillStyle = inWindow
+        ? "rgba(0, 114, 178, 0.55)"
+        : "rgba(0, 114, 178, 0.18)";
+      ctx.fillRect(x, h - bh, Math.max(1, binW - 1), bh);
+    }
+  };
+
+  const redraw = (): void => {
+    renderHandles();
+    renderHistogram();
+  };
+
+  const onInput = (): void => {
+    // Keep min <= max without preventing crossing — when the user drags
+    // past, swap so the gesture feels continuous instead of getting stuck.
+    let lo = Number(minInput.value);
+    let hi = Number(maxInput.value);
+    if (lo > hi) {
+      [lo, hi] = [hi, lo];
+      minInput.value = String(lo);
+      maxInput.value = String(hi);
+    }
+    redraw();
+    pushFilter();
+  };
+
+  enable.addEventListener("change", () => {
+    body.hidden = !enable.checked;
+    if (enable.checked) {
+      recomputeBounds();
+      redraw();
+    }
+    pushFilter();
   });
+  minInput.addEventListener("input", onInput);
+  maxInput.addEventListener("input", onInput);
+
+  // Other filters changing reshapes the underlying population; resync.
+  devices.onFilterChange(() => {
+    if (!enable.checked) {
+      // Still keep bounds fresh so the slider is ready when toggled on.
+      recomputeBounds();
+      return;
+    }
+    recomputeBounds();
+    redraw();
+  });
+
+  // Canvas needs CSS dimensions before first paint; redraw on resize so
+  // the histogram stays crisp when the drawer width changes.
+  window.addEventListener("resize", () => {
+    if (enable.checked) renderHistogram();
+  });
+
+  redraw();
 }
 
 function wireColorBy(): void {

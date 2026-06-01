@@ -136,18 +136,40 @@
 
         <section
           class="control-group"
-          id="range-floor-section"
-          aria-labelledby="range-floor-label"
-          hidden
+          aria-labelledby="range-slider-label"
         >
-          <h3 id="range-floor-label" class="control-label">
-            Long-range bikes
-            <span class="device-popup__authed-tag">Authenticated</span>
-          </h3>
+          <h3 id="range-slider-label" class="control-label">Distance range</h3>
           <label class="switch">
-            <input type="checkbox" id="range-floor-enable" />
-            <span>Show only devices with &ge;40 km range</span>
+            <input type="checkbox" id="range-slider-enable" />
+            <span>Filter by current range</span>
           </label>
+          <div id="range-slider-body" class="range-slider" hidden>
+            <canvas
+              id="range-slider-hist"
+              class="range-slider__hist"
+              aria-hidden="true"
+            ></canvas>
+            <div class="range-slider__track" aria-hidden="true">
+              <div class="range-slider__rail"></div>
+              <div id="range-slider-fill" class="range-slider__fill"></div>
+            </div>
+            <input
+              type="range"
+              id="range-slider-min"
+              class="range-slider__input range-slider__input--min"
+              aria-label="Minimum range"
+            />
+            <input
+              type="range"
+              id="range-slider-max"
+              class="range-slider__input range-slider__input--max"
+              aria-label="Maximum range"
+            />
+            <p id="range-slider-labels" class="range-slider__labels">
+              <span id="range-slider-min-label">0 km</span>
+              <span id="range-slider-max-label">0 km</span>
+            </p>
+          </div>
         </section>
 
         <section class="control-group" aria-labelledby="area-filter-label">
