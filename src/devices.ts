@@ -47,6 +47,9 @@ export class Devices {
   /** Null = no battery filter. Empty set = filter is "on" but excludes
    *  everything. Set of bucket indices = restrict to those buckets. */
   private batteryBuckets: Set<BatteryBucket> | null = null;
+  /** Inclusive minimum on `current_range_meters`; null = no floor. Devices
+   *  without a numeric range fail the filter when a floor is set. */
+  private minRangeMeters: number | null = null;
   private colorMode: ColorMode = "type";
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
@@ -387,6 +390,13 @@ export class Devices {
     this.apply();
   }
 
+  /** Hide any device whose `current_range_meters` is below `meters`. Devices
+   *  reporting no range are also hidden. Pass null to clear. */
+  setMinRangeMeters(meters: number | null): void {
+    this.minRangeMeters = meters;
+    this.apply();
+  }
+
   setColorMode(mode: ColorMode): void {
     this.colorMode = mode;
     this.applyPaint();
@@ -424,6 +434,13 @@ export class Devices {
           return b !== null && allowed.has(b);
         });
       }
+    }
+    if (this.minRangeMeters !== null) {
+      const floor = this.minRangeMeters;
+      feats = feats.filter((f) => {
+        const m = asNumber(f.properties.current_range_meters);
+        return m !== null && m >= floor;
+      });
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
       const polys = this.areaFilter;

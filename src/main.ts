@@ -56,6 +56,7 @@ map.on("load", async () => {
   wireDeviceFilter();
   wireHideUnavailable();
   wireBatteryFilter();
+  wireRangeFloor();
   wireColorBy();
   wireChoropleth();
   wireNeighborhoodSearch();
@@ -210,6 +211,38 @@ function wireBatteryFilter(): void {
         btn.classList.remove("is-active");
       }
       push();
+    }
+  });
+}
+
+// Authenticated-only switch that hides any device with current_range_meters
+// below 40 km. Reveals itself if the user is already signed in; otherwise
+// stays tucked away so unauthed visitors don't see a control they can't trust.
+function wireRangeFloor(): void {
+  const FLOOR_METERS = 40_000;
+  const section = document.getElementById("range-floor-section");
+  const cb = document.getElementById("range-floor-enable") as
+    | HTMLInputElement
+    | null;
+  if (!section || !cb) return;
+
+  if (isAuthenticated()) section.hidden = false;
+
+  cb.addEventListener("change", () => {
+    devices.setMinRangeMeters(cb.checked ? FLOOR_METERS : null);
+    clusters.update(devices.visibleFeatures());
+  });
+
+  // Auth state can change mid-tab (sign-in callback lands on the same page,
+  // sign-out reloads). Re-evaluate on focus so the section appears without
+  // a manual refresh, and stand down the filter on sign-out.
+  window.addEventListener("focus", () => {
+    const authed = isAuthenticated();
+    section.hidden = !authed;
+    if (!authed && cb.checked) {
+      cb.checked = false;
+      devices.setMinRangeMeters(null);
+      clusters.update(devices.visibleFeatures());
     }
   });
 }
@@ -396,11 +429,9 @@ function wireDrawers(): void {
 
 // ---------- Secret unlock ----------
 
-// Reveal the Account drawer tab when the user taps an SOS morse pattern
-// (... --- ...) on the freshness pill. A short press is a dot (< 300ms), a
-// long press is a dash (>= 300ms). Idle > 2.5s resets. Right-clicking the
-// pill (desktop) or holding it for 2s (mobile) opens a live readout of the
-// detected pattern that auto-hides 2.4s after the last activity.
+// Reveal the Account drawer tab via a deliberately fiddly but mobile-friendly
+// gesture on the freshness pill: tap 10 times in quick succession, or hold
+// for 10s straight. No on-screen feedback — the reveal itself is the signal.
 function wireSecretUnlock(): void {
   const target = document.getElementById("freshness");
   const tab = document.querySelector<HTMLButtonElement>(
@@ -408,113 +439,54 @@ function wireSecretUnlock(): void {
   );
   if (!target || !tab) return;
 
-  const TARGET = "...---...";
-  const DOT_MAX_MS = 300;
-  const RESET_MS = 2500;
-  const POPUP_HIDE_MS = 2400;
-  const LONG_PRESS_MS = 2000;
+  const TAP_TARGET = 10;
+  const TAP_RESET_MS = 2000;
+  const HOLD_MS = 10_000;
 
-  let buffer = "";
-  let pressStart = 0;
+  let taps = 0;
   let resetTimer: number | undefined;
-  let popupTimer: number | undefined;
-  let longPressTimer: number | undefined;
-  let longPressTriggered = false;
+  let holdTimer: number | undefined;
+  let pressActive = false;
 
-  const popup = document.createElement("div");
-  popup.className = "sos-popup";
-  popup.setAttribute("role", "status");
-  popup.setAttribute("aria-live", "polite");
-  popup.hidden = true;
-  document.body.appendChild(popup);
-
-  const renderPopup = (): void => {
-    if (popup.hidden) return;
-    const symbols = buffer.length
-      ? buffer.split("").join(" ")
-      : "(awaiting taps)";
-    popup.textContent = symbols;
-  };
-  const showPopup = (): void => {
-    popup.hidden = false;
-    renderPopup();
-    scheduleHide();
-  };
-  const hidePopup = (): void => {
-    popup.hidden = true;
-  };
-  const scheduleHide = (): void => {
-    window.clearTimeout(popupTimer);
-    popupTimer = window.setTimeout(hidePopup, POPUP_HIDE_MS);
-  };
-
-  const reset = (): void => {
-    buffer = "";
-    renderPopup();
-  };
-  const scheduleReset = (): void => {
+  const unlock = (): void => {
+    taps = 0;
     window.clearTimeout(resetTimer);
-    resetTimer = window.setTimeout(reset, RESET_MS);
+    window.clearTimeout(holdTimer);
+    revealAccountTab();
+    tab.focus();
   };
 
-  target.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    showPopup();
-  });
+  const endPress = (): void => {
+    pressActive = false;
+    window.clearTimeout(holdTimer);
+  };
 
   target.addEventListener("pointerdown", (e) => {
-    // Only react to primary button / touch / pen.
     if (e.button !== undefined && e.button !== 0) return;
-    pressStart = performance.now();
-    longPressTriggered = false;
-    window.clearTimeout(resetTimer);
-    window.clearTimeout(longPressTimer);
-    // Mobile-friendly alternative to right-click: holding 2s opens the popup.
-    longPressTimer = window.setTimeout(() => {
-      longPressTriggered = true;
-      showPopup();
-    }, LONG_PRESS_MS);
+    pressActive = true;
+    window.clearTimeout(holdTimer);
+    holdTimer = window.setTimeout(() => {
+      if (pressActive) unlock();
+    }, HOLD_MS);
   });
 
   target.addEventListener("pointerup", (e) => {
-    window.clearTimeout(longPressTimer);
-    if (pressStart === 0) return;
-    if (longPressTriggered) {
-      // The hold was a "show popup" gesture, not a tap — don't record it.
-      pressStart = 0;
-      longPressTriggered = false;
-      e.preventDefault();
-      return;
-    }
-    const duration = performance.now() - pressStart;
-    pressStart = 0;
-    buffer += duration < DOT_MAX_MS ? "." : "-";
-    // Keep only the trailing window we care about.
-    if (buffer.length > TARGET.length) {
-      buffer = buffer.slice(-TARGET.length);
-    }
-    if (!popup.hidden) {
-      renderPopup();
-      scheduleHide();
-    }
-    if (buffer === TARGET) {
-      reset();
-      hidePopup();
-      revealAccountTab();
-      tab.focus();
+    if (!pressActive) return;
+    endPress();
+    taps += 1;
+    window.clearTimeout(resetTimer);
+    if (taps >= TAP_TARGET) {
+      unlock();
     } else {
-      scheduleReset();
+      resetTimer = window.setTimeout(() => {
+        taps = 0;
+      }, TAP_RESET_MS);
     }
     e.preventDefault();
   });
 
-  // Cancel an in-flight press if the pointer leaves the element.
-  target.addEventListener("pointercancel", () => {
-    window.clearTimeout(longPressTimer);
-    pressStart = 0;
-    longPressTriggered = false;
-    scheduleReset();
-  });
+  target.addEventListener("pointercancel", endPress);
+  target.addEventListener("pointerleave", endPress);
 }
 
 /** Make the Account tab visible. Called either on SOS unlock or, for users

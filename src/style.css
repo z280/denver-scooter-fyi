@@ -653,24 +653,6 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- SOS readout popup ---------- */
-.sos-popup {
-  position: fixed;
-  bottom: 52px;
-  right: 12px;
-  z-index: 40;
-  padding: 6px 10px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: var(--shadow);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
-  letter-spacing: 0.08em;
-  color: var(--fg);
-  white-space: nowrap;
-  pointer-events: none;
-}
 .brand-link img {
   display: block;
   /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
