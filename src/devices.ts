@@ -72,6 +72,9 @@ export class Devices {
   /** Observers notified after every apply() — used by the battery filter
    *  UI to enable/disable buttons when thresholds become (un)available. */
   private listeners = new Set<(t: BatteryThresholds | null) => void>();
+  /** Observers notified after every apply() with the current
+   *  visible-feature count and the unfiltered fleet total. */
+  private countListeners = new Set<(visible: number, total: number) => void>();
 
   constructor(private readonly map: Map) {}
 
@@ -279,6 +282,16 @@ export class Devices {
     this.listeners.add(cb);
     cb(this.thresholds);
     return () => this.listeners.delete(cb);
+  }
+
+  /** Subscribe to visible/total count updates. Fires synchronously with
+   *  the current counts and again after every filter change or fresh fetch. */
+  onCountsChange(
+    cb: (visible: number, total: number) => void,
+  ): () => void {
+    this.countListeners.add(cb);
+    cb(this.filtered().length, this.all?.features.length ?? 0);
+    return () => this.countListeners.delete(cb);
   }
 
   private wireInteractions(): void {
@@ -656,8 +669,11 @@ export class Devices {
   private apply(): void {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     if (!src || !this.all) return;
-    src.setData({ type: "FeatureCollection", features: this.filtered() });
+    const feats = this.filtered();
+    src.setData({ type: "FeatureCollection", features: feats });
     this.applyPaint();
+    const total = this.all.features.length;
+    for (const cb of this.countListeners) cb(feats.length, total);
   }
 
   /** Push the current display mode into the point-layer's icon + text
