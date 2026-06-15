@@ -71,10 +71,11 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
-    clusters.update(devices.visibleFeatures());
+    const visible = devices.visibleFeatures();
+    clusters.update(visible);
     freshness.update(
       resp.metadata.snapshot_time,
-      devices.visibleFeatures().length,
+      visible.length,
       resp.metadata.device_count,
     );
   } else {
@@ -651,10 +652,11 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
-      clusters.update(devices.visibleFeatures());
+      const visible = devices.visibleFeatures();
+      clusters.update(visible);
       freshness.update(
         resp.metadata.snapshot_time,
-        devices.visibleFeatures().length,
+        visible.length,
         resp.metadata.device_count,
       );
       void overlays.refreshChoropleth();

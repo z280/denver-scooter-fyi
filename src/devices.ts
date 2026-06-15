@@ -731,11 +731,13 @@ export class Devices {
   // ---------- H3 cell outline ----------
 
   /** Draw the boundary of an H3 cell (the cohort a per-cell rank was
-   *  computed against). One cell at a time; replaces any prior outline. */
+   *  computed against). One cell at a time; replaces any prior outline.
+   *  On any failure (bad index, empty boundary) the prior outline is
+   *  cleared so the UI doesn't show a stale cell. */
   private showH3Cell(key: string, h3Index: string): void {
     const src = this.map.getSource(H3_SRC) as GeoJSONSource | undefined;
     if (!src) return;
-    let ring: GeoJSON.Position[];
+    let ring: GeoJSON.Position[] = [];
     try {
       // h3-js returns [lat, lng] pairs; flip to GeoJSON [lng, lat] and
       // close the ring so the fill renders correctly.
@@ -743,6 +745,11 @@ export class Devices {
       ring = boundary.map(([lat, lng]) => [lng, lat] as GeoJSON.Position);
       if (ring.length > 0) ring.push(ring[0]);
     } catch {
+      this.clearH3Cell();
+      return;
+    }
+    if (ring.length < 4) {
+      this.clearH3Cell();
       return;
     }
     src.setData({
