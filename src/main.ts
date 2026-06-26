@@ -46,7 +46,9 @@ const devicesPromise = fetchDevicesAuto().catch((e) => {
   console.error("initial device fetch failed", e);
   return null;
 });
-void renderCompliance(need("compliance"));
+void renderCompliance(need("compliance")).catch((e) => {
+  console.error("compliance render failed", e);
+});
 wireSecretUnlock();
 wireAccount();
 
