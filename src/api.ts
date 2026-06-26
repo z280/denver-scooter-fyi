@@ -35,6 +35,26 @@ export interface DeviceProperties {
   current_range_meters?: number | null;
   /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
   propulsion_type?: PropulsionType | null;
+  // ----- H3 spatial indexes at three resolutions (cell ID strings).
+  h3_8_index?: string | null;
+  h3_9_index?: string | null;
+  h3_10_index?: string | null;
+  // ----- Range rank / percentile fields, computed server-side against
+  // various peer sets. Lower rank = more remaining range. Null when the
+  // device has no current_range_meters.
+  /** 0–100 percentile of this device's range among same-propulsion peers. */
+  range_percentile_by_type?: number | null;
+  range_rank_unique_by_type?: number | null;
+  range_rank_all_by_type?: number | null;
+  range_rank_all_devices?: number | null;
+  range_rank_h3_8_peers?: number | null;
+  range_rank_h3_9_peers?: number | null;
+  range_rank_h3_10_peers?: number | null;
+  // ----- Community quality signals.
+  /** True when the device has at least one open negative quality report. */
+  has_negative_report?: boolean | null;
+  /** Server-assigned quality label (e.g. "low_quality", "ok"); free-form string. */
+  quality_designation?: string | null;
   // ----- Client-derived fields (not on the wire). The map enriches each
   // device with a battery_percent (0–100) computed against the
   // observed-max range for its propulsion type, since the API doesn't

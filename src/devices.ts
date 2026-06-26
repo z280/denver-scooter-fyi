@@ -1,4 +1,5 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
+import { cellToBoundary } from "h3-js";
 import type {
   DeviceProperties,
   DevicesResponse,
@@ -26,12 +27,17 @@ const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
 
+const H3_SRC = "device-h3-cell";
+const H3_FILL_LAYER = "device-h3-cell-fill";
+const H3_LINE_LAYER = "device-h3-cell-line";
+
 const SRC = "devices";
 const CLUSTER_LAYER = "device-clusters";
 /** Overlays insert before this id so device markers stay on top. */
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
 const COUNT_LAYER = "device-cluster-count";
 const POINT_LAYER = "device-points";
+const FLAG_LAYER = "device-negative-flag";
 
 const FORM_LABEL: Record<FormFactor, string> = {
   scooter: "Scooter",
@@ -60,9 +66,15 @@ export class Devices {
    *  null if no circle is showing. Used so popups can render a toggleable
    *  Show/Hide-on-map link. */
   private rangeCircleDeviceId: string | null = null;
+  /** Composite key `${device_id}|${h3Index}` of the H3 cell currently
+   *  outlined on the map (from a popup's "Show cell" toggle), or null. */
+  private h3CellKey: string | null = null;
   /** Observers notified after every apply() — used by the battery filter
    *  UI to enable/disable buttons when thresholds become (un)available. */
   private listeners = new Set<(t: BatteryThresholds | null) => void>();
+  /** Observers notified after every apply() with the current
+   *  visible-feature count and the unfiltered fleet total. */
+  private countListeners = new Set<(visible: number, total: number) => void>();
 
   constructor(private readonly map: Map) {}
 
@@ -113,6 +125,41 @@ export class Devices {
         "text-allow-overlap": true,
       },
       paint: { "text-color": "#ffffff" },
+    });
+
+    // Red halo behind any device with an open negative report. Filter
+    // accepts both real booleans and tile-encoded "true" strings since
+    // MapLibre may flatten the property on its way through clustering.
+    this.map.addLayer({
+      id: FLAG_LAYER,
+      type: "circle",
+      source: SRC,
+      filter: [
+        "all",
+        ["!", ["has", "point_count"]],
+        [
+          "any",
+          ["==", ["get", "has_negative_report"], true],
+          ["==", ["get", "has_negative_report"], "true"],
+        ],
+      ],
+      paint: {
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": "#c62828",
+        "circle-stroke-width": 2.5,
+        "circle-stroke-opacity": 0.9,
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          11,
+          14,
+          16,
+          17,
+          21,
+        ],
+      },
     });
 
     this.map.addLayer({
@@ -195,6 +242,35 @@ export class Devices {
       POINT_LAYER,
     );
 
+    // H3 cell outline used by the popup's per-resolution "Show cell"
+    // toggle. One cell at a time; switching toggles replaces the data.
+    this.map.addSource(H3_SRC, { type: "geojson", data: emptyFC() });
+    this.map.addLayer(
+      {
+        id: H3_FILL_LAYER,
+        type: "fill",
+        source: H3_SRC,
+        paint: {
+          "fill-color": "#D55E00",
+          "fill-opacity": 0.10,
+        },
+      },
+      FLAG_LAYER,
+    );
+    this.map.addLayer(
+      {
+        id: H3_LINE_LAYER,
+        type: "line",
+        source: H3_SRC,
+        paint: {
+          "line-color": "#D55E00",
+          "line-width": 2,
+          "line-opacity": 0.85,
+        },
+      },
+      FLAG_LAYER,
+    );
+
     this.wireInteractions();
   }
 
@@ -206,6 +282,16 @@ export class Devices {
     this.listeners.add(cb);
     cb(this.thresholds);
     return () => this.listeners.delete(cb);
+  }
+
+  /** Subscribe to visible/total count updates. Fires synchronously with
+   *  the current counts and again after every filter change or fresh fetch. */
+  onCountsChange(
+    cb: (visible: number, total: number) => void,
+  ): () => void {
+    this.countListeners.add(cb);
+    cb(this.filtered().length, this.all?.features.length ?? 0);
+    return () => this.countListeners.delete(cb);
   }
 
   private wireInteractions(): void {
@@ -242,6 +328,21 @@ export class Devices {
         is_reserved?: boolean | string | null;
         current_range_meters?: number | string | null;
         propulsion_type?: PropulsionType | string | null;
+        // h3 indexes (strings) — flattened intact through GeoJSON
+        h3_8_index?: string | null;
+        h3_9_index?: string | null;
+        h3_10_index?: string | null;
+        // range percentile / rank fields
+        range_percentile_by_type?: number | string | null;
+        range_rank_unique_by_type?: number | string | null;
+        range_rank_all_by_type?: number | string | null;
+        range_rank_all_devices?: number | string | null;
+        range_rank_h3_8_peers?: number | string | null;
+        range_rank_h3_9_peers?: number | string | null;
+        range_rank_h3_10_peers?: number | string | null;
+        // quality flags
+        has_negative_report?: boolean | string | null;
+        quality_designation?: string | null;
         // private (authed only)
         vehicle_plate?: string;
         first_observed_at_location?: string;
@@ -301,6 +402,66 @@ export class Devices {
         );
       }
 
+      // Range-rank rows. The H3-peer ranks each get a "Show cell" toggle
+      // that draws the actual H3 polygon — handy for visualizing which
+      // cohort the rank was computed against.
+      const percentile = asNumber(props.range_percentile_by_type);
+      if (percentile !== null) {
+        publicRows.push(
+          `<dt>Range percentile</dt><dd>${formatPercentile(percentile)} <span class="device-popup__hint">vs same drivetrain</span></dd>`,
+        );
+      }
+      const rankAllDevices = asNumber(props.range_rank_all_devices);
+      if (rankAllDevices !== null) {
+        publicRows.push(
+          `<dt>Rank (citywide)</dt><dd>#${rankAllDevices.toLocaleString()}</dd>`,
+        );
+      }
+      const rankByType = asNumber(props.range_rank_all_by_type);
+      if (rankByType !== null) {
+        publicRows.push(
+          `<dt>Rank (by drivetrain)</dt><dd>#${rankByType.toLocaleString()}</dd>`,
+        );
+      }
+      const h3Ranks: Array<[number, string | null | undefined, number | null]> = [
+        [8, props.h3_8_index, asNumber(props.range_rank_h3_8_peers)],
+        [9, props.h3_9_index, asNumber(props.range_rank_h3_9_peers)],
+        [10, props.h3_10_index, asNumber(props.range_rank_h3_10_peers)],
+      ];
+      for (const [res, idx, rank] of h3Ranks) {
+        if (rank === null && !idx) continue;
+        const rankText =
+          rank === null ? "—" : `#${rank.toLocaleString()}`;
+        const cellKey = idx ? `${props.device_id}|${idx}` : "";
+        const showing = !!cellKey && this.h3CellKey === cellKey;
+        const toggleBtn = idx
+          ? `<button
+               type="button"
+               class="device-popup__action"
+               data-action="toggle-h3"
+               data-device="${escapeHtml(props.device_id)}"
+               data-h3="${escapeHtml(idx)}"
+             >${showing ? "Hide cell" : "Show cell"}</button>`
+          : "";
+        publicRows.push(
+          `<dt>Rank vs H3 r${res} peers</dt>
+           <dd>${rankText} ${toggleBtn}${idx ? `<div class="device-popup__h3">${escapeHtml(idx)}</div>` : ""}</dd>`,
+        );
+      }
+
+      // Quality flags — server-assigned designation + open negative-report flag.
+      const qualityRows: string[] = [];
+      if (props.quality_designation) {
+        qualityRows.push(
+          `<dt>Quality</dt><dd><code>${escapeHtml(String(props.quality_designation))}</code></dd>`,
+        );
+      }
+      if (asBool(props.has_negative_report)) {
+        qualityRows.push(
+          `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">Negative report on file</span></dd>`,
+        );
+      }
+
       // Private detail rows — present only when the authenticated fetch ran.
       const privateRows: string[] = [];
       if (props.vehicle_plate) {
@@ -329,6 +490,10 @@ export class Devices {
         ? `<div class="device-popup__statuses">${statusBadges.join("")}</div>`
         : "";
 
+      const qualityBlock = qualityRows.length
+        ? `<dl class="device-popup__meta">${qualityRows.join("")}</dl>`
+        : "";
+
       const privateBlock = privateRows.length
         ? `<div class="device-popup__authed">
              <span class="device-popup__authed-tag">Authenticated</span>
@@ -348,6 +513,7 @@ export class Devices {
                <dd><code>${escapeHtml(props.device_id)}</code></dd>
                ${publicRows.join("")}
              </dl>
+             ${qualityBlock}
              ${privateBlock}
            </div>`,
         )
@@ -371,6 +537,29 @@ export class Devices {
           this.showRangeCircle(deviceId, lng, lat, radius);
           toggleBtn.textContent = "Hide on map";
         }
+      });
+
+      // H3 "Show cell" toggles — one per resolution row that the device has.
+      const h3Buttons = this.popup
+        .getElement()
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-h3"]');
+      h3Buttons?.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const deviceId = btn.dataset.device || "";
+          const h3 = btn.dataset.h3 || "";
+          if (!h3) return;
+          const key = `${deviceId}|${h3}`;
+          if (this.h3CellKey === key) {
+            this.clearH3Cell();
+          } else {
+            this.showH3Cell(key, h3);
+          }
+          // Refresh all H3 buttons in this popup so labels reflect state.
+          h3Buttons.forEach((b) => {
+            const bKey = `${b.dataset.device || ""}|${b.dataset.h3 || ""}`;
+            b.textContent = this.h3CellKey === bKey ? "Hide cell" : "Show cell";
+          });
+        });
       });
     });
 
@@ -480,8 +669,11 @@ export class Devices {
   private apply(): void {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     if (!src || !this.all) return;
-    src.setData({ type: "FeatureCollection", features: this.filtered() });
+    const feats = this.filtered();
+    src.setData({ type: "FeatureCollection", features: feats });
     this.applyPaint();
+    const total = this.all.features.length;
+    for (const cb of this.countListeners) cb(feats.length, total);
   }
 
   /** Push the current display mode into the point-layer's icon + text
@@ -534,6 +726,49 @@ export class Devices {
     const src = this.map.getSource(RANGE_SRC) as GeoJSONSource | undefined;
     if (src) src.setData(emptyFC());
     this.rangeCircleDeviceId = null;
+  }
+
+  // ---------- H3 cell outline ----------
+
+  /** Draw the boundary of an H3 cell (the cohort a per-cell rank was
+   *  computed against). One cell at a time; replaces any prior outline.
+   *  On any failure (bad index, empty boundary) the prior outline is
+   *  cleared so the UI doesn't show a stale cell. */
+  private showH3Cell(key: string, h3Index: string): void {
+    const src = this.map.getSource(H3_SRC) as GeoJSONSource | undefined;
+    if (!src) return;
+    let ring: GeoJSON.Position[] = [];
+    try {
+      // h3-js returns [lat, lng] pairs; flip to GeoJSON [lng, lat] and
+      // close the ring so the fill renders correctly.
+      const boundary = cellToBoundary(h3Index);
+      ring = boundary.map(([lat, lng]) => [lng, lat] as GeoJSON.Position);
+      if (ring.length > 0) ring.push(ring[0]);
+    } catch {
+      this.clearH3Cell();
+      return;
+    }
+    if (ring.length < 4) {
+      this.clearH3Cell();
+      return;
+    }
+    src.setData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [ring] },
+          properties: { h3: h3Index },
+        },
+      ],
+    });
+    this.h3CellKey = key;
+  }
+
+  private clearH3Cell(): void {
+    const src = this.map.getSource(H3_SRC) as GeoJSONSource | undefined;
+    if (src) src.setData(emptyFC());
+    this.h3CellKey = null;
   }
 }
 
@@ -785,6 +1020,13 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** 0–100 percentile → "p87" with one decimal where helpful. */
+function formatPercentile(p: number): string {
+  const clamped = Math.max(0, Math.min(100, p));
+  const rounded = clamped >= 10 ? Math.round(clamped) : Math.round(clamped * 10) / 10;
+  return `p${rounded}`;
 }
 
 /** Meters → "3.4 mi (5.5 km)" for at-a-glance range readability. */

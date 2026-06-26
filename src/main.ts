@@ -62,11 +62,22 @@ map.on("load", async () => {
   wireDrawers();
   wireAreaFilter();
 
+  // Keep the freshness pill's "Displaying x out of y" in sync with every
+  // filter change. The first fire happens right after a setData() too.
+  devices.onCountsChange((visible, total) => {
+    freshness.setCounts(visible, total);
+  });
+
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
-    clusters.update(devices.visibleFeatures());
-    freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
+    const visible = devices.visibleFeatures();
+    clusters.update(visible);
+    freshness.update(
+      resp.metadata.snapshot_time,
+      visible.length,
+      resp.metadata.device_count,
+    );
   } else {
     freshness.error();
   }
@@ -641,8 +652,13 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
-      clusters.update(devices.visibleFeatures());
-      freshness.update(resp.metadata.snapshot_time, resp.metadata.device_count);
+      const visible = devices.visibleFeatures();
+      clusters.update(visible);
+      freshness.update(
+        resp.metadata.snapshot_time,
+        visible.length,
+        resp.metadata.device_count,
+      );
       void overlays.refreshChoropleth();
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
