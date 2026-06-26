@@ -20,15 +20,54 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 type Version = "v1" | "v2";
 
+/** Per-feed network budget. Without this, a single stalled endpoint keeps its
+ *  fetch pending forever; because we render via Promise.allSettled (waits for
+ *  BOTH), one hung feed leaves the whole card stuck on "Loading…" indefinitely.
+ *  A bounded timeout turns "hung" into "unavailable" so the card always renders. */
+const COMPLIANCE_FETCH_TIMEOUT_MS = 12_000;
+
+/** Run a signal-accepting fetch with a hard timeout. On expiry the underlying
+ *  request is aborted and the promise rejects (caught by allSettled), so the
+ *  feed renders as pending/unavailable rather than blocking the card. */
+function withTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fn(controller.signal).finally(() => clearTimeout(timer));
+}
+
 export async function renderCompliance(root: HTMLElement): Promise<void> {
   // Fetch both feeds in parallel. The "current" snapshot is the high-cadence
   // readout; the daily SLA window is the contractually-binding number. Each
   // can fail independently — a missing one renders as a pending row rather
-  // than blowing up the whole card.
-  const [snapshotR, slaR] = await Promise.allSettled([
-    fetchLatestSnapshot(),
-    fetchCompliance(),
-  ]);
+  // than blowing up the whole card. Each is time-boxed so a slow/hung endpoint
+  // can't pin the card on its loading state forever.
+  let snapshotR: PromiseSettledResult<SnapshotMetadataResponse>;
+  let slaR: PromiseSettledResult<ComplianceResponse>;
+  try {
+    [snapshotR, slaR] = await Promise.allSettled([
+      withTimeout(fetchLatestSnapshot, COMPLIANCE_FETCH_TIMEOUT_MS),
+      withTimeout(fetchCompliance, COMPLIANCE_FETCH_TIMEOUT_MS),
+    ]);
+  } catch (err) {
+    // Promise.allSettled never rejects, so reaching here means something
+    // unexpected blew up before the await resolved. Replace the loading state
+    // regardless so the card can never be stuck "Loading…" forever.
+    console.error("compliance render failed", err);
+    const card = el("div", "compliance__card");
+    card.append(el("span", "compliance__title", "Equity compliance"));
+    card.append(
+      el(
+        "div",
+        "compliance__foot",
+        "Compliance data is temporarily unavailable.",
+      ),
+    );
+    root.replaceChildren(card);
+    return;
+  }
 
   const snapshot = snapshotR.status === "fulfilled" ? snapshotR.value : null;
   const sla = slaR.status === "fulfilled" ? slaR.value : null;
