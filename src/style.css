@@ -655,7 +655,7 @@ body {
 }
 
 /* ---------- SOS readout popup ---------- */
-.sos-popup {
+.tap-popup {
   position: fixed;
   bottom: 52px;
   right: 12px;
