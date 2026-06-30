@@ -654,8 +654,8 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- SOS readout popup ---------- */
-.sos-popup {
+/* ---------- Tap-progress readout popup ---------- */
+.tap-popup {
   position: fixed;
   bottom: 52px;
   right: 12px;

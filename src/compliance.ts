@@ -39,65 +39,57 @@ function withTimeout<T>(
 }
 
 export async function renderCompliance(root: HTMLElement): Promise<void> {
-  // Fetch both feeds in parallel. The "current" snapshot is the high-cadence
-  // readout; the daily SLA window is the contractually-binding number. Each
-  // can fail independently — a missing one renders as a pending row rather
-  // than blowing up the whole card. Each is time-boxed so a slow/hung endpoint
-  // can't pin the card on its loading state forever.
-  let snapshotR: PromiseSettledResult<SnapshotMetadataResponse>;
-  let slaR: PromiseSettledResult<ComplianceResponse>;
+  // Everything below — fetching AND building the DOM — runs inside one guard.
+  // The loading placeholder is static markup; the ONLY thing that clears it is
+  // a successful replaceChildren() at the end. So any unhandled throw (a hung
+  // feed, a value the render code chokes on) would otherwise leave the card
+  // stuck on "Loading…" forever. The catch guarantees we always replace it.
   try {
-    [snapshotR, slaR] = await Promise.allSettled([
+    // Fetch both feeds in parallel. The "current" snapshot is the high-cadence
+    // readout; the daily SLA window is the contractually-binding number. Each
+    // can fail independently — a missing one renders as a pending row rather
+    // than blowing up the whole card. Each is time-boxed so a slow/hung
+    // endpoint can't pin the card on its loading state forever.
+    const [snapshotR, slaR] = await Promise.allSettled([
       withTimeout(fetchLatestSnapshot, COMPLIANCE_FETCH_TIMEOUT_MS),
       withTimeout(fetchCompliance, COMPLIANCE_FETCH_TIMEOUT_MS),
     ]);
+
+    const snapshot = snapshotR.status === "fulfilled" ? snapshotR.value : null;
+    const sla = slaR.status === "fulfilled" ? slaR.value : null;
+
+    // Hard failure only if BOTH feeds errored with something other than
+    // NoDataError. Otherwise we can show partial data.
+    if (!snapshot && !sla) {
+      const card = el("div", "compliance__card");
+      card.append(el("span", "compliance__title", "Equity compliance"));
+      card.append(el("div", "compliance__foot", pendingReason(snapshotR, slaR)));
+      root.replaceChildren(card);
+      return;
+    }
+
+    const card = el("div", "compliance__card");
+    card.append(renderVersionSection("v1", snapshot, sla));
+    card.append(renderVersionSection("v2", snapshot, sla));
+    if (sla) {
+      card.append(
+        el(
+          "div",
+          "compliance__foot",
+          `Target ≥ ${COMPLIANCE_THRESHOLD}% · SLA window ${sla.sla_date}`,
+        ),
+      );
+    }
+    root.replaceChildren(card);
   } catch (err) {
-    // Promise.allSettled never rejects, so reaching here means something
-    // unexpected blew up before the await resolved. Replace the loading state
-    // regardless so the card can never be stuck "Loading…" forever.
     console.error("compliance render failed", err);
     const card = el("div", "compliance__card");
     card.append(el("span", "compliance__title", "Equity compliance"));
     card.append(
-      el(
-        "div",
-        "compliance__foot",
-        "Compliance data is temporarily unavailable.",
-      ),
+      el("div", "compliance__foot", "Compliance data is temporarily unavailable."),
     );
     root.replaceChildren(card);
-    return;
   }
-
-  const snapshot = snapshotR.status === "fulfilled" ? snapshotR.value : null;
-  const sla = slaR.status === "fulfilled" ? slaR.value : null;
-
-  // Hard failure only if BOTH feeds errored with something other than
-  // NoDataError. Otherwise we can show partial data.
-  if (!snapshot && !sla) {
-    const card = el("div", "compliance__card");
-    card.append(el("span", "compliance__title", "Equity compliance"));
-    const reason = pendingReason(snapshotR, slaR);
-    card.append(
-      el("div", "compliance__foot", reason),
-    );
-    root.replaceChildren(card);
-    return;
-  }
-
-  const card = el("div", "compliance__card");
-  card.append(renderVersionSection("v1", snapshot, sla));
-  card.append(renderVersionSection("v2", snapshot, sla));
-  if (sla) {
-    card.append(
-      el(
-        "div",
-        "compliance__foot",
-        `Target ≥ ${COMPLIANCE_THRESHOLD}% · SLA window ${sla.sla_date}`,
-      ),
-    );
-  }
-  root.replaceChildren(card);
 }
 
 function renderVersionSection(
@@ -126,15 +118,18 @@ function renderVersionSection(
   }
   section.append(head);
 
-  const currentPct =
+  const currentPct = toNum(
     v === "v1"
-      ? snapshot?.percent_all_devices_v1 ?? null
-      : snapshot?.percent_all_devices_v2 ?? null;
-  const slaPct = sla
-    ? v === "v1"
-      ? sla.avg_percent_all_devices_v1
-      : sla.avg_percent_all_devices_v2
-    : null;
+      ? snapshot?.percent_all_devices_v1
+      : snapshot?.percent_all_devices_v2,
+  );
+  const slaPct = toNum(
+    sla
+      ? v === "v1"
+        ? sla.avg_percent_all_devices_v1
+        : sla.avg_percent_all_devices_v2
+      : null,
+  );
   const slaPass = sla
     ? v === "v1"
       ? sla.compliance_v1_pass
@@ -189,6 +184,18 @@ function renderRow(
   row.append(bar);
 
   return row;
+}
+
+/** Coerce an API numeric field to a real number. The upstream serializes some
+ *  decimal columns as JSON strings (e.g. `"21.82"`), and the per-device/percent
+ *  fields are nullable. Calling `.toFixed()` on a string throws — and since the
+ *  render runs after the fetch, that throw would leave the card stuck on its
+ *  loading state. Returns null for null/undefined/blank/non-finite input so the
+ *  row renders as pending ("—") instead of blowing up. */
+function toNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Per-bar pass evaluation when we don't have an authoritative SLA boolean

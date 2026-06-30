@@ -409,11 +409,11 @@ function wireDrawers(): void {
 
 // ---------- Secret unlock ----------
 
-// Reveal the Account drawer tab when the user taps an SOS morse pattern
-// (... --- ...) on the freshness pill. A short press is a dot (< 300ms), a
-// long press is a dash (>= 300ms). Idle > 2.5s resets. Right-clicking the
-// pill (desktop) or holding it for 2s (mobile) opens a live readout of the
-// detected pattern that auto-hides 2.4s after the last activity.
+// Reveal the Account drawer tab when the user taps the freshness pill 9 times
+// in a row. Each tap counts the same — no morse, no long/short distinction —
+// so it works reliably on touchscreens. Idle > 2.5s resets the count.
+// Right-clicking the pill (desktop) or holding it for 2s (mobile) opens a
+// live readout of the tap progress that auto-hides 2.4s after the last tap.
 function wireSecretUnlock(): void {
   const target = document.getElementById("freshness");
   const tab = document.querySelector<HTMLButtonElement>(
@@ -421,13 +421,12 @@ function wireSecretUnlock(): void {
   );
   if (!target || !tab) return;
 
-  const TARGET = "...---...";
-  const DOT_MAX_MS = 300;
+  const TARGET_TAPS = 9;
   const RESET_MS = 2500;
   const POPUP_HIDE_MS = 2400;
   const LONG_PRESS_MS = 2000;
 
-  let buffer = "";
+  let taps = 0;
   let pressStart = 0;
   let resetTimer: number | undefined;
   let popupTimer: number | undefined;
@@ -435,7 +434,7 @@ function wireSecretUnlock(): void {
   let longPressTriggered = false;
 
   const popup = document.createElement("div");
-  popup.className = "sos-popup";
+  popup.className = "tap-popup";
   popup.setAttribute("role", "status");
   popup.setAttribute("aria-live", "polite");
   popup.hidden = true;
@@ -443,10 +442,7 @@ function wireSecretUnlock(): void {
 
   const renderPopup = (): void => {
     if (popup.hidden) return;
-    const symbols = buffer.length
-      ? buffer.split("").join(" ")
-      : "(awaiting taps)";
-    popup.textContent = symbols;
+    popup.textContent = taps ? `${taps} / ${TARGET_TAPS} taps` : "(awaiting taps)";
   };
   const showPopup = (): void => {
     popup.hidden = false;
@@ -462,7 +458,7 @@ function wireSecretUnlock(): void {
   };
 
   const reset = (): void => {
-    buffer = "";
+    taps = 0;
     renderPopup();
   };
   const scheduleReset = (): void => {
@@ -499,18 +495,13 @@ function wireSecretUnlock(): void {
       e.preventDefault();
       return;
     }
-    const duration = performance.now() - pressStart;
     pressStart = 0;
-    buffer += duration < DOT_MAX_MS ? "." : "-";
-    // Keep only the trailing window we care about.
-    if (buffer.length > TARGET.length) {
-      buffer = buffer.slice(-TARGET.length);
-    }
+    taps += 1;
     if (!popup.hidden) {
       renderPopup();
       scheduleHide();
     }
-    if (buffer === TARGET) {
+    if (taps >= TARGET_TAPS) {
       reset();
       hidePopup();
       revealAccountTab();
