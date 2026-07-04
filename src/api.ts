@@ -1,7 +1,7 @@
 // Typed client for the data.scooter.fyi public API.
 // Contract: https://raw.githubusercontent.com/z280/veo-audit/main/API.md
 
-import { apiFetch, isAuthenticated } from "./map-auth.js";
+import { getAuth, isAuthenticated } from "./map-auth.js";
 
 // In production, the browser calls the API directly (CORS allows denver.scooter.fyi).
 // In local dev, requests go through the Vite proxy (see vite.config.ts) because the
@@ -141,7 +141,11 @@ export class NoDataError extends Error {
   }
 }
 
-async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function getJSON<T>(
+  path: string,
+  signal?: AbortSignal,
+  parseText?: (text: string) => T,
+): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     signal,
     headers: { Accept: "application/json" },
@@ -159,12 +163,83 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   if (!res.ok) {
     throw new Error(`Request to ${path} failed: ${res.status}`);
   }
+  if (parseText) return parseText(await res.text());
   return (await res.json()) as T;
+}
+
+/** Parse a devices payload while preserving the H3 cell indexes. Upstream
+ *  serializes `h3_8_index` / `h3_9_index` / `h3_10_index` as JSON integers
+ *  larger than Number.MAX_SAFE_INTEGER, so a plain JSON.parse silently rounds
+ *  them (…919 → …900) and corrupts the cell id. Quote them in the raw text
+ *  first so the exact digits survive as strings (matching their declared
+ *  `string` type). The regex only touches an unquoted integer immediately
+ *  after one of those keys, so null values and already-quoted values are left
+ *  alone. */
+function parseDevicesResponse(text: string): DevicesResponse {
+  const fixed = text.replace(
+    /("h3_(?:8|9|10)_index":)\s*(\d+)/g,
+    '$1"$2"',
+  );
+  return JSON.parse(fixed) as DevicesResponse;
 }
 
 /** Every Denver device's current position via the public endpoint. */
 export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
-  return getJSON<DevicesResponse>("/api/v1/devices/current", signal);
+  return getJSON<DevicesResponse>(
+    "/api/v1/devices/current",
+    signal,
+    parseDevicesResponse,
+  );
+}
+
+// Mirrors the sessionStorage key map-auth.js keeps the auth blob under (a
+// private const there). We only need it to eagerly drop a server-rejected
+// token so the UI reflects the signed-out state, exactly as apiFetch does.
+const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
+
+/** Authenticated GET returning the raw response text, so the caller can parse
+ *  the JSON itself and preserve the large-integer H3 fields that JSON.parse
+ *  would round. Reimplements map-auth's apiFetch error contract — NO_AUTH,
+ *  TOKEN_REJECTED (and clears the stale token), HTTP_ERROR with `status` —
+ *  which fetchDevicesAuto's fallback keys off. This lives here rather than as
+ *  a raw-text variant in map-auth.js because that file is a verbatim upstream
+ *  copy that must not be modified. */
+async function authedGetText(
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const auth = getAuth();
+  if (!auth) {
+    const err: Error & { code?: string } = new Error("not authenticated");
+    err.code = "NO_AUTH";
+    throw err;
+  }
+  const res = await fetch(`${API_BASE}${path}`, {
+    signal,
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${auth.token}`,
+    },
+  });
+  if (res.status === 401) {
+    try {
+      sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {
+      /* sessionStorage unavailable — nothing to clear */
+    }
+    const err: Error & { code?: string } = new Error("token rejected");
+    err.code = "TOKEN_REJECTED";
+    throw err;
+  }
+  if (!res.ok) {
+    const err: Error & { code?: string; status?: number } = new Error(
+      `HTTP ${res.status}`,
+    );
+    err.code = "HTTP_ERROR";
+    err.status = res.status;
+    throw err;
+  }
+  return res.text();
 }
 
 /**
@@ -187,10 +262,11 @@ export async function fetchDevicesAuto(
 ): Promise<DevicesResponse> {
   if (!isAuthenticated()) return fetchDevices(signal);
   try {
-    return await apiFetch<DevicesResponse>("/api/v1/private/devices/current", {
+    const text = await authedGetText(
+      "/api/v1/private/devices/current",
       signal,
-      headers: { Accept: "application/json" },
-    });
+    );
+    return parseDevicesResponse(text);
   } catch (e) {
     const err = e as { code?: string; name?: string; status?: number };
     if (err?.name === "AbortError") throw e;

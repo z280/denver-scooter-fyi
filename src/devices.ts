@@ -1,5 +1,5 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
-import { cellToBoundary } from "h3-js";
+import { cellToBoundary, isValidCell } from "h3-js";
 import type {
   DeviceProperties,
   DevicesResponse,
@@ -411,27 +411,34 @@ export class Devices {
           `<dt>Range percentile</dt><dd>${formatPercentile(percentile)} <span class="device-popup__hint">vs same drivetrain</span></dd>`,
         );
       }
-      const rankAllDevices = asNumber(props.range_rank_all_devices);
+      const rankAllDevices = formatRank(props.range_rank_all_devices);
       if (rankAllDevices !== null) {
         publicRows.push(
-          `<dt>Rank (citywide)</dt><dd>#${rankAllDevices.toLocaleString()}</dd>`,
+          `<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`,
         );
       }
-      const rankByType = asNumber(props.range_rank_all_by_type);
+      const rankByType = formatRank(props.range_rank_all_by_type);
       if (rankByType !== null) {
         publicRows.push(
-          `<dt>Rank (by drivetrain)</dt><dd>#${rankByType.toLocaleString()}</dd>`,
+          `<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`,
         );
       }
-      const h3Ranks: Array<[number, string | null | undefined, number | null]> = [
-        [8, props.h3_8_index, asNumber(props.range_rank_h3_8_peers)],
-        [9, props.h3_9_index, asNumber(props.range_rank_h3_9_peers)],
-        [10, props.h3_10_index, asNumber(props.range_rank_h3_10_peers)],
+      // The wire type says these H3 indexes are strings, but the upstream
+      // API actually serializes them as JSON numbers. Coerce to string up
+      // front: the raw number reaching escapeHtml() below used to throw
+      // ("s.replace is not a function"), which aborted popup construction
+      // for every device and silently killed click-for-details.
+      const h3Ranks: Array<
+        [number, number | string | null | undefined, string | null]
+      > = [
+        [8, props.h3_8_index, formatRank(props.range_rank_h3_8_peers)],
+        [9, props.h3_9_index, formatRank(props.range_rank_h3_9_peers)],
+        [10, props.h3_10_index, formatRank(props.range_rank_h3_10_peers)],
       ];
-      for (const [res, idx, rank] of h3Ranks) {
+      for (const [res, rawIdx, rank] of h3Ranks) {
+        const idx = rawIdx == null || rawIdx === "" ? "" : String(rawIdx);
         if (rank === null && !idx) continue;
-        const rankText =
-          rank === null ? "—" : `#${rank.toLocaleString()}`;
+        const rankText = rank === null ? "—" : rank;
         const cellKey = idx ? `${props.device_id}|${idx}` : "";
         const showing = !!cellKey && this.h3CellKey === cellKey;
         const toggleBtn = idx
@@ -739,9 +746,17 @@ export class Devices {
     if (!src) return;
     let ring: GeoJSON.Position[] = [];
     try {
+      // The API sends the cell id as a decimal integer, but h3-js speaks the
+      // canonical hex form — convert before handing it over, else it silently
+      // returns a garbage boundary for a wrong (or invalid) cell.
+      const hex = h3ToHex(h3Index);
+      if (!isValidCell(hex)) {
+        this.clearH3Cell();
+        return;
+      }
       // h3-js returns [lat, lng] pairs; flip to GeoJSON [lng, lat] and
       // close the ring so the fill renders correctly.
-      const boundary = cellToBoundary(h3Index);
+      const boundary = cellToBoundary(hex);
       ring = boundary.map(([lat, lng]) => [lng, lat] as GeoJSON.Position);
       if (ring.length > 0) ring.push(ring[0]);
     } catch {
@@ -998,8 +1013,12 @@ function makeCirclePolygon(
   };
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(
+/** HTML-escape a value for safe interpolation into popup markup. Accepts
+ *  `unknown` and coerces to string first: several upstream fields (e.g. the
+ *  H3 indexes) arrive as numbers despite their string wire types, and a raw
+ *  number has no `.replace`, which previously threw mid-popup-build. */
+function escapeHtml(s: unknown): string {
+  return String(s).replace(
     /[&<>"']/g,
     (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
@@ -1020,6 +1039,31 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Convert an H3 cell id from the API's decimal-integer form (kept exact as a
+ *  string by parseDevicesResponse) into the canonical hex form h3-js expects.
+ *  A value that already contains hex letters is assumed canonical and passed
+ *  through unchanged. */
+function h3ToHex(index: string): string {
+  return /^[0-9]+$/.test(index) ? BigInt(index).toString(16) : index;
+}
+
+/** Format an upstream rank value into a friendly string, or null when absent
+ *  or unparseable (so the caller can omit the row). The API sends these as
+ *  "rank/total" strings like "646/8746" → "#646 of 8,746"; a bare number is
+ *  also tolerated → "#646". Note asNumber() cannot be used here: it returns
+ *  null for the slash-delimited form, which is why every rank row previously
+ *  rendered "—". */
+function formatRank(v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v);
+  const m = s.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (m) {
+    return `#${Number(m[1]).toLocaleString()} of ${Number(m[2]).toLocaleString()}`;
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? `#${n.toLocaleString()}` : null;
 }
 
 /** 0–100 percentile → "p87" with one decimal where helpful. */
