@@ -5,7 +5,7 @@ import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
 import { createMap } from "./map.ts";
 import {
   Devices,
-  type ColorMode,
+  DEVICE_INTERACTIVE_LAYERS,
   type DeviceFilter,
 } from "./devices.ts";
 import { type BatteryBucket } from "./battery.ts";
@@ -13,8 +13,13 @@ import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
-import { AreaFilter, type AreaFilterElements } from "./area-filter.ts";
-import { OVERLAYS, REFRESH_MS } from "./config.ts";
+import {
+  AreaFilter,
+  type AreaFilterElements,
+  type AreaFilterState,
+} from "./area-filter.ts";
+import { FilterChips, type Chip } from "./filter-chips.ts";
+import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
 
 function need<T extends HTMLElement>(id: string): T {
@@ -41,6 +46,90 @@ const clusters = new Clusters(
 // the matching overlay box when the user picks a category.
 const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 
+// ---------- Active-filter chips ----------
+// One chip per live constraint, floating over the map so closed drawers
+// never hide state. The wire* functions below stash just enough of their
+// internal state here for refreshChips() to read, and each chip's ✕
+// resets the originating control through its normal event path so the
+// drawer UI stays in sync.
+const chips = new FilterChips(need("filter-chips"));
+let currentDeviceFilter: DeviceFilter = "all";
+let batterySelection: ReadonlySet<BatteryBucket> = new Set();
+let clearBatterySelection: () => void = () => {};
+let lastAreaState: AreaFilterState | null = null;
+
+const DEVICE_CHIP_LABEL: Partial<Record<DeviceFilter, string>> = {
+  scooter: "🛴 Scooters only",
+  bicycle: "🚲 E-bikes only",
+};
+
+const BUCKET_CHIP_LABEL: Record<BatteryBucket, string> = {
+  0: "bottom 25%",
+  1: "25–50%",
+  2: "50–75%",
+  3: "top 25%",
+};
+
+function refreshChips(): void {
+  const active: Chip[] = [];
+
+  const deviceLabel = DEVICE_CHIP_LABEL[currentDeviceFilter];
+  if (deviceLabel) {
+    active.push({
+      id: "device-type",
+      label: deviceLabel,
+      onClear: () => {
+        document
+          .querySelector<HTMLButtonElement>(
+            '#device-filter-seg .seg-btn[data-filter="all"]',
+          )
+          ?.click();
+      },
+    });
+  }
+
+  const hideCb = need<HTMLInputElement>("hide-unavailable");
+  if (hideCb.checked) {
+    active.push({
+      id: "availability",
+      label: "Hiding unavailable",
+      onClear: () => {
+        hideCb.checked = false;
+        hideCb.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
+  if (batterySelection.size > 0) {
+    const parts = [...batterySelection]
+      .sort((a, b) => a - b)
+      .map((b) => BUCKET_CHIP_LABEL[b]);
+    active.push({
+      id: "battery",
+      label: `⚡ Range: ${parts.join(", ")}`,
+      onClear: clearBatterySelection,
+    });
+  }
+
+  const display = lastAreaState?.display;
+  if (lastAreaState?.polygons && display) {
+    const layerLabel = OVERLAY_BY_LAYER[display.layer].label;
+    active.push({
+      id: "area",
+      label: display.subset
+        ? `📍 ${display.subset.length} × ${layerLabel}`
+        : `📍 ${layerLabel}`,
+      onClear: () => {
+        const enable = need<HTMLInputElement>("area-filter-enable");
+        enable.checked = false;
+        enable.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
+  chips.render(active);
+}
+
 // Kick off network-independent work immediately so dots/compliance arrive fast.
 const devicesPromise = fetchDevicesAuto().catch((e) => {
   console.error("initial device fetch failed", e);
@@ -60,9 +149,14 @@ map.on("load", async () => {
   wireBatteryFilter();
   wireColorBy();
   wireChoropleth();
-  wireNeighborhoodSearch();
   wireDrawers();
-  wireAreaFilter();
+  const areaFilter = wireAreaFilter();
+
+  // Direct manipulation: clicking a visible region polygon toggles it in
+  // the area filter (clicks on device dots/clusters keep their popups).
+  overlays.enableRegionClicks((layer, regionName) => {
+    void areaFilter.toggleRegionFromMap(layer, regionName);
+  }, DEVICE_INTERACTIVE_LAYERS);
 
   // Keep the freshness pill's "Displaying x out of y" in sync with every
   // filter change. The first fire happens right after a setData() too.
@@ -149,8 +243,10 @@ function wireDeviceFilter(): void {
       b.classList.toggle("is-active", on);
       b.setAttribute("aria-checked", String(on));
     }
-    devices.setFilter(btn.dataset.filter as DeviceFilter);
+    currentDeviceFilter = btn.dataset.filter as DeviceFilter;
+    devices.setFilter(currentDeviceFilter);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => select(btn));
@@ -175,6 +271,7 @@ function wireHideUnavailable(): void {
   cb.addEventListener("change", () => {
     devices.setHideUnavailable(cb.checked);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   });
 }
 
@@ -185,11 +282,23 @@ function wireBatteryFilter(): void {
     root.querySelectorAll<HTMLButtonElement>(".batt-btn"),
   );
   const selected = new Set<BatteryBucket>();
+  batterySelection = selected;
 
   const push = (): void => {
     devices.setBatteryFilter(selected.size > 0 ? new Set(selected) : null);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   };
+
+  const deselectAll = (): void => {
+    selected.clear();
+    for (const btn of btns) {
+      btn.setAttribute("aria-pressed", "false");
+      btn.classList.remove("is-active");
+    }
+    push();
+  };
+  clearBatterySelection = deselectAll;
 
   for (const btn of btns) {
     btn.addEventListener("click", () => {
@@ -203,6 +312,14 @@ function wireBatteryFilter(): void {
         selected.add(b);
         btn.setAttribute("aria-pressed", "true");
         btn.classList.add("is-active");
+        // Filtering by battery auto-enables range coloring so the map gives
+        // immediate visual feedback. One-way convenience only: deselecting
+        // buckets (or clearing the filter) never turns coloring back off.
+        const colorCb = need<HTMLInputElement>("color-by-range");
+        if (!colorCb.checked) {
+          colorCb.checked = true;
+          colorCb.dispatchEvent(new Event("change"));
+        }
       }
       push();
     });
@@ -217,43 +334,15 @@ function wireBatteryFilter(): void {
     if (!enabled && selected.size > 0) {
       // Drop any latent selection so the user isn't left with a hidden,
       // active filter when data arrives sparse.
-      selected.clear();
-      for (const btn of btns) {
-        btn.setAttribute("aria-pressed", "false");
-        btn.classList.remove("is-active");
-      }
-      push();
+      deselectAll();
     }
   });
 }
 
 function wireColorBy(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#color-by-seg .seg-btn"),
-  );
-  const select = (btn: HTMLButtonElement) => {
-    for (const b of btns) {
-      const on = b === btn;
-      b.classList.toggle("is-active", on);
-      b.setAttribute("aria-checked", String(on));
-    }
-    devices.setColorMode((btn.dataset.color as ColorMode) || "type");
-  };
-  btns.forEach((btn, i) => {
-    btn.addEventListener("click", () => select(btn));
-    btn.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = btns[(i + 1) % btns.length];
-        next.focus();
-        select(next);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = btns[(i - 1 + btns.length) % btns.length];
-        prev.focus();
-        select(prev);
-      }
-    });
+  const cb = need<HTMLInputElement>("color-by-range");
+  cb.addEventListener("change", () => {
+    devices.setColorMode(cb.checked ? "range" : "type");
   });
 }
 
@@ -274,50 +363,7 @@ function wireChoropleth(): void {
   });
 }
 
-function wireNeighborhoodSearch(): void {
-  const input = need<HTMLInputElement>("neighborhood-search");
-  const datalist = need<HTMLDataListElement>("neighborhood-options");
-  const clearBtn = need<HTMLButtonElement>("neighborhood-clear");
-  const labelToValue = new Map<string, string>();
-  let populated = false;
-
-  const populate = async () => {
-    if (populated) return;
-    populated = true;
-    try {
-      const list = await overlays.neighborhoodList();
-      const frag = document.createDocumentFragment();
-      for (const { value, label } of list) {
-        labelToValue.set(label.toLowerCase(), value);
-        const opt = document.createElement("option");
-        opt.value = label;
-        frag.append(opt);
-      }
-      datalist.replaceChildren(frag);
-    } catch (e) {
-      console.error("neighborhood list failed", e);
-      populated = false;
-    }
-  };
-
-  input.addEventListener("focus", populate, { once: true });
-  input.addEventListener("change", async () => {
-    await populate();
-    const value = labelToValue.get(input.value.trim().toLowerCase());
-    if (!value) return;
-    await overlays.highlightNeighborhood(value);
-    clearBtn.hidden = false;
-  });
-
-  clearBtn.addEventListener("click", async () => {
-    input.value = "";
-    clearBtn.hidden = true;
-    await overlays.highlightNeighborhood(null);
-    input.focus();
-  });
-}
-
-function wireAreaFilter(): void {
+function wireAreaFilter(): AreaFilter {
   const elements: AreaFilterElements = {
     enable: need<HTMLInputElement>("area-filter-enable"),
     body: need("area-filter-body"),
@@ -333,8 +379,9 @@ function wireAreaFilter(): void {
   // turn its checkbox off, so manually re-enabling it shows all polygons.
   let managed: BoundaryLayer | null = null;
 
-  new AreaFilter(overlays, elements, (state) => {
+  return new AreaFilter(overlays, elements, (state) => {
     devices.setAreaFilter(state.polygons);
+    lastAreaState = state;
 
     const nextLayer = state.display?.layer ?? null;
     if (managed && managed !== nextLayer) {
@@ -348,6 +395,7 @@ function wireAreaFilter(): void {
     managed = nextLayer;
 
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   });
 }
 

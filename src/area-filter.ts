@@ -53,6 +53,39 @@ export class AreaFilter {
     this.el.clear.addEventListener("click", () => this.clearSelection());
   }
 
+  /**
+   * Map-click entry point: toggle `regionName` (of `layer`) in the filter,
+   * standing up whatever state that requires — enabling the filter and/or
+   * switching the category to the clicked layer first. Keeps the drawer's
+   * checkboxes in sync so the UI always mirrors what the map shows. For the
+   * all-or-nothing layers (v1/v2) there is no per-region toggle; switching
+   * to them already selects every region.
+   */
+  async toggleRegionFromMap(
+    layer: BoundaryLayer,
+    regionName: string,
+  ): Promise<void> {
+    if (!this.enabled) {
+      this.enabled = true;
+      this.el.enable.checked = true;
+      this.el.body.hidden = false;
+    }
+    if (this.category !== layer) {
+      this.el.category.value = layer;
+      await this.onCategoryChange();
+    }
+    if (ALL_OR_NOTHING.has(layer)) return;
+    for (const cb of this.el.options.querySelectorAll<HTMLInputElement>(
+      "input[type=checkbox]",
+    )) {
+      if (cb.value === regionName) {
+        cb.checked = !cb.checked;
+        this.onOptionToggle(regionName, cb.checked);
+        return;
+      }
+    }
+  }
+
   private onEnableToggle(): void {
     this.enabled = this.el.enable.checked;
     this.el.body.hidden = !this.enabled;

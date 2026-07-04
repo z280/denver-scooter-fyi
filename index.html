@@ -23,24 +23,24 @@
       <button
         class="drawer-tab"
         type="button"
-        data-drawer="filters"
+        data-drawer="devices"
         aria-pressed="false"
-        aria-controls="drawer-filters"
-        title="Filters"
+        aria-controls="drawer-devices"
+        title="Devices"
       >
         <!-- Funnel / sieve -->
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
-        <span class="sr-only">Filters</span>
+        <span class="sr-only">Devices</span>
       </button>
       <button
         class="drawer-tab"
         type="button"
-        data-drawer="overlays"
+        data-drawer="areas"
         aria-pressed="false"
-        aria-controls="drawer-overlays"
-        title="Overlays"
+        aria-controls="drawer-areas"
+        title="Areas"
       >
         <!-- Stacked layers -->
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -48,7 +48,7 @@
           <polyline points="2 17 12 22 22 17" />
           <polyline points="2 12 12 17 22 12" />
         </svg>
-        <span class="sr-only">Overlays</span>
+        <span class="sr-only">Areas</span>
       </button>
       <button
         class="drawer-tab"
@@ -97,11 +97,11 @@
       </button>
     </nav>
 
-    <!-- ---------- Filters drawer ---------- -->
-    <aside class="drawer" id="drawer-filters" aria-labelledby="drawer-filters-h" aria-hidden="true">
+    <!-- ---------- Devices drawer ---------- -->
+    <aside class="drawer" id="drawer-devices" aria-labelledby="drawer-devices-h" aria-hidden="true">
       <header class="drawer-header">
-        <h2 class="drawer-title" id="drawer-filters-h">Filters</h2>
-        <button class="drawer-close" type="button" aria-label="Close Filters">&times;</button>
+        <h2 class="drawer-title" id="drawer-devices-h">Devices</h2>
+        <button class="drawer-close" type="button" aria-label="Close Devices">&times;</button>
       </header>
       <div class="drawer-body">
         <section class="control-group" aria-labelledby="device-filter-label">
@@ -121,8 +121,12 @@
           </label>
         </section>
 
+        <!-- One block owns everything battery: the quartile filter and the
+             range coloring live together so filtering and styling read as
+             two faces of the same attribute. -->
         <section class="control-group" aria-labelledby="battery-filter-label">
-          <h3 id="battery-filter-label" class="control-label">Battery state</h3>
+          <h3 id="battery-filter-label" class="control-label">Battery &amp; range</h3>
+          <p class="control-hint">Only show devices with…</p>
           <div id="battery-filter" class="battery-filter" role="group" aria-labelledby="battery-filter-label">
             <button class="batt-btn" type="button" data-bucket="0" aria-pressed="false" title="Bottom 25% of range">▁ 😢</button>
             <button class="batt-btn" type="button" data-bucket="1" aria-pressed="false" title="25–50% of range">▃ 😐</button>
@@ -132,52 +136,32 @@
           <p id="battery-filter-hint" class="battery-filter__hint" hidden>
             Not enough range data yet to bucket.
           </p>
-        </section>
-
-        <section class="control-group" aria-labelledby="area-filter-label">
-          <h3 id="area-filter-label" class="control-label">Additional filters</h3>
-          <label class="switch">
-            <input type="checkbox" id="area-filter-enable" />
-            <span>Enabled</span>
+          <label class="switch battery-color-switch">
+            <input type="checkbox" id="color-by-range" />
+            <span>Color dots by range</span>
           </label>
-          <div id="area-filter-body" class="area-filter-body" hidden>
-            <label class="area-filter-by">
-              <span>Filter by</span>
-              <select id="area-filter-category" class="select">
-                <option value="">Choose a category…</option>
-                <option value="community_network">City Region</option>
-                <option value="v1">Disadvantaged Areas (v1)</option>
-                <option value="v2">Disadvantaged Areas (v2)</option>
-                <option value="council_district">Council District</option>
-                <option value="neighborhood">Neighborhood</option>
-              </select>
-            </label>
-            <div id="area-filter-multi" class="area-multi" hidden>
-              <input
-                id="area-filter-search"
-                class="select"
-                type="search"
-                placeholder="Filter list…"
-                aria-label="Filter the list of areas"
-              />
-              <ul id="area-filter-options" class="area-options"></ul>
+          <div class="legend batt-legend" aria-hidden="true">
+            <div class="legend__bar">
+              <span class="legend__swatch" style="background: #c62828"></span>
+              <span class="legend__swatch" style="background: #f5b400"></span>
+              <span class="legend__swatch" style="background: #7ec850"></span>
+              <span class="legend__swatch" style="background: #1b8a3f"></span>
             </div>
-            <p id="area-filter-status" class="area-status" hidden></p>
-            <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
+            <div class="legend__scale"><span>empty</span><span>full</span></div>
           </div>
         </section>
       </div>
     </aside>
 
-    <!-- ---------- Overlays drawer ---------- -->
-    <aside class="drawer" id="drawer-overlays" aria-labelledby="drawer-overlays-h" aria-hidden="true">
+    <!-- ---------- Areas drawer ---------- -->
+    <aside class="drawer" id="drawer-areas" aria-labelledby="drawer-areas-h" aria-hidden="true">
       <header class="drawer-header">
-        <h2 class="drawer-title" id="drawer-overlays-h">Overlays</h2>
-        <button class="drawer-close" type="button" aria-label="Close Overlays">&times;</button>
+        <h2 class="drawer-title" id="drawer-areas-h">Areas</h2>
+        <button class="drawer-close" type="button" aria-label="Close Areas">&times;</button>
       </header>
       <div class="drawer-body">
         <section class="control-group" aria-labelledby="layers-label">
-          <h3 id="layers-label" class="control-label">Boundary overlays</h3>
+          <h3 id="layers-label" class="control-label">Boundary outlines</h3>
           <ul class="layer-list" id="layer-list">
             <!-- populated by JS -->
           </ul>
@@ -195,6 +179,40 @@
           </select>
           <div id="choropleth-legend" class="legend" hidden></div>
         </section>
+
+        <section class="control-group" aria-labelledby="area-filter-label">
+          <h3 id="area-filter-label" class="control-label">Only show devices in…</h3>
+          <label class="switch">
+            <input type="checkbox" id="area-filter-enable" />
+            <span>Filter devices by area</span>
+          </label>
+          <div id="area-filter-body" class="area-filter-body" hidden>
+            <label class="area-filter-by">
+              <span>Area type</span>
+              <select id="area-filter-category" class="select">
+                <option value="">Choose a category…</option>
+                <option value="community_network">City Region</option>
+                <option value="v1">Disadvantaged Areas (v1)</option>
+                <option value="v2">Disadvantaged Areas (v2)</option>
+                <option value="council_district">Council District</option>
+                <option value="neighborhood">Neighborhood</option>
+              </select>
+            </label>
+            <div id="area-filter-multi" class="area-multi" hidden>
+              <input
+                id="area-filter-search"
+                class="select"
+                type="search"
+                placeholder="Search areas…"
+                aria-label="Search the list of areas"
+              />
+              <ul id="area-filter-options" class="area-options"></ul>
+            </div>
+            <p id="area-filter-status" class="area-status" hidden></p>
+            <p class="control-hint">Tip: you can also click a region right on the map to add or remove it.</p>
+            <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
+          </div>
+        </section>
       </div>
     </aside>
 
@@ -205,28 +223,6 @@
         <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
       </header>
       <div class="drawer-body">
-        <section class="control-group" aria-labelledby="color-by-label">
-          <h3 id="color-by-label" class="control-label">Display as</h3>
-          <div id="color-by-seg" class="segmented" role="radiogroup" aria-labelledby="color-by-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-color="type">Device type</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-color="range">Range</button>
-          </div>
-        </section>
-
-        <section class="control-group" aria-labelledby="search-label">
-          <h3 id="search-label" class="control-label">Find a neighborhood</h3>
-          <input
-            id="neighborhood-search"
-            class="select"
-            list="neighborhood-options"
-            placeholder="Type a neighborhood…"
-            aria-labelledby="search-label"
-            autocomplete="off"
-          />
-          <datalist id="neighborhood-options"></datalist>
-          <button id="neighborhood-clear" class="text-btn" hidden>Clear highlight</button>
-        </section>
-
         <section class="control-group" aria-labelledby="finder-label">
           <h3 id="finder-label" class="control-label">Find dense device clusters</h3>
           <p class="finder-help">Groups of devices within 30&nbsp;ft of each other.</p>
@@ -290,6 +286,10 @@
         </section>
       </div>
     </aside>
+
+    <!-- Active-filter chips: always-visible readout of every live constraint,
+         so closing a drawer never hides the map's state. Populated by JS. -->
+    <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a

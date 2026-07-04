@@ -16,16 +16,22 @@ self-hosted vector basemap.
 
 - Full-viewport MapLibre map, fit to Denver on load.
 - Device markers clustered at low zoom; click a dot for `device_id` + type.
-- Device-type filter: All / Scooters / Bicycles (recomputes clusters in place).
-- Five boundary overlays, toggleable together (colored outline + faint fill):
-  Disadvantaged Areas (v1), Disadvantaged Areas (v2), Neighborhoods,
-  City Council Districts, City Regions.
-- Choropleth coloring of any boundary layer by live device density.
-- Neighborhood search that zooms to and highlights the selected polygon.
-- Top-right compliance gauge (avg % of devices in v1 areas vs. the 30%
-  threshold), or a PENDING state before the daily window is computed.
-- Bottom-right freshness footer: `as of HH:MM · N devices`.
-- Responsive: the control panel collapses to a bottom sheet on mobile.
+- Controls grouped by attribute in a left activity bar:
+  - **Devices** — type filter (All / Scooters / E-bikes), availability
+    switch, and a unified battery block: quartile filter buttons plus a
+    "Color dots by range" toggle (auto-enabled when you filter by battery).
+  - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
+    v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
+    coloring by live device density, and an "Only show devices in…" area
+    filter. With an area type chosen, clicking a region directly on the map
+    adds or removes it from the filter.
+  - **Tools** — dense-cluster finder.
+  - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
+    the 30% threshold), or PENDING before the daily window is computed.
+- Active-filter chips float over the map — one per live constraint, each
+  with a ✕ to clear it — so closed drawers never hide the map's state.
+- Bottom-right freshness footer: `as of HH:MM · Displaying x out of y`.
+- Responsive: drawers fill the remaining width on mobile.
 
 ## Tech stack
 

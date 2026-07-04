@@ -38,6 +38,9 @@ export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
 const COUNT_LAYER = "device-cluster-count";
 const POINT_LAYER = "device-points";
 const FLAG_LAYER = "device-negative-flag";
+/** Layers with their own click behavior — a click that hits one of these
+ *  should not also trigger the map-click region filter beneath it. */
+export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
 
 const FORM_LABEL: Record<FormFactor, string> = {
   scooter: "Scooter",
