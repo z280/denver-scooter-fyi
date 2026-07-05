@@ -289,7 +289,7 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- Segmented control (shared by Filters > Device type and Tools > Color by) ---------- */
+/* ---------- Segmented control (Devices > Device type) ---------- */
 .segmented {
   display: flex;
   gap: 4px;
@@ -369,6 +369,175 @@ body {
   font-size: 11.5px;
   color: var(--fg-muted);
   font-style: italic;
+}
+.battery-color-switch {
+  margin-top: 12px;
+}
+.batt-legend {
+  margin-top: 8px;
+}
+
+/* ---------- Reliability legend ---------- */
+.rel-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.rel-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.rel-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ---------- Intent-mode presets (bottom center) ---------- */
+.mode-switch {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+.mode-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mode-btn:hover {
+  background: rgba(0, 114, 178, 0.08);
+  color: var(--fg);
+}
+.mode-btn.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ---------- Inline hint text under control labels ---------- */
+.control-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ---------- Active-filter chips (float over the map, top center) ---------- */
+.filter-chips {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25; /* under the tab strip (32) and drawers (30) */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: min(560px, calc(100vw - 160px));
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.chip__clear {
+  appearance: none;
+  border: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip__clear:hover {
+  background: rgba(198, 40, 40, 0.12);
+  color: var(--fail);
+}
+
+/* ---------- Equity rank toggles ---------- */
+.rank-toggles {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.rank-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.rank-btn:hover:not([disabled]) {
+  border-color: #7b1fa2;
+}
+.rank-btn.is-active {
+  background: #7b1fa2;
+  border-color: #7b1fa2;
+  color: #fff;
+}
+.rank-btn[disabled] {
+  opacity: 0.5;
+  cursor: progress;
+}
+.equity-metric {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.equity-metric strong {
+  font-size: 16px;
+}
+.equity-metric__ranks {
+  color: #7b1fa2;
+  font-weight: 600;
+}
+.equity-metric__count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.equity-overlay-switch {
+  margin-top: 12px;
 }
 
 /* ---------- Layer toggles ---------- */
@@ -1009,6 +1178,405 @@ body {
   margin-top: 6px;
 }
 
+/* ---------- Popup: reliability verdict ---------- */
+.device-popup__reliability {
+  margin-top: 9px;
+  font-size: 12.5px;
+}
+.device-popup__rel-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.device-popup__rel-label {
+  font-weight: 700;
+}
+.device-popup__rel-reasons {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* ---------- Popup: unlock deep link + QR ---------- */
+.device-popup__unlock-row {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.device-popup__unlock {
+  flex: 1 1 auto;
+  display: inline-block;
+  text-align: center;
+  padding: 7px 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.device-popup__unlock:hover {
+  filter: brightness(1.05);
+}
+.device-popup__unlock-hint {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+/* ---------- Popup: walk economics ---------- */
+.device-popup__walk {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.device-popup__alt {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--fg);
+  background: rgba(245, 180, 0, 0.14);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+
+/* ---------- Ride HUD (full-screen, glanceable) ----------
+   Two fixed high-contrast palettes: day (near-black on white) and night
+   (luminescent green on black, preserving night vision). Big type, huge
+   targets — designed to be read in under two seconds at 15 mph. */
+.ride-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  color: #10151c;
+  font-variant-numeric: tabular-nums;
+}
+.ride-hud.is-night {
+  background: #000000;
+  color: #7dffa0;
+}
+.hud-card {
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.hud-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.hud-note {
+  margin: 0;
+  font-size: 13.5px;
+  opacity: 0.75;
+  line-height: 1.45;
+}
+.hud-note--pointed {
+  opacity: 1;
+  font-weight: 600;
+}
+.hud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  text-align: left;
+}
+.hud-field .select.is-error {
+  border-color: var(--fail);
+  outline: 2px solid var(--fail);
+}
+.hud-start-row {
+  display: flex;
+  gap: 8px;
+}
+.hud-btn {
+  appearance: none;
+  border: 2px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 12px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  flex: 1 1 0;
+}
+.hud-btn--primary {
+  background: #10151c;
+  color: #ffffff;
+  border-color: #10151c;
+}
+.ride-hud.is-night .hud-btn--primary {
+  background: #7dffa0;
+  color: #000000;
+  border-color: #7dffa0;
+}
+.hud-btn--ghost {
+  border-color: transparent;
+  opacity: 0.7;
+  font-weight: 600;
+}
+.hud-btn--end {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #ffffff;
+  flex: 2 1 0;
+  padding: 18px 14px;
+  font-size: 20px;
+}
+.hud-inline-select {
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+}
+.hud-card--countdown .hud-countdown {
+  font-size: min(48vh, 240px);
+  font-weight: 800;
+  line-height: 1;
+}
+/* Riding view: the map IS the screen. The HUD is transparent and only its
+   tiny corner cutouts paint or take pointer events. */
+.ride-hud.is-riding {
+  display: block;
+  background: transparent;
+  pointer-events: none;
+}
+.ride-hud.is-riding .hud-live {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.hud-corner {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+.hud-corner--tl { top: 0; left: 0; }
+.hud-corner--tr { top: 0; right: 0; }
+.hud-corner--bl { bottom: 0; left: 0; }
+.hud-corner--br { bottom: 0; right: 0; pointer-events: none; }
+
+/* Transparent digital readouts — no panel, just contrasting text with a
+   halo so they stay legible over any basemap, day or night. */
+.hud-readout {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #0d1522;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.95), 0 1px 4px rgba(255, 255, 255, 0.9);
+}
+.ride-hud.is-night .hud-readout {
+  color: #ffffff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.95), 0 1px 5px rgba(0, 0, 0, 0.9);
+}
+.hud-readout--cost { font-size: clamp(26px, 6vh, 40px); }
+.hud-readout--clock { font-size: clamp(24px, 5.5vh, 36px); }
+.hud-readout--mph {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.hud-readout--mph b { font-size: clamp(26px, 6vh, 40px); font-weight: 800; }
+.hud-readout--mph i { font-size: 14px; font-weight: 600; font-style: normal; opacity: 0.75; }
+
+/* Bottom-left cutout buttons: stop (end) + wrench (adjust). */
+.hud-corner--bl { pointer-events: none; }
+.hud-cutout-btns { display: flex; gap: 8px; pointer-events: auto; }
+.hud-readout--clock { pointer-events: auto; }
+.hud-round-btn {
+  appearance: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0d1522;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.ride-hud.is-night .hud-round-btn {
+  background: rgba(20, 20, 20, 0.8);
+  color: #fff;
+}
+.hud-round-btn svg { width: 24px; height: 24px; }
+.hud-round-btn--stop {
+  background: var(--fail);
+  color: #fff;
+}
+.hud-round-btn--stop svg { fill: currentColor; }
+
+/* Equity-zone badge: a small centered pill up top, only while flagged. */
+.hud-zone-badge {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #5a4300;
+  background: rgba(245, 180, 0, 0.92);
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* Adjust popover (wrench): time nudges + rate + theme. */
+.hud-adjust-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  width: min(420px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  color: var(--fg);
+}
+.hud-adjust-row { display: flex; gap: 6px; }
+.hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
+
+/* Analog speedometer, bottom-right. */
+.speedo {
+  width: clamp(140px, 26vh, 200px);
+  height: clamp(140px, 26vh, 200px);
+  pointer-events: none;
+}
+.speedo-face {
+  fill: rgba(255, 255, 255, 0.82);
+  stroke: rgba(0, 0, 0, 0.12);
+  stroke-width: 1.5;
+}
+.ride-hud.is-night .speedo-face {
+  fill: rgba(12, 16, 22, 0.82);
+  stroke: rgba(255, 255, 255, 0.18);
+}
+.speedo-track {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.25);
+  stroke-width: 3;
+}
+.ride-hud.is-night .speedo-track { stroke: rgba(255, 255, 255, 0.3); }
+.speedo-caution {
+  fill: none;
+  stroke: var(--fail);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.speedo-tick { stroke: rgba(0, 0, 0, 0.4); stroke-width: 1.5; }
+.speedo-tick--major { stroke: rgba(0, 0, 0, 0.7); stroke-width: 2.5; }
+.ride-hud.is-night .speedo-tick { stroke: rgba(255, 255, 255, 0.45); }
+.ride-hud.is-night .speedo-tick--major { stroke: rgba(255, 255, 255, 0.85); }
+.speedo-num {
+  fill: #0d1522;
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.ride-hud.is-night .speedo-num { fill: #fff; }
+.speedo-unit {
+  fill: rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+.ride-hud.is-night .speedo-unit { fill: rgba(255, 255, 255, 0.6); }
+.speedo-needle {
+  fill: var(--fail);
+  transform-box: view-box;
+  transform-origin: 100px 100px;
+  transition: transform 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.speedo-hub { fill: #0d1522; }
+.ride-hud.is-night .speedo-hub { fill: #e6e6e6; }
+@media (prefers-reduced-motion: reduce) {
+  .speedo-needle { transition: none; }
+}
+
+/* Rider position marker on the follow-cam. */
+.ride-user-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0072b2;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px rgba(0, 114, 178, 0.35), 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* While a ride is active the app chrome gets out of the way so the frame +
+   map own the screen. */
+body.ride-active .drawer-tabs,
+body.ride-active .drawer,
+body.ride-active .mode-switch,
+body.ride-active .filter-chips,
+body.ride-active .freshness,
+body.ride-active .brand-link,
+body.ride-active .maplibregl-ctrl {
+  display: none !important;
+}
+
+.hud-note--landscape {
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+/* ---------- Ride HUD card states in landscape ----------
+   The riding view is corner cutouts over a full map, so it needs no special
+   landscape handling. The centered card states (armed / countdown / summary)
+   just need to fit a short viewport. */
+@media (orientation: landscape) {
+  .hud-card {
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+  .hud-card--countdown .hud-countdown {
+    font-size: min(60vh, 200px);
+  }
+}
+.hud-summary {
+  margin: 0;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  font-size: 15px;
+}
+.hud-summary dt {
+  opacity: 0.7;
+}
+.hud-summary dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
 /* ---------- Focus visibility ---------- */
 :focus-visible {
   outline: 3px solid var(--accent);
@@ -1025,6 +1593,33 @@ body {
   }
   .freshness {
     bottom: 12px;
+  }
+  /* Chips hug the tab strip instead of centering — centering would tuck
+     them behind an open drawer on narrow screens. */
+  .filter-chips {
+    left: 72px;
+    right: 64px;
+    transform: none;
+    justify-content: flex-start;
+    max-width: none;
+  }
+  /* Lift the mode pill clear of the bottom-right freshness pill, which
+     would otherwise overlap it and swallow taps on narrow screens. */
+  .mode-switch {
+    bottom: 58px;
+  }
+  .mode-btn {
+    padding: 7px 10px;
+    font-size: 12.5px;
+  }
+}
+
+/* Short viewports (landscape phones): the bottom-center mode pill would sit
+   under the bottom-right freshness pill and swallow taps on the Ride button.
+   Lift it clear regardless of width. */
+@media (max-height: 480px) {
+  .mode-switch {
+    bottom: 52px;
   }
 }
 

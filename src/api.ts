@@ -15,7 +15,16 @@ export type BoundaryLayer =
   | "v2"
   | "neighborhood"
   | "council_district"
-  | "community_network";
+  | "community_network"
+  // Equity-rank tiers er1..er6 from the city's ranked equity map. The city
+  // hasn't said which ranks bind the SLA, so the UI lets users pick a set
+  // to estimate against rather than hardcoding one.
+  | "er1"
+  | "er2"
+  | "er3"
+  | "er4"
+  | "er5"
+  | "er6";
 
 export type PropulsionType = "electric" | "electric_assist" | "human";
 
@@ -35,6 +44,12 @@ export interface DeviceProperties {
   current_range_meters?: number | null;
   /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
   propulsion_type?: PropulsionType | null;
+  /** Rider posture, corrected server-side against Veo's GBFS mislabels:
+   *  "sitting" (seated e-bikes like the Apollo) vs "standing" (scooters).
+   *  Key any seated-vs-standing UX off THIS, not `form_factor`. */
+  vehicle_use_type?: string | null;
+  /** Veo's model name (e.g. "Apollo", "Astro"), aligned to their app. */
+  vehicle_model_name?: string | null;
   // ----- H3 spatial indexes at three resolutions (cell ID strings).
   h3_8_index?: string | null;
   h3_9_index?: string | null;
@@ -55,16 +70,27 @@ export interface DeviceProperties {
   has_negative_report?: boolean | null;
   /** Server-assigned quality label (e.g. "low_quality", "ok"); free-form string. */
   quality_designation?: string | null;
-  // ----- Client-derived fields (not on the wire). The map enriches each
-  // device with a battery_percent (0–100) computed against the
-  // observed-max range for its propulsion type, since the API doesn't
-  // yet expose per-type `max_range_meters`.
-  battery_percent?: number;
-  // ----- Private fields (only populated via /api/v1/private/devices/current
-  // when the user is signed in via map-auth). Undefined on public fetches.
-  vehicle_plate?: string;
-  first_observed_at_location?: string;
+  // ----- Reliability. The server now ships `reliability_tier` on the public
+  // endpoint (values "ok" | "unknown" | "high_risk"); the raw inputs
+  // `number_failed_starts`, `first_observed_at_location`, `quality_designation`
+  // and `has_negative_report` are public too. annotateReliability() prefers
+  // the server tier (normalizing "high_risk" → "risk") and falls back to a
+  // local assessment, then attaches a human-readable `reliability_reasons`.
+  reliability_tier?: "ok" | "unknown" | "risk" | "high_risk";
+  reliability_reasons?: string;
+  /** Recent failed unlock/start attempts. Public. */
   number_failed_starts?: number;
+  /** When the device first appeared at its current spot (dwell start). Public. */
+  first_observed_at_location?: string;
+  // ----- Client-derived (not on the wire): battery_percent (0–100) computed
+  // against the observed-max range for the device's propulsion type, since
+  // the public endpoint doesn't expose per-type `max_range_meters`.
+  battery_percent?: number;
+  // ----- Private fields — only via /api/v1/private/* (devices/lookup, trips)
+  // when signed in. `vehicle_plate` is deliberately NOT on the public
+  // endpoint (publishing live plates would let Veo reconcile our map against
+  // their GBFS feed), so the "Unlock in Veo" deep link is authenticated-only.
+  vehicle_plate?: string;
   first_ever_observed_at?: string;
 }
 

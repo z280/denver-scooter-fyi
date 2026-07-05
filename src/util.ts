@@ -18,7 +18,12 @@ export function commas(n: number): string {
   return Math.round(n).toLocaleString("en-US");
 }
 
-const PREFIXES: Record<BoundaryLayer, RegExp> = {
+// Partial: only the layers whose coded region_names actually reach
+// prettyRegion (the area-filter list, choropleth, neighborhood search) need
+// a prefix. The equity ranks er1..er6 are drawn as a union overlay and never
+// labeled per-region, so they're deliberately absent — an unknown layer just
+// falls through to splitCamel on the raw name.
+const PREFIXES: Partial<Record<BoundaryLayer, RegExp>> = {
   v1: /^V1_/,
   v2: /^V2_/,
   neighborhood: /^NB_/,
@@ -35,7 +40,8 @@ const PREFIXES: Record<BoundaryLayer, RegExp> = {
  *   V1_001        -> "Equity Area 001"
  */
 export function prettyRegion(name: string, layer: BoundaryLayer): string {
-  const stripped = name.replace(PREFIXES[layer], "");
+  const prefix = PREFIXES[layer];
+  const stripped = prefix ? name.replace(prefix, "") : name;
   switch (layer) {
     case "council_district":
       return `Council District ${stripped}`;

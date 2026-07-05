@@ -5,7 +5,7 @@ import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
 import { createMap } from "./map.ts";
 import {
   Devices,
-  type ColorMode,
+  DEVICE_INTERACTIVE_LAYERS,
   type DeviceFilter,
 } from "./devices.ts";
 import { type BatteryBucket } from "./battery.ts";
@@ -13,8 +13,19 @@ import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
-import { AreaFilter, type AreaFilterElements } from "./area-filter.ts";
-import { OVERLAYS, REFRESH_MS } from "./config.ts";
+import {
+  AreaFilter,
+  type AreaFilterElements,
+  type AreaFilterState,
+} from "./area-filter.ts";
+import { FilterChips, type Chip } from "./filter-chips.ts";
+import { Locate } from "./locate.ts";
+import { RideHud } from "./ride-hud.ts";
+import { EquityRanks } from "./equity.ts";
+import { consumePendingMagicLink } from "./auth-magic-link.ts";
+import { type EquityRank } from "./config.ts";
+import { indexFeature, type IndexedFeature } from "./geo.ts";
+import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
 
 function need<T extends HTMLElement>(id: string): T {
@@ -23,10 +34,12 @@ function need<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const map = createMap("map");
+const { map, geolocate } = createMap("map");
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
-const devices = new Devices(map);
+const locate = new Locate(map, geolocate);
+const devices = new Devices(map, locate);
 const overlays = new Overlays(map, need("choropleth-legend"));
+const equity = new EquityRanks(overlays, () => renderEquityMetric());
 const freshness = new Freshness(need("freshness"), need("freshness-text"));
 const clusters = new Clusters(
   map,
@@ -41,6 +54,90 @@ const clusters = new Clusters(
 // the matching overlay box when the user picks a category.
 const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 
+// ---------- Active-filter chips ----------
+// One chip per live constraint, floating over the map so closed drawers
+// never hide state. The wire* functions below stash just enough of their
+// internal state here for refreshChips() to read, and each chip's ✕
+// resets the originating control through its normal event path so the
+// drawer UI stays in sync.
+const chips = new FilterChips(need("filter-chips"));
+let currentDeviceFilter: DeviceFilter = "all";
+let batterySelection: ReadonlySet<BatteryBucket> = new Set();
+let clearBatterySelection: () => void = () => {};
+let lastAreaState: AreaFilterState | null = null;
+
+const DEVICE_CHIP_LABEL: Partial<Record<DeviceFilter, string>> = {
+  scooter: "🛴 Scooters only",
+  bicycle: "🚲 E-bikes only",
+};
+
+const BUCKET_CHIP_LABEL: Record<BatteryBucket, string> = {
+  0: "bottom 25%",
+  1: "25–50%",
+  2: "50–75%",
+  3: "top 25%",
+};
+
+function refreshChips(): void {
+  const active: Chip[] = [];
+
+  const deviceLabel = DEVICE_CHIP_LABEL[currentDeviceFilter];
+  if (deviceLabel) {
+    active.push({
+      id: "device-type",
+      label: deviceLabel,
+      onClear: () => {
+        document
+          .querySelector<HTMLButtonElement>(
+            '#device-filter-seg .seg-btn[data-filter="all"]',
+          )
+          ?.click();
+      },
+    });
+  }
+
+  const hideCb = need<HTMLInputElement>("hide-unavailable");
+  if (hideCb.checked) {
+    active.push({
+      id: "availability",
+      label: "Hiding unavailable",
+      onClear: () => {
+        hideCb.checked = false;
+        hideCb.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
+  if (batterySelection.size > 0) {
+    const parts = [...batterySelection]
+      .sort((a, b) => a - b)
+      .map((b) => BUCKET_CHIP_LABEL[b]);
+    active.push({
+      id: "battery",
+      label: `⚡ Range: ${parts.join(", ")}`,
+      onClear: clearBatterySelection,
+    });
+  }
+
+  const display = lastAreaState?.display;
+  if (lastAreaState?.polygons && display) {
+    const layerLabel = OVERLAY_BY_LAYER[display.layer].label;
+    active.push({
+      id: "area",
+      label: display.subset
+        ? `📍 ${display.subset.length} × ${layerLabel}`
+        : `📍 ${layerLabel}`,
+      onClear: () => {
+        const enable = need<HTMLInputElement>("area-filter-enable");
+        enable.checked = false;
+        enable.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
+  chips.render(active);
+}
+
 // Kick off network-independent work immediately so dots/compliance arrive fast.
 const devicesPromise = fetchDevicesAuto().catch((e) => {
   console.error("initial device fetch failed", e);
@@ -51,6 +148,34 @@ void renderCompliance(need("compliance")).catch((e) => {
 });
 wireSecretUnlock();
 wireAccount();
+wireRideHud();
+
+// If the user just followed a magic link (?ml=<token>), redeem it before the
+// account UI settles; on success reload so every fetch goes out authenticated.
+// Inert when no token is present, so it's harmless before the endpoints exist.
+void consumePendingMagicLink().then((ok) => {
+  if (ok) location.reload();
+});
+
+// ---------- Ride HUD ----------
+
+// The v1∪v2 disadvantaged-area polygons power the HUD's equity-ride flags.
+// Fetched lazily on first ride and cached (loadBoundary caches too).
+let equityZonesCache: Promise<IndexedFeature[]> | null = null;
+function equityZones(): Promise<IndexedFeature[]> {
+  equityZonesCache ??= Promise.all([
+    overlays.loadBoundary("v1"),
+    overlays.loadBoundary("v2"),
+  ]).then((responses) =>
+    responses.flatMap((r) => r.features.map((f) => indexFeature(f))),
+  );
+  return equityZonesCache;
+}
+
+function wireRideHud(): void {
+  const hud = new RideHud(need("ride-hud"), equityZones, map);
+  need("ride-open").addEventListener("click", () => hud.open());
+}
 
 map.on("load", async () => {
   devices.addLayers();
@@ -60,9 +185,16 @@ map.on("load", async () => {
   wireBatteryFilter();
   wireColorBy();
   wireChoropleth();
-  wireNeighborhoodSearch();
   wireDrawers();
-  wireAreaFilter();
+  const areaFilter = wireAreaFilter();
+  wireModes();
+  wireEquityRanks();
+
+  // Direct manipulation: clicking a visible region polygon toggles it in
+  // the area filter (clicks on device dots/clusters keep their popups).
+  overlays.enableRegionClicks((layer, regionName) => {
+    void areaFilter.toggleRegionFromMap(layer, regionName);
+  }, DEVICE_INTERACTIVE_LAYERS);
 
   // Keep the freshness pill's "Displaying x out of y" in sync with every
   // filter change. The first fire happens right after a setData() too.
@@ -73,6 +205,7 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
+    equity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -83,6 +216,8 @@ map.on("load", async () => {
   } else {
     freshness.error();
   }
+  // Warm the default-selected ranks' polygons so the estimate populates.
+  void equity.warm();
   startRefreshLoop();
 });
 
@@ -149,8 +284,10 @@ function wireDeviceFilter(): void {
       b.classList.toggle("is-active", on);
       b.setAttribute("aria-checked", String(on));
     }
-    devices.setFilter(btn.dataset.filter as DeviceFilter);
+    currentDeviceFilter = btn.dataset.filter as DeviceFilter;
+    devices.setFilter(currentDeviceFilter);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => select(btn));
@@ -175,6 +312,7 @@ function wireHideUnavailable(): void {
   cb.addEventListener("change", () => {
     devices.setHideUnavailable(cb.checked);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   });
 }
 
@@ -185,11 +323,23 @@ function wireBatteryFilter(): void {
     root.querySelectorAll<HTMLButtonElement>(".batt-btn"),
   );
   const selected = new Set<BatteryBucket>();
+  batterySelection = selected;
 
   const push = (): void => {
     devices.setBatteryFilter(selected.size > 0 ? new Set(selected) : null);
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   };
+
+  const deselectAll = (): void => {
+    selected.clear();
+    for (const btn of btns) {
+      btn.setAttribute("aria-pressed", "false");
+      btn.classList.remove("is-active");
+    }
+    push();
+  };
+  clearBatterySelection = deselectAll;
 
   for (const btn of btns) {
     btn.addEventListener("click", () => {
@@ -203,6 +353,14 @@ function wireBatteryFilter(): void {
         selected.add(b);
         btn.setAttribute("aria-pressed", "true");
         btn.classList.add("is-active");
+        // Filtering by battery auto-enables range coloring so the map gives
+        // immediate visual feedback. One-way convenience only: deselecting
+        // buckets (or clearing the filter) never turns coloring back off.
+        const colorCb = need<HTMLInputElement>("color-by-range");
+        if (!colorCb.checked) {
+          colorCb.checked = true;
+          colorCb.dispatchEvent(new Event("change"));
+        }
       }
       push();
     });
@@ -217,43 +375,28 @@ function wireBatteryFilter(): void {
     if (!enabled && selected.size > 0) {
       // Drop any latent selection so the user isn't left with a hidden,
       // active filter when data arrives sparse.
-      selected.clear();
-      for (const btn of btns) {
-        btn.setAttribute("aria-pressed", "false");
-        btn.classList.remove("is-active");
-      }
-      push();
+      deselectAll();
     }
   });
 }
 
 function wireColorBy(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#color-by-seg .seg-btn"),
-  );
-  const select = (btn: HTMLButtonElement) => {
-    for (const b of btns) {
-      const on = b === btn;
-      b.classList.toggle("is-active", on);
-      b.setAttribute("aria-checked", String(on));
-    }
-    devices.setColorMode((btn.dataset.color as ColorMode) || "type");
+  // Two coloring toggles, radio-like: range and reliability are different
+  // lenses on the same dots, so turning one on turns the other off.
+  const range = need<HTMLInputElement>("color-by-range");
+  const rel = need<HTMLInputElement>("color-by-reliability");
+  const sync = () => {
+    devices.setColorMode(
+      rel.checked ? "reliability" : range.checked ? "range" : "type",
+    );
   };
-  btns.forEach((btn, i) => {
-    btn.addEventListener("click", () => select(btn));
-    btn.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = btns[(i + 1) % btns.length];
-        next.focus();
-        select(next);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = btns[(i - 1 + btns.length) % btns.length];
-        prev.focus();
-        select(prev);
-      }
-    });
+  range.addEventListener("change", () => {
+    if (range.checked) rel.checked = false;
+    sync();
+  });
+  rel.addEventListener("change", () => {
+    if (rel.checked) range.checked = false;
+    sync();
   });
 }
 
@@ -274,50 +417,7 @@ function wireChoropleth(): void {
   });
 }
 
-function wireNeighborhoodSearch(): void {
-  const input = need<HTMLInputElement>("neighborhood-search");
-  const datalist = need<HTMLDataListElement>("neighborhood-options");
-  const clearBtn = need<HTMLButtonElement>("neighborhood-clear");
-  const labelToValue = new Map<string, string>();
-  let populated = false;
-
-  const populate = async () => {
-    if (populated) return;
-    populated = true;
-    try {
-      const list = await overlays.neighborhoodList();
-      const frag = document.createDocumentFragment();
-      for (const { value, label } of list) {
-        labelToValue.set(label.toLowerCase(), value);
-        const opt = document.createElement("option");
-        opt.value = label;
-        frag.append(opt);
-      }
-      datalist.replaceChildren(frag);
-    } catch (e) {
-      console.error("neighborhood list failed", e);
-      populated = false;
-    }
-  };
-
-  input.addEventListener("focus", populate, { once: true });
-  input.addEventListener("change", async () => {
-    await populate();
-    const value = labelToValue.get(input.value.trim().toLowerCase());
-    if (!value) return;
-    await overlays.highlightNeighborhood(value);
-    clearBtn.hidden = false;
-  });
-
-  clearBtn.addEventListener("click", async () => {
-    input.value = "";
-    clearBtn.hidden = true;
-    await overlays.highlightNeighborhood(null);
-    input.focus();
-  });
-}
-
-function wireAreaFilter(): void {
+function wireAreaFilter(): AreaFilter {
   const elements: AreaFilterElements = {
     enable: need<HTMLInputElement>("area-filter-enable"),
     body: need("area-filter-body"),
@@ -333,8 +433,9 @@ function wireAreaFilter(): void {
   // turn its checkbox off, so manually re-enabling it shows all polygons.
   let managed: BoundaryLayer | null = null;
 
-  new AreaFilter(overlays, elements, (state) => {
+  return new AreaFilter(overlays, elements, (state) => {
     devices.setAreaFilter(state.polygons);
+    lastAreaState = state;
 
     const nextLayer = state.display?.layer ?? null;
     if (managed && managed !== nextLayer) {
@@ -348,7 +449,187 @@ function wireAreaFilter(): void {
     managed = nextLayer;
 
     clusters.update(devices.visibleFeatures());
+    refreshChips();
   });
+}
+
+// ---------- Intent modes ----------
+
+// One-tap presets over the existing controls — not separate apps. "Find a
+// ride" sets the rider up (available devices, reliability coloring, offer
+// location); "Audit" sets the civic view (v1 choropleth + compliance).
+// Any manual control change afterwards clears the highlight: the user is
+// in "custom" now, and the presets never fight them for state.
+function wireModes(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      "#mode-switch .mode-btn[data-mode]",
+    ),
+  );
+  let applying = false;
+
+  const setActive = (mode: string | null): void => {
+    for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
+  };
+  const setChecked = (id: string, on: boolean): void => {
+    const cb = need<HTMLInputElement>(id);
+    if (cb.checked !== on) {
+      cb.checked = on;
+      cb.dispatchEvent(new Event("change"));
+    }
+  };
+  const setSelect = (id: string, value: string): void => {
+    const sel = need<HTMLSelectElement>(id);
+    if (sel.value !== value) {
+      sel.value = value;
+      sel.dispatchEvent(new Event("change"));
+    }
+  };
+  const setDeviceFilter = (filter: string): void => {
+    document
+      .querySelector<HTMLButtonElement>(
+        `#device-filter-seg .seg-btn[data-filter="${filter}"]`,
+      )
+      ?.click();
+  };
+  const setDrawer = (id: string | null): void => {
+    const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
+    if (open && open.dataset.drawer !== id) open.click();
+    if (id) {
+      const tab = document.querySelector<HTMLButtonElement>(
+        `.drawer-tab[data-drawer="${id}"]`,
+      );
+      if (tab && !tab.classList.contains("is-active")) tab.click();
+    }
+  };
+
+  const applyRide = (): void => {
+    setDeviceFilter("all");
+    setChecked("hide-unavailable", true);
+    setChecked("area-filter-enable", false);
+    setChecked("color-by-range", false);
+    setChecked("color-by-reliability", true);
+    setSelect("choropleth-select", "");
+    for (const input of layerInputs.values()) {
+      if (input.checked) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    }
+    setDrawer(null);
+    // Offer location so walk times light up. Runs inside the button tap,
+    // so the browser treats the permission prompt as user-initiated.
+    locate.trigger();
+  };
+
+  const applyAudit = (): void => {
+    setDeviceFilter("all");
+    setChecked("hide-unavailable", false);
+    setChecked("area-filter-enable", false);
+    setChecked("color-by-range", false);
+    setChecked("color-by-reliability", false);
+    setSelect("choropleth-select", "v1");
+    setDrawer("compliance");
+  };
+
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      applying = true;
+      try {
+        if (btn.dataset.mode === "ride") applyRide();
+        else applyAudit();
+      } finally {
+        applying = false;
+      }
+      setActive(btn.dataset.mode ?? null);
+    });
+  }
+
+  // Manual changes to any drawer control drop the mode back to custom.
+  // Capture phase so the preset's own synthetic events (guarded by
+  // `applying`) never count.
+  const toCustom = (e: Event): void => {
+    if (applying) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest?.(".drawer")) setActive(null);
+  };
+  document.addEventListener("change", toCustom, true);
+  document.addEventListener("click", toCustom, true);
+}
+
+// ---------- Equity ranks ----------
+
+// Rank toggles (1–6, default 1+2) drive a live "% of the fleet in the
+// selected ranks" estimate and the "Equity Ranking (Selected)" map overlay.
+// The two overlay checkboxes (one in Areas, one beside the toggles) mirror
+// each other and the underlying overlay state.
+function wireEquityRanks(): void {
+  const rankBtns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#rank-toggles .rank-btn"),
+  );
+  const overlayInputs = [
+    need<HTMLInputElement>("equity-selected-overlay"),
+    need<HTMLInputElement>("equity-selected-overlay-mirror"),
+  ];
+
+  const syncRankButtons = () => {
+    const selected = equity.getSelected();
+    for (const btn of rankBtns) {
+      const on = selected.has(Number(btn.dataset.rank) as EquityRank);
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", String(on));
+    }
+  };
+  syncRankButtons();
+
+  for (const btn of rankBtns) {
+    btn.addEventListener("click", async () => {
+      const rank = Number(btn.dataset.rank) as EquityRank;
+      const nowOn = !equity.getSelected().has(rank);
+      btn.disabled = true;
+      try {
+        await equity.toggleRank(rank, nowOn);
+      } finally {
+        btn.disabled = false;
+      }
+      syncRankButtons();
+    });
+  }
+
+  const setOverlay = async (visible: boolean, source: HTMLInputElement) => {
+    for (const input of overlayInputs) input.checked = visible;
+    source.disabled = true;
+    try {
+      await equity.setOverlayVisible(visible);
+    } finally {
+      source.disabled = false;
+    }
+  };
+  for (const input of overlayInputs) {
+    input.addEventListener("change", () => void setOverlay(input.checked, input));
+  }
+}
+
+function renderEquityMetric(): void {
+  const el = document.getElementById("equity-rank-metric");
+  if (!el) return;
+  const selected = [...equity.getSelected()].sort((a, b) => a - b);
+  if (selected.length === 0) {
+    el.textContent = "Select one or more ranks to estimate.";
+    return;
+  }
+  const { percent, inside, total } = equity.estimate();
+  const ranks = `Ranks ${selected.join(", ")}`;
+  if (percent === null) {
+    el.textContent = equity.isUnavailable()
+      ? "Equity-rank boundaries aren't published yet — check back once the city map is live."
+      : `${ranks}: computing…`;
+    return;
+  }
+  el.innerHTML =
+    `<strong>${percent.toFixed(1)}%</strong> of devices are in ` +
+    `<span class="equity-metric__ranks">${ranks}</span> right now ` +
+    `<span class="equity-metric__count">(${inside.toLocaleString()} of ${total.toLocaleString()})</span>`;
 }
 
 function wireDrawers(): void {
@@ -645,6 +926,7 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
+      equity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(

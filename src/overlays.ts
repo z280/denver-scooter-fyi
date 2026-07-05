@@ -1,22 +1,19 @@
 import maplibregl, {
   type Map as MLMap,
-  type GeoJSONSource,
-  type LngLatBoundsLike,
   type FilterSpecification,
 } from "maplibre-gl";
 import {
   fetchBoundary,
   fetchSpatialSnapshot,
   type BoundaryLayer,
+  type BoundaryProperties,
   type BoundaryResponse,
 } from "./api.ts";
 import { OVERLAY_BY_LAYER } from "./config.ts";
 import { FIRST_DEVICE_LAYER } from "./devices.ts";
-import { commas, prettyRegion } from "./util.ts";
+import { commas } from "./util.ts";
 
 const CHOROPLETH_FILL = "choropleth-fill";
-const HIGHLIGHT_LINE = "nbhd-highlight";
-const HIGHLIGHT_SRC = "nbhd-highlight-src";
 
 /** Sequential blue ramp for choropleth fills. */
 const RAMP = ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"];
@@ -35,11 +32,60 @@ export class Overlays {
   private cache = new Map<BoundaryLayer, BoundaryResponse>();
   private loaded = new Set<BoundaryLayer>();
   private choroplethLayer: BoundaryLayer | null = null;
+  private regionClickHandler:
+    | ((layer: BoundaryLayer, regionName: string) => void)
+    | null = null;
 
   constructor(
     private readonly map: MLMap,
     private readonly legendEl: HTMLElement,
   ) {}
+
+  /**
+   * Direct-manipulation filtering: clicking a visible region polygon reports
+   * (layer, region_name) so main.ts can toggle it in the area filter. A
+   * single map-wide handler (rather than per-layer ones) so a click that
+   * lands on stacked polygons resolves to just the topmost region, and so
+   * clicks that hit a device dot or cluster are left to the device popup —
+   * `blockedBy` lists those layer ids.
+   */
+  enableRegionClicks(
+    handler: (layer: BoundaryLayer, regionName: string) => void,
+    blockedBy: string[],
+  ): void {
+    this.regionClickHandler = handler;
+    this.map.on("click", (e) => {
+      if (!this.regionClickHandler) return;
+      const blockers = blockedBy.filter((id) => this.map.getLayer(id));
+      if (
+        blockers.length &&
+        this.map.queryRenderedFeatures(e.point, { layers: blockers }).length
+      ) {
+        return;
+      }
+      const candidates: string[] = [];
+      if (this.choroplethLayer) candidates.push(CHOROPLETH_FILL);
+      for (const layer of this.loaded) {
+        if (
+          this.map.getLayoutProperty(fillId(layer), "visibility") === "visible"
+        ) {
+          candidates.push(fillId(layer));
+        }
+      }
+      if (!candidates.length) return;
+      const top = this.map.queryRenderedFeatures(e.point, {
+        layers: candidates,
+      })[0];
+      if (!top) return;
+      const layer =
+        top.layer.id === CHOROPLETH_FILL
+          ? this.choroplethLayer
+          : (top.layer.id.replace(/^bnd-/, "").replace(/-fill$/, "") as BoundaryLayer);
+      const regionName = (top.properties as BoundaryProperties).region_name;
+      if (!layer || !regionName) return;
+      this.regionClickHandler(layer, regionName);
+    });
+  }
 
   /** Fetch (and cache) a boundary layer's data without touching the map. */
   async loadBoundary(layer: BoundaryLayer): Promise<BoundaryResponse> {
@@ -97,20 +143,33 @@ export class Overlays {
   }
 
   /**
-   * Restrict the overlay's polygons to a specific set of region_names.
-   * Pass null to clear the filter (show every region of the layer).
+   * Emphasize a specific set of region_names in the overlay. Pass null to
+   * clear (every region back to normal). Selected regions get the outline
+   * and full-strength fill; the rest are dimmed rather than removed so they
+   * stay clickable for the map-click add/remove interaction — hiding them
+   * would make it impossible to click a second region into the filter.
    */
   async setSubset(
     layer: BoundaryLayer,
     regionNames: string[] | null,
   ): Promise<void> {
     await this.ensureLayer(layer);
-    const filter: FilterSpecification | null =
+    const lineFilter: FilterSpecification | null =
       regionNames === null
         ? null
         : ["in", ["get", "region_name"], ["literal", regionNames]];
-    this.map.setFilter(fillId(layer), filter);
-    this.map.setFilter(lineId(layer), filter);
+    this.map.setFilter(lineId(layer), lineFilter);
+    this.map.setFilter(fillId(layer), null);
+    const fillOpacity: maplibregl.ExpressionSpecification | number =
+      regionNames === null
+        ? 0.12
+        : [
+            "case",
+            ["in", ["get", "region_name"], ["literal", regionNames]],
+            0.18,
+            0.04,
+          ];
+    this.map.setPaintProperty(fillId(layer), "fill-opacity", fillOpacity);
   }
 
   /** Color one layer's regions by live device density (or clear when null). */
@@ -207,72 +266,4 @@ export class Overlays {
     this.legendEl.hidden = false;
   }
 
-  // ----- Neighborhood search + highlight -----
-
-  async neighborhoodList(): Promise<{ value: string; label: string }[]> {
-    const data = await this.ensureLayer("neighborhood");
-    return data.features
-      .map((f) => ({
-        value: f.properties.region_name,
-        label: prettyRegion(f.properties.region_name, "neighborhood"),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }
-
-  async highlightNeighborhood(regionName: string | null): Promise<void> {
-    if (!this.map.getSource(HIGHLIGHT_SRC)) {
-      this.map.addSource(HIGHLIGHT_SRC, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      this.map.addLayer(
-        {
-          id: HIGHLIGHT_LINE,
-          type: "line",
-          source: HIGHLIGHT_SRC,
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": "#111827", "line-width": 3, "line-opacity": 0.95 },
-        },
-        FIRST_DEVICE_LAYER,
-      );
-    }
-    const hSrc = this.map.getSource(HIGHLIGHT_SRC) as GeoJSONSource;
-
-    if (!regionName) {
-      hSrc.setData({ type: "FeatureCollection", features: [] });
-      return;
-    }
-
-    const data = await this.ensureLayer("neighborhood");
-    const feature = data.features.find((f) => f.properties.region_name === regionName);
-    if (!feature) return;
-
-    hSrc.setData({ type: "FeatureCollection", features: [feature] });
-    const b = bounds(feature.geometry);
-    if (b) this.map.fitBounds(b, { padding: 60, maxZoom: 15, duration: 800 });
-  }
-}
-
-/** Compute a [[w,s],[e,n]] bounds box from a polygon/multipolygon. */
-function bounds(
-  geom: GeoJSON.Polygon | GeoJSON.MultiPolygon,
-): LngLatBoundsLike | null {
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  const rings = geom.type === "Polygon" ? geom.coordinates : geom.coordinates.flat();
-  for (const ring of rings) {
-    for (const [x, y] of ring as [number, number][]) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  if (minX === Infinity) return null;
-  return [
-    [minX, minY],
-    [maxX, maxY],
-  ];
 }

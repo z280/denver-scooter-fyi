@@ -15,17 +15,63 @@ self-hosted vector basemap.
 ## Features
 
 - Full-viewport MapLibre map, fit to Denver on load.
-- Device markers clustered at low zoom; click a dot for `device_id` + type.
-- Device-type filter: All / Scooters / Bicycles (recomputes clusters in place).
-- Five boundary overlays, toggleable together (colored outline + faint fill):
-  Disadvantaged Areas (v1), Disadvantaged Areas (v2), Neighborhoods,
-  City Council Districts, City Regions.
-- Choropleth coloring of any boundary layer by live device density.
-- Neighborhood search that zooms to and highlights the selected polygon.
-- Top-right compliance gauge (avg % of devices in v1 areas vs. the 30%
-  threshold), or a PENDING state before the daily window is computed.
-- Bottom-right freshness footer: `as of HH:MM · N devices`.
-- Responsive: the control panel collapses to a bottom sheet on mobile.
+- Device markers clustered at low zoom; click a dot for a full detail popup.
+- **Reliability tiers**: every device is scored likely-rideable / unknown /
+  high-risk from quality flags, negative reports, failed starts, and dwell
+  time. High-risk "ghost" devices render faded; the popup explains the
+  verdict in plain language and, when it's risky, points at the nearest
+  likely-rideable alternative with a one-tap jump.
+- **Walk economics** (opt-in location): straight-line walk time to any
+  device, a dashed guide line on the map, and a Directions handoff to
+  Apple/Google Maps in walking mode.
+- **Unlock in Veo**: the device popup deep-links into the Veo app using the
+  same Adjust URL printed on the scooter's QR sticker. Deliberately gated —
+  it appears only for a signed-in user with location on who is physically at
+  the scooter (~75 m). Plates are never exposed to anonymous users, so the
+  map can't be scraped back into a competing feed.
+- **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
+  (available devices, reliability coloring, location offer) and 📊 *Audit*
+  (v1 choropleth + compliance gauge). Manual changes drop back to custom.
+- **🧭 Ride companion**: a landscape-first HUD (the Veo app has none) where
+  the live, pitched follow-cam map fills the whole screen — your position
+  marker recenters it as you move, with 3D building extrusions where the
+  basemap carries them — and only tiny corner cutouts float on top:
+  - top-left: live cost at your chosen rate (contract-locked Denver pricing),
+  - top-right: a digital mph readout,
+  - bottom-left: the ride clock with a red stop button (end ride) and a
+    wrench button (a panel for the countdown-start clock ±15s/±1m nudges,
+    rate, and day/night theme),
+  - bottom-right: a car-style analog speedometer with an animated needle,
+    0–18 mph and a caution band past Denver's ~15 mph cap.
+
+  Ride start goes fullscreen with a best-effort landscape lock; the summary
+  prices the trip under Lime's typical rates — what competition would have
+  cost — and prompts an equity-discount receipt check for rides touching a
+  disadvantaged area.
+- Controls grouped by attribute in a left activity bar:
+  - **Devices** — type filter (All / Scooters / E-bikes), availability
+    switch, a unified battery block: quartile filter buttons plus a
+    "Color dots by range" toggle — **on by default**, so dots show battery
+    percentage out of the box — and a "Color dots by reliability" toggle.
+    Device popups show the Veo model name and corrected rider posture
+    (seated vs. standing, keyed off `vehicle_use_type` since Veo mislabels
+    `form_factor`).
+  - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
+    v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
+    coloring by live device density, and an "Only show devices in…" area
+    filter. With an area type chosen, clicking a region directly on the map
+    adds or removes it from the filter.
+  - **Tools** — dense-cluster finder.
+  - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
+    the 30% threshold), or PENDING before the daily window is computed. Also
+    hosts the **equity-rank estimate**: the city ranked equity areas 1–6 but
+    hasn't said which bind the SLA, so you pick a rank set (default 1 + 2)
+    and get a live "% of the fleet inside the selected ranks" figure, plus an
+    "Equity Ranking (Selected)" union overlay in the Areas drawer.
+- Active-filter chips float over the map — one per live constraint, each
+  with a ✕ to clear it — so closed drawers never hide the map's state.
+- Bottom-right freshness footer: `as of HH:MM · Displaying x out of y`.
+- Responsive: drawers fill the remaining width on mobile.
 
 ## Tech stack
 
