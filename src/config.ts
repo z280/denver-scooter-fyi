@@ -69,6 +69,25 @@ export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEn
   [...OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
+/** Admin allowlist for the forthcoming Google sign-in gate (see
+ *  docs/API_REQUIREMENTS.md §2.2). A Google-verified email on this list is
+ *  meant to receive the `admin` scope — access to private per-scooter fields
+ *  and future admin tooling.
+ *
+ *  NOTE: this list grants nothing on its own. The binding decision is
+ *  enforced SERVER-SIDE once auth ships (the API verifies the Google token
+ *  and stamps the scope); this is only the client-side mirror the UI reads to
+ *  decide what to show. Hardcoded for now until the auth flow surfaces an
+ *  email — the current AuthBlob carries only a token, no identity. */
+export const ADMIN_EMAILS: readonly string[] = ["zneill@gmail.com"];
+
+/** True if `email` is on the admin allowlist (case-insensitive). Wired ahead
+ *  of the Google gate; nothing calls it yet because no email is available
+ *  until sign-in provides one. */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  return typeof email === "string" && ADMIN_EMAILS.includes(email.toLowerCase());
+}
+
 /** Adjust tracker token from Veo's own QR stickers. Campaign-scoped, so
  *  Veo could rotate it — if unlock links stop resolving, refresh it from
  *  any scooter's QR code. */
