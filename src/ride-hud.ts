@@ -46,6 +46,10 @@ const MPS_TO_MPH = 2.23694;
  *  rather than spinning the map on GPS noise while stopped. */
 const BEARING_MIN_MPS = 1.5;
 const BUILDINGS_3D_LAYER = "ride-buildings-3d";
+/** Fraction of viewport height to push the rider's marker BELOW center, so
+ *  the road ahead (bearing-up) fills most of the screen instead of the
+ *  ground already behind them. ~0.3 puts the dot ~80% of the way down. */
+const RIDE_FOCUS_OFFSET_FRAC = 0.3;
 
 export class RideHud {
   private state: HudState = "hidden";
@@ -528,6 +532,10 @@ export class RideHud {
     this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
     this.map.easeTo({
       center: [pos.lng, pos.lat],
+      // Push the focal point down so the rider sits low on screen and sees
+      // the road ahead. Screen-space offset, so it stays "toward the bottom"
+      // regardless of which way the bearing-up map is rotated.
+      offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
       bearing: this.lastBearing,
       pitch: RIDE_PITCH,
       zoom: RIDE_ZOOM,
