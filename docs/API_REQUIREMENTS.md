@@ -48,17 +48,20 @@ devices endpoint:
   showing an opaque grade.
 - Document the tier formula in the repo so the audit stays reproducible.
 
-### 1.3 Equity-rank boundaries `er1`–`er6` (DONE — consumed by frontend)
+### 1.3 Equity-rank boundaries `er1`–`er6` (DONE — live & verified)
 
 The city delivered a ranked equity map but did **not** say which ranks bind
 the SLA. The API now serves `GET /api/v1/boundaries/er1` … `/er6` in the same
-`BoundaryResponse` shape as the other layers. The frontend lets users pick
-which ranks to estimate against (default 1 + 2), draws the selected union as
-an "Equity Ranking (Selected)" overlay, and computes a live in-app "% of
-devices in selected ranks" figure client-side (point-in-polygon over the
-current fleet). No further API work is required unless we later want a
-server-side historical SLA-style average for a chosen rank set — deferred
-until the city specifies the binding ranks.
+`BoundaryResponse` shape as the other layers — **live in production and
+verified end-to-end** (er1: 34 features … er3: 157 … er6: 116; region names
+`ER1_0803100…`). The frontend lets users pick which ranks to estimate against
+(default 1 + 2), draws the selected union as an "Equity Ranking (Selected)"
+overlay, and computes a live in-app "% of devices in selected ranks" figure
+client-side (point-in-polygon over the current fleet). Sanity check against
+live data: ranks 1+2 ≈ 21% of the fleet, all six ranks = 100% (they tile the
+city). No further API work is required unless we later want a server-side
+historical SLA-style average for a chosen rank set — deferred until the city
+specifies the binding ranks.
 
 ---
 
