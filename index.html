@@ -311,7 +311,12 @@
     <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
       <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
       <button class="mode-btn" type="button" data-mode="audit">📊 Audit</button>
+      <button class="mode-btn" type="button" id="ride-open">🧭 Ride</button>
     </div>
+
+    <!-- Full-screen in-ride HUD (speed / clock / cost). Content built by
+         ride-hud.ts; hidden until the rider opens it. -->
+    <div id="ride-hud" class="ride-hud" hidden></div>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a

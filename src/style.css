@@ -1194,6 +1194,192 @@ body {
   padding: 5px 7px;
 }
 
+/* ---------- Ride HUD (full-screen, glanceable) ----------
+   Two fixed high-contrast palettes: day (near-black on white) and night
+   (luminescent green on black, preserving night vision). Big type, huge
+   targets — designed to be read in under two seconds at 15 mph. */
+.ride-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  color: #10151c;
+  font-variant-numeric: tabular-nums;
+}
+.ride-hud.is-night {
+  background: #000000;
+  color: #7dffa0;
+}
+.hud-card {
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.hud-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.hud-note {
+  margin: 0;
+  font-size: 13.5px;
+  opacity: 0.75;
+  line-height: 1.45;
+}
+.hud-note--pointed {
+  opacity: 1;
+  font-weight: 600;
+}
+.hud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  text-align: left;
+}
+.hud-field .select.is-error {
+  border-color: var(--fail);
+  outline: 2px solid var(--fail);
+}
+.hud-start-row {
+  display: flex;
+  gap: 8px;
+}
+.hud-btn {
+  appearance: none;
+  border: 2px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 12px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  flex: 1 1 0;
+}
+.hud-btn--primary {
+  background: #10151c;
+  color: #ffffff;
+  border-color: #10151c;
+}
+.ride-hud.is-night .hud-btn--primary {
+  background: #7dffa0;
+  color: #000000;
+  border-color: #7dffa0;
+}
+.hud-btn--ghost {
+  border-color: transparent;
+  opacity: 0.7;
+  font-weight: 600;
+}
+.hud-btn--end {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #ffffff;
+  flex: 2 1 0;
+  padding: 18px 14px;
+  font-size: 20px;
+}
+.hud-inline-select {
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+}
+.hud-card--countdown .hud-countdown {
+  font-size: min(48vh, 240px);
+  font-weight: 800;
+  line-height: 1;
+}
+.hud-live {
+  width: min(480px, calc(100vw - 24px));
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-evenly;
+  padding: 24px 0;
+}
+.hud-speed {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: min(26vh, 160px);
+  font-weight: 800;
+  line-height: 1;
+}
+.hud-speed-unit {
+  font-size: 24px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+.hud-clockcost {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 44px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.hud-cost {
+  font-size: 26px;
+  opacity: 0.8;
+}
+.hud-adjust {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.hud-adjust .hud-btn {
+  padding: 10px 4px;
+  font-size: 15px;
+}
+.hud-zone {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  background: rgba(245, 180, 0, 0.2);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.hud-bottom {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.hud-bottom .hud-btn--ghost {
+  flex: 0 0 auto;
+  font-size: 20px;
+}
+.hud-summary {
+  margin: 0;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  font-size: 15px;
+}
+.hud-summary dt {
+  opacity: 0.7;
+}
+.hud-summary dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
 /* ---------- Focus visibility ---------- */
 :focus-visible {
   outline: 3px solid var(--accent);
@@ -1219,6 +1405,15 @@ body {
     transform: none;
     justify-content: flex-start;
     max-width: none;
+  }
+  /* Lift the mode pill clear of the bottom-right freshness pill, which
+     would otherwise overlap it and swallow taps on narrow screens. */
+  .mode-switch {
+    bottom: 58px;
+  }
+  .mode-btn {
+    padding: 7px 10px;
+    font-size: 12.5px;
   }
 }
 

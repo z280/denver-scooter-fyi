@@ -20,6 +20,8 @@ import {
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
+import { RideHud } from "./ride-hud.ts";
+import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
 
@@ -142,6 +144,27 @@ void renderCompliance(need("compliance")).catch((e) => {
 });
 wireSecretUnlock();
 wireAccount();
+wireRideHud();
+
+// ---------- Ride HUD ----------
+
+// The v1∪v2 disadvantaged-area polygons power the HUD's equity-ride flags.
+// Fetched lazily on first ride and cached (loadBoundary caches too).
+let equityZonesCache: Promise<IndexedFeature[]> | null = null;
+function equityZones(): Promise<IndexedFeature[]> {
+  equityZonesCache ??= Promise.all([
+    overlays.loadBoundary("v1"),
+    overlays.loadBoundary("v2"),
+  ]).then((responses) =>
+    responses.flatMap((r) => r.features.map((f) => indexFeature(f))),
+  );
+  return equityZonesCache;
+}
+
+function wireRideHud(): void {
+  const hud = new RideHud(need("ride-hud"), equityZones);
+  need("ride-open").addEventListener("click", () => hud.open());
+}
 
 map.on("load", async () => {
   devices.addLayers();
@@ -424,7 +447,9 @@ function wireAreaFilter(): AreaFilter {
 // in "custom" now, and the presets never fight them for state.
 function wireModes(): void {
   const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#mode-switch .mode-btn"),
+    document.querySelectorAll<HTMLButtonElement>(
+      "#mode-switch .mode-btn[data-mode]",
+    ),
   );
   let applying = false;
 

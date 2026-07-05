@@ -57,3 +57,35 @@ export const VEO_ADJUST_TOKEN = "622qh4";
 export function veoDeepLink(vehicleNumber: string): string {
   return `https://gmjc.adj.st/?adj_t=${VEO_ADJUST_TOKEN}&number=${encodeURIComponent(vehicleNumber)}`;
 }
+
+// ---------- Ride pricing ----------
+// Veo's Denver rates are locked in the city licensing agreement for the
+// contract's duration, so constants are safe. All amounts in cents.
+
+export type RatePlanKey = "resident" | "visitor" | "equity";
+
+export interface RatePlan {
+  key: RatePlanKey;
+  label: string;
+  unlockCents: number;
+  perMinCents: number;
+}
+
+export const RATE_PLANS: RatePlan[] = [
+  { key: "resident", label: "Resident — $1 + 25¢/min", unlockCents: 100, perMinCents: 25 },
+  { key: "visitor", label: "Visitor — $1 + 39¢/min", unlockCents: 100, perMinCents: 39 },
+  // Equity program: 60 free min/day, then 15¢/min with no unlock fee. The
+  // ticker can't know how much of today's free hour is left, so it prices
+  // minutes beyond 60 and labels the estimate accordingly.
+  { key: "equity", label: "Equity program — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
+];
+
+/** "If Veo had competition" comparator for the ride summary. Lime's
+ *  typical mid-market US pricing; update to Lime's last-known Denver rates
+ *  when confirmed. */
+export const COMPARATOR = {
+  name: "Lime",
+  unlockCents: 100,
+  perMinCents: 30,
+  weekPassCents: 499,
+};

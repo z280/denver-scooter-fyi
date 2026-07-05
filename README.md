@@ -32,6 +32,14 @@ self-hosted vector basemap.
 - **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
   (available devices, reliability coloring, location offer) and 📊 *Audit*
   (v1 choropleth + compliance gauge). Manual changes drop back to custom.
+- **🧭 Ride companion**: a full-screen glanceable HUD — GPS speedometer,
+  ride clock with a countdown start ("start the scooter in N seconds") and
+  mid-ride ±15s/±1m nudges to sync with Veo's billing clock, a live cost
+  estimate at your chosen rate (contract-locked Denver pricing), equity-zone
+  flags, screen wake lock, and day/night high-contrast palettes. The ride
+  summary prices the same trip under Lime's typical rates — what
+  competition would have cost — and prompts an equity-discount receipt
+  check for rides touching a disadvantaged area.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
     switch, a unified battery block: quartile filter buttons plus a
