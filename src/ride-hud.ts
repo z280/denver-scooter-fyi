@@ -107,6 +107,7 @@ export class RideHud {
         <h2 class="hud-title">Ride companion</h2>
         <p class="hud-note">Speed, ride clock, and a cost estimate while you ride.
           The clock is unofficial — nudge it anytime to match the Veo app.</p>
+        <p class="hud-note hud-note--landscape">📱 Mount your phone sideways — the ride view is built for landscape.</p>
         <label class="hud-field">
           <span>My Veo rate</span>
           <select id="hud-rate" class="select">
@@ -137,6 +138,7 @@ export class RideHud {
       case "close":
         this.stopSensors();
         this.exitFollowCam();
+        this.exitImmersive();
         this.setState("hidden");
         break;
       case "start-now":
@@ -183,8 +185,51 @@ export class RideHud {
         void this.endRide();
         break;
       case "done":
+        this.exitImmersive();
         this.setState("hidden");
         break;
+    }
+  }
+
+  /** Best-effort immersive landscape: fullscreen the HUD and lock to
+   *  landscape. Both are gated by browser support and only work from a user
+   *  gesture / while fullscreen, so every call is guarded and failures are
+   *  silent — the CSS still adapts to whatever orientation the OS gives us. */
+  private async enterImmersive(): Promise<void> {
+    try {
+      // Fullscreen the whole document, NOT the HUD element — the follow-cam
+      // map (#map) is a sibling of the HUD, so fullscreening just the HUD
+      // would drop the map out of the fullscreen subtree and leave a black
+      // void behind the frame.
+      const el = document.documentElement as HTMLElement & {
+        requestFullscreen?: () => Promise<void>;
+      };
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        await el.requestFullscreen();
+      }
+    } catch {
+      /* fullscreen denied — layout still reflows for landscape */
+    }
+    try {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (o: string) => Promise<void>;
+      };
+      await orientation?.lock?.("landscape");
+    } catch {
+      /* orientation lock unsupported (desktop, iOS Safari) — that's fine */
+    }
+  }
+
+  private exitImmersive(): void {
+    try {
+      (screen.orientation as ScreenOrientation & { unlock?: () => void })?.unlock?.();
+    } catch {
+      /* nothing to unlock */
+    }
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen?.();
+    } catch {
+      /* not in fullscreen */
     }
   }
 
@@ -197,6 +242,12 @@ export class RideHud {
       return;
     }
     saveRatePlan(rate);
+
+    // Go immersive from within this click gesture (both start paths pass
+    // through here): fullscreen + a best-effort landscape lock, because the
+    // whole reason Ride mode exists is that the Veo app has no landscape
+    // view and the phone is mounted sideways on the handlebars.
+    void this.enterImmersive();
 
     if (seconds <= 0) {
       void this.startRide();
