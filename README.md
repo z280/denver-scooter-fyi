@@ -15,11 +15,28 @@ self-hosted vector basemap.
 ## Features
 
 - Full-viewport MapLibre map, fit to Denver on load.
-- Device markers clustered at low zoom; click a dot for `device_id` + type.
+- Device markers clustered at low zoom; click a dot for a full detail popup.
+- **Reliability tiers**: every device is scored likely-rideable / unknown /
+  high-risk from quality flags, negative reports, failed starts, and dwell
+  time. High-risk "ghost" devices render faded; the popup explains the
+  verdict in plain language and, when it's risky, points at the nearest
+  likely-rideable alternative with a one-tap jump.
+- **Walk economics** (opt-in location): straight-line walk time to any
+  device, a dashed guide line on the map, and a Directions handoff to
+  Apple/Google Maps in walking mode.
+- **Unlock in Veo**: each popup deep-links into the Veo app using the same
+  Adjust URL printed on the scooter's QR sticker (desktop shows a scannable
+  QR instead). Requires the vehicle plate, so today it lights up for
+  signed-in users; it applies to everyone once the public API carries
+  `vehicle_plate`.
+- **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
+  (available devices, reliability coloring, location offer) and 📊 *Audit*
+  (v1 choropleth + compliance gauge). Manual changes drop back to custom.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
-    switch, and a unified battery block: quartile filter buttons plus a
-    "Color dots by range" toggle (auto-enabled when you filter by battery).
+    switch, a unified battery block: quartile filter buttons plus a
+    "Color dots by range" toggle (auto-enabled when you filter by battery),
+    and a "Color dots by reliability" toggle.
   - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
     v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
     coloring by live device density, and an "Only show devices in…" area

@@ -46,3 +46,14 @@ export const OVERLAYS: OverlayDef[] = [
 export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEntries(
   OVERLAYS.map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
+
+/** Adjust tracker token from Veo's own QR stickers. Campaign-scoped, so
+ *  Veo could rotate it — if unlock links stop resolving, refresh it from
+ *  any scooter's QR code. */
+export const VEO_ADJUST_TOKEN = "622qh4";
+
+/** The exact deep-link format printed on every scooter: opens the Veo app
+ *  to this vehicle when installed, else Adjust bounces to the app store. */
+export function veoDeepLink(vehicleNumber: string): string {
+  return `https://gmjc.adj.st/?adj_t=${VEO_ADJUST_TOKEN}&number=${encodeURIComponent(vehicleNumber)}`;
+}

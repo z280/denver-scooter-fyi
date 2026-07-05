@@ -1,12 +1,13 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
 import { cellToBoundary, isValidCell } from "h3-js";
+import { renderSVG } from "uqr";
 import type {
   DeviceProperties,
   DevicesResponse,
   FormFactor,
   PropulsionType,
 } from "./api.ts";
-import { DEVICE_COLORS } from "./config.ts";
+import { DEVICE_COLORS, veoDeepLink } from "./config.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
@@ -18,10 +19,24 @@ import {
   type BatteryBucket,
   type BatteryThresholds,
 } from "./battery.ts";
+import {
+  assessReliability,
+  RELIABILITY_COLOR,
+  RELIABILITY_LABEL,
+  type ReliabilityTier,
+} from "./reliability.ts";
+import {
+  distanceMeters,
+  formatWalk,
+  walkMinutes,
+  walkingDirectionsUrl,
+  type Locate,
+  type LngLat,
+} from "./locate.ts";
 
 export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
-export type ColorMode = "type" | "range";
+export type ColorMode = "type" | "range" | "reliability";
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -79,7 +94,10 @@ export class Devices {
    *  visible-feature count and the unfiltered fleet total. */
   private countListeners = new Set<(visible: number, total: number) => void>();
 
-  constructor(private readonly map: Map) {}
+  constructor(
+    private readonly map: Map,
+    private readonly locate: Locate,
+  ) {}
 
   addLayers(): void {
     registerDeviceIcons(this.map);
@@ -211,6 +229,15 @@ export class Devices {
         "text-color": "#ffffff",
         "text-halo-color": "rgba(0,0,0,0.25)",
         "text-halo-width": 0.6,
+        // Ghost pins: high-failure-risk devices render semi-transparent in
+        // every color mode, training riders to walk past dead hardware.
+        "icon-opacity": [
+          "match",
+          ["get", "reliability_tier"],
+          "risk",
+          0.45,
+          1,
+        ],
       },
     });
 
@@ -317,46 +344,95 @@ export class Devices {
     map.on("click", POINT_LAYER, (e) => {
       const feature = e.features?.[0];
       if (!feature) return;
-      // Public fields are always potentially present; private fields only
-      // ride along when the signed-in user fetched via the private endpoint.
-      // MapLibre flattens bool/number JSON values into the layer's
-      // `properties` map, but the wire type can become a string when the
-      // value rides through a tile encoding. Be defensive in the readers.
-      const props = feature.properties as {
-        device_id: string;
-        form_factor: FormFactor;
-        // public
-        vehicle_identifier?: string | null;
-        is_disabled?: boolean | string | null;
-        is_reserved?: boolean | string | null;
-        current_range_meters?: number | string | null;
-        propulsion_type?: PropulsionType | string | null;
-        // h3 indexes (strings) — flattened intact through GeoJSON
-        h3_8_index?: string | null;
-        h3_9_index?: string | null;
-        h3_10_index?: string | null;
-        // range percentile / rank fields
-        range_percentile_by_type?: number | string | null;
-        range_rank_unique_by_type?: number | string | null;
-        range_rank_all_by_type?: number | string | null;
-        range_rank_all_devices?: number | string | null;
-        range_rank_h3_8_peers?: number | string | null;
-        range_rank_h3_9_peers?: number | string | null;
-        range_rank_h3_10_peers?: number | string | null;
-        // quality flags
-        has_negative_report?: boolean | string | null;
-        quality_designation?: string | null;
-        // private (authed only)
-        vehicle_plate?: string;
-        first_observed_at_location?: string;
-        number_failed_starts?: number | string;
-        first_ever_observed_at?: string;
-      };
       const geom = feature.geometry as GeoJSON.Point;
+      this.openDevicePopup(
+        feature.properties as PopupProps,
+        geom.coordinates as [number, number],
+      );
+    });
+
+    for (const layer of [CLUSTER_LAYER, POINT_LAYER]) {
+      map.on("mouseenter", layer, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", layer, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    }
+  }
+
+  /** Build and show the details popup for one device. Called from the map
+   *  click handler (flattened feature properties) and from the
+   *  worth-the-walk "Show me" jump (raw GeoJSON properties) — the readers
+   *  are defensive about both. */
+  private openDevicePopup(props: PopupProps, coords: [number, number]): void {
+    const { map } = this;
+    {
       const label = FORM_LABEL[props.form_factor] ?? props.form_factor;
       const color =
         DEVICE_COLORS[props.form_factor as keyof typeof DEVICE_COLORS] ??
         DEVICE_COLORS.unknown;
+      const here: LngLat = { lng: coords[0], lat: coords[1] };
+
+      // Reliability verdict — the headline answer to "worth the walk?".
+      // setData() pre-annotated tier + reasons; fall back to a fresh
+      // assessment for props that didn't ride through it.
+      const relTier = (props.reliability_tier ??
+        assessReliability(props).tier) as ReliabilityTier;
+      const relReasons =
+        props.reliability_reasons ??
+        assessReliability(props).reasons.join(" · ");
+      const relBlock = `
+        <div class="device-popup__reliability">
+          <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+          <span class="device-popup__rel-label">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
+          ${relReasons ? `<div class="device-popup__rel-reasons">${escapeHtml(relReasons)}</div>` : ""}
+        </div>`;
+
+      // Unlock deep link — same URL as the QR sticker on the deck. Only
+      // renderable when the plate rode along (signed-in today; public once
+      // the API promotes vehicle_plate). On fine-pointer devices there's no
+      // app to open, so offer the link as a scannable QR instead.
+      let unlockBlock = "";
+      if (props.vehicle_plate) {
+        const link = veoDeepLink(String(props.vehicle_plate));
+        const desktop = !window.matchMedia("(pointer: coarse)").matches;
+        unlockBlock = `
+          <div class="device-popup__unlock-row">
+            <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
+            ${desktop ? `<button type="button" class="device-popup__action" data-action="toggle-qr" data-link="${escapeHtml(link)}">QR</button>` : ""}
+          </div>
+          <div class="device-popup__qr" hidden></div>`;
+      }
+
+      // Walk economics — needs a location fix (opt-in via the geolocate
+      // button). For risky devices, point at the nearest likely-rideable
+      // alternative so the rider can decide before burning the walk.
+      let walkBlock = "";
+      const user = this.locate.current();
+      if (user) {
+        const meters = distanceMeters(user, here);
+        walkBlock = `
+          <div class="device-popup__walk">
+            🚶 ${escapeHtml(formatWalk(meters))}
+            <a class="device-popup__action" href="${escapeHtml(walkingDirectionsUrl(here))}" target="_blank" rel="noopener">Directions</a>
+          </div>`;
+        if (relTier !== "ok") {
+          const alt = this.nearestReliable(
+            user,
+            props.device_id,
+            props.form_factor,
+          );
+          if (alt) {
+            walkBlock += `
+              <div class="device-popup__alt">
+                ⚠️ A likely-rideable one is ~${walkMinutes(alt.meters)} min away
+                <button type="button" class="device-popup__action" data-action="jump-device"
+                  data-device="${escapeHtml(alt.id)}" data-lng="${alt.lng}" data-lat="${alt.lat}">Show me</button>
+              </div>`;
+          }
+        }
+      }
 
       // Status badges (out-of-service / reserved) — only when the upstream
       // payload explicitly flagged them. Null/undefined → omit.
@@ -387,8 +463,8 @@ export class Devices {
                class="device-popup__action"
                data-action="toggle-range"
                data-device="${escapeHtml(props.device_id)}"
-               data-lng="${(geom.coordinates as [number, number])[0]}"
-               data-lat="${(geom.coordinates as [number, number])[1]}"
+               data-lng="${coords[0]}"
+               data-lat="${coords[1]}"
                data-radius="${rangeMeters}"
              >${linkText}</button>
            </dd>`,
@@ -513,11 +589,14 @@ export class Devices {
 
       this.popup?.remove();
       this.popup = new maplibregl.Popup({ closeButton: true, offset: 10 })
-        .setLngLat(geom.coordinates as [number, number])
+        .setLngLat(coords)
         .setHTML(
           `<div class="device-popup">
              <span class="device-popup__badge" style="background:${color}">${label}</span>
              ${statusBlock}
+             ${relBlock}
+             ${unlockBlock}
+             ${walkBlock}
              <dl class="device-popup__meta">
                <dt>Device ID</dt>
                <dd><code>${escapeHtml(props.device_id)}</code></dd>
@@ -528,6 +607,12 @@ export class Devices {
            </div>`,
         )
         .addTo(map);
+
+      // Dashed orientation line user → device while the popup is open.
+      if (user) {
+        this.locate.showLineTo(here);
+        this.popup.on("close", () => this.locate.clearLine());
+      }
 
       // Wire the "Show/Hide on map" range-circle toggle, if rendered.
       const toggleBtn = this.popup
@@ -571,16 +656,68 @@ export class Devices {
           });
         });
       });
-    });
 
-    for (const layer of [CLUSTER_LAYER, POINT_LAYER]) {
-      map.on("mouseenter", layer, () => {
-        map.getCanvas().style.cursor = "pointer";
+      // Worth-the-walk "Show me": fly to the reliable alternative and open
+      // its popup so the rider can compare before walking.
+      const jumpBtn = this.popup
+        .getElement()
+        ?.querySelector<HTMLButtonElement>('[data-action="jump-device"]');
+      jumpBtn?.addEventListener("click", () => {
+        this.jumpToDevice(
+          jumpBtn.dataset.device || "",
+          Number(jumpBtn.dataset.lng),
+          Number(jumpBtn.dataset.lat),
+        );
       });
-      map.on("mouseleave", layer, () => {
-        map.getCanvas().style.cursor = "";
+
+      // Desktop QR reveal for the unlock link.
+      const qrBtn = this.popup
+        .getElement()
+        ?.querySelector<HTMLButtonElement>('[data-action="toggle-qr"]');
+      qrBtn?.addEventListener("click", () => {
+        const box = this.popup
+          ?.getElement()
+          ?.querySelector<HTMLElement>(".device-popup__qr");
+        if (!box) return;
+        if (!box.innerHTML) box.innerHTML = renderSVG(qrBtn.dataset.link || "");
+        box.hidden = !box.hidden;
       });
     }
+  }
+
+  /** Center the map on a device and open its popup — used by the
+   *  worth-the-walk suggestion. */
+  private jumpToDevice(deviceId: string, lng: number, lat: number): void {
+    this.map.easeTo({
+      center: [lng, lat],
+      zoom: Math.max(this.map.getZoom(), 15.5),
+    });
+    const feat = this.filtered().find(
+      (f) => f.properties.device_id === deviceId,
+    );
+    if (feat) this.openDevicePopup(feat.properties as PopupProps, [lng, lat]);
+  }
+
+  /** Nearest visible same-type device with an "ok" reliability tier. */
+  private nearestReliable(
+    from: LngLat,
+    excludeId: string,
+    formFactor?: string,
+  ): { id: string; lng: number; lat: number; meters: number } | null {
+    let best: { id: string; lng: number; lat: number; meters: number } | null =
+      null;
+    for (const f of this.filtered()) {
+      const p = f.properties as DeviceProperties;
+      if (p.device_id === excludeId) continue;
+      if (p.reliability_tier !== "ok") continue;
+      if (formFactor && p.form_factor !== formFactor) continue;
+      const [lng, lat] = f.geometry.coordinates;
+      const meters = distanceMeters(from, { lng, lat });
+      if (!best || meters < best.meters) {
+        best = { id: p.device_id, lng, lat, meters };
+      }
+    }
+    return best;
   }
 
   setData(resp: DevicesResponse): void {
@@ -592,6 +729,7 @@ export class Devices {
     // tell the same story. When the API ships max_range_meters this can
     // collapse to a one-line lookup.
     annotateBatteryPercent(resp.features);
+    annotateReliability(resp.features);
 
     this.all = resp;
     // Recompute battery thresholds from the freshly-arrived fleet so the
@@ -692,9 +830,12 @@ export class Devices {
    *  emoji badge with no text. Cheap to call repeatedly. */
   private applyPaint(): void {
     const rangeMode = this.colorMode === "range" && this.thresholds;
-    const iconExpr = rangeMode
-      ? iconByRange(this.thresholds!)
-      : iconByType();
+    const iconExpr =
+      this.colorMode === "reliability"
+        ? iconByReliability()
+        : rangeMode
+          ? iconByRange(this.thresholds!)
+          : iconByType();
     const textExpr: maplibregl.ExpressionSpecification | string = rangeMode
       ? textByPercent()
       : "";
@@ -790,6 +931,59 @@ export class Devices {
   }
 }
 
+/** Flattened feature properties the popup builder reads. Public fields are
+ *  always potentially present; private fields only ride along when the
+ *  signed-in user fetched via the private endpoint. MapLibre flattens
+ *  bool/number JSON values into the layer's `properties` map, but the wire
+ *  type can become a string when the value rides through a tile encoding,
+ *  so every reader is defensive. */
+interface PopupProps {
+  device_id: string;
+  form_factor: FormFactor;
+  // public
+  vehicle_identifier?: string | null;
+  is_disabled?: boolean | string | null;
+  is_reserved?: boolean | string | null;
+  current_range_meters?: number | string | null;
+  propulsion_type?: PropulsionType | string | null;
+  // h3 indexes (strings) — flattened intact through GeoJSON
+  h3_8_index?: string | null;
+  h3_9_index?: string | null;
+  h3_10_index?: string | null;
+  // range percentile / rank fields
+  range_percentile_by_type?: number | string | null;
+  range_rank_unique_by_type?: number | string | null;
+  range_rank_all_by_type?: number | string | null;
+  range_rank_all_devices?: number | string | null;
+  range_rank_h3_8_peers?: number | string | null;
+  range_rank_h3_9_peers?: number | string | null;
+  range_rank_h3_10_peers?: number | string | null;
+  // quality flags
+  has_negative_report?: boolean | string | null;
+  quality_designation?: string | null;
+  // client-derived (annotated in setData)
+  reliability_tier?: string | null;
+  reliability_reasons?: string | null;
+  // private (authed only)
+  vehicle_plate?: string;
+  first_observed_at_location?: string;
+  number_failed_starts?: number | string;
+  first_ever_observed_at?: string;
+}
+
+/** Attach a `reliability_tier` + human-readable `reliability_reasons` to
+ *  every feature so paint expressions and popups tell the same story.
+ *  Mutates the input — call once per fresh DevicesResponse. */
+function annotateReliability(features: DevicesResponse["features"]): void {
+  const now = Date.now();
+  for (const f of features) {
+    const props = f.properties;
+    const info = assessReliability(props, now);
+    props.reliability_tier = info.tier;
+    props.reliability_reasons = info.reasons.join(" · ");
+  }
+}
+
 /** Per-form-factor icon expression — the default "Device type" display. */
 function iconByType(): maplibregl.ExpressionSpecification {
   return [
@@ -800,6 +994,19 @@ function iconByType(): maplibregl.ExpressionSpecification {
     "bicycle",
     "dev-bicycle",
     "dev-unknown",
+  ];
+}
+
+/** Tier-based icon expression for the "Reliability" display. */
+function iconByReliability(): maplibregl.ExpressionSpecification {
+  return [
+    "match",
+    ["get", "reliability_tier"],
+    "ok",
+    "dev-rel-ok",
+    "risk",
+    "dev-rel-risk",
+    "dev-rel-unknown",
   ];
 }
 
@@ -922,6 +1129,16 @@ function registerDeviceIcons(map: Map): void {
       makeGlyphBadge("?", BATTERY_MISSING_COLOR, "#ffffff"),
       { pixelRatio: 2 },
     );
+  }
+  // Reliability-tier badges: ✓ / ? / ! on the tier's signature color.
+  const relIcons: Array<[string, string, string, string]> = [
+    ["dev-rel-ok", "✓", RELIABILITY_COLOR.ok, "#ffffff"],
+    ["dev-rel-unknown", "?", RELIABILITY_COLOR.unknown, "#3a2a00"],
+    ["dev-rel-risk", "!", RELIABILITY_COLOR.risk, "#ffffff"],
+  ];
+  for (const [id, glyph, bg, fg] of relIcons) {
+    if (map.hasImage(id)) continue;
+    map.addImage(id, makeGlyphBadge(glyph, bg, fg), { pixelRatio: 2 });
   }
 }
 

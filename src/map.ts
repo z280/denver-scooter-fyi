@@ -30,7 +30,14 @@ function buildStyle(): StyleSpecification {
   };
 }
 
-export function createMap(container: string): maplibregl.Map {
+export interface MapHandles {
+  map: maplibregl.Map;
+  /** Exposed so locate.ts can subscribe to fixes and mode presets can
+   *  trigger the permission prompt from a user gesture. */
+  geolocate: maplibregl.GeolocateControl;
+}
+
+export function createMap(container: string): MapHandles {
   // Register the pmtiles:// protocol so MapLibre can read the self-hosted archive.
   const protocol = new Protocol();
   maplibregl.addProtocol("pmtiles", protocol.tile);
@@ -58,15 +65,13 @@ export function createMap(container: string): maplibregl.Map {
     new maplibregl.AttributionControl({ compact: true }),
     "bottom-left",
   );
-  map.addControl(
-    new maplibregl.GeolocateControl({
-      positionOptions: { enableHighAccuracy: true },
-      trackUserLocation: true,
-      showUserLocation: true,
-      showAccuracyCircle: true,
-    }),
-    "top-right",
-  );
+  const geolocate = new maplibregl.GeolocateControl({
+    positionOptions: { enableHighAccuracy: true },
+    trackUserLocation: true,
+    showUserLocation: true,
+    showAccuracyCircle: true,
+  });
+  map.addControl(geolocate, "top-right");
 
-  return map;
+  return { map, geolocate };
 }

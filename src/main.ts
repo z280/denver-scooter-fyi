@@ -19,6 +19,7 @@ import {
   type AreaFilterState,
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
+import { Locate } from "./locate.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
 
@@ -28,9 +29,10 @@ function need<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const map = createMap("map");
+const { map, geolocate } = createMap("map");
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
-const devices = new Devices(map);
+const locate = new Locate(map, geolocate);
+const devices = new Devices(map, locate);
 const overlays = new Overlays(map, need("choropleth-legend"));
 const freshness = new Freshness(need("freshness"), need("freshness-text"));
 const clusters = new Clusters(
@@ -151,6 +153,7 @@ map.on("load", async () => {
   wireChoropleth();
   wireDrawers();
   const areaFilter = wireAreaFilter();
+  wireModes();
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -340,9 +343,22 @@ function wireBatteryFilter(): void {
 }
 
 function wireColorBy(): void {
-  const cb = need<HTMLInputElement>("color-by-range");
-  cb.addEventListener("change", () => {
-    devices.setColorMode(cb.checked ? "range" : "type");
+  // Two coloring toggles, radio-like: range and reliability are different
+  // lenses on the same dots, so turning one on turns the other off.
+  const range = need<HTMLInputElement>("color-by-range");
+  const rel = need<HTMLInputElement>("color-by-reliability");
+  const sync = () => {
+    devices.setColorMode(
+      rel.checked ? "reliability" : range.checked ? "range" : "type",
+    );
+  };
+  range.addEventListener("change", () => {
+    if (range.checked) rel.checked = false;
+    sync();
+  });
+  rel.addEventListener("change", () => {
+    if (rel.checked) range.checked = false;
+    sync();
   });
 }
 
@@ -397,6 +413,108 @@ function wireAreaFilter(): AreaFilter {
     clusters.update(devices.visibleFeatures());
     refreshChips();
   });
+}
+
+// ---------- Intent modes ----------
+
+// One-tap presets over the existing controls — not separate apps. "Find a
+// ride" sets the rider up (available devices, reliability coloring, offer
+// location); "Audit" sets the civic view (v1 choropleth + compliance).
+// Any manual control change afterwards clears the highlight: the user is
+// in "custom" now, and the presets never fight them for state.
+function wireModes(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#mode-switch .mode-btn"),
+  );
+  let applying = false;
+
+  const setActive = (mode: string | null): void => {
+    for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
+  };
+  const setChecked = (id: string, on: boolean): void => {
+    const cb = need<HTMLInputElement>(id);
+    if (cb.checked !== on) {
+      cb.checked = on;
+      cb.dispatchEvent(new Event("change"));
+    }
+  };
+  const setSelect = (id: string, value: string): void => {
+    const sel = need<HTMLSelectElement>(id);
+    if (sel.value !== value) {
+      sel.value = value;
+      sel.dispatchEvent(new Event("change"));
+    }
+  };
+  const setDeviceFilter = (filter: string): void => {
+    document
+      .querySelector<HTMLButtonElement>(
+        `#device-filter-seg .seg-btn[data-filter="${filter}"]`,
+      )
+      ?.click();
+  };
+  const setDrawer = (id: string | null): void => {
+    const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
+    if (open && open.dataset.drawer !== id) open.click();
+    if (id) {
+      const tab = document.querySelector<HTMLButtonElement>(
+        `.drawer-tab[data-drawer="${id}"]`,
+      );
+      if (tab && !tab.classList.contains("is-active")) tab.click();
+    }
+  };
+
+  const applyRide = (): void => {
+    setDeviceFilter("all");
+    setChecked("hide-unavailable", true);
+    setChecked("area-filter-enable", false);
+    setChecked("color-by-range", false);
+    setChecked("color-by-reliability", true);
+    setSelect("choropleth-select", "");
+    for (const input of layerInputs.values()) {
+      if (input.checked) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    }
+    setDrawer(null);
+    // Offer location so walk times light up. Runs inside the button tap,
+    // so the browser treats the permission prompt as user-initiated.
+    locate.trigger();
+  };
+
+  const applyAudit = (): void => {
+    setDeviceFilter("all");
+    setChecked("hide-unavailable", false);
+    setChecked("area-filter-enable", false);
+    setChecked("color-by-range", false);
+    setChecked("color-by-reliability", false);
+    setSelect("choropleth-select", "v1");
+    setDrawer("compliance");
+  };
+
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      applying = true;
+      try {
+        if (btn.dataset.mode === "ride") applyRide();
+        else applyAudit();
+      } finally {
+        applying = false;
+      }
+      setActive(btn.dataset.mode ?? null);
+    });
+  }
+
+  // Manual changes to any drawer control drop the mode back to custom.
+  // Capture phase so the preset's own synthetic events (guarded by
+  // `applying`) never count.
+  const toCustom = (e: Event): void => {
+    if (applying) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest?.(".drawer")) setActive(null);
+  };
+  document.addEventListener("change", toCustom, true);
+  document.addEventListener("click", toCustom, true);
 }
 
 function wireDrawers(): void {

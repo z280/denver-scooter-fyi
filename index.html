@@ -150,6 +150,20 @@
             <div class="legend__scale"><span>empty</span><span>full</span></div>
           </div>
         </section>
+
+        <section class="control-group" aria-labelledby="reliability-label">
+          <h3 id="reliability-label" class="control-label">Reliability</h3>
+          <label class="switch">
+            <input type="checkbox" id="color-by-reliability" />
+            <span>Color dots by reliability</span>
+          </label>
+          <div class="rel-legend" aria-hidden="true">
+            <span><i style="background: #1b8a3f"></i> likely rideable</span>
+            <span><i style="background: #f5b400"></i> unknown</span>
+            <span><i style="background: #c62828"></i> high risk</span>
+          </div>
+          <p class="control-hint">High-risk devices always render faded on the map.</p>
+        </section>
       </div>
     </aside>
 
@@ -290,6 +304,14 @@
     <!-- Active-filter chips: always-visible readout of every live constraint,
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
+
+    <!-- Intent-mode presets (bottom center): one-tap setups for the two main
+         audiences. Manual control changes drop back to an unlabeled custom
+         state — the presets never lock anything. -->
+    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
+      <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
+      <button class="mode-btn" type="button" data-mode="audit">📊 Audit</button>
+    </div>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a
