@@ -21,6 +21,8 @@ import {
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
+import { EquityRanks } from "./equity.ts";
+import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
@@ -36,6 +38,7 @@ if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
 const overlays = new Overlays(map, need("choropleth-legend"));
+const equity = new EquityRanks(overlays, () => renderEquityMetric());
 const freshness = new Freshness(need("freshness"), need("freshness-text"));
 const clusters = new Clusters(
   map,
@@ -162,7 +165,7 @@ function equityZones(): Promise<IndexedFeature[]> {
 }
 
 function wireRideHud(): void {
-  const hud = new RideHud(need("ride-hud"), equityZones);
+  const hud = new RideHud(need("ride-hud"), equityZones, map);
   need("ride-open").addEventListener("click", () => hud.open());
 }
 
@@ -177,6 +180,7 @@ map.on("load", async () => {
   wireDrawers();
   const areaFilter = wireAreaFilter();
   wireModes();
+  wireEquityRanks();
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -193,6 +197,7 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
+    equity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -203,6 +208,8 @@ map.on("load", async () => {
   } else {
     freshness.error();
   }
+  // Warm the default-selected ranks' polygons so the estimate populates.
+  void equity.warm();
   startRefreshLoop();
 });
 
@@ -542,6 +549,81 @@ function wireModes(): void {
   document.addEventListener("click", toCustom, true);
 }
 
+// ---------- Equity ranks ----------
+
+// Rank toggles (1–6, default 1+2) drive a live "% of the fleet in the
+// selected ranks" estimate and the "Equity Ranking (Selected)" map overlay.
+// The two overlay checkboxes (one in Areas, one beside the toggles) mirror
+// each other and the underlying overlay state.
+function wireEquityRanks(): void {
+  const rankBtns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#rank-toggles .rank-btn"),
+  );
+  const overlayInputs = [
+    need<HTMLInputElement>("equity-selected-overlay"),
+    need<HTMLInputElement>("equity-selected-overlay-mirror"),
+  ];
+
+  const syncRankButtons = () => {
+    const selected = equity.getSelected();
+    for (const btn of rankBtns) {
+      const on = selected.has(Number(btn.dataset.rank) as EquityRank);
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", String(on));
+    }
+  };
+  syncRankButtons();
+
+  for (const btn of rankBtns) {
+    btn.addEventListener("click", async () => {
+      const rank = Number(btn.dataset.rank) as EquityRank;
+      const nowOn = !equity.getSelected().has(rank);
+      btn.disabled = true;
+      try {
+        await equity.toggleRank(rank, nowOn);
+      } finally {
+        btn.disabled = false;
+      }
+      syncRankButtons();
+    });
+  }
+
+  const setOverlay = async (visible: boolean, source: HTMLInputElement) => {
+    for (const input of overlayInputs) input.checked = visible;
+    source.disabled = true;
+    try {
+      await equity.setOverlayVisible(visible);
+    } finally {
+      source.disabled = false;
+    }
+  };
+  for (const input of overlayInputs) {
+    input.addEventListener("change", () => void setOverlay(input.checked, input));
+  }
+}
+
+function renderEquityMetric(): void {
+  const el = document.getElementById("equity-rank-metric");
+  if (!el) return;
+  const selected = [...equity.getSelected()].sort((a, b) => a - b);
+  if (selected.length === 0) {
+    el.textContent = "Select one or more ranks to estimate.";
+    return;
+  }
+  const { percent, inside, total } = equity.estimate();
+  const ranks = `Ranks ${selected.join(", ")}`;
+  if (percent === null) {
+    el.textContent = equity.isUnavailable()
+      ? "Equity-rank boundaries aren't published yet — check back once the city map is live."
+      : `${ranks}: computing…`;
+    return;
+  }
+  el.innerHTML =
+    `<strong>${percent.toFixed(1)}%</strong> of devices are in ` +
+    `<span class="equity-metric__ranks">${ranks}</span> right now ` +
+    `<span class="equity-metric__count">(${inside.toLocaleString()} of ${total.toLocaleString()})</span>`;
+}
+
 function wireDrawers(): void {
   const tabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".drawer-tab"),
@@ -836,6 +918,7 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
+      equity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(

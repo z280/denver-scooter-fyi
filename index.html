@@ -179,6 +179,14 @@
           <ul class="layer-list" id="layer-list">
             <!-- populated by JS -->
           </ul>
+          <!-- Union of the equity ranks selected in the Equity Compliance
+               drawer. Not a single boundary layer, so it lives outside the
+               JS-built list. -->
+          <label class="layer-item">
+            <input type="checkbox" id="equity-selected-overlay" />
+            <span class="layer-item__swatch" style="background: #7b1fa2"></span>
+            <span class="layer-item__label">Equity Ranking (Selected)</span>
+          </label>
         </section>
 
         <section class="control-group" aria-labelledby="choropleth-label">
@@ -285,6 +293,27 @@
         <div id="compliance" class="compliance" role="status" aria-live="polite" aria-label="Daily compliance status">
           <div class="compliance-loading">Loading compliance…</div>
         </div>
+
+        <section class="control-group" id="equity-ranks" aria-labelledby="equity-ranks-label">
+          <h3 id="equity-ranks-label" class="control-label">Equity ranks (estimate)</h3>
+          <p class="control-hint">
+            The city ranked equity areas 1–6 but hasn't said which bind the SLA.
+            Pick the ranks to estimate against.
+          </p>
+          <div id="rank-toggles" class="rank-toggles" role="group" aria-labelledby="equity-ranks-label">
+            <button class="rank-btn" type="button" data-rank="1" aria-pressed="false">1</button>
+            <button class="rank-btn" type="button" data-rank="2" aria-pressed="false">2</button>
+            <button class="rank-btn" type="button" data-rank="3" aria-pressed="false">3</button>
+            <button class="rank-btn" type="button" data-rank="4" aria-pressed="false">4</button>
+            <button class="rank-btn" type="button" data-rank="5" aria-pressed="false">5</button>
+            <button class="rank-btn" type="button" data-rank="6" aria-pressed="false">6</button>
+          </div>
+          <div id="equity-rank-metric" class="equity-metric" aria-live="polite"></div>
+          <label class="switch equity-overlay-switch">
+            <input type="checkbox" id="equity-selected-overlay-mirror" />
+            <span>Show selected ranks on map</span>
+          </label>
+        </section>
       </div>
     </aside>
 

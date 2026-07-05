@@ -15,7 +15,16 @@ export type BoundaryLayer =
   | "v2"
   | "neighborhood"
   | "council_district"
-  | "community_network";
+  | "community_network"
+  // Equity-rank tiers er1..er6 from the city's ranked equity map. The city
+  // hasn't said which ranks bind the SLA, so the UI lets users pick a set
+  // to estimate against rather than hardcoding one.
+  | "er1"
+  | "er2"
+  | "er3"
+  | "er4"
+  | "er5"
+  | "er6";
 
 export type PropulsionType = "electric" | "electric_assist" | "human";
 

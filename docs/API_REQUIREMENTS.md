@@ -15,16 +15,23 @@ the existing `{detail}` shape; CORS allowlist stays production-origins-only
 
 ## 1. Field promotions (unblocks frontend Phase 2 — read-only)
 
-### 1.1 Promote `vehicle_plate` to the public devices endpoint
+### 1.1 Keep `vehicle_plate` authenticated-only (REVERSED — do NOT promote)
 
-- Add `vehicle_plate` to `/api/v1/devices/current` feature properties
-  (today it's private-only). Rationale: the number is painted on every
-  scooter on the street and printed in its QR code — it is not sensitive —
-  and the frontend needs it to build "Unlock in Veo" deep links
-  (`https://gmjc.adj.st/?adj_t=622qh4&number=<plate>`).
-- **Verification task before shipping:** scan one scooter's QR on-device
-  and confirm its `number` query param equals our stored `vehicle_plate`
-  for that vehicle. If they differ, expose whichever field matches the QR.
+An earlier draft asked to expose `vehicle_plate` publicly for the "Unlock
+in Veo" deep link. **That is withdrawn.** Publishing every live plate is a
+gift to Veo: they could scrape our map and reconcile it against their own
+GBFS feed, and it hands the whole audit's raw identifiers to the operator
+we're auditing. Plates stay on the authenticated endpoint only.
+
+Consequences, already reflected in the frontend:
+- The unlock button is gated to signed-in users **and** requires an active
+  location fix within ~75 m of the scooter. Unlocking is a
+  standing-at-the-scooter action, so this loses nothing real while removing
+  the couch-scraping vector entirely.
+- No API change is needed here beyond *not* promoting the field.
+- **Verification task (unchanged):** scan one scooter's QR on-device and
+  confirm its `number` query param equals our stored `vehicle_plate`, so the
+  authenticated unlock link resolves to the right vehicle.
 
 ### 1.2 Public reliability signal
 
@@ -40,6 +47,18 @@ devices endpoint:
   then explain the tier ("idle 4 days · 2 failed starts") instead of
   showing an opaque grade.
 - Document the tier formula in the repo so the audit stays reproducible.
+
+### 1.3 Equity-rank boundaries `er1`–`er6` (DONE — consumed by frontend)
+
+The city delivered a ranked equity map but did **not** say which ranks bind
+the SLA. The API now serves `GET /api/v1/boundaries/er1` … `/er6` in the same
+`BoundaryResponse` shape as the other layers. The frontend lets users pick
+which ranks to estimate against (default 1 + 2), draws the selected union as
+an "Equity Ranking (Selected)" overlay, and computes a live in-app "% of
+devices in selected ranks" figure client-side (point-in-polygon over the
+current fleet). No further API work is required unless we later want a
+server-side historical SLA-style average for a chosen rank set — deferred
+until the city specifies the binding ranks.
 
 ---
 
@@ -191,8 +210,9 @@ attribution, and supporter features.
 
 | Order | Item | Unblocks frontend |
 |---|---|---|
-| 1 | §1.1 plate promotion (+ QR verification) | Phase 2 deep links |
+| 1 | §1.1 keep plates authed-only (no work; verify QR↔plate) | Phase 2 unlock |
 | 2 | §1.2 reliability tier / raw fields | Phase 2 reliability UI |
+| — | §1.3 `er1`–`er6` boundaries (already shipped) | Phase 2 equity ranks |
 | 3 | §2 accounts (Google → sessions → magic link → profile) | Phase 3 cost ticker |
 | 4 | §2.5 GitHub retirement | Phase 3 admin migration |
 | 5 | §3 reports + aggregates | Phase 4 |

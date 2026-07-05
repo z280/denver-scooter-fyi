@@ -1,6 +1,6 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
 import { cellToBoundary, isValidCell } from "h3-js";
-import { renderSVG } from "uqr";
+import { isAuthenticated } from "./map-auth.js";
 import type {
   DeviceProperties,
   DevicesResponse,
@@ -37,6 +37,11 @@ import {
 export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
 export type ColorMode = "type" | "range" | "reliability";
+
+/** How close (metres) the user must be for the "Unlock in Veo" button to
+ *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
+ *  tight enough that the button means "you're at this scooter." */
+const UNLOCK_PROXIMITY_M = 75;
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -389,27 +394,37 @@ export class Devices {
           ${relReasons ? `<div class="device-popup__rel-reasons">${escapeHtml(relReasons)}</div>` : ""}
         </div>`;
 
-      // Unlock deep link — same URL as the QR sticker on the deck. Only
-      // renderable when the plate rode along (signed-in today; public once
-      // the API promotes vehicle_plate). On fine-pointer devices there's no
-      // app to open, so offer the link as a scannable QR instead.
+      const user = this.locate.current();
+
+      // Unlock deep link — same URL as the QR sticker on the scooter's deck.
+      // Deliberately gated three ways: it needs the plate (authenticated
+      // fetch only — we never expose plates to anonymous users, so Veo can't
+      // scrape our map back into their GBFS feed), an active location fix,
+      // AND physical proximity. Unlocking is a standing-at-the-scooter
+      // action; a link that works from your couch is a plate leak with extra
+      // steps. When authed but not in range, we say why instead of hiding it.
       let unlockBlock = "";
-      if (props.vehicle_plate) {
-        const link = veoDeepLink(String(props.vehicle_plate));
-        const desktop = !window.matchMedia("(pointer: coarse)").matches;
-        unlockBlock = `
-          <div class="device-popup__unlock-row">
-            <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
-            ${desktop ? `<button type="button" class="device-popup__action" data-action="toggle-qr" data-link="${escapeHtml(link)}">QR</button>` : ""}
-          </div>
-          <div class="device-popup__qr" hidden></div>`;
+      if (props.vehicle_plate && isAuthenticated()) {
+        const nearEnough =
+          user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
+        if (nearEnough) {
+          const link = veoDeepLink(String(props.vehicle_plate));
+          unlockBlock = `
+            <div class="device-popup__unlock-row">
+              <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
+            </div>`;
+        } else {
+          const why = user
+            ? "Walk up to this scooter to unlock it here."
+            : "Turn on your location to unlock at the scooter.";
+          unlockBlock = `<div class="device-popup__unlock-hint">🔒 ${escapeHtml(why)}</div>`;
+        }
       }
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
       // alternative so the rider can decide before burning the walk.
       let walkBlock = "";
-      const user = this.locate.current();
       if (user) {
         const meters = distanceMeters(user, here);
         walkBlock = `
@@ -670,18 +685,6 @@ export class Devices {
         );
       });
 
-      // Desktop QR reveal for the unlock link.
-      const qrBtn = this.popup
-        .getElement()
-        ?.querySelector<HTMLButtonElement>('[data-action="toggle-qr"]');
-      qrBtn?.addEventListener("click", () => {
-        const box = this.popup
-          ?.getElement()
-          ?.querySelector<HTMLElement>(".device-popup__qr");
-        if (!box) return;
-        if (!box.innerHTML) box.innerHTML = renderSVG(qrBtn.dataset.link || "");
-        box.hidden = !box.hidden;
-      });
     }
   }
 

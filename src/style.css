@@ -489,6 +489,57 @@ body {
   color: var(--fail);
 }
 
+/* ---------- Equity rank toggles ---------- */
+.rank-toggles {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.rank-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.rank-btn:hover:not([disabled]) {
+  border-color: #7b1fa2;
+}
+.rank-btn.is-active {
+  background: #7b1fa2;
+  border-color: #7b1fa2;
+  color: #fff;
+}
+.rank-btn[disabled] {
+  opacity: 0.5;
+  cursor: progress;
+}
+.equity-metric {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.equity-metric strong {
+  font-size: 16px;
+}
+.equity-metric__ranks {
+  color: #7b1fa2;
+  font-weight: 600;
+}
+.equity-metric__count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.equity-overlay-switch {
+  margin-top: 12px;
+}
+
 /* ---------- Layer toggles ---------- */
 .layer-list {
   list-style: none;
@@ -1170,14 +1221,13 @@ body {
 .device-popup__unlock:hover {
   filter: brightness(1.05);
 }
-.device-popup__qr {
-  margin-top: 8px;
-}
-.device-popup__qr svg {
-  display: block;
-  width: 148px;
-  height: 148px;
-  margin: 0 auto;
+.device-popup__unlock-hint {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  padding: 7px 9px;
 }
 
 /* ---------- Popup: walk economics ---------- */
@@ -1298,25 +1348,54 @@ body {
   font-weight: 800;
   line-height: 1;
 }
+/* Riding view: the HUD is a transparent frame over the live follow-cam
+   map. Only the top/bottom panels paint and take pointer events; the middle
+   shows the map moving under the rider. */
+.ride-hud.is-riding {
+  display: block;
+  background: transparent;
+  pointer-events: none;
+}
 .hud-live {
-  width: min(480px, calc(100vw - 24px));
-  height: 100%;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.hud-frame {
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-evenly;
-  padding: 24px 0;
+  gap: 8px;
+  padding: 18px 16px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(6px);
+}
+.ride-hud.is-night .hud-frame {
+  background: rgba(0, 0, 0, 0.72);
+}
+.hud-frame--top {
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+}
+.hud-frame--bottom {
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
 }
 .hud-speed {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  font-size: min(26vh, 160px);
+  gap: 8px;
+  font-size: min(16vh, 96px);
   font-weight: 800;
   line-height: 1;
 }
 .hud-speed-unit {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   opacity: 0.6;
 }
@@ -1327,20 +1406,22 @@ body {
   color: inherit;
   font: inherit;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 44px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  font-size: 40px;
   font-weight: 700;
   cursor: pointer;
 }
 .hud-cost {
-  font-size: 26px;
+  font-size: 24px;
   opacity: 0.8;
 }
 .hud-adjust {
   display: flex;
   gap: 6px;
   width: 100%;
+  max-width: 420px;
 }
 .hud-adjust .hud-btn {
   padding: 10px 4px;
@@ -1348,20 +1429,44 @@ body {
 }
 .hud-zone {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  background: rgba(245, 180, 0, 0.2);
+  text-align: center;
+  background: rgba(245, 180, 0, 0.24);
   border-radius: 10px;
-  padding: 8px 12px;
+  padding: 7px 12px;
 }
 .hud-bottom {
   display: flex;
   gap: 10px;
   width: 100%;
+  max-width: 420px;
 }
 .hud-bottom .hud-btn--ghost {
   flex: 0 0 auto;
   font-size: 20px;
+}
+
+/* Rider position marker on the follow-cam. */
+.ride-user-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0072b2;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px rgba(0, 114, 178, 0.35), 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* While a ride is active the app chrome gets out of the way so the frame +
+   map own the screen. */
+body.ride-active .drawer-tabs,
+body.ride-active .drawer,
+body.ride-active .mode-switch,
+body.ride-active .filter-chips,
+body.ride-active .freshness,
+body.ride-active .brand-link,
+body.ride-active .maplibregl-ctrl {
+  display: none !important;
 }
 .hud-summary {
   margin: 0;

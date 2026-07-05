@@ -43,8 +43,30 @@ export const OVERLAYS: OverlayDef[] = [
   { layer: "community_network", label: "City Regions", color: "#6d4c41" },
 ];
 
+/** Equity-rank tiers er1..er6. One shared color so the "Equity Ranking
+ *  (Selected)" union reads as a single overlay regardless of which ranks
+ *  are on. Kept out of OVERLAYS so they don't each get an individual
+ *  boundary-outline checkbox — the rank toggles live in the compliance
+ *  drawer and drive the union overlay instead. */
+export const EQUITY_RANK_COLOR = "#7b1fa2";
+export const EQUITY_RANK_NUMBERS = [1, 2, 3, 4, 5, 6] as const;
+export type EquityRank = (typeof EQUITY_RANK_NUMBERS)[number];
+export const EQUITY_RANK_DEFAULT: readonly EquityRank[] = [1, 2];
+
+export function equityRankLayer(rank: EquityRank): BoundaryLayer {
+  return `er${rank}` as BoundaryLayer;
+}
+
+const EQUITY_RANK_OVERLAYS: OverlayDef[] = EQUITY_RANK_NUMBERS.map((r) => ({
+  layer: equityRankLayer(r),
+  label: `Equity Rank ${r}`,
+  color: EQUITY_RANK_COLOR,
+}));
+
+/** Color/label lookup for every layer, including the equity ranks (which
+ *  aren't in OVERLAYS). overlays.ts reads `.color` from here for er layers. */
 export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEntries(
-  OVERLAYS.map((o) => [o.layer, o]),
+  [...OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
 /** Adjust tracker token from Veo's own QR stickers. Campaign-scoped, so

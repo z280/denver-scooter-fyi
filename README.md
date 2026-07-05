@@ -24,22 +24,24 @@ self-hosted vector basemap.
 - **Walk economics** (opt-in location): straight-line walk time to any
   device, a dashed guide line on the map, and a Directions handoff to
   Apple/Google Maps in walking mode.
-- **Unlock in Veo**: each popup deep-links into the Veo app using the same
-  Adjust URL printed on the scooter's QR sticker (desktop shows a scannable
-  QR instead). Requires the vehicle plate, so today it lights up for
-  signed-in users; it applies to everyone once the public API carries
-  `vehicle_plate`.
+- **Unlock in Veo**: the device popup deep-links into the Veo app using the
+  same Adjust URL printed on the scooter's QR sticker. Deliberately gated —
+  it appears only for a signed-in user with location on who is physically at
+  the scooter (~75 m). Plates are never exposed to anonymous users, so the
+  map can't be scraped back into a competing feed.
 - **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
   (available devices, reliability coloring, location offer) and 📊 *Audit*
   (v1 choropleth + compliance gauge). Manual changes drop back to custom.
-- **🧭 Ride companion**: a full-screen glanceable HUD — GPS speedometer,
-  ride clock with a countdown start ("start the scooter in N seconds") and
-  mid-ride ±15s/±1m nudges to sync with Veo's billing clock, a live cost
-  estimate at your chosen rate (contract-locked Denver pricing), equity-zone
-  flags, screen wake lock, and day/night high-contrast palettes. The ride
-  summary prices the same trip under Lime's typical rates — what
-  competition would have cost — and prompts an equity-discount receipt
-  check for rides touching a disadvantaged area.
+- **🧭 Ride companion**: a glanceable HUD framing a live, pitched follow-cam
+  map — your position marker recenters the map as you move (with 3D building
+  extrusions where the basemap carries them). Top and bottom panels show a
+  GPS speedometer, a ride clock with a countdown start ("start the scooter
+  in N seconds") and mid-ride ±15s/±1m nudges to sync with Veo's billing
+  clock, a live cost estimate at your chosen rate (contract-locked Denver
+  pricing), equity-zone flags, screen wake lock, and day/night high-contrast
+  palettes. The ride summary prices the same trip under Lime's typical rates
+  — what competition would have cost — and prompts an equity-discount
+  receipt check for rides touching a disadvantaged area.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
     switch, a unified battery block: quartile filter buttons plus a
@@ -52,7 +54,11 @@ self-hosted vector basemap.
     adds or removes it from the filter.
   - **Tools** — dense-cluster finder.
   - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
-    the 30% threshold), or PENDING before the daily window is computed.
+    the 30% threshold), or PENDING before the daily window is computed. Also
+    hosts the **equity-rank estimate**: the city ranked equity areas 1–6 but
+    hasn't said which bind the SLA, so you pick a rank set (default 1 + 2)
+    and get a live "% of the fleet inside the selected ranks" figure, plus an
+    "Equity Ranking (Selected)" union overlay in the Areas drawer.
 - Active-filter chips float over the map — one per live constraint, each
   with a ✕ to clear it — so closed drawers never hide the map's state.
 - Bottom-right freshness footer: `as of HH:MM · Displaying x out of y`.

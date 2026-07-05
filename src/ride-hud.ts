@@ -8,8 +8,10 @@
 // phone, then scan the QR) and the running clock has ±15s/±1m nudges to
 // square it with the Veo app mid-ride.
 
+import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
+import { FIRST_DEVICE_LAYER } from "./devices.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   comparatorCostCents,
@@ -28,6 +30,15 @@ const SPEED_ALPHA = 0.35;
 /** Ignore fixes implying > 45 mph — GPS teleports, not scooters. */
 const MAX_PLAUSIBLE_MPS = 20;
 
+/** Follow-cam framing during a ride: zoomed in, pitched for a 3D-ish
+ *  perspective, bearing tracking the direction of travel. */
+const RIDE_ZOOM = 17;
+const RIDE_PITCH = 60;
+/** Below this speed heading is unreliable, so we hold the last good bearing
+ *  rather than spinning the map on GPS noise while stopped. */
+const BEARING_MIN_MPS = 1.5;
+const BUILDINGS_3D_LAYER = "ride-buildings-3d";
+
 export class RideHud {
   private state: HudState = "hidden";
   private root: HTMLElement;
@@ -43,11 +54,19 @@ export class RideHud {
   private startPos: LngLat | null = null;
   private startedInZone = false;
   private night = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  private userMarker: maplibregl.Marker | null = null;
+  private lastBearing = 0;
+  private following = false;
+  /** Map camera state captured on ride start, restored on exit. */
+  private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
 
   constructor(
     container: HTMLElement,
     /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
     private readonly equityZones: () => Promise<IndexedFeature[]>,
+    /** The main map — the HUD frames it and drives a follow-cam during a
+     *  ride, so the rider sees themselves move instead of a blank panel. */
+    private readonly map: MLMap,
   ) {
     this.root = container;
     this.root.addEventListener("click", (e) => this.onClick(e));
@@ -67,6 +86,11 @@ export class RideHud {
     this.state = state;
     this.root.hidden = state === "hidden";
     this.root.classList.toggle("is-night", this.night);
+    // Only the riding state is a transparent frame over the live map; the
+    // others are solid cards. `ride-active` on <body> hides the app chrome
+    // (drawers, mode pill, chips, map controls) for every non-hidden state.
+    this.root.classList.toggle("is-riding", state === "riding");
+    document.body.classList.toggle("ride-active", state !== "hidden");
     if (state === "armed") this.renderArmed();
   }
 
@@ -112,6 +136,7 @@ export class RideHud {
     switch (btn.dataset.hud) {
       case "close":
         this.stopSensors();
+        this.exitFollowCam();
         this.setState("hidden");
         break;
       case "start-now":
@@ -129,6 +154,13 @@ export class RideHud {
       case "toggle-night":
         this.night = !this.night;
         this.root.classList.toggle("is-night", this.night);
+        if (this.map.getLayer(BUILDINGS_3D_LAYER)) {
+          this.map.setPaintProperty(
+            BUILDINGS_3D_LAYER,
+            "fill-extrusion-color",
+            this.night ? "#1b2733" : "#d3d7e0",
+          );
+        }
         break;
       case "adjust":
         this.root
@@ -202,31 +234,125 @@ export class RideHud {
     this.lastFix = null;
     this.startPos = null;
     this.startedInZone = false;
+    this.lastBearing = 0;
     this.setState("riding");
     this.renderRiding();
+    this.enterFollowCam();
     this.startSensors();
     void this.acquireWakeLock();
   }
 
+  /** Pitch the map into follow-cam framing and raise 3D buildings. Camera
+   *  then tracks each GPS fix in onFix(). */
+  private enterFollowCam(): void {
+    const c = this.map.getCenter();
+    this.savedView = {
+      center: { lng: c.lng, lat: c.lat },
+      zoom: this.map.getZoom(),
+      pitch: this.map.getPitch(),
+      bearing: this.map.getBearing(),
+    };
+    this.map.easeTo({ pitch: RIDE_PITCH, zoom: RIDE_ZOOM, duration: 600 });
+    this.addBuildings3D();
+    this.userMarker ??= new maplibregl.Marker({ element: makeUserDot() });
+    this.following = true;
+  }
+
+  /** Restore the pre-ride 2D view and remove ride-only map decorations. */
+  private exitFollowCam(): void {
+    if (!this.following) return;
+    this.following = false;
+    this.userMarker?.remove();
+    this.removeBuildings3D();
+    if (this.savedView) {
+      this.map.easeTo({
+        center: [this.savedView.center.lng, this.savedView.center.lat],
+        zoom: this.savedView.zoom,
+        pitch: this.savedView.pitch,
+        bearing: this.savedView.bearing,
+        duration: 500,
+      });
+      this.savedView = null;
+    } else {
+      this.map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
+    }
+  }
+
+  /** Raise building footprints into extrusions for a 3D feel. The basemap's
+   *  vector tiles may not carry heights, so we coalesce to a modest uniform
+   *  height — enough for a pitched cityscape. Inserted beneath the device
+   *  pins so scooters stay visible. No-op if the buildings layer is absent. */
+  private addBuildings3D(): void {
+    if (this.map.getLayer(BUILDINGS_3D_LAYER)) return;
+    const style = this.map.getStyle();
+    const buildings = style.layers?.find(
+      (l) => (l as { "source-layer"?: string })["source-layer"] === "buildings",
+    ) as { source?: string } | undefined;
+    if (!buildings?.source) return;
+    const before = this.map.getLayer(FIRST_DEVICE_LAYER)
+      ? FIRST_DEVICE_LAYER
+      : undefined;
+    try {
+      this.map.addLayer(
+        {
+          id: BUILDINGS_3D_LAYER,
+          type: "fill-extrusion",
+          source: buildings.source,
+          "source-layer": "buildings",
+          paint: {
+            "fill-extrusion-color": this.night ? "#1b2733" : "#d3d7e0",
+            "fill-extrusion-height": [
+              "coalesce",
+              ["to-number", ["get", "render_height"]],
+              ["to-number", ["get", "height"]],
+              12,
+            ],
+            "fill-extrusion-base": [
+              "coalesce",
+              ["to-number", ["get", "render_min_height"]],
+              0,
+            ],
+            "fill-extrusion-opacity": 0.85,
+          },
+        },
+        before,
+      );
+    } catch {
+      /* source-layer name differs in this basemap — pitched 2D is fine */
+    }
+  }
+
+  private removeBuildings3D(): void {
+    if (this.map.getLayer(BUILDINGS_3D_LAYER)) {
+      this.map.removeLayer(BUILDINGS_3D_LAYER);
+    }
+  }
+
   private renderRiding(): void {
+    // A frame, not a full screen: the top and bottom panels float over the
+    // live follow-cam map, which shows through the transparent middle.
     this.root.innerHTML = `
       <div class="hud-live">
-        <div class="hud-speed"><span id="hud-mph">0</span><span class="hud-speed-unit">mph</span></div>
-        <button type="button" class="hud-clockcost" data-hud="adjust" aria-label="Ride clock and cost — tap to adjust the clock">
-          <span id="hud-clock">0:00</span>
-          <span id="hud-cost" class="hud-cost"></span>
-        </button>
-        <div class="hud-adjust" hidden>
-          <button type="button" class="hud-btn" data-hud="nudge" data-ms="-60000">−1m</button>
-          <button type="button" class="hud-btn" data-hud="nudge" data-ms="-15000">−15s</button>
-          <button type="button" class="hud-btn" data-hud="reset-clock">reset</button>
-          <button type="button" class="hud-btn" data-hud="nudge" data-ms="15000">+15s</button>
-          <button type="button" class="hud-btn" data-hud="nudge" data-ms="60000">+1m</button>
+        <div class="hud-frame hud-frame--top">
+          <div class="hud-speed"><span id="hud-mph">0</span><span class="hud-speed-unit">mph</span></div>
         </div>
-        <div id="hud-zone" class="hud-zone" hidden>🏷️ Started in an equity zone — discount applies</div>
-        <div class="hud-bottom">
-          <button type="button" class="hud-btn hud-btn--ghost" data-hud="toggle-night">☀/☾</button>
-          <button type="button" class="hud-btn hud-btn--end" data-hud="end">End ride</button>
+        <div class="hud-frame hud-frame--bottom">
+          <div id="hud-zone" class="hud-zone" hidden>🏷️ Started in an equity zone — discount applies</div>
+          <button type="button" class="hud-clockcost" data-hud="adjust" aria-label="Ride clock and cost — tap to adjust the clock">
+            <span id="hud-clock">0:00</span>
+            <span id="hud-cost" class="hud-cost"></span>
+          </button>
+          <div class="hud-adjust" hidden>
+            <button type="button" class="hud-btn" data-hud="nudge" data-ms="-60000">−1m</button>
+            <button type="button" class="hud-btn" data-hud="nudge" data-ms="-15000">−15s</button>
+            <button type="button" class="hud-btn" data-hud="reset-clock">reset</button>
+            <button type="button" class="hud-btn" data-hud="nudge" data-ms="15000">+15s</button>
+            <button type="button" class="hud-btn" data-hud="nudge" data-ms="60000">+1m</button>
+          </div>
+          <div class="hud-bottom">
+            <button type="button" class="hud-btn hud-btn--ghost" data-hud="toggle-night">☀/☾</button>
+            <button type="button" class="hud-btn hud-btn--end" data-hud="end">End ride</button>
+          </div>
         </div>
       </div>`;
     window.clearInterval(this.tickTimer);
@@ -290,6 +416,23 @@ export class RideHud {
       }
     }
     this.lastFix = { pos, t };
+
+    // Drive the follow-cam: recenter on the rider, bearing-up when moving.
+    if (
+      fix.coords.heading !== null &&
+      Number.isFinite(fix.coords.heading) &&
+      this.smoothedMps >= BEARING_MIN_MPS
+    ) {
+      this.lastBearing = fix.coords.heading;
+    }
+    this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
+    this.map.easeTo({
+      center: [pos.lng, pos.lat],
+      bearing: this.lastBearing,
+      pitch: RIDE_PITCH,
+      zoom: RIDE_ZOOM,
+      duration: 700,
+    });
     this.renderTick();
   }
 
@@ -330,6 +473,7 @@ export class RideHud {
     const elapsed = Date.now() - this.startedAt;
     const endPos = this.lastFix?.pos ?? null;
     this.stopSensors();
+    this.exitFollowCam();
 
     let endedInZone = false;
     if (endPos) {
@@ -393,4 +537,12 @@ function formatClock(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** The rider's position marker on the follow-cam: a bright dot with a soft
+ *  pulsing halo, legible against both day and night basemaps. */
+function makeUserDot(): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "ride-user-dot";
+  return el;
 }
