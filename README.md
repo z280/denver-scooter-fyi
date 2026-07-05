@@ -32,16 +32,22 @@ self-hosted vector basemap.
 - **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
   (available devices, reliability coloring, location offer) and 📊 *Audit*
   (v1 choropleth + compliance gauge). Manual changes drop back to custom.
-- **🧭 Ride companion**: a glanceable HUD framing a live, pitched follow-cam
-  map — your position marker recenters the map as you move (with 3D building
-  extrusions where the basemap carries them). Top and bottom panels show a
-  GPS speedometer, a ride clock with a countdown start ("start the scooter
-  in N seconds") and mid-ride ±15s/±1m nudges to sync with Veo's billing
-  clock, a live cost estimate at your chosen rate (contract-locked Denver
-  pricing), equity-zone flags, screen wake lock, and day/night high-contrast
-  palettes. The ride summary prices the same trip under Lime's typical rates
-  — what competition would have cost — and prompts an equity-discount
-  receipt check for rides touching a disadvantaged area.
+- **🧭 Ride companion**: a landscape-first HUD (the Veo app has none) where
+  the live, pitched follow-cam map fills the whole screen — your position
+  marker recenters it as you move, with 3D building extrusions where the
+  basemap carries them — and only tiny corner cutouts float on top:
+  - top-left: live cost at your chosen rate (contract-locked Denver pricing),
+  - top-right: a digital mph readout,
+  - bottom-left: the ride clock with a red stop button (end ride) and a
+    wrench button (a panel for the countdown-start clock ±15s/±1m nudges,
+    rate, and day/night theme),
+  - bottom-right: a car-style analog speedometer with an animated needle,
+    0–18 mph and a caution band past Denver's ~15 mph cap.
+
+  Ride start goes fullscreen with a best-effort landscape lock; the summary
+  prices the trip under Lime's typical rates — what competition would have
+  cost — and prompts an equity-discount receipt check for rides touching a
+  disadvantaged area.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
     switch, a unified battery block: quartile filter buttons plus a

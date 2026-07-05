@@ -1348,103 +1348,176 @@ body {
   font-weight: 800;
   line-height: 1;
 }
-/* Riding view: the HUD is a transparent frame over the live follow-cam
-   map. Only the top/bottom panels paint and take pointer events; the middle
-   shows the map moving under the rider. */
+/* Riding view: the map IS the screen. The HUD is transparent and only its
+   tiny corner cutouts paint or take pointer events. */
 .ride-hud.is-riding {
   display: block;
   background: transparent;
   pointer-events: none;
 }
-.hud-live {
+.ride-hud.is-riding .hud-live {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
   pointer-events: none;
 }
-.hud-frame {
+.hud-corner {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+.hud-corner--tl { top: 0; left: 0; }
+.hud-corner--tr { top: 0; right: 0; }
+.hud-corner--bl { bottom: 0; left: 0; }
+.hud-corner--br { bottom: 0; right: 0; pointer-events: none; }
+
+/* Transparent digital readouts — no panel, just contrasting text with a
+   halo so they stay legible over any basemap, day or night. */
+.hud-readout {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #0d1522;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.95), 0 1px 4px rgba(255, 255, 255, 0.9);
+}
+.ride-hud.is-night .hud-readout {
+  color: #ffffff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.95), 0 1px 5px rgba(0, 0, 0, 0.9);
+}
+.hud-readout--cost { font-size: clamp(26px, 6vh, 40px); }
+.hud-readout--clock { font-size: clamp(24px, 5.5vh, 36px); }
+.hud-readout--mph {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.hud-readout--mph b { font-size: clamp(26px, 6vh, 40px); font-weight: 800; }
+.hud-readout--mph i { font-size: 14px; font-weight: 600; font-style: normal; opacity: 0.75; }
+
+/* Bottom-left cutout buttons: stop (end) + wrench (adjust). */
+.hud-corner--bl { pointer-events: none; }
+.hud-cutout-btns { display: flex; gap: 8px; pointer-events: auto; }
+.hud-readout--clock { pointer-events: auto; }
+.hud-round-btn {
+  appearance: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0d1522;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.ride-hud.is-night .hud-round-btn {
+  background: rgba(20, 20, 20, 0.8);
+  color: #fff;
+}
+.hud-round-btn svg { width: 24px; height: 24px; }
+.hud-round-btn--stop {
+  background: var(--fail);
+  color: #fff;
+}
+.hud-round-btn--stop svg { fill: currentColor; }
+
+/* Equity-zone badge: a small centered pill up top, only while flagged. */
+.hud-zone-badge {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #5a4300;
+  background: rgba(245, 180, 0, 0.92);
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* Adjust popover (wrench): time nudges + rate + theme. */
+.hud-adjust-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
   pointer-events: auto;
+  width: min(420px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 18px 16px;
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(6px);
-}
-.ride-hud.is-night .hud-frame {
-  background: rgba(0, 0, 0, 0.72);
-}
-.hud-frame--top {
-  border-bottom-left-radius: 18px;
-  border-bottom-right-radius: 18px;
-}
-.hud-frame--bottom {
-  border-top-left-radius: 18px;
-  border-top-right-radius: 18px;
-  padding-bottom: max(18px, env(safe-area-inset-bottom));
-}
-.hud-speed {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: min(16vh, 96px);
-  font-weight: 800;
-  line-height: 1;
-}
-.hud-speed-unit {
-  font-size: 22px;
-  font-weight: 600;
-  opacity: 0.6;
-}
-.hud-clockcost {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
   gap: 10px;
-  font-size: 40px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  color: var(--fg);
+}
+.hud-adjust-row { display: flex; gap: 6px; }
+.hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
+
+/* Analog speedometer, bottom-right. */
+.speedo {
+  width: clamp(140px, 26vh, 200px);
+  height: clamp(140px, 26vh, 200px);
+  pointer-events: none;
+}
+.speedo-face {
+  fill: rgba(255, 255, 255, 0.82);
+  stroke: rgba(0, 0, 0, 0.12);
+  stroke-width: 1.5;
+}
+.ride-hud.is-night .speedo-face {
+  fill: rgba(12, 16, 22, 0.82);
+  stroke: rgba(255, 255, 255, 0.18);
+}
+.speedo-track {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.25);
+  stroke-width: 3;
+}
+.ride-hud.is-night .speedo-track { stroke: rgba(255, 255, 255, 0.3); }
+.speedo-caution {
+  fill: none;
+  stroke: var(--fail);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.speedo-tick { stroke: rgba(0, 0, 0, 0.4); stroke-width: 1.5; }
+.speedo-tick--major { stroke: rgba(0, 0, 0, 0.7); stroke-width: 2.5; }
+.ride-hud.is-night .speedo-tick { stroke: rgba(255, 255, 255, 0.45); }
+.ride-hud.is-night .speedo-tick--major { stroke: rgba(255, 255, 255, 0.85); }
+.speedo-num {
+  fill: #0d1522;
+  font-size: 13px;
   font-weight: 700;
-  cursor: pointer;
+  text-anchor: middle;
+  dominant-baseline: middle;
 }
-.hud-cost {
-  font-size: 24px;
-  opacity: 0.8;
-}
-.hud-adjust {
-  display: flex;
-  gap: 6px;
-  width: 100%;
-  max-width: 420px;
-}
-.hud-adjust .hud-btn {
-  padding: 10px 4px;
-  font-size: 15px;
-}
-.hud-zone {
-  margin: 0;
-  font-size: 14px;
+.ride-hud.is-night .speedo-num { fill: #fff; }
+.speedo-unit {
+  fill: rgba(0, 0, 0, 0.55);
+  font-size: 11px;
   font-weight: 600;
-  text-align: center;
-  background: rgba(245, 180, 0, 0.24);
-  border-radius: 10px;
-  padding: 7px 12px;
+  text-anchor: middle;
 }
-.hud-bottom {
-  display: flex;
-  gap: 10px;
-  width: 100%;
-  max-width: 420px;
+.ride-hud.is-night .speedo-unit { fill: rgba(255, 255, 255, 0.6); }
+.speedo-needle {
+  fill: var(--fail);
+  transform-box: view-box;
+  transform-origin: 100px 100px;
+  transition: transform 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-.hud-bottom .hud-btn--ghost {
-  flex: 0 0 auto;
-  font-size: 20px;
+.speedo-hub { fill: #0d1522; }
+.ride-hud.is-night .speedo-hub { fill: #e6e6e6; }
+@media (prefers-reduced-motion: reduce) {
+  .speedo-needle { transition: none; }
 }
 
 /* Rider position marker on the follow-cam. */
@@ -1474,68 +1547,17 @@ body.ride-active .maplibregl-ctrl {
   opacity: 0.9;
 }
 
-/* ---------- Ride HUD in landscape ----------
-   The whole reason Ride mode exists: the Veo app has no landscape view and
-   the phone is mounted sideways on the handlebars. Vertical space is scarce,
-   so the riding frame moves its panels to the LEFT and RIGHT edges (speed on
-   the left, clock/cost/controls on the right) and lets the follow-cam map
-   fill the wide middle. The card states (armed/countdown/summary) stay
-   centered but cap their height and scroll. */
+/* ---------- Ride HUD card states in landscape ----------
+   The riding view is corner cutouts over a full map, so it needs no special
+   landscape handling. The centered card states (armed / countdown / summary)
+   just need to fit a short viewport. */
 @media (orientation: landscape) {
-  /* Card states: never taller than the (short) viewport. */
   .hud-card {
     max-height: calc(100dvh - 20px);
     overflow-y: auto;
   }
   .hud-card--countdown .hud-countdown {
     font-size: min(60vh, 200px);
-  }
-
-  /* Riding frame → side rails. */
-  .ride-hud.is-riding .hud-live {
-    flex-direction: row;
-    align-items: stretch;
-  }
-  .hud-frame--top,
-  .hud-frame--bottom {
-    align-self: stretch;
-    justify-content: center;
-    padding: 12px 16px;
-  }
-  .hud-frame--top {
-    /* left rail: speed */
-    border-radius: 0 20px 20px 0;
-    max-width: 32%;
-  }
-  .hud-frame--bottom {
-    /* right rail: clock/cost + controls */
-    border-radius: 20px 0 0 20px;
-    max-width: 44%;
-    gap: 10px;
-    padding-bottom: 12px;
-  }
-  .hud-speed {
-    /* Height-bound so it never overflows a short landscape viewport. */
-    font-size: min(30vh, 108px);
-    flex-direction: column;
-    align-items: center;
-    gap: 0;
-  }
-  .hud-clockcost {
-    font-size: min(9vh, 40px);
-    flex-direction: column;
-    gap: 0;
-  }
-  .hud-cost {
-    font-size: min(6vh, 24px);
-  }
-  /* Keep the END button big and thumb-reachable on the right rail. */
-  .hud-bottom {
-    flex-direction: column-reverse;
-    align-items: stretch;
-  }
-  .hud-bottom .hud-btn--end {
-    padding: 16px;
   }
 }
 .hud-summary {

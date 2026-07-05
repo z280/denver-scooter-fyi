@@ -34,6 +34,14 @@ const MAX_PLAUSIBLE_MPS = 20;
  *  perspective, bearing tracking the direction of travel. */
 const RIDE_ZOOM = 17;
 const RIDE_PITCH = 60;
+/** Analog speedometer full-scale, in mph. Denver caps scooters ~15 mph, so
+ *  18 gives a little headroom with the top of the dial as a "too fast" zone. */
+const SPEEDO_MAX_MPH = 18;
+/** Dial sweep: needle travels from -135° (empty, lower-left) to +135°
+ *  (full, lower-right) — a classic 270° automotive gauge. */
+const SPEEDO_SWEEP = 270;
+const SPEEDO_START = -135;
+const MPS_TO_MPH = 2.23694;
 /** Below this speed heading is unreliable, so we hold the last good bearing
  *  rather than spinning the map on GPS noise while stopped. */
 const BEARING_MIN_MPS = 1.5;
@@ -57,6 +65,7 @@ export class RideHud {
   private userMarker: maplibregl.Marker | null = null;
   private lastBearing = 0;
   private following = false;
+  private needleEl: SVGElement | null = null;
   /** Map camera state captured on ride start, restored on exit. */
   private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
 
@@ -166,7 +175,7 @@ export class RideHud {
         break;
       case "adjust":
         this.root
-          .querySelector(".hud-adjust")
+          .querySelector(".hud-adjust-panel")
           ?.toggleAttribute("hidden");
         break;
       case "nudge":
@@ -380,32 +389,65 @@ export class RideHud {
   }
 
   private renderRiding(): void {
-    // A frame, not a full screen: the top and bottom panels float over the
-    // live follow-cam map, which shows through the transparent middle.
+    // The map IS the screen. Only tiny cutouts sit over it, one per corner:
+    //   top-left  — cost (transparent, contrasting)
+    //   top-right — digital mph (transparent, contrasting)
+    //   bottom-left  — ride clock + End (stop) + adjust (wrench)
+    //   bottom-right — analog speedometer with an animated needle
+    const rateOptions = RATE_PLANS.map(
+      (p) =>
+        `<option value="${p.key}" ${p.key === savedRatePlan() ? "selected" : ""}>${p.label}</option>`,
+    ).join("");
     this.root.innerHTML = `
       <div class="hud-live">
-        <div class="hud-frame hud-frame--top">
-          <div class="hud-speed"><span id="hud-mph">0</span><span class="hud-speed-unit">mph</span></div>
+        <div class="hud-corner hud-corner--tl">
+          <span id="hud-cost" class="hud-readout hud-readout--cost"></span>
         </div>
-        <div class="hud-frame hud-frame--bottom">
-          <div id="hud-zone" class="hud-zone" hidden>🏷️ Started in an equity zone — discount applies</div>
-          <button type="button" class="hud-clockcost" data-hud="adjust" aria-label="Ride clock and cost — tap to adjust the clock">
-            <span id="hud-clock">0:00</span>
-            <span id="hud-cost" class="hud-cost"></span>
-          </button>
-          <div class="hud-adjust" hidden>
+        <div class="hud-corner hud-corner--tr">
+          <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
+        </div>
+        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity zone</div>
+        <div class="hud-corner hud-corner--bl">
+          <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
+          <div class="hud-cutout-btns">
+            <button type="button" class="hud-round-btn hud-round-btn--stop" data-hud="end" aria-label="End ride">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+            </button>
+            <button type="button" class="hud-round-btn" data-hud="adjust" aria-label="Adjust time and rate">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.121 2.121 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="hud-corner hud-corner--br">${speedoMarkup()}</div>
+
+        <div class="hud-adjust-panel" hidden>
+          <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="-60000">−1m</button>
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="-15000">−15s</button>
             <button type="button" class="hud-btn" data-hud="reset-clock">reset</button>
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="15000">+15s</button>
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="60000">+1m</button>
           </div>
-          <div class="hud-bottom">
-            <button type="button" class="hud-btn hud-btn--ghost" data-hud="toggle-night">☀/☾</button>
-            <button type="button" class="hud-btn hud-btn--end" data-hud="end">End ride</button>
+          <label class="hud-field">
+            <span>Rate</span>
+            <select id="hud-rate-live" class="select">${rateOptions}</select>
+          </label>
+          <div class="hud-adjust-row">
+            <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
+            <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>
           </div>
         </div>
       </div>`;
+    this.needleEl = this.root.querySelector<SVGElement>("#speedo-needle");
+    // Live rate change from the adjust panel — recompute the cost ticker.
+    this.root
+      .querySelector<HTMLSelectElement>("#hud-rate-live")
+      ?.addEventListener("change", (e) => {
+        saveRatePlan((e.target as HTMLSelectElement).value as RatePlanKey);
+        this.renderTick();
+      });
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -421,8 +463,15 @@ export class RideHud {
     if (cost && rate) {
       cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
     }
+    const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
-    if (mph) mph.textContent = String(Math.round(this.smoothedMps * 2.23694));
+    if (mph) mph.textContent = String(Math.round(mphValue));
+    // Sweep the analog needle (CSS transition animates the motion).
+    if (this.needleEl) {
+      const clamped = Math.max(0, Math.min(SPEEDO_MAX_MPH, mphValue));
+      const deg = SPEEDO_START + (clamped / SPEEDO_MAX_MPH) * SPEEDO_SWEEP;
+      this.needleEl.style.transform = `rotate(${deg}deg)`;
+    }
   }
 
   private startSensors(): void {
@@ -596,4 +645,58 @@ function makeUserDot(): HTMLElement {
   const el = document.createElement("div");
   el.className = "ride-user-dot";
   return el;
+}
+
+// ---------- Analog speedometer ----------
+
+const SPEEDO_CX = 100;
+const SPEEDO_CY = 100;
+const SPEEDO_R = 84;
+
+/** Point on the dial at `mph` and `radius` (SVG coords). 0° = straight up,
+ *  angle increases clockwise, matching the needle's rotate(). */
+function speedoPoint(mph: number, radius: number): [number, number] {
+  const deg = SPEEDO_START + (mph / SPEEDO_MAX_MPH) * SPEEDO_SWEEP;
+  const a = (deg * Math.PI) / 180;
+  return [SPEEDO_CX + radius * Math.sin(a), SPEEDO_CY - radius * Math.cos(a)];
+}
+
+/** Static markup for a car-style dial: outer track, a caution band near the
+ *  top of the range, tick marks + numerals every 3 mph, and the needle
+ *  (id=speedo-needle) that renderTick() rotates. */
+function speedoMarkup(): string {
+  const [tx, ty] = speedoPoint(0, SPEEDO_R);
+  const [ux, uy] = speedoPoint(SPEEDO_MAX_MPH, SPEEDO_R);
+  const track = `<path d="M ${r(tx)} ${r(ty)} A ${SPEEDO_R} ${SPEEDO_R} 0 1 1 ${r(ux)} ${r(uy)}" class="speedo-track"/>`;
+
+  // Caution band 15→18 mph (Denver's cap sits ~15).
+  const [cx0, cy0] = speedoPoint(15, SPEEDO_R);
+  const [cx1, cy1] = speedoPoint(SPEEDO_MAX_MPH, SPEEDO_R);
+  const caution = `<path d="M ${r(cx0)} ${r(cy0)} A ${SPEEDO_R} ${SPEEDO_R} 0 0 1 ${r(cx1)} ${r(cy1)}" class="speedo-caution"/>`;
+
+  let ticks = "";
+  for (let t = 0; t <= SPEEDO_MAX_MPH; t++) {
+    const major = t % 3 === 0;
+    const [x1, y1] = speedoPoint(t, SPEEDO_R - 3);
+    const [x2, y2] = speedoPoint(t, SPEEDO_R - (major ? 15 : 8));
+    ticks += `<line x1="${r(x1)}" y1="${r(y1)}" x2="${r(x2)}" y2="${r(y2)}" class="speedo-tick${major ? " speedo-tick--major" : ""}"/>`;
+    if (major) {
+      const [lx, ly] = speedoPoint(t, SPEEDO_R - 30);
+      ticks += `<text x="${r(lx)}" y="${r(ly)}" class="speedo-num">${t}</text>`;
+    }
+  }
+
+  return `
+    <svg class="speedo" viewBox="0 0 200 200" role="img" aria-label="Speedometer, 0 to ${SPEEDO_MAX_MPH} mph">
+      <circle cx="100" cy="100" r="96" class="speedo-face"/>
+      ${track}${caution}${ticks}
+      <text x="100" y="150" class="speedo-unit">mph</text>
+      <polygon id="speedo-needle" class="speedo-needle" points="96.5,100 103.5,100 100,26" style="transform: rotate(${SPEEDO_START}deg)"/>
+      <circle cx="100" cy="100" r="8" class="speedo-hub"/>
+    </svg>`;
+}
+
+/** Round to 2 dp to keep the generated SVG path strings compact. */
+function r(n: number): number {
+  return Math.round(n * 100) / 100;
 }
