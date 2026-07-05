@@ -69,6 +69,13 @@ export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEn
   [...OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
+/** Google OAuth Web client id for Sign in with Google (see auth-google.ts).
+ *  Empty until you create one in Google Cloud Console and set
+ *  VITE_GOOGLE_CLIENT_ID — the Google door stays hidden and loads no
+ *  third-party script while this is blank. */
+export const GOOGLE_OAUTH_CLIENT_ID: string =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
+
 /** Admin allowlist for the forthcoming Google sign-in gate (see
  *  docs/API_REQUIREMENTS.md §2.2). A Google-verified email on this list is
  *  meant to receive the `admin` scope — access to private per-scooter fields

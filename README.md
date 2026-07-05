@@ -51,8 +51,11 @@ self-hosted vector basemap.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
     switch, a unified battery block: quartile filter buttons plus a
-    "Color dots by range" toggle (auto-enabled when you filter by battery),
-    and a "Color dots by reliability" toggle.
+    "Color dots by range" toggle — **on by default**, so dots show battery
+    percentage out of the box — and a "Color dots by reliability" toggle.
+    Device popups show the Veo model name and corrected rider posture
+    (seated vs. standing, keyed off `vehicle_use_type` since Veo mislabels
+    `form_factor`).
   - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
     v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
     coloring by live device density, and an "Only show devices in…" area

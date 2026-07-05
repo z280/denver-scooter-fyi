@@ -82,7 +82,10 @@ export class Devices {
   /** Null = no battery filter. Empty set = filter is "on" but excludes
    *  everything. Set of bucket indices = restrict to those buckets. */
   private batteryBuckets: Set<BatteryBucket> | null = null;
-  private colorMode: ColorMode = "type";
+  // Default to battery-range coloring rather than device type (per product
+  // direction). Falls back to type icons automatically until enough range
+  // data arrives to compute quartile thresholds.
+  private colorMode: ColorMode = "range";
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -381,9 +384,10 @@ export class Devices {
 
       // Reliability verdict — the headline answer to "worth the walk?".
       // setData() pre-annotated tier + reasons; fall back to a fresh
-      // assessment for props that didn't ride through it.
-      const relTier = (props.reliability_tier ??
-        assessReliability(props).tier) as ReliabilityTier;
+      // assessment for props that didn't ride through it. normalizeTier
+      // guards against a raw server "high_risk" reaching the color lookup.
+      const relTier =
+        normalizeTier(props.reliability_tier) ?? assessReliability(props).tier;
       const relReasons =
         props.reliability_reasons ??
         assessReliability(props).reasons.join(" · ");
@@ -465,6 +469,16 @@ export class Devices {
 
       // Public detail rows.
       const publicRows: string[] = [];
+      if (props.vehicle_model_name) {
+        // Model name (aligned to Veo's app), with the corrected rider posture
+        // when known — key posture off vehicle_use_type, not form_factor.
+        const use = props.vehicle_use_type
+          ? ` <span class="device-popup__hint">${escapeHtml(usePosture(props.vehicle_use_type))}</span>`
+          : "";
+        publicRows.push(
+          `<dt>Model</dt><dd>${escapeHtml(String(props.vehicle_model_name))}${use}</dd>`,
+        );
+      }
       const rangeMeters = asNumber(props.current_range_meters);
       if (rangeMeters !== null) {
         const showing = this.rangeCircleDeviceId === props.device_id;
@@ -550,7 +564,9 @@ export class Devices {
         );
       }
 
-      // Quality flags — server-assigned designation + open negative-report flag.
+      // Quality + reliability rows — all now public. quality_designation,
+      // negative-report flag, dwell time, and failed starts ship on the
+      // public endpoint, so they belong here (not behind the auth tag).
       const qualityRows: string[] = [];
       if (props.quality_designation) {
         qualityRows.push(
@@ -562,23 +578,25 @@ export class Devices {
           `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">Negative report on file</span></dd>`,
         );
       }
-
-      // Private detail rows — present only when the authenticated fetch ran.
-      const privateRows: string[] = [];
-      if (props.vehicle_plate) {
-        privateRows.push(
-          `<dt>Plate</dt><dd><code>${escapeHtml(props.vehicle_plate)}</code></dd>`,
-        );
-      }
       if (props.first_observed_at_location) {
-        privateRows.push(
+        qualityRows.push(
           `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}</dd>`,
         );
       }
       const failedStarts = asNumber(props.number_failed_starts);
       if (failedStarts !== null) {
-        privateRows.push(
+        qualityRows.push(
           `<dt>Failed starts</dt><dd>${failedStarts.toLocaleString()}</dd>`,
+        );
+      }
+
+      // Private detail rows — only present when the authenticated fetch ran.
+      // Post-revert this is just the plate (never public) and the all-time
+      // first-seen stamp (private lookup only).
+      const privateRows: string[] = [];
+      if (props.vehicle_plate) {
+        privateRows.push(
+          `<dt>Plate</dt><dd><code>${escapeHtml(props.vehicle_plate)}</code></dd>`,
         );
       }
       if (props.first_ever_observed_at) {
@@ -949,6 +967,8 @@ interface PopupProps {
   is_reserved?: boolean | string | null;
   current_range_meters?: number | string | null;
   propulsion_type?: PropulsionType | string | null;
+  vehicle_use_type?: string | null;
+  vehicle_model_name?: string | null;
   // h3 indexes (strings) — flattened intact through GeoJSON
   h3_8_index?: string | null;
   h3_9_index?: string | null;
@@ -974,17 +994,29 @@ interface PopupProps {
   first_ever_observed_at?: string;
 }
 
-/** Attach a `reliability_tier` + human-readable `reliability_reasons` to
- *  every feature so paint expressions and popups tell the same story.
- *  Mutates the input — call once per fresh DevicesResponse. */
+/** Attach a canonical `reliability_tier` + human-readable
+ *  `reliability_reasons` to every feature so paint expressions and popups
+ *  tell the same story. Prefers the server's tier (normalizing its
+ *  "high_risk" to our "risk") and falls back to a local assessment when the
+ *  server omits it. Reasons are always computed locally from the now-public
+ *  quality/dwell/failed-start signals. Mutates the input — call once per
+ *  fresh DevicesResponse. */
 function annotateReliability(features: DevicesResponse["features"]): void {
   const now = Date.now();
   for (const f of features) {
     const props = f.properties;
     const info = assessReliability(props, now);
-    props.reliability_tier = info.tier;
+    props.reliability_tier = normalizeTier(props.reliability_tier) ?? info.tier;
     props.reliability_reasons = info.reasons.join(" · ");
   }
+}
+
+/** Coerce a server/raw tier value to our canonical set, or null if absent
+ *  or unrecognized (caller then computes one locally). */
+function normalizeTier(v: unknown): ReliabilityTier | null {
+  if (v === "ok" || v === "unknown" || v === "risk") return v;
+  if (v === "high_risk" || v === "high-risk") return "risk";
+  return null;
 }
 
 /** Per-form-factor icon expression — the default "Device type" display. */
@@ -1314,6 +1346,15 @@ function formatDwell(iso: string): string {
   if (hours < 24) return `${hours}h ${minutes % 60}m`;
   const days = Math.floor(hours / 24);
   return `${days}d ${hours % 24}h`;
+}
+
+/** Map the server's rider-posture code to a friendly word. Unknown values
+ *  pass through so a new posture never renders blank. */
+function usePosture(useType: string): string {
+  const t = useType.toLowerCase();
+  if (t === "sitting") return "seated";
+  if (t === "standing") return "standing";
+  return useType;
 }
 
 /** Short, locale-friendly date for "first observed" stamps. */

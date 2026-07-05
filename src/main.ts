@@ -22,6 +22,7 @@ import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
 import { EquityRanks } from "./equity.ts";
+import { consumePendingMagicLink } from "./auth-magic-link.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -148,6 +149,13 @@ void renderCompliance(need("compliance")).catch((e) => {
 wireSecretUnlock();
 wireAccount();
 wireRideHud();
+
+// If the user just followed a magic link (?ml=<token>), redeem it before the
+// account UI settles; on success reload so every fetch goes out authenticated.
+// Inert when no token is present, so it's harmless before the endpoints exist.
+void consumePendingMagicLink().then((ok) => {
+  if (ok) location.reload();
+});
 
 // ---------- Ride HUD ----------
 
