@@ -53,14 +53,19 @@ self-hosted vector basemap.
     switch, a unified battery block: quartile filter buttons plus a
     "Color dots by range" toggle — **on by default**, so dots show battery
     percentage out of the box — and a "Color dots by reliability" toggle.
-    Device popups show the Veo model name and corrected rider posture
-    (seated vs. standing, keyed off `vehicle_use_type` since Veo mislabels
-    `form_factor`).
+    Device popups open with a turquoise (Veo-brand) header naming the model
+    — Veo Astro (standing), Cosmo (seated, no pedals), or Apollo (seated,
+    pedals, 2-passenger) — and corrected rider posture (keyed off
+    `vehicle_use_type`, since Veo mislabels `form_factor`). An unrecognized
+    model shows "Veo Unknown — Tell us!" with a one-tap report form
+    (description + optional camera photo) that POSTs to the audit API.
   - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
     v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
-    coloring by live device density, and an "Only show devices in…" area
-    filter. With an area type chosen, clicking a region directly on the map
-    adds or removes it from the filter.
+    coloring by live device density, an **H3 hexagon-density** tool
+    (Off/Large/Medium/Small — grids the map into hexagons shaded by device
+    count; mutually exclusive with the choropleth), and an "Only show
+    devices in…" area filter. With an area type chosen, clicking a region
+    directly on the map adds or removes it from the filter.
   - **Tools** — dense-cluster finder.
   - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
     the 30% threshold), or PENDING before the daily window is computed. Also

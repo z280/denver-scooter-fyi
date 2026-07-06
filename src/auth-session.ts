@@ -17,6 +17,9 @@
 // sessionStorage contract now is what makes the doors work with the current
 // app untouched.
 
+import { API_BASE } from "./api.ts";
+import { getAuth } from "./map-auth.js";
+
 /** Mirror of map-auth.js's private STORAGE_KEY. */
 export const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
 
@@ -53,4 +56,45 @@ export function clearSession(): void {
   } catch {
     /* nothing to clear */
   }
+}
+
+/** Identity for the current session, from GET /api/v1/auth/session
+ *  (docs/API_REQUIREMENTS.md §2.1). The token alone carries no identity, so
+ *  this is how the UI learns the email / scopes to decide what to show. */
+export interface SessionInfo {
+  email?: string;
+  scopes?: string[];
+  supporter?: boolean;
+  admin?: boolean;
+  expires?: string;
+}
+
+/** Fetch the current session's identity, or null if not signed in / the
+ *  endpoint is unreachable (so the UI degrades to "just signed in"). */
+export async function fetchSessionInfo(): Promise<SessionInfo | null> {
+  const auth = getAuth();
+  if (!auth) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/auth/session`, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${auth.token}`,
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as SessionInfo;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the session has administrator rights. Trusts ONLY the server's
+ *  admin signal (an `admin` flag or `admin` scope). Admin is Google-exclusive:
+ *  the API stamps the scope from the verified allowlisted email and
+ *  deliberately withholds it from magic-link sessions even for allowlisted
+ *  emails. A client-side email-allowlist fallback would falsely surface
+ *  "Administrator Mode" for those magic-link sessions, so there is none. */
+export function isAdminSession(info: SessionInfo | null): boolean {
+  if (!info) return false;
+  return info.admin === true || (info.scopes?.includes("admin") ?? false);
 }
