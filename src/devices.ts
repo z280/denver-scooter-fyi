@@ -643,26 +643,28 @@ export class Devices {
         );
       }
 
-      // Range-rank rows. (Per-H3-cell ranks were removed — see the
-      // hexagon-density map tool in the Areas panel for spatial views.)
+      // Range-rank rows are API-computed but too wonky for the popup
+      // proper — they live in a modal behind a "Show Battery Rankings"
+      // link, and the link itself is analysis-mode-only (hidden via CSS in
+      // ride mode).
+      const rankRows: string[] = [];
       const percentile = asNumber(props.range_percentile_by_type);
       if (percentile !== null) {
-        publicRows.push(
+        rankRows.push(
           `<dt>Range percentile</dt><dd>${formatPercentile(percentile)} <span class="device-popup__hint">vs same drivetrain</span></dd>`,
         );
       }
       const rankAllDevices = formatRank(props.range_rank_all_devices);
       if (rankAllDevices !== null) {
-        publicRows.push(
-          `<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`,
-        );
+        rankRows.push(`<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`);
       }
       const rankByType = formatRank(props.range_rank_all_by_type);
       if (rankByType !== null) {
-        publicRows.push(
-          `<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`,
-        );
+        rankRows.push(`<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`);
       }
+      const ranksLink = rankRows.length
+        ? `<button type="button" class="device-popup__ranks-link text-btn" data-action="show-ranks">Show Battery Rankings</button>`
+        : "";
 
       // Quality + reliability rows — all now public. quality_designation,
       // negative-report flag, dwell time, and failed starts ship on the
@@ -747,6 +749,7 @@ export class Devices {
             ${publicRows.join("")}
           </dl>
           ${qualityBlock}
+          ${ranksLink}
           ${reportProblemBlock}
         </div>`;
       const authColumn = privateRows.length
@@ -777,6 +780,15 @@ export class Devices {
         this.locate.showLineTo(here);
         this.popup.on("close", () => this.locate.clearLine());
       }
+
+      // "Show Battery Rankings" → the nerd-stats modal (analysis mode only;
+      // the link is display:none'd in ride mode).
+      const ranksBtn = this.popup
+        .getElement()
+        ?.querySelector<HTMLButtonElement>('[data-action="show-ranks"]');
+      ranksBtn?.addEventListener("click", () => {
+        openRanksModal(rankRows);
+      });
 
       // Wire the "Show/Hide on map" range-circle toggle, if rendered.
       const toggleBtn = this.popup
@@ -1754,6 +1766,38 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Lightweight modal for the battery-ranking nerd stats. One at a time;
+ *  closes on ✕, backdrop click, or Escape. */
+function openRanksModal(rankRows: string[]): void {
+  document.querySelector(".ranks-modal")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "ranks-modal";
+  backdrop.innerHTML = `
+    <div class="ranks-modal__card" role="dialog" aria-modal="true" aria-labelledby="ranks-modal-title">
+      <div class="ranks-modal__head">
+        <h3 id="ranks-modal-title">Battery Rankings</h3>
+        <button type="button" class="ranks-modal__close" aria-label="Close">×</button>
+      </div>
+      <p class="ranks-modal__hint">How this device's remaining range compares to the rest of the fleet right now.</p>
+      <dl class="device-popup__meta">${rankRows.join("")}</dl>
+    </div>`;
+  const close = (): void => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") close();
+  };
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) close();
+  });
+  backdrop
+    .querySelector(".ranks-modal__close")
+    ?.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
 }
 
 /** Format an upstream rank value into a friendly string, or null when absent
