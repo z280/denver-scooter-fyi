@@ -39,10 +39,31 @@ export interface ReliabilitySignals {
   first_observed_at_location?: string | null;
 }
 
-/** Server quality labels that carry no negative signal: "good"/"ok" mean
- *  healthy, "N/A" means the server hasn't assessed the device — neither
- *  should count against it. Live API emits "good" and "N/A" today. */
-const CLEAN_QUALITY: ReadonlySet<string> = new Set(["ok", "good", "N/A", "n/a"]);
+/** Server quality labels that carry no negative signal. The API's
+ *  machine-trained scale runs poor < acceptable < good < great, with "N/A"
+ *  meaning unassessed — only "poor" (or anything unrecognized) counts
+ *  against a device. */
+const CLEAN_QUALITY: ReadonlySet<string> = new Set([
+  "ok",
+  "acceptable",
+  "good",
+  "great",
+  "N/A",
+  "n/a",
+]);
+
+const TIER_RANK: Record<ReliabilityTier, number> = {
+  ok: 0,
+  unknown: 1,
+  risk: 2,
+};
+
+/** The more pessimistic of two tiers. Used to merge the server's tier with
+ *  the local evidence-based assessment: the server can demote a device but
+ *  never promote it past what the public signals support. */
+export function worstTier(a: ReliabilityTier, b: ReliabilityTier): ReliabilityTier {
+  return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
+}
 
 export function assessReliability(
   p: ReliabilitySignals,

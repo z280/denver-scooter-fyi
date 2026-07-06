@@ -20,6 +20,7 @@ import {
 } from "./battery.ts";
 import {
   assessReliability,
+  worstTier,
   RELIABILITY_COLOR,
   RELIABILITY_LABEL,
   type ReliabilityTier,
@@ -1308,17 +1309,25 @@ interface PopupProps {
 
 /** Attach a canonical `reliability_tier` + human-readable
  *  `reliability_reasons` to every feature so paint expressions and popups
- *  tell the same story. Prefers the server's tier (normalizing its
- *  "high_risk" to our "risk") and falls back to a local assessment when the
- *  server omits it. Reasons are always computed locally from the now-public
- *  quality/dwell/failed-start signals. Mutates the input — call once per
- *  fresh DevicesResponse. */
+ *  tell the same story.
+ *
+ *  Merge rule: the WORST of the server's tier and the local evidence-based
+ *  assessment. The live API has been observed shipping `reliability_tier:
+ *  "ok"` for devices that are simultaneously idle for days and rated
+ *  `quality_designation: "poor"` by its own quality model — so the server
+ *  tier may demote a device (it can see private signals we can't) but
+ *  never promote one past what the public quality/dwell/failed-start
+ *  evidence supports. Reasons are always computed locally. Mutates the
+ *  input — call once per fresh DevicesResponse. */
 function annotateReliability(features: DevicesResponse["features"]): void {
   const now = Date.now();
   for (const f of features) {
     const props = f.properties;
     const info = assessReliability(props, now);
-    props.reliability_tier = normalizeTier(props.reliability_tier) ?? info.tier;
+    const serverTier = normalizeTier(props.reliability_tier);
+    props.reliability_tier = serverTier
+      ? worstTier(serverTier, info.tier)
+      : info.tier;
     props.reliability_reasons = info.reasons.join(" · ");
   }
 }

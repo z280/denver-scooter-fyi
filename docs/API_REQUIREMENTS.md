@@ -35,6 +35,19 @@ Consequences, already reflected in the frontend:
 
 ### 1.2 Public reliability signal
 
+> **Calibration bug observed in production (2026-07-06):** the live feed
+> ships `reliability_tier: "ok"` for devices that are simultaneously idle
+> 2–7+ days AND rated `quality_designation: "poor"` by the API's own
+> quality model (518 idle≥48h devices tier=ok; 172 of them idle≥3d with
+> quality=poor in one snapshot). The tier formula apparently ignores dwell
+> and the quality designation. Please recalibrate server-side — at minimum,
+> multi-day dwell or quality=poor should demote a device out of "ok".
+> Until then the frontend merges defensively: it displays the WORST of the
+> server tier and its local assessment (quality/dwell/failed-starts/
+> reports), so the server tier can demote but never promote a device past
+> the public evidence. Note the quality scale now observed in production is
+> `poor | acceptable | good | great | N/A` — please document it in API.md.
+
 Preferred: compute server-side and expose a single field on the public
 devices endpoint:
 
