@@ -132,13 +132,16 @@ attribution, and supporter features.
 
 ## 3. Report ingestion (unblocks frontend Phase 4)
 
-### 3.1 Device failure reports
+### 3.1 Device failure reports (DONE — live & wired)
 
-- `POST /api/v1/reports/device` with
-  `{ vehicle_identifier, report_type: "failed_unlock" | "dead_battery" | "damaged", observed_at?, lat?, lng? }`.
-- Anonymous allowed (tight limits: 5/day per IP); authenticated reports
-  are linked to the account and weighted higher in aggregates.
-- Idempotency: dedupe identical (vehicle, type, reporter) within 30 min.
+- `POST /api/v1/reports/device` — **live**. Body:
+  `{ vehicle_identifier (≥16 chars), report_type: "failed_unlock" | "dead_battery" | "damaged", report_lat?, report_lon? }`
+  → `200 { id, reported_at, deduped }`. The frontend surfaces one-tap chips
+  in the device popup (shown when `vehicle_identifier` is present) and posts
+  here with the device coordinates; a bearer token rides along when signed in.
+- **Deprecated:** the bare `POST /api/v1/reports` (the old
+  `report_lat`/`report_lon` generic form) is no longer used by the frontend —
+  everything goes through the typed `/reports/device`.
 - **Feedback loop:** reports feed the §1.2 `reliability_tier` inputs and
   `has_negative_report`.
 

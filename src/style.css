@@ -1345,6 +1345,51 @@ body {
   color: #fff;
 }
 
+/* ---------- Popup: one-tap device-failure report ---------- */
+.device-popup__report-device {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.device-popup__report-device-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+.device-popup__report-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.device-popup__report-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 5px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.device-popup__report-chip:hover:not(:disabled) {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.device-popup__report-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.device-popup__report-device-status {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--pass);
+}
+
 /* ---------- Popup two-column layout (when authenticated data is present) ---------- */
 .device-popup__body--two-col {
   display: flex;

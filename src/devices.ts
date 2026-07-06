@@ -32,7 +32,11 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
-import { submitModelReport } from "./reports.ts";
+import {
+  submitModelReport,
+  submitDeviceReport,
+  type DeviceReportType,
+} from "./reports.ts";
 
 export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
@@ -580,6 +584,25 @@ export class Devices {
         ? `<dl class="device-popup__meta">${qualityRows.join("")}</dl>`
         : "";
 
+      // One-tap device-failure report (POST /api/v1/reports/device). Needs
+      // the stable vehicle_identifier (the API requires ≥16 chars), so it
+      // only shows when that's present. Feeds the reliability signal.
+      const vid = props.vehicle_identifier
+        ? String(props.vehicle_identifier)
+        : "";
+      const reportProblemBlock =
+        vid.length >= 16
+          ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
+               <span class="device-popup__report-device-label">Report a problem</span>
+               <div class="device-popup__report-chips">
+                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="failed_unlock">🚫 Won't unlock</button>
+                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="dead_battery">🪫 Dead battery</button>
+                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="damaged">🛴 Damaged</button>
+               </div>
+               <p class="device-popup__report-device-status" role="status" aria-live="polite"></p>
+             </div>`
+          : "";
+
       // Primary (always-present) column. The authenticated data, when
       // available, rides in a SECOND column beside this one so the popup
       // grows sideways instead of getting even taller.
@@ -595,6 +618,7 @@ export class Devices {
             ${publicRows.join("")}
           </dl>
           ${qualityBlock}
+          ${reportProblemBlock}
         </div>`;
       const authColumn = privateRows.length
         ? `<div class="device-popup__col device-popup__col--auth">
@@ -645,10 +669,46 @@ export class Devices {
         }
       });
 
+      const popupEl = this.popup.getElement();
+
+      // One-tap device-failure report chips → POST /api/v1/reports/device.
+      const reportChips = popupEl?.querySelectorAll<HTMLButtonElement>(
+        '[data-action="report-device"]',
+      );
+      if (reportChips?.length) {
+        const dStatus = popupEl?.querySelector<HTMLElement>(
+          ".device-popup__report-device-status",
+        );
+        reportChips.forEach((chip) => {
+          chip.addEventListener("click", () => {
+            reportChips.forEach((c) => (c.disabled = true));
+            if (dStatus) dStatus.textContent = "Sending…";
+            submitDeviceReport({
+              vehicle_identifier: vid,
+              report_type: chip.dataset.type as DeviceReportType,
+              lat: coords[1],
+              lng: coords[0],
+            })
+              .then((res) => {
+                if (dStatus) {
+                  dStatus.textContent = res.deduped
+                    ? "✓ Already flagged recently — thanks."
+                    : "✓ Reported. Thanks for the heads-up!";
+                }
+              })
+              .catch(() => {
+                reportChips.forEach((c) => (c.disabled = false));
+                if (dStatus) {
+                  dStatus.textContent = "Couldn't send — please try again.";
+                }
+              });
+          });
+        });
+      }
+
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
       // vehicle.
-      const popupEl = this.popup.getElement();
       const reportOpen = popupEl?.querySelector<HTMLButtonElement>(
         '[data-action="report-model"]',
       );
