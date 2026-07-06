@@ -142,6 +142,18 @@ attribution, and supporter features.
 - **Feedback loop:** reports feed the §1.2 `reliability_tier` inputs and
   `has_negative_report`.
 
+### 3.1a Model reports (consumed by frontend now)
+
+- `POST /api/v1/reports/model` — multipart form: `device_id`,
+  `vehicle_identifier?`, `description`, optional `photo` (image), `lng?`,
+  `lat?`. Fired from the device popup when the vehicle's `vehicle_model_name`
+  isn't one we recognize ("Veo Unknown → Tell us!"). Anonymous allowed
+  (rate-limited); bearer token attached when the user is signed in.
+- Store the photo in R2 (strip EXIF); the description + coordinates feed a
+  review queue so unrecognized models can be named / the model catalog
+  corrected. The frontend already posts here and shows an inline
+  success/error state, so it activates the moment this lands.
+
 ### 3.2 Missed-discount reports
 
 - `POST /api/v1/reports/discount` with

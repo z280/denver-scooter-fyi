@@ -1178,8 +1178,116 @@ body {
   margin-top: 6px;
 }
 
+/* ---------- Popup Veo-brand header ---------- */
+.device-popup__header {
+  /* Cancel the popup content's padding so the turquoise bleeds to the edges;
+     extra right padding clears the × close button. */
+  margin: -12px -14px 10px;
+  padding: 12px 34px 12px 14px;
+  background: #17b9ab; /* Veo turquoise */
+  color: #fff;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+.device-popup__model {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.device-popup__model-sub {
+  font-size: 12px;
+  opacity: 0.92;
+  margin-top: 1px;
+}
+.device-popup__header--unknown .device-popup__model-sub {
+  font-style: italic;
+}
+
+/* "Tell us what this is" report affordance (unknown models). */
+.device-popup__report-btn {
+  appearance: none;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.device-popup__report-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+.device-popup__report {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.device-popup__report-desc {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--fg);
+  resize: vertical;
+}
+.device-popup__report-photo {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.device-popup__report-photo input {
+  display: none;
+}
+.device-popup__report-photo-label {
+  display: inline-block;
+  padding: 5px 9px;
+  border: 1px dashed rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+}
+.device-popup__report-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.device-popup__report-cancel,
+.device-popup__report-send {
+  appearance: none;
+  border: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.device-popup__report-cancel {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.device-popup__report-send {
+  background: #ffffff;
+  color: #0f766e;
+}
+.device-popup__report-send:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.device-popup__report-status {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #fff;
+}
+
 /* ---------- Popup two-column layout (when authenticated data is present) ---------- */
-.device-popup--two-col {
+.device-popup__body--two-col {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;

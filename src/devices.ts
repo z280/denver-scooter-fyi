@@ -32,6 +32,7 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
+import { submitModelReport } from "./reports.ts";
 
 export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
@@ -57,11 +58,21 @@ const FLAG_LAYER = "device-negative-flag";
  *  should not also trigger the map-click region filter beneath it. */
 export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
 
-const FORM_LABEL: Record<FormFactor, string> = {
-  scooter: "Scooter",
-  bicycle: "E-bike",
-  unknown: "Unknown",
+/** Veo's model line-up, keyed by lowercased `vehicle_model_name`. The popup
+ *  header shows the friendly name + a plain description; an unrecognized or
+ *  missing model falls through to a "Tell us!" report prompt. */
+const VEO_MODELS: Record<string, { name: string; desc: string }> = {
+  astro: { name: "Veo Astro", desc: "Standing scooter" },
+  cosmo: { name: "Veo Cosmo", desc: "Seated, no pedals" },
+  apollo: { name: "Veo Apollo", desc: "Seated, with pedals · 2 passenger" },
 };
+
+function veoModel(
+  modelName: string | null | undefined,
+): { name: string; desc: string } | null {
+  if (!modelName) return null;
+  return VEO_MODELS[modelName.trim().toLowerCase()] ?? null;
+}
 
 const PROPULSION_LABEL: Record<PropulsionType, string> = {
   electric: "Throttle electric",
@@ -339,11 +350,37 @@ export class Devices {
   private openDevicePopup(props: PopupProps, coords: [number, number]): void {
     const { map } = this;
     {
-      const label = FORM_LABEL[props.form_factor] ?? props.form_factor;
-      const color =
-        DEVICE_COLORS[props.form_factor as keyof typeof DEVICE_COLORS] ??
-        DEVICE_COLORS.unknown;
       const here: LngLat = { lng: coords[0], lat: coords[1] };
+
+      // Turquoise (Veo-brand) header identifying the model. A recognized
+      // model shows its friendly name + description; an unknown one invites
+      // the rider to report what it is (description + optional photo).
+      const model = veoModel(props.vehicle_model_name);
+      const headerName = model ? model.name : "Veo Unknown";
+      const headerDesc = model ? model.desc : "Tell us!";
+      const reportUi = model
+        ? ""
+        : `<button type="button" class="device-popup__report-btn" data-action="report-model">📸 Tell us what this is</button>
+           <form class="device-popup__report" hidden>
+             <textarea class="device-popup__report-desc" rows="2"
+               placeholder="What is it? Model, seats, pedals, anything you can tell…"
+               aria-label="Describe this vehicle"></textarea>
+             <label class="device-popup__report-photo">
+               <input type="file" accept="image/*" capture="environment" />
+               <span class="device-popup__report-photo-label">📷 Add a photo</span>
+             </label>
+             <div class="device-popup__report-actions">
+               <button type="button" class="device-popup__report-cancel" data-action="report-cancel">Cancel</button>
+               <button type="submit" class="device-popup__report-send" data-action="report-submit">Send</button>
+             </div>
+             <p class="device-popup__report-status" role="status" aria-live="polite"></p>
+           </form>`;
+      const headerBlock = `
+        <div class="device-popup__header${model ? "" : " device-popup__header--unknown"}">
+          <div class="device-popup__model">${escapeHtml(headerName)}</div>
+          <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
+          ${reportUi}
+        </div>`;
 
       // Reliability verdict — the headline answer to "worth the walk?".
       // setData() pre-annotated tier + reasons; fall back to a fresh
@@ -548,7 +585,6 @@ export class Devices {
       // grows sideways instead of getting even taller.
       const primaryColumn = `
         <div class="device-popup__col">
-          <span class="device-popup__badge" style="background:${color}">${label}</span>
           ${statusBlock}
           ${relBlock}
           ${unlockBlock}
@@ -566,17 +602,20 @@ export class Devices {
              <dl class="device-popup__meta">${privateRows.join("")}</dl>
            </div>`
         : "";
-      const twoCol = privateRows.length ? " device-popup--two-col" : "";
+      const twoCol = privateRows.length ? " device-popup__body--two-col" : "";
 
       this.popup?.remove();
       this.popup = new maplibregl.Popup({
         closeButton: true,
         offset: 10,
-        maxWidth: privateRows.length ? "460px" : "260px",
+        maxWidth: privateRows.length ? "460px" : "270px",
       })
         .setLngLat(coords)
         .setHTML(
-          `<div class="device-popup${twoCol}">${primaryColumn}${authColumn}</div>`,
+          `<div class="device-popup">
+             ${headerBlock}
+             <div class="device-popup__body${twoCol}">${primaryColumn}${authColumn}</div>
+           </div>`,
         )
         .addTo(map);
 
@@ -605,6 +644,80 @@ export class Devices {
           toggleBtn.textContent = "Hide on map";
         }
       });
+
+      // "Tell us what this is" — reveal the model-report form, then handle
+      // photo selection and submission for an unrecognized ("Veo Unknown")
+      // vehicle.
+      const popupEl = this.popup.getElement();
+      const reportOpen = popupEl?.querySelector<HTMLButtonElement>(
+        '[data-action="report-model"]',
+      );
+      const reportForm = popupEl?.querySelector<HTMLFormElement>(
+        ".device-popup__report",
+      );
+      if (reportOpen && reportForm) {
+        reportOpen.addEventListener("click", () => {
+          reportOpen.hidden = true;
+          reportForm.hidden = false;
+          reportForm.querySelector("textarea")?.focus();
+        });
+        const photoInput = reportForm.querySelector<HTMLInputElement>(
+          'input[type="file"]',
+        );
+        const photoLabel = reportForm.querySelector<HTMLElement>(
+          ".device-popup__report-photo-label",
+        );
+        photoInput?.addEventListener("change", () => {
+          if (photoLabel) {
+            photoLabel.textContent = photoInput.files?.length
+              ? "📷 Photo attached ✓"
+              : "📷 Add a photo";
+          }
+        });
+        reportForm
+          .querySelector('[data-action="report-cancel"]')
+          ?.addEventListener("click", () => {
+            reportForm.hidden = true;
+            reportOpen.hidden = false;
+          });
+        reportForm.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const desc =
+            reportForm.querySelector<HTMLTextAreaElement>("textarea")?.value ??
+            "";
+          const status = reportForm.querySelector<HTMLElement>(
+            ".device-popup__report-status",
+          );
+          const sendBtn = reportForm.querySelector<HTMLButtonElement>(
+            '[data-action="report-submit"]',
+          );
+          if (!desc.trim() && !photoInput?.files?.length) {
+            if (status) status.textContent = "Add a description or a photo first.";
+            return;
+          }
+          if (sendBtn) sendBtn.disabled = true;
+          if (status) status.textContent = "Sending…";
+          submitModelReport({
+            device_id: props.device_id,
+            vehicle_identifier: props.vehicle_identifier ?? null,
+            description: desc,
+            photo: photoInput?.files?.[0] ?? null,
+            lng: coords[0],
+            lat: coords[1],
+          })
+            .then(() => {
+              reportForm.innerHTML =
+                `<p class="device-popup__report-status">🎉 Thanks! Your report helps us name the fleet.</p>`;
+            })
+            .catch(() => {
+              if (sendBtn) sendBtn.disabled = false;
+              if (status) {
+                status.textContent =
+                  "Couldn't send right now — please try again later.";
+              }
+            });
+        });
+      }
 
       // Worth-the-walk "Show me": fly to the reliable alternative and open
       // its popup so the rider can compare before walking.
