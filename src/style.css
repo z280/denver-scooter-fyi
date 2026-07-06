@@ -1178,6 +1178,26 @@ body {
   margin-top: 6px;
 }
 
+/* ---------- Popup two-column layout (when authenticated data is present) ---------- */
+.device-popup--two-col {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.device-popup__col {
+  flex: 1 1 190px;
+  min-width: 0;
+}
+/* The authenticated column gets a subtle tint (rather than a directional
+   border) so it reads as distinct whether it sits beside or wraps below. */
+.device-popup__col--auth {
+  flex: 1 1 150px;
+  background: rgba(0, 114, 178, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  align-self: flex-start;
+}
+
 /* ---------- Popup: reliability verdict ---------- */
 .device-popup__reliability {
   margin-top: 9px;

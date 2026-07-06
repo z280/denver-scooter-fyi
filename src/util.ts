@@ -64,3 +64,11 @@ export function splitCamel(s: string): string {
 export function emptyFC(): GeoJSON.FeatureCollection {
   return { type: "FeatureCollection", features: [] };
 }
+
+/** Convert an H3 cell id from the API's decimal-integer form (kept exact as a
+ *  string by parseDevicesResponse) into the canonical hex form h3-js expects.
+ *  A value that already contains hex letters is assumed canonical and passed
+ *  through unchanged. */
+export function h3ToHex(index: string): string {
+  return /^[0-9]+$/.test(index) ? BigInt(index).toString(16) : index;
+}

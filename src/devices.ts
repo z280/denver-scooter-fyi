@@ -1,5 +1,4 @@
 import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
-import { cellToBoundary, isValidCell } from "h3-js";
 import { isAuthenticated } from "./map-auth.js";
 import type {
   DeviceProperties,
@@ -47,10 +46,6 @@ const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
 
-const H3_SRC = "device-h3-cell";
-const H3_FILL_LAYER = "device-h3-cell-fill";
-const H3_LINE_LAYER = "device-h3-cell-line";
-
 const SRC = "devices";
 const CLUSTER_LAYER = "device-clusters";
 /** Overlays insert before this id so device markers stay on top. */
@@ -92,9 +87,6 @@ export class Devices {
    *  null if no circle is showing. Used so popups can render a toggleable
    *  Show/Hide-on-map link. */
   private rangeCircleDeviceId: string | null = null;
-  /** Composite key `${device_id}|${h3Index}` of the H3 cell currently
-   *  outlined on the map (from a popup's "Show cell" toggle), or null. */
-  private h3CellKey: string | null = null;
   /** Observers notified after every apply() — used by the battery filter
    *  UI to enable/disable buttons when thresholds become (un)available. */
   private listeners = new Set<(t: BatteryThresholds | null) => void>();
@@ -278,35 +270,6 @@ export class Devices {
         },
       },
       POINT_LAYER,
-    );
-
-    // H3 cell outline used by the popup's per-resolution "Show cell"
-    // toggle. One cell at a time; switching toggles replaces the data.
-    this.map.addSource(H3_SRC, { type: "geojson", data: emptyFC() });
-    this.map.addLayer(
-      {
-        id: H3_FILL_LAYER,
-        type: "fill",
-        source: H3_SRC,
-        paint: {
-          "fill-color": "#D55E00",
-          "fill-opacity": 0.10,
-        },
-      },
-      FLAG_LAYER,
-    );
-    this.map.addLayer(
-      {
-        id: H3_LINE_LAYER,
-        type: "line",
-        source: H3_SRC,
-        paint: {
-          "line-color": "#D55E00",
-          "line-width": 2,
-          "line-opacity": 0.85,
-        },
-      },
-      FLAG_LAYER,
     );
 
     this.wireInteractions();
@@ -510,9 +473,8 @@ export class Devices {
         );
       }
 
-      // Range-rank rows. The H3-peer ranks each get a "Show cell" toggle
-      // that draws the actual H3 polygon — handy for visualizing which
-      // cohort the rank was computed against.
+      // Range-rank rows. (Per-H3-cell ranks were removed — see the
+      // hexagon-density map tool in the Areas panel for spatial views.)
       const percentile = asNumber(props.range_percentile_by_type);
       if (percentile !== null) {
         publicRows.push(
@@ -529,38 +491,6 @@ export class Devices {
       if (rankByType !== null) {
         publicRows.push(
           `<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`,
-        );
-      }
-      // The wire type says these H3 indexes are strings, but the upstream
-      // API actually serializes them as JSON numbers. Coerce to string up
-      // front: the raw number reaching escapeHtml() below used to throw
-      // ("s.replace is not a function"), which aborted popup construction
-      // for every device and silently killed click-for-details.
-      const h3Ranks: Array<
-        [number, number | string | null | undefined, string | null]
-      > = [
-        [8, props.h3_8_index, formatRank(props.range_rank_h3_8_peers)],
-        [9, props.h3_9_index, formatRank(props.range_rank_h3_9_peers)],
-        [10, props.h3_10_index, formatRank(props.range_rank_h3_10_peers)],
-      ];
-      for (const [res, rawIdx, rank] of h3Ranks) {
-        const idx = rawIdx == null || rawIdx === "" ? "" : String(rawIdx);
-        if (rank === null && !idx) continue;
-        const rankText = rank === null ? "—" : rank;
-        const cellKey = idx ? `${props.device_id}|${idx}` : "";
-        const showing = !!cellKey && this.h3CellKey === cellKey;
-        const toggleBtn = idx
-          ? `<button
-               type="button"
-               class="device-popup__action"
-               data-action="toggle-h3"
-               data-device="${escapeHtml(props.device_id)}"
-               data-h3="${escapeHtml(idx)}"
-             >${showing ? "Hide cell" : "Show cell"}</button>`
-          : "";
-        publicRows.push(
-          `<dt>Rank vs H3 r${res} peers</dt>
-           <dd>${rankText} ${toggleBtn}${idx ? `<div class="device-popup__h3">${escapeHtml(idx)}</div>` : ""}</dd>`,
         );
       }
 
@@ -613,31 +543,40 @@ export class Devices {
         ? `<dl class="device-popup__meta">${qualityRows.join("")}</dl>`
         : "";
 
-      const privateBlock = privateRows.length
-        ? `<div class="device-popup__authed">
+      // Primary (always-present) column. The authenticated data, when
+      // available, rides in a SECOND column beside this one so the popup
+      // grows sideways instead of getting even taller.
+      const primaryColumn = `
+        <div class="device-popup__col">
+          <span class="device-popup__badge" style="background:${color}">${label}</span>
+          ${statusBlock}
+          ${relBlock}
+          ${unlockBlock}
+          ${walkBlock}
+          <dl class="device-popup__meta">
+            <dt>Device ID</dt>
+            <dd><code>${escapeHtml(props.device_id)}</code></dd>
+            ${publicRows.join("")}
+          </dl>
+          ${qualityBlock}
+        </div>`;
+      const authColumn = privateRows.length
+        ? `<div class="device-popup__col device-popup__col--auth">
              <span class="device-popup__authed-tag">Authenticated</span>
              <dl class="device-popup__meta">${privateRows.join("")}</dl>
            </div>`
         : "";
+      const twoCol = privateRows.length ? " device-popup--two-col" : "";
 
       this.popup?.remove();
-      this.popup = new maplibregl.Popup({ closeButton: true, offset: 10 })
+      this.popup = new maplibregl.Popup({
+        closeButton: true,
+        offset: 10,
+        maxWidth: privateRows.length ? "460px" : "260px",
+      })
         .setLngLat(coords)
         .setHTML(
-          `<div class="device-popup">
-             <span class="device-popup__badge" style="background:${color}">${label}</span>
-             ${statusBlock}
-             ${relBlock}
-             ${unlockBlock}
-             ${walkBlock}
-             <dl class="device-popup__meta">
-               <dt>Device ID</dt>
-               <dd><code>${escapeHtml(props.device_id)}</code></dd>
-               ${publicRows.join("")}
-             </dl>
-             ${qualityBlock}
-             ${privateBlock}
-           </div>`,
+          `<div class="device-popup${twoCol}">${primaryColumn}${authColumn}</div>`,
         )
         .addTo(map);
 
@@ -665,29 +604,6 @@ export class Devices {
           this.showRangeCircle(deviceId, lng, lat, radius);
           toggleBtn.textContent = "Hide on map";
         }
-      });
-
-      // H3 "Show cell" toggles — one per resolution row that the device has.
-      const h3Buttons = this.popup
-        .getElement()
-        ?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-h3"]');
-      h3Buttons?.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const deviceId = btn.dataset.device || "";
-          const h3 = btn.dataset.h3 || "";
-          if (!h3) return;
-          const key = `${deviceId}|${h3}`;
-          if (this.h3CellKey === key) {
-            this.clearH3Cell();
-          } else {
-            this.showH3Cell(key, h3);
-          }
-          // Refresh all H3 buttons in this popup so labels reflect state.
-          h3Buttons.forEach((b) => {
-            const bKey = `${b.dataset.device || ""}|${b.dataset.h3 || ""}`;
-            b.textContent = this.h3CellKey === bKey ? "Hide cell" : "Show cell";
-          });
-        });
       });
 
       // Worth-the-walk "Show me": fly to the reliable alternative and open
@@ -900,56 +816,6 @@ export class Devices {
     this.rangeCircleDeviceId = null;
   }
 
-  // ---------- H3 cell outline ----------
-
-  /** Draw the boundary of an H3 cell (the cohort a per-cell rank was
-   *  computed against). One cell at a time; replaces any prior outline.
-   *  On any failure (bad index, empty boundary) the prior outline is
-   *  cleared so the UI doesn't show a stale cell. */
-  private showH3Cell(key: string, h3Index: string): void {
-    const src = this.map.getSource(H3_SRC) as GeoJSONSource | undefined;
-    if (!src) return;
-    let ring: GeoJSON.Position[] = [];
-    try {
-      // The API sends the cell id as a decimal integer, but h3-js speaks the
-      // canonical hex form — convert before handing it over, else it silently
-      // returns a garbage boundary for a wrong (or invalid) cell.
-      const hex = h3ToHex(h3Index);
-      if (!isValidCell(hex)) {
-        this.clearH3Cell();
-        return;
-      }
-      // h3-js returns [lat, lng] pairs; flip to GeoJSON [lng, lat] and
-      // close the ring so the fill renders correctly.
-      const boundary = cellToBoundary(hex);
-      ring = boundary.map(([lat, lng]) => [lng, lat] as GeoJSON.Position);
-      if (ring.length > 0) ring.push(ring[0]);
-    } catch {
-      this.clearH3Cell();
-      return;
-    }
-    if (ring.length < 4) {
-      this.clearH3Cell();
-      return;
-    }
-    src.setData({
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          geometry: { type: "Polygon", coordinates: [ring] },
-          properties: { h3: h3Index },
-        },
-      ],
-    });
-    this.h3CellKey = key;
-  }
-
-  private clearH3Cell(): void {
-    const src = this.map.getSource(H3_SRC) as GeoJSONSource | undefined;
-    if (src) src.setData(emptyFC());
-    this.h3CellKey = null;
-  }
 }
 
 /** Flattened feature properties the popup builder reads. Public fields are
@@ -1294,14 +1160,6 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
-}
-
-/** Convert an H3 cell id from the API's decimal-integer form (kept exact as a
- *  string by parseDevicesResponse) into the canonical hex form h3-js expects.
- *  A value that already contains hex letters is assumed canonical and passed
- *  through unchanged. */
-function h3ToHex(index: string): string {
-  return /^[0-9]+$/.test(index) ? BigInt(index).toString(16) : index;
 }
 
 /** Format an upstream rank value into a friendly string, or null when absent

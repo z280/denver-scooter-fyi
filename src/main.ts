@@ -22,6 +22,7 @@ import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
 import { EquityRanks } from "./equity.ts";
+import { HexDensity, type HexSize } from "./hexdensity.ts";
 import { consumePendingMagicLink } from "./auth-magic-link.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
@@ -40,6 +41,12 @@ const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
 const overlays = new Overlays(map, need("choropleth-legend"));
 const equity = new EquityRanks(overlays, () => renderEquityMetric());
+const hexDensity = new HexDensity(map, need("hexbin-legend"));
+// Hex density and the region choropleth both shade the map by count, so only
+// one runs at a time — turning one on clears the other. Assigned by their
+// wire functions.
+let clearChoropleth: () => void = () => {};
+let clearHexDensity: () => void = () => {};
 const freshness = new Freshness(need("freshness"), need("freshness-text"));
 const clusters = new Clusters(
   map,
@@ -185,6 +192,7 @@ map.on("load", async () => {
   wireBatteryFilter();
   wireColorBy();
   wireChoropleth();
+  wireHexDensity();
   wireDrawers();
   const areaFilter = wireAreaFilter();
   wireModes();
@@ -206,6 +214,7 @@ map.on("load", async () => {
   if (resp) {
     devices.setData(resp);
     equity.update(resp.features);
+    hexDensity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -402,8 +411,15 @@ function wireColorBy(): void {
 
 function wireChoropleth(): void {
   const select = need<HTMLSelectElement>("choropleth-select");
+  // Reset to Off without re-triggering the change handler's side effects.
+  clearChoropleth = () => {
+    if (!select.value) return;
+    select.value = "";
+    void overlays.setChoropleth(null);
+  };
   select.addEventListener("change", async () => {
     const layer = (select.value || null) as BoundaryLayer | null;
+    if (layer) clearHexDensity(); // mutually exclusive with hex density
     select.disabled = true;
     try {
       await overlays.setChoropleth(layer);
@@ -414,6 +430,43 @@ function wireChoropleth(): void {
     } finally {
       select.disabled = false;
     }
+  });
+}
+
+function wireHexDensity(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#hexbin-seg .seg-btn"),
+  );
+  const select = (btn: HTMLButtonElement): void => {
+    for (const b of btns) {
+      const on = b === btn;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", String(on));
+    }
+    const size = (btn.dataset.hex || "") as HexSize | "";
+    if (size) clearChoropleth(); // mutually exclusive with the choropleth
+    hexDensity.setSize(size || null);
+  };
+  // Reset to Off (used when the choropleth takes over).
+  clearHexDensity = () => {
+    const off = btns.find((b) => b.dataset.hex === "");
+    if (off && !off.classList.contains("is-active")) select(off);
+  };
+  btns.forEach((btn, i) => {
+    btn.addEventListener("click", () => select(btn));
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = btns[(i + 1) % btns.length];
+        next.focus();
+        select(next);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = btns[(i - 1 + btns.length) % btns.length];
+        prev.focus();
+        select(prev);
+      }
+    });
   });
 }
 
@@ -927,6 +980,7 @@ function startRefreshLoop(): void {
       const resp = await fetchDevicesAuto(inFlight.signal);
       devices.setData(resp);
       equity.update(resp.features);
+      hexDensity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(
