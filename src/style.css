@@ -2270,3 +2270,78 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   width: 17px;
   height: 17px;
 }
+
+/* ---------- Iconography drawer: contextual details + on-map legend ---------- */
+
+/* Slightly larger reading text in this drawer, with breathing room below
+   each selector toggle. */
+#drawer-iconography .control-hint,
+.icono-detail {
+  font-size: 13px;
+}
+.icono-detail {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.icono-detail:empty {
+  display: none;
+}
+.icono-detail__title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.icono-detail__note {
+  margin: 0 0 2px;
+  color: var(--fg-muted);
+}
+.icono-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.icono-item img {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+.icono-sublabel {
+  margin-top: 14px;
+}
+#gauge-body .segmented {
+  margin-bottom: 2px;
+}
+
+/* On-map legend: docked below the left tab-strip menu (top set by JS). */
+.icon-legend {
+  position: fixed;
+  left: 12px;
+  z-index: 26; /* under the tab strip (32) and drawers (30) */
+  display: grid;
+  grid-template-columns: repeat(2, 26px);
+  gap: 6px;
+  padding: 8px;
+  max-height: calc(100dvh - 480px);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.icon-legend img {
+  display: block;
+  width: 26px;
+  height: 26px;
+  cursor: help;
+}
+.icon-legend__head {
+  grid-column: 1 / -1;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+}

@@ -9,6 +9,8 @@ import {
   ALL_RIDE_TYPES,
   ALL_MODELS,
   gaugeColor,
+  iconPreviewURL,
+  whenModelIconsReady,
   type RideType,
   type ModelKey,
   type QualityFilter,
@@ -105,7 +107,7 @@ let resetIconography: () => void = () => {};
 
 const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
   standing: "🛴 Standing only",
-  sitting: "🚲 Sitting only",
+  sitting: "🚲 Seated only",
 };
 
 const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
@@ -526,30 +528,238 @@ function wireBatterySlider(): void {
 
 // ---------- Iconography ----------
 
-// Icon style (device use / model / data), the data source that colors the
-// gauge ring and the "data" badge, and the gauge toggle itself (default on).
+// Icon style (ride type / model / data), independent icon-data and
+// gauge-data sources, the gauge toggle (default on), contextual example
+// rows rendered with the real icon renderer, and the on-map legend.
 function wireIconography(): void {
+  const styleDetail = need("icono-style-detail");
+  const gaugeBody = need("gauge-body");
+  const gaugeDetail = need("icono-gauge-detail");
+  const iconDataSection = need("icon-data-section");
+  const legendEl = need("icon-legend");
+  const legendToggle = need<HTMLInputElement>("legend-toggle");
+  const gauge = need<HTMLInputElement>("gauge-toggle");
+
+  // Local mirrors of the devices-side iconography state, for rendering.
+  let style: IconStyle = "use";
+  let iconData: DataSource = "reliability";
+  let gaugeData: DataSource = "battery";
+
+  const el = <K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className?: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const icon = (
+    key: string,
+    title: string,
+    overlay?: { text: string; color: string },
+  ): HTMLImageElement => {
+    const img = el("img");
+    img.src = iconPreviewURL(key, overlay);
+    img.alt = title;
+    img.title = title;
+    return img;
+  };
+  const item = (
+    key: string,
+    label: string,
+    overlay?: { text: string; color: string },
+  ): HTMLElement => {
+    const row = el("div", "icono-item");
+    row.append(icon(key, label, overlay), el("span", undefined, label));
+    return row;
+  };
+
+  // Only details pertinent to the selected icon style.
+  const renderStyleDetail = (): void => {
+    styleDetail.replaceChildren();
+    if (style === "use") {
+      styleDetail.append(
+        el("p", "icono-detail__title", "Ride Types:"),
+        item("ik|use-sitting|off", "Seated"),
+        item("ik|use-standing|off", "Standing"),
+      );
+    } else if (style === "model") {
+      styleDetail.append(
+        el("p", "icono-detail__title", "Device Models"),
+        item("ik|msvg-astro|off", "Veo Astro — Standing scooter"),
+        item("ik|msvg-cosmo|off", "Veo Cosmo — One passenger glider (no pedals)"),
+        item("ik|msvg-apollo|off", "Veo Apollo — Two passenger e-bike w/ pedals"),
+      );
+    } else {
+      styleDetail.append(
+        el(
+          "p",
+          "icono-detail__note",
+          "Data display shows battery % or reliability indicator icon for each device.",
+        ),
+      );
+      if (iconData === "battery") {
+        styleDetail.append(
+          item("ik|db-3|off", "100%", { text: "100", color: "#ffffff" }),
+          item("ik|db-1|off", "50%", { text: "50", color: "#3a2a00" }),
+          item("ik|db-0|off", "25%", { text: "25", color: "#ffffff" }),
+        );
+      } else {
+        styleDetail.append(
+          item("ik|dr-ok|off", "Likely Ridable"),
+          item("ik|dr-unknown|off", "Unknown"),
+          item("ik|dr-risk|off", "High Risk"),
+        );
+      }
+    }
+  };
+
+  // Gauge section: nothing below the toggle line when off; examples match
+  // the selected gauge data when on.
+  const renderGaugeDetail = (): void => {
+    gaugeBody.hidden = !gauge.checked;
+    gaugeDetail.replaceChildren();
+    if (!gauge.checked) return;
+    if (gaugeData === "battery") {
+      gaugeDetail.append(
+        item("ik|x|b-100", "Full"),
+        item("ik|x|b-50", "50%"),
+        item("ik|x|b-25", "25%"),
+      );
+    } else {
+      gaugeDetail.append(
+        item("ik|x|r-ok", "Likely ridable"),
+        item("ik|x|r-unknown", "Unknown"),
+        item("ik|x|r-risk", "Questionable"),
+      );
+    }
+  };
+
+  // On-map legend: every icon + gauge-ring permutation for the current
+  // settings, docked below the tab-strip menu; hover for descriptions.
+  const positionLegend = (): void => {
+    const tabs = document.getElementById("drawer-tabs");
+    if (!tabs) return;
+    const rect = tabs.getBoundingClientRect();
+    legendEl.style.top = `${Math.round(rect.bottom + 10)}px`;
+  };
+  const renderLegend = (): void => {
+    legendEl.hidden = !legendToggle.checked;
+    if (!legendToggle.checked) return;
+    legendEl.replaceChildren();
+    const head = (text: string): HTMLElement =>
+      el("span", "icon-legend__head", text);
+
+    legendEl.append(head("Icons"));
+    if (style === "use") {
+      legendEl.append(
+        icon("ik|use-sitting|off", "Seated ride (Cosmo glider or Apollo e-bike)"),
+        icon("ik|use-standing|off", "Standing scooter (Astro)"),
+      );
+    } else if (style === "model") {
+      legendEl.append(
+        icon("ik|msvg-astro|off", "Veo Astro — standing scooter"),
+        icon("ik|msvg-cosmo|off", "Veo Cosmo — one passenger glider (no pedals)"),
+        icon("ik|msvg-apollo|off", "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon("ik|model-unk|off", "Unrecognized model — tap its pin to tell us!"),
+      );
+    } else if (iconData === "battery") {
+      legendEl.append(
+        icon("ik|db-3|off", "Battery: top quartile", { text: "100", color: "#ffffff" }),
+        icon("ik|db-2|off", "Battery: 50–75% quartile", { text: "65", color: "#1f3a14" }),
+        icon("ik|db-1|off", "Battery: 25–50% quartile", { text: "40", color: "#3a2a00" }),
+        icon("ik|db-0|off", "Battery: bottom quartile", { text: "15", color: "#ffffff" }),
+        icon("ik|db-x|off", "No battery data"),
+      );
+    } else {
+      legendEl.append(
+        icon("ik|dr-ok|off", "Likely ridable"),
+        icon("ik|dr-unknown|off", "Unknown reliability"),
+        icon("ik|dr-risk|off", "High risk — rendered faded on the map"),
+      );
+    }
+
+    if (gauge.checked) {
+      legendEl.append(head("Gauge"));
+      if (gaugeData === "battery") {
+        legendEl.append(
+          icon("ik|x|b-100", "Gauge ring: 100% battery — full green ring"),
+          icon("ik|x|b-75", "Gauge ring: ~75% battery"),
+          icon("ik|x|b-50", "Gauge ring: ~50% battery (amber)"),
+          icon("ik|x|b-25", "Gauge ring: ~25% battery (red)"),
+          icon("ik|x|b-x", "Gauge ring: no battery data (thin gray outline)"),
+        );
+      } else {
+        legendEl.append(
+          icon("ik|x|r-ok", "Gauge ring: likely ridable"),
+          icon("ik|x|r-unknown", "Gauge ring: unknown reliability"),
+          icon("ik|x|r-risk", "Gauge ring: questionable — high risk"),
+        );
+      }
+    }
+    positionLegend();
+  };
+  const renderAll = (): void => {
+    renderStyleDetail();
+    renderGaugeDetail();
+    renderLegend();
+  };
+
+  const setGaugeSrc = wireSeg(
+    "#data-source-seg",
+    (b) => b.dataset.source ?? "battery",
+    (v) => {
+      gaugeData = v as DataSource;
+      devices.setGaugeData(gaugeData);
+      renderAll();
+    },
+  );
+  const setIconSrc = wireSeg(
+    "#icon-data-seg",
+    (b) => b.dataset.source ?? "reliability",
+    (v) => {
+      iconData = v as DataSource;
+      devices.setIconData(iconData);
+      renderAll();
+    },
+  );
   const setStyle = wireSeg(
     "#icon-style-seg",
     (b) => b.dataset.style ?? "use",
-    (v) => devices.setIconStyle(v as IconStyle),
+    (v) => {
+      style = v as IconStyle;
+      devices.setIconStyle(style);
+      iconDataSection.hidden = style !== "data";
+      // Per design: choosing Data icons corrects the gauge back to battery
+      // so the badge (reliability by default) and ring stay complementary.
+      if (style === "data") setGaugeSrc("battery");
+      renderAll();
+    },
   );
-  const setSource = wireSeg(
-    "#data-source-seg",
-    (b) => b.dataset.source ?? "battery",
-    (v) => devices.setDataSource(v as DataSource),
-  );
-  const gauge = need<HTMLInputElement>("gauge-toggle");
-  gauge.addEventListener("change", () => devices.setGauge(gauge.checked));
+  gauge.addEventListener("change", () => {
+    devices.setGauge(gauge.checked);
+    renderAll();
+  });
+  legendToggle.addEventListener("change", renderLegend);
+  window.addEventListener("resize", () => {
+    if (legendToggle.checked) positionLegend();
+  });
 
   resetIconography = () => {
     setStyle("use");
-    setSource("battery");
+    setIconSrc("reliability");
+    setGaugeSrc("battery");
     if (!gauge.checked) {
       gauge.checked = true;
       gauge.dispatchEvent(new Event("change"));
     }
   };
+
+  // Model silhouettes decode async — refresh previews once they land.
+  void whenModelIconsReady().then(renderAll);
+  renderAll();
 }
 
 function wireChoropleth(): void {

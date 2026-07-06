@@ -78,8 +78,8 @@ export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
  *  missing model falls through to a "Tell us!" report prompt. */
 const VEO_MODELS: Record<string, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
-  cosmo: { name: "Veo Cosmo", desc: "Seated, no pedals" },
-  apollo: { name: "Veo Apollo", desc: "Seated, with pedals · 2 passenger" },
+  cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
+  apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
 };
 
 function veoModel(
@@ -108,10 +108,12 @@ export class Devices {
    *  satisfy a minimum. */
   private minBattery = 0;
   private quality: QualityFilter = "any";
-  // Iconography: inner badge style + gauge ring (default on) + the signal
-  // that colors both. Battery gauge is the flagship default look.
+  // Iconography: inner badge style + gauge ring (default on). The badge
+  // ("icon data") and the ring ("gauge data") have independent signals so
+  // riders can see reliability in the icon while the ring tracks battery.
   private iconStyle: IconStyle = "use";
-  private dataSource: DataSource = "battery";
+  private iconData: DataSource = "reliability";
+  private gaugeData: DataSource = "battery";
   private gauge = true;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
@@ -928,8 +930,15 @@ export class Devices {
     this.apply(); // icon keys are data-driven — re-annotate + re-set data
   }
 
-  setDataSource(source: DataSource): void {
-    this.dataSource = source;
+  /** Signal shown by the "Data" badge style. */
+  setIconData(source: DataSource): void {
+    this.iconData = source;
+    this.apply();
+  }
+
+  /** Signal the gauge ring is colored/sized by. */
+  setGaugeData(source: DataSource): void {
+    this.gaugeData = source;
     this.apply();
   }
 
@@ -1027,7 +1036,7 @@ export class Devices {
       // Silhouette badge once its SVG has decoded; letter tag until then
       // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
       inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
-    } else if (this.dataSource === "reliability") {
+    } else if (this.iconData === "reliability") {
       inner = `dr-${tier}`;
     } else {
       const b = this.thresholds ? bucketFor(pct, this.thresholds) : null;
@@ -1037,7 +1046,7 @@ export class Devices {
     let ring: string;
     if (!this.gauge) {
       ring = "off";
-    } else if (this.dataSource === "reliability") {
+    } else if (this.gaugeData === "reliability") {
       ring = `r-${tier}`;
     } else {
       // Quantize to 5% steps so the atlas stays small (≤21 ring variants).
@@ -1051,7 +1060,7 @@ export class Devices {
   private applyPaint(): void {
     const battText =
       this.iconStyle === "data" &&
-      this.dataSource === "battery" &&
+      this.iconData === "battery" &&
       this.thresholds;
     const textExpr: maplibregl.ExpressionSpecification | string = battText
       ? textByPercent()
@@ -1288,6 +1297,37 @@ export function gaugeColor(pct: number): string {
   if (pct >= 67) return "#1b8a3f";
   if (pct >= 34) return "#f5b400";
   return "#c62828";
+}
+
+/** Render one composite icon key to a data URL — powers the Iconography
+ *  drawer's example rows and the on-map legend, so what they show is the
+ *  exact renderer output. Optional overlay text mimics the symbol layer's
+ *  percentage overlay on "Data · battery" badges. */
+export function iconPreviewURL(
+  key: string,
+  overlay?: { text: string; color: string },
+): string {
+  const data = makeCompositeIcon(key);
+  const c = document.createElement("canvas");
+  c.width = data.width;
+  c.height = data.height;
+  const ctx = c.getContext("2d");
+  if (!ctx) return "";
+  ctx.putImageData(data, 0, 0);
+  if (overlay) {
+    ctx.fillStyle = overlay.color;
+    ctx.font = `bold ${Math.round(data.width * 0.3)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(overlay.text, data.width / 2, data.height / 2 + 1);
+  }
+  return c.toDataURL();
+}
+
+/** Resolves when the model silhouettes have decoded (or failed) — callers
+ *  re-render model previews after this so the SVGs replace letter tags. */
+export function whenModelIconsReady(): Promise<void> {
+  return loadModelIcons();
 }
 
 /** Build one composite marker image from its `ik|<inner>|<ring>` key.

@@ -142,7 +142,7 @@
           <p class="control-hint">All on by default — tap to hide a type.</p>
           <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
             <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
-            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Sitting</button>
+            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Seated</button>
           </div>
         </section>
 
@@ -160,14 +160,14 @@
               <img class="toggle-card__icon" src="/cosmo.svg" alt="" />
               <span class="toggle-card__text">
                 <strong>Cosmo</strong>
-                <span>Seated, no pedals</span>
+                <span>One passenger glider (no pedals)</span>
               </span>
             </button>
             <button class="toggle-card is-active" type="button" data-model="apollo" aria-pressed="true">
               <img class="toggle-card__icon" src="/apollo.svg" alt="" />
               <span class="toggle-card__text">
                 <strong>Apollo</strong>
-                <span>Seated, with pedals · 2 passenger</span>
+                <span>Two passenger e-bike w/ pedals</span>
               </span>
             </button>
           </div>
@@ -223,21 +223,20 @@
         <section class="control-group" aria-labelledby="icon-style-label">
           <h3 id="icon-style-label" class="control-label">Icon style</h3>
           <div id="icon-style-seg" class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="use">Device use</button>
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="use">Ride type</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-style="model">Model</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-style="data">Data</button>
           </div>
-          <p class="control-hint">
-            Device use shows 🛴 standing / 🚲 sitting. Model tags Astro (As),
-            Cosmo (Co), Apollo (Ap). Data colors each dot by the source below.
-          </p>
+          <!-- Filled by wireIconography(): only details pertinent to the
+               selected style, with live renderer previews. -->
+          <div id="icono-style-detail" class="icono-detail"></div>
         </section>
 
-        <section class="control-group" aria-labelledby="data-source-label">
-          <h3 id="data-source-label" class="control-label">Data source</h3>
-          <div id="data-source-seg" class="segmented" role="radiogroup" aria-labelledby="data-source-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="battery">Battery %</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-source="reliability">Reliability</button>
+        <section class="control-group" id="icon-data-section" aria-labelledby="icon-data-label" hidden>
+          <h3 id="icon-data-label" class="control-label">Icon data</h3>
+          <div id="icon-data-seg" class="segmented" role="radiogroup" aria-labelledby="icon-data-label">
+            <button class="seg-btn" role="radio" aria-checked="false" data-source="battery">Battery %</button>
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="reliability">Reliability</button>
           </div>
         </section>
 
@@ -247,25 +246,26 @@
             <input type="checkbox" id="gauge-toggle" checked />
             <span>Ring each device with its gauge</span>
           </label>
-          <p class="control-hint">
-            Battery: the ring fills clockwise from 12 o'clock to the charge
-            level — full green ring at 100%, a sliver at 5%. Reliability: the
-            ring takes the tier's color.
-          </p>
-          <div class="legend batt-legend" aria-hidden="true">
-            <div class="legend__bar">
-              <span class="legend__swatch" style="background: #c62828"></span>
-              <span class="legend__swatch" style="background: #f5b400"></span>
-              <span class="legend__swatch" style="background: #1b8a3f"></span>
+          <div id="gauge-body">
+            <h3 id="data-source-label" class="control-label icono-sublabel">Gauge data</h3>
+            <div id="data-source-seg" class="segmented" role="radiogroup" aria-labelledby="data-source-label">
+              <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="battery">Battery %</button>
+              <button class="seg-btn" role="radio" aria-checked="false" data-source="reliability">Reliability</button>
             </div>
-            <div class="legend__scale"><span>empty</span><span>full</span></div>
+            <div id="icono-gauge-detail" class="icono-detail"></div>
           </div>
-          <div class="rel-legend" aria-hidden="true">
-            <span><i style="background: #1b8a3f"></i> likely rideable</span>
-            <span><i style="background: #f5b400"></i> unknown</span>
-            <span><i style="background: #c62828"></i> high risk</span>
-          </div>
-          <p class="control-hint">High-risk devices always render faded on the map.</p>
+        </section>
+
+        <section class="control-group" aria-labelledby="legend-label">
+          <h3 id="legend-label" class="control-label">Legend</h3>
+          <label class="switch">
+            <input type="checkbox" id="legend-toggle" />
+            <span>Show icon legend on the map</span>
+          </label>
+          <p class="control-hint icono-hint">
+            Every icon and gauge-ring permutation, below the menu on the left.
+            Hover any for a description.
+          </p>
         </section>
       </div>
     </aside>
@@ -485,6 +485,10 @@
     <!-- Full-screen in-ride HUD (speed / clock / cost). Content built by
          ride-hud.ts; hidden until the rider opens it. -->
     <div id="ride-hud" class="ride-hud" hidden></div>
+
+    <!-- On-map icon legend (Iconography drawer toggle). Populated by
+         wireIconography(); sits below the left tab strip. -->
+    <div id="icon-legend" class="icon-legend" role="img" aria-label="Icon legend" hidden></div>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a
