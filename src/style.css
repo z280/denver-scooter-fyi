@@ -2303,9 +2303,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   gap: 9px;
 }
 .icono-item img {
-  flex: none;
-  width: 26px;
-  height: 26px;
+  flex: none; /* sized via width/height attrs to mirror map scale */
 }
 .icono-sublabel {
   margin-top: 14px;
@@ -2320,7 +2318,9 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   left: 12px;
   z-index: 26; /* under the tab strip (32) and drawers (30) */
   display: grid;
-  grid-template-columns: repeat(2, 26px);
+  grid-template-columns: repeat(2, auto);
+  justify-items: center;
+  align-items: center;
   gap: 6px;
   padding: 8px;
   max-height: calc(100dvh - 480px);
@@ -2333,9 +2333,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .icon-legend img {
   display: block;
-  width: 26px;
-  height: 26px;
-  cursor: help;
+  cursor: help; /* sized via width/height attrs to mirror map scale */
 }
 .icon-legend__head {
   grid-column: 1 / -1;
@@ -2424,4 +2422,27 @@ body.mode-ride .device-popup__ranks-link {
   margin: 6px 0 10px;
   font-size: 12px;
   color: var(--fg-muted);
+}
+
+/* ---------- ✨ Essentials hover tooltip ---------- */
+.map-tooltip {
+  position: fixed;
+  z-index: 65;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  max-width: 200px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--fg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.map-tooltip strong {
+  font-size: 13px;
 }

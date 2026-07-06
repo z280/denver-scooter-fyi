@@ -598,7 +598,13 @@ function wireIconography(): void {
     overlay?: { text: string; color: string },
   ): HTMLImageElement => {
     const img = el("img");
-    img.src = iconPreviewURL(key, overlay);
+    const preview = iconPreviewURL(key, overlay);
+    img.src = preview.url;
+    // Canvases vary by design (rings grow outward from a fixed badge), so
+    // previews scale to match the map's relative sizes.
+    const size = Math.round(preview.logicalPx * 0.8);
+    img.width = size;
+    img.height = size;
     img.alt = title;
     img.title = title;
     return img;
@@ -803,6 +809,11 @@ function wireIconography(): void {
     devices.setGauge(gauge.checked);
     renderAll();
   });
+  // ✨ Essentials-on-hover tooltip.
+  const tooltipToggle = need<HTMLInputElement>("tooltip-toggle");
+  tooltipToggle.addEventListener("change", () =>
+    devices.setHoverTooltip(tooltipToggle.checked),
+  );
   legendToggle.addEventListener("change", renderLegend);
   window.addEventListener("resize", () => {
     if (legendToggle.checked) positionLegend();
@@ -818,6 +829,10 @@ function wireIconography(): void {
     if (!gauge.checked) {
       gauge.checked = true;
       gauge.dispatchEvent(new Event("change"));
+    }
+    if (!tooltipToggle.checked) {
+      tooltipToggle.checked = true;
+      tooltipToggle.dispatchEvent(new Event("change"));
     }
   };
 

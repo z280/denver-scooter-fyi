@@ -150,6 +150,8 @@ export class Devices {
   private gaugeThickness: GaugeThickness = "standard";
   private gaugePlacement: GaugePlacement = "surrounding";
   private hoverDeviceId: string | null = null;
+  /** ✨ Essentials-on-hover tooltip, default on. */
+  private tooltipOn = true;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -373,17 +375,30 @@ export class Devices {
     });
 
     this.map.on("mousemove", POINT_LAYER, (e) => {
-      if (!this.gauge || this.gaugeDisplay !== "hover") return;
-      const id = e.features?.[0]?.properties?.device_id;
-      if (!id || String(id) === this.hoverDeviceId) return;
-      this.hoverDeviceId = String(id);
-      this.map.setFilter(HOVER_LAYER, [
-        "all",
-        ["!", ["has", "point_count"]],
-        ["==", ["get", "device_id"], this.hoverDeviceId],
-      ]);
+      const f = e.features?.[0];
+      if (!f) return;
+      const props = f.properties as PopupProps;
+      // On-hover gauge ring.
+      if (this.gauge && this.gaugeDisplay === "hover") {
+        const id = String(props.device_id ?? "");
+        if (id && id !== this.hoverDeviceId) {
+          this.hoverDeviceId = id;
+          this.map.setFilter(HOVER_LAYER, [
+            "all",
+            ["!", ["has", "point_count"]],
+            ["==", ["get", "device_id"], id],
+          ]);
+        }
+      }
+      // ✨ Essentials tooltip (premium): model + battery + quality.
+      if (this.tooltipOn) showMapTooltip(e.originalEvent, props);
     });
-    this.map.on("mouseleave", POINT_LAYER, () => this.clearHover());
+    this.map.on("mouseleave", POINT_LAYER, () => {
+      this.clearHover();
+      hideMapTooltip();
+    });
+    // The click popup takes over — don't double-annotate the device.
+    this.map.on("click", () => hideMapTooltip());
 
     // Range-circle source/layers: a single device's reachable-distance halo,
     // toggled from the popup's "Show on map" affordance. Beneath the device
@@ -1065,6 +1080,12 @@ export class Devices {
     this.apply();
   }
 
+  /** ✨ Essentials-on-hover tooltip (model · battery · quality). */
+  setHoverTooltip(on: boolean): void {
+    this.tooltipOn = on;
+    if (!on) hideMapTooltip();
+  }
+
   /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
    *  space and only draws it (via the hover overlay) under the pointer. */
   setGaugeDisplay(mode: GaugeDisplay): void {
@@ -1310,6 +1331,7 @@ interface PopupProps {
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
   // client-derived (annotated in setData)
+  battery_percent?: number | string | null;
   reliability_tier?: string | null;
   reliability_reasons?: string | null;
   // private (authed only)
@@ -1482,25 +1504,33 @@ export function gaugeColor(pct: number): string {
  *  drawer's example rows and the on-map legend, so what they show is the
  *  exact renderer output. Optional overlay text mimics the symbol layer's
  *  percentage overlay on "Data · battery" badges. */
+export interface IconPreview {
+  url: string;
+  /** Logical (CSS) pixel size of the icon — canvases vary by design now
+   *  that rings grow outward, so previews scale to match the map. */
+  logicalPx: number;
+}
+
 export function iconPreviewURL(
   key: string,
   overlay?: { text: string; color: string },
-): string {
+): IconPreview {
   const data = makeCompositeIcon(key);
   const c = document.createElement("canvas");
   c.width = data.width;
   c.height = data.height;
   const ctx = c.getContext("2d");
-  if (!ctx) return "";
+  if (!ctx) return { url: "", logicalPx: 32 };
   ctx.putImageData(data, 0, 0);
   if (overlay) {
     ctx.fillStyle = overlay.color;
-    ctx.font = `bold ${Math.round(data.width * 0.3)}px system-ui, sans-serif`;
+    // Size the overlay against the fixed badge, not the (variable) canvas.
+    ctx.font = `bold ${Math.round(RINGED_BADGE_R * 0.9)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(overlay.text, data.width / 2, data.height / 2 + 1);
   }
-  return c.toDataURL();
+  return { url: c.toDataURL(), logicalPx: data.width / 2 };
 }
 
 /** Resolves when the model silhouettes have decoded (or failed) — callers
@@ -1524,19 +1554,39 @@ const RING_THICKNESS: Record<
 /** Extra pixels between the badge edge and the ring per placement. */
 const RING_GAP: Record<string, number> = { S: 0, G: 3.5, B: 7 };
 
+/** The badge radius used whenever a gauge ring is in play. FIXED across
+ *  every thickness/placement combination — the ring grows OUTWARD (the
+ *  canvas gets bigger), the icon never shrinks. Chosen so the default
+ *  Standard/Surrounding gauge icon renders exactly as before. */
+const RINGED_BADGE_R = 20.5;
+
+/** Ring center-line radius and total canvas size for a design. Exported
+ *  shape so previews can scale correctly. */
+function ringGeometry(
+  th: { arc: number; outline: number; solid: number },
+  gap: number,
+): { ringR: number; px: number } {
+  const maxStroke = Math.max(th.arc, th.solid);
+  const ringR = RINGED_BADGE_R + 2.5 + gap + maxStroke / 2;
+  let px = Math.ceil((ringR + maxStroke / 2 + 1.5) * 2);
+  if (px % 2) px += 1; // even size keeps the center crisp
+  return { ringR, px };
+}
+
 /** Build one composite marker image from its
  *  `ik|<inner>|<ring>|<design>` key.
  *
  *  Ring encodings: `off` (no gauge — inner badge drawn full size),
- *  `hoff` (On-Hover display: the ring's space is reserved but nothing is
- *  drawn, so the hover overlay adds the ring without a size pop),
+ *  `hoff` (On-Hover display: ring geometry reserved but nothing drawn, so
+ *  the hover overlay adds the ring without the badge moving),
  *  `b-<pct>` (battery: thin full ring + thick arc clockwise from 12
  *  o'clock covering pct% of the circumference, both in the gauge color),
  *  `b-x` (no battery data: thin neutral ring), `r-<tier>` (reliability:
  *  solid thick ring in the tier color).
  *
  *  Design encodings (two chars): thickness T/S/L/X (thin/standard/large/
- *  xlarge) then placement S/G/B (surrounding/gap/big gap).
+ *  xlarge) then placement S/G/B (surrounding/gap/big gap). Placement and
+ *  thickness push the ring outward from the fixed-size badge.
  *
  *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
  *  `msvg-*` (model silhouette), `model-*` (two-letter tag fallback),
@@ -1546,15 +1596,20 @@ function makeCompositeIcon(key: string): ImageData {
   const [, inner = "", ring = "off", design = "SS"] = key.split("|");
   const th = RING_THICKNESS[design[0]] ?? RING_THICKNESS.S;
   const gap = RING_GAP[design[1]] ?? 0;
-  const px = 64; // 32 logical px at pixelRatio 2
+
+  let px = 64; // 32 logical px at pixelRatio 2
+  let innerRadius = px / 2 - 2.5; // gauge off → full-size badge
+  let ringR = 0;
+  if (ring !== "off") {
+    const geo = ringGeometry(th, gap);
+    px = geo.px;
+    ringR = geo.ringR;
+    innerRadius = RINGED_BADGE_R;
+  }
   const ctx = newCanvasCtx(px);
   const cx = px / 2;
 
-  let innerRadius = px / 2 - 2.5; // gauge off → full-size badge
-  if (ring !== "off") {
-    const maxStroke = Math.max(th.arc, th.solid);
-    const ringR = px / 2 - (maxStroke / 2 + 1);
-    innerRadius = Math.max(6, ringR - maxStroke / 2 - 2 - gap);
+  if (ring !== "off" && ring !== "hoff") {
     if (ring.startsWith("b-")) {
       const raw = ring.slice(2);
       if (raw === "x") {
@@ -1591,7 +1646,6 @@ function makeCompositeIcon(key: string): ImageData {
         th.solid,
       );
     }
-    // ring === "hoff": reserved space only, nothing drawn.
   }
 
   drawInnerBadge(ctx, cx, innerRadius, inner);
@@ -1766,6 +1820,56 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// ---------- ✨ Essentials hover tooltip ----------
+
+const QUALITY_EMOJI: Record<string, string> = {
+  great: "🌟",
+  good: "👍",
+  acceptable: "🆗",
+  poor: "👎",
+  "N/A": "❓",
+  "n/a": "❓",
+};
+
+let tooltipEl: HTMLDivElement | null = null;
+
+/** Tiny cursor-following card with just the essentials:
+ *    Veo Apollo
+ *    🔋 62% · Quality: 👍
+ */
+function showMapTooltip(ev: MouseEvent, p: PopupProps): void {
+  if (!tooltipEl) {
+    tooltipEl = document.createElement("div");
+    tooltipEl.className = "map-tooltip";
+    document.body.appendChild(tooltipEl);
+  }
+  const model = veoModel(p.vehicle_model_name);
+  const name = model
+    ? model.name
+    : p.vehicle_model_name
+      ? `Veo ${p.vehicle_model_name}`
+      : p.form_factor === "bicycle"
+        ? "E-bike"
+        : "Scooter";
+  const pct = asNumber(p.battery_percent);
+  const batt =
+    pct === null ? "🔋 —" : `${pct < 25 ? "🪫" : "🔋"} ${Math.round(pct)}%`;
+  const q = QUALITY_EMOJI[String(p.quality_designation ?? "")] ?? "❓";
+  tooltipEl.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${batt} · Quality: ${q}</span>`;
+
+  const pad = 14;
+  let left = ev.clientX + pad;
+  const width = 190;
+  if (left + width > window.innerWidth - 8) left = ev.clientX - width - 4;
+  tooltipEl.style.left = `${Math.max(4, left)}px`;
+  tooltipEl.style.top = `${Math.max(4, ev.clientY - 14)}px`;
+}
+
+function hideMapTooltip(): void {
+  tooltipEl?.remove();
+  tooltipEl = null;
 }
 
 /** Lightweight modal for the battery-ranking nerd stats. One at a time;
