@@ -28,7 +28,12 @@ import {
   requestMagicLink,
   isProbablyEmail,
 } from "./auth-magic-link.ts";
-import { initGoogleSignIn, isGoogleConfigured } from "./auth-google.ts";
+import {
+  renderGoogleButton,
+  promptGoogleOneTap,
+  isGoogleConfigured,
+} from "./auth-google.ts";
+import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -168,6 +173,13 @@ wireRideHud();
 void consumePendingMagicLink().then((ok) => {
   if (ok) location.reload();
 });
+
+// Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
+// dialog on load (when Google is configured). GIS manages its own cooldown so
+// this isn't nagging. Signed-in users are skipped.
+if (isGoogleConfigured() && !isAuthenticated()) {
+  void promptGoogleOneTap({ onSignedIn: () => location.reload() });
+}
 
 // ---------- Ride HUD ----------
 
@@ -887,6 +899,12 @@ function wireAccount(): void {
   if (isAuthenticated()) revealAccountTab();
 
   let countdownTimer: number | undefined;
+  // Admin status is resolved once per token (identity comes from
+  // /auth/session, not the token blob). Cached so the minute-tick re-render
+  // and focus re-render don't refetch.
+  let adminCheckedToken: string | null = null;
+  let adminIsOn = false;
+  let adminEmail: string | undefined;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -926,6 +944,23 @@ function wireAccount(): void {
         el("span", undefined, formatRemaining(auth.expires)),
       );
       status.append(row, expiryP);
+      body.append(status);
+
+      // Administrator Mode badge, shown once we've confirmed the session is
+      // on the admin allowlist (Google + verified allowlisted email → admin
+      // scope, enforced server-side).
+      if (adminIsOn && adminCheckedToken === auth.token) {
+        const badge = el("div", "account-admin");
+        const brow = el("div", "account-admin__row");
+        brow.append(
+          el("span", "account-admin__icon", "🛡️"),
+          el("strong", undefined, "Administrator Mode"),
+        );
+        badge.append(brow);
+        if (adminEmail) badge.append(el("p", "account-admin__email", adminEmail));
+        body.append(badge);
+      }
+
       const signoutBtn = el(
         "button",
         "login-btn login-btn--secondary",
@@ -943,7 +978,20 @@ function wireAccount(): void {
           location.reload();
         }
       });
-      body.append(status, signoutBtn);
+      body.append(signoutBtn);
+
+      // Resolve admin status once per token, then re-render to reveal the
+      // badge. Marking the token as checked up front prevents the minute
+      // re-render from refetching.
+      if (adminCheckedToken !== auth.token) {
+        adminCheckedToken = auth.token;
+        void fetchSessionInfo().then((info) => {
+          adminIsOn = isAdminSession(info);
+          adminEmail = info?.email;
+          if (adminIsOn) render();
+        });
+      }
+
       // Re-render once a minute to keep the countdown current.
       countdownTimer = window.setTimeout(render, 60_000);
     } else {
@@ -958,8 +1006,7 @@ function wireAccount(): void {
       if (isGoogleConfigured()) {
         const gWrap = el("div", "account-google");
         body.append(gWrap);
-        void initGoogleSignIn({
-          container: gWrap,
+        void renderGoogleButton(gWrap, {
           onSignedIn: () => location.reload(),
           onError: (err) => {
             const msg = el("p", "account-error", err.message);

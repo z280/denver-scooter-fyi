@@ -17,6 +17,10 @@
 // sessionStorage contract now is what makes the doors work with the current
 // app untouched.
 
+import { API_BASE } from "./api.ts";
+import { getAuth } from "./map-auth.js";
+import { isAdminEmail } from "./config.ts";
+
 /** Mirror of map-auth.js's private STORAGE_KEY. */
 export const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
 
@@ -53,4 +57,44 @@ export function clearSession(): void {
   } catch {
     /* nothing to clear */
   }
+}
+
+/** Identity for the current session, from GET /api/v1/auth/session
+ *  (docs/API_REQUIREMENTS.md §2.1). The token alone carries no identity, so
+ *  this is how the UI learns the email / scopes to decide what to show. */
+export interface SessionInfo {
+  email?: string;
+  scopes?: string[];
+  supporter?: boolean;
+  admin?: boolean;
+  expires?: string;
+}
+
+/** Fetch the current session's identity, or null if not signed in / the
+ *  endpoint is unreachable (so the UI degrades to "just signed in"). */
+export async function fetchSessionInfo(): Promise<SessionInfo | null> {
+  const auth = getAuth();
+  if (!auth) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/auth/session`, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${auth.token}`,
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as SessionInfo;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the session has administrator rights. Trusts the server's
+ *  explicit signal first (an `admin` flag or scope — the binding decision is
+ *  server-side), and falls back to the client `ADMIN_EMAILS` allowlist. */
+export function isAdminSession(info: SessionInfo | null): boolean {
+  if (!info) return false;
+  if (info.admin === true) return true;
+  if (info.scopes?.includes("admin")) return true;
+  return isAdminEmail(info.email);
 }
