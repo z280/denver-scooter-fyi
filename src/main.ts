@@ -21,6 +21,7 @@ import {
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
+import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize } from "./hexdensity.ts";
 import {
@@ -523,13 +524,15 @@ function wireAreaFilter(): AreaFilter {
   });
 }
 
-// ---------- Intent modes ----------
+// ---------- Use-case modes ----------
 
-// One-tap presets over the existing controls — not separate apps. "Find a
-// ride" sets the rider up (available devices, reliability coloring, offer
-// location); "Audit" sets the civic view (v1 choropleth + compliance).
-// Any manual control change afterwards clears the highlight: the user is
-// in "custom" now, and the presets never fight them for state.
+// Two surfaces over one map. "Find a ride" runs the guided wizard
+// (ride-wizard.ts): location consent → interview → ranked options; while
+// it's active the analysis drawer tabs hide and the 🧭 Ride HUD button
+// appears. "Analysis" is the full civic/data surface with every drawer.
+// The Account (login) tab is shared by both. Exiting ride mode — declining
+// consent, closing the wizard, or tapping Analysis — always resets the map
+// to its fresh-load defaults so the wizard's presets never leak.
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
@@ -537,6 +540,7 @@ function wireModes(): void {
     ),
   );
   let applying = false;
+  let rideActive = false;
 
   const setActive = (mode: string | null): void => {
     for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
@@ -572,7 +576,39 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
+  /** Run a preset with the `applying` guard up so its synthetic events
+   *  don't count as manual "custom" changes. */
+  const applyPreset = (fn: () => void): void => {
+    applying = true;
+    try {
+      fn();
+    } finally {
+      applying = false;
+    }
+  };
 
+  // Fresh-load defaults. Exiting ride mode runs this so the map comes back
+  // "normal": every filter cleared, range coloring (the default) restored,
+  // overlays and the walk line gone.
+  const applyNormal = (): void => {
+    setDeviceFilter("all");
+    setChecked("hide-unavailable", false);
+    setChecked("area-filter-enable", false);
+    setChecked("color-by-range", true);
+    setChecked("color-by-reliability", false);
+    setSelect("choropleth-select", "");
+    clearHexDensity();
+    for (const input of layerInputs.values()) {
+      if (input.checked) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    }
+    setDrawer(null);
+    locate.clearLine();
+  };
+
+  // Map preset behind the wizard: available devices, reliability lens.
   const applyRide = (): void => {
     setDeviceFilter("all");
     setChecked("hide-unavailable", true);
@@ -587,12 +623,9 @@ function wireModes(): void {
       }
     }
     setDrawer(null);
-    // Offer location so walk times light up. Runs inside the button tap,
-    // so the browser treats the permission prompt as user-initiated.
-    locate.trigger();
   };
 
-  const applyAudit = (): void => {
+  const applyAnalysis = (): void => {
     setDeviceFilter("all");
     setChecked("hide-unavailable", false);
     setChecked("area-filter-enable", false);
@@ -602,24 +635,61 @@ function wireModes(): void {
     setDrawer("compliance");
   };
 
+  /** Swap the visible surface: ride hides the analysis tabs (Account stays)
+   *  and reveals the HUD button; the map container also resizes when the
+   *  wizard docks as a side panel on small screens. */
+  const setRideSurface = (on: boolean): void => {
+    rideActive = on;
+    document.body.classList.toggle("mode-ride", on);
+    need("ride-open").hidden = !on;
+    map.resize();
+  };
+
+  const wizard = new RideWizard(need("ride-wizard"), devices, locate, map, {
+    onConsentGranted: () => applyPreset(applyRide),
+    onExit: () => exitRide(),
+    onLoginHint: () => {
+      const tab = document.querySelector<HTMLButtonElement>(
+        '.drawer-tab[data-drawer="person"]',
+      );
+      if (tab && !tab.classList.contains("is-active")) tab.click();
+    },
+  });
+
+  const exitRide = (): void => {
+    if (!rideActive) return;
+    if (wizard.isOpen()) wizard.close();
+    setRideSurface(false);
+    applyPreset(applyNormal);
+    setActive("analysis");
+  };
+
+  const enterRide = (): void => {
+    setDrawer(null);
+    setRideSurface(true);
+    setActive("ride");
+    wizard.start();
+  };
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
-      applying = true;
-      try {
-        if (btn.dataset.mode === "ride") applyRide();
-        else applyAudit();
-      } finally {
-        applying = false;
+      if (btn.dataset.mode === "ride") {
+        enterRide();
+      } else if (rideActive) {
+        exitRide(); // back to a normal map — no surprise choropleth
+      } else {
+        applyPreset(applyAnalysis);
+        setActive("analysis");
       }
-      setActive(btn.dataset.mode ?? null);
     });
   }
 
   // Manual changes to any drawer control drop the mode back to custom.
-  // Capture phase so the preset's own synthetic events (guarded by
-  // `applying`) never count.
+  // Capture phase so the presets' own synthetic events (guarded by
+  // `applying`) never count. Ride mode is exempt: its surface has no
+  // analysis controls to customize.
   const toCustom = (e: Event): void => {
-    if (applying) return;
+    if (applying || rideActive) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest?.(".drawer")) setActive(null);
   };

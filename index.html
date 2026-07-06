@@ -345,14 +345,25 @@
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
-    <!-- Intent-mode presets (bottom center): one-tap setups for the two main
-         audiences. Manual control changes drop back to an unlabeled custom
-         state — the presets never lock anything. -->
+    <!-- Use-case switch (bottom center): "Find a ride" runs the guided
+         wizard surface; "Analysis" is the full civic/data surface with the
+         drawer tabs. The Account (login) tab is shared by both. -->
     <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
       <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
-      <button class="mode-btn" type="button" data-mode="audit">📊 Audit</button>
-      <button class="mode-btn" type="button" id="ride-open">🧭 Ride</button>
+      <button class="mode-btn is-active" type="button" data-mode="analysis">📊 Analysis</button>
+      <button class="mode-btn" type="button" id="ride-open" hidden>🧭 Ride</button>
     </div>
+
+    <!-- Find-a-ride wizard (consent → interview → ranked options). Content
+         built by ride-wizard.ts; floats over the map on desktop, docks as a
+         right-side panel on small screens. -->
+    <aside
+      id="ride-wizard"
+      class="ride-wizard"
+      role="dialog"
+      aria-labelledby="ride-wizard-title"
+      hidden
+    ></aside>
 
     <!-- Full-screen in-ride HUD (speed / clock / cost). Content built by
          ride-hud.ts; hidden until the rider opens it. -->

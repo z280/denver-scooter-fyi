@@ -61,6 +61,8 @@ const FIX_MAX_AGE_MS = 5 * 60_000;
 export class Locate {
   private position: LngLat | null = null;
   private fixedAt = 0;
+  private fixListeners = new Set<(pos: LngLat) => void>();
+  private errorListeners = new Set<() => void>();
 
   constructor(
     private readonly map: MLMap,
@@ -69,6 +71,7 @@ export class Locate {
     control.on("geolocate", (e) => {
       this.position = { lng: e.coords.longitude, lat: e.coords.latitude };
       this.fixedAt = Date.now();
+      for (const cb of this.fixListeners) cb(this.position);
     });
     // NOTE: deliberately no `trackuserlocationend` handler — MapLibre fires
     // it whenever a map move breaks the camera lock (active → background),
@@ -77,7 +80,21 @@ export class Locate {
     control.on("error", () => {
       this.position = null;
       this.clearLine();
+      for (const cb of this.errorListeners) cb();
     });
+  }
+
+  /** Notify on every location fix. Returns an unsubscribe function. */
+  onFix(cb: (pos: LngLat) => void): () => void {
+    this.fixListeners.add(cb);
+    return () => this.fixListeners.delete(cb);
+  }
+
+  /** Notify when geolocation errors (denied / unavailable). Returns an
+   *  unsubscribe function. */
+  onError(cb: () => void): () => void {
+    this.errorListeners.add(cb);
+    return () => this.errorListeners.delete(cb);
   }
 
   /** Last known user position, or null when not locating (or the last fix
