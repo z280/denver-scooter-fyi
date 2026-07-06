@@ -19,7 +19,6 @@
 
 import { API_BASE } from "./api.ts";
 import { getAuth } from "./map-auth.js";
-import { isAdminEmail } from "./config.ts";
 
 /** Mirror of map-auth.js's private STORAGE_KEY. */
 export const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
@@ -89,12 +88,13 @@ export async function fetchSessionInfo(): Promise<SessionInfo | null> {
   }
 }
 
-/** Whether the session has administrator rights. Trusts the server's
- *  explicit signal first (an `admin` flag or scope — the binding decision is
- *  server-side), and falls back to the client `ADMIN_EMAILS` allowlist. */
+/** Whether the session has administrator rights. Trusts ONLY the server's
+ *  admin signal (an `admin` flag or `admin` scope). Admin is Google-exclusive:
+ *  the API stamps the scope from the verified allowlisted email and
+ *  deliberately withholds it from magic-link sessions even for allowlisted
+ *  emails. A client-side email-allowlist fallback would falsely surface
+ *  "Administrator Mode" for those magic-link sessions, so there is none. */
 export function isAdminSession(info: SessionInfo | null): boolean {
   if (!info) return false;
-  if (info.admin === true) return true;
-  if (info.scopes?.includes("admin")) return true;
-  return isAdminEmail(info.email);
+  return info.admin === true || (info.scopes?.includes("admin") ?? false);
 }

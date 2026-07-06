@@ -76,21 +76,18 @@ export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEn
 export const GOOGLE_OAUTH_CLIENT_ID: string =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 
-/** Admin allowlist for the forthcoming Google sign-in gate (see
- *  docs/API_REQUIREMENTS.md §2.2). A Google-verified email on this list is
- *  meant to receive the `admin` scope — access to private per-scooter fields
- *  and future admin tooling.
- *
- *  NOTE: this list grants nothing on its own. The binding decision is
- *  enforced SERVER-SIDE once auth ships (the API verifies the Google token
- *  and stamps the scope); this is only the client-side mirror the UI reads to
- *  decide what to show. Hardcoded for now until the auth flow surfaces an
- *  email — the current AuthBlob carries only a token, no identity. */
+/** Admin allowlist for the Google sign-in gate (see
+ *  docs/API_REQUIREMENTS.md §2.2), kept here for reference / parity with the
+ *  server config. The binding decision is enforced SERVER-SIDE: the API
+ *  verifies the Google token and, for a verified email on this list, stamps
+ *  the session's `admin` scope. The frontend trusts only that scope (see
+ *  isAdminSession) — it does NOT gate admin on this list, so a magic-link
+ *  session for an allowlisted email is correctly not treated as admin. */
 export const ADMIN_EMAILS: readonly string[] = ["zneill@gmail.com"];
 
-/** True if `email` is on the admin allowlist (case-insensitive). Wired ahead
- *  of the Google gate; nothing calls it yet because no email is available
- *  until sign-in provides one. */
+/** True if `email` is on the admin allowlist (case-insensitive). Reference
+ *  helper only — the UI does not use it to decide admin (the server's scope
+ *  is authoritative); kept alongside ADMIN_EMAILS for parity/tests. */
 export function isAdminEmail(email: string | null | undefined): boolean {
   return typeof email === "string" && ADMIN_EMAILS.includes(email.toLowerCase());
 }
