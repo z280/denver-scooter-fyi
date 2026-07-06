@@ -502,8 +502,11 @@
 
     <!-- Freshness footer (bottom-right) -->
     <div id="freshness" class="freshness" role="status" aria-live="polite">
-      <span class="freshness-dot" aria-hidden="true"></span>
-      <span id="freshness-text">Connecting…</span>
+      <span class="freshness__line freshness__line--time">
+        <span class="freshness-dot" aria-hidden="true"></span>
+        <span id="freshness-text">Connecting…</span>
+      </span>
+      <span class="freshness__line" id="freshness-count" hidden></span>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

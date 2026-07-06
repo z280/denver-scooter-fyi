@@ -1,5 +1,9 @@
 import { commas, denverTime } from "./util.ts";
 
+/** The bottom-right status pill: two compact lines —
+ *    (dot) Data Timestamp: HH:MM
+ *    Showing: 0,000 / 0,000 Devices
+ */
 export class Freshness {
   private snapshotTime: string | null = null;
   private visibleCount = 0;
@@ -7,7 +11,8 @@ export class Freshness {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly textEl: HTMLElement,
+    private readonly timeEl: HTMLElement,
+    private readonly countEl: HTMLElement,
   ) {}
 
   update(snapshotTime: string, visibleCount: number, totalCount: number): void {
@@ -27,11 +32,14 @@ export class Freshness {
   private render(): void {
     if (!this.snapshotTime) return;
     this.root.classList.remove("is-stale");
-    this.textEl.textContent = `as of ${denverTime(this.snapshotTime)} · Displaying ${commas(this.visibleCount)} devices out of ${commas(this.totalCount)}`;
+    this.timeEl.textContent = `Data Timestamp: ${denverTime(this.snapshotTime)}`;
+    this.countEl.hidden = false;
+    this.countEl.textContent = `Showing: ${commas(this.visibleCount)} / ${commas(this.totalCount)} Devices`;
   }
 
   error(): void {
     this.root.classList.add("is-stale");
-    this.textEl.textContent = "live data unavailable — retrying";
+    this.timeEl.textContent = "live data unavailable — retrying";
+    this.countEl.hidden = true;
   }
 }

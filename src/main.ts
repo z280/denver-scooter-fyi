@@ -65,7 +65,11 @@ const hexDensity = new HexDensity(map, need("hexbin-legend"));
 // wire functions.
 let clearChoropleth: () => void = () => {};
 let clearHexDensity: () => void = () => {};
-const freshness = new Freshness(need("freshness"), need("freshness-text"));
+const freshness = new Freshness(
+  need("freshness"),
+  need("freshness-text"),
+  need("freshness-count"),
+);
 const clusters = new Clusters(
   map,
   need("cluster-list"),
