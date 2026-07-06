@@ -74,7 +74,19 @@ const freshness = new Freshness(
   need("freshness"),
   need("freshness-text"),
   need("freshness-count"),
+  need("freshness-map"),
 );
+
+/** Filtered devices inside the current viewport, for the pill's Map line. */
+function countDevicesInViewport(): number {
+  const bounds = map.getBounds();
+  let n = 0;
+  for (const f of devices.visibleFeatures()) {
+    const [lng, lat] = f.geometry.coordinates;
+    if (bounds.contains([lng, lat])) n++;
+  }
+  return n;
+}
 const clusters = new Clusters(
   map,
   need("cluster-list"),
@@ -275,10 +287,15 @@ map.on("load", async () => {
     void areaFilter.toggleRegionFromMap(layer, regionName);
   }, DEVICE_INTERACTIVE_LAYERS);
 
-  // Keep the freshness pill's "Displaying x out of y" in sync with every
-  // filter change. The first fire happens right after a setData() too.
+  // Keep the freshness pill's Filters line in sync with every filter
+  // change (the first fire happens right after a setData() too), and the
+  // Map line with both filter changes and camera moves.
   devices.onCountsChange((visible, total) => {
     freshness.setCounts(visible, total);
+    freshness.setViewportCount(countDevicesInViewport());
+  });
+  map.on("moveend", () => {
+    freshness.setViewportCount(countDevicesInViewport());
   });
 
   const resp = await devicesPromise;
