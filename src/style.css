@@ -1869,13 +1869,14 @@ body.ride-active .maplibregl-ctrl {
 
 /* ---------- Ride-mode surface ---------- */
 
-/* "Find a ride" isolates the rider's buttons: the analysis-only drawer tabs
-   hide while ride mode is active. Filters (Devices), Iconography, and
-   Recommended Devices work in BOTH modes, and the Account (login) tab is
-   the shared button across both. */
+/* Each use case gets its own buttons. Ride mode never shows the map-layers
+   (Areas), Tools, or Compliance menus; Analysis never shows the Recommended
+   Devices list. Filters (Devices) and Iconography work in BOTH modes, and
+   the Account (login) tab is the shared button across both. */
 body.mode-ride .drawer-tab[data-drawer="areas"],
 body.mode-ride .drawer-tab[data-drawer="tools"],
-body.mode-ride .drawer-tab[data-drawer="compliance"] {
+body.mode-ride .drawer-tab[data-drawer="compliance"],
+body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   display: none;
 }
 
