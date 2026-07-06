@@ -679,10 +679,25 @@ export class Devices {
         const dStatus = popupEl?.querySelector<HTMLElement>(
           ".device-popup__report-device-status",
         );
+        const setDeviceStatus = (
+          text: string,
+          state?: "ok" | "error",
+        ): void => {
+          if (!dStatus) return;
+          dStatus.textContent = text;
+          dStatus.classList.toggle(
+            "device-popup__report-device-status--ok",
+            state === "ok",
+          );
+          dStatus.classList.toggle(
+            "device-popup__report-device-status--error",
+            state === "error",
+          );
+        };
         reportChips.forEach((chip) => {
           chip.addEventListener("click", () => {
             reportChips.forEach((c) => (c.disabled = true));
-            if (dStatus) dStatus.textContent = "Sending…";
+            setDeviceStatus("Sending…");
             submitDeviceReport({
               vehicle_identifier: vid,
               report_type: chip.dataset.type as DeviceReportType,
@@ -690,17 +705,16 @@ export class Devices {
               lng: coords[0],
             })
               .then((res) => {
-                if (dStatus) {
-                  dStatus.textContent = res.deduped
+                setDeviceStatus(
+                  res.deduped
                     ? "✓ Already flagged recently — thanks."
-                    : "✓ Reported. Thanks for the heads-up!";
-                }
+                    : "✓ Reported. Thanks for the heads-up!",
+                  "ok",
+                );
               })
               .catch(() => {
                 reportChips.forEach((c) => (c.disabled = false));
-                if (dStatus) {
-                  dStatus.textContent = "Couldn't send — please try again.";
-                }
+                setDeviceStatus("Couldn't send — please try again.", "error");
               });
           });
         });
