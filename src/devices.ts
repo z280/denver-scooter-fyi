@@ -38,9 +38,20 @@ import {
   type DeviceReportType,
 } from "./reports.ts";
 
-export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
-export type ColorMode = "type" | "range" | "reliability";
+/** Ride posture, the primary "what am I sitting on" split. Derived from the
+ *  server-corrected `vehicle_use_type` with model names as tiebreaker. */
+export type RideType = "sitting" | "standing";
+/** Veo's recognized model line-up (unrecognized models are never filtered). */
+export type ModelKey = "astro" | "cosmo" | "apollo";
+export type QualityFilter = "any" | "no-risk" | "ok-only";
+/** What the marker's inner badge depicts. */
+export type IconStyle = "use" | "model" | "data";
+/** Which signal colors the gauge ring (and the "data" badge). */
+export type DataSource = "battery" | "reliability";
+
+export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
+export const ALL_MODELS: readonly ModelKey[] = ["astro", "cosmo", "apollo"];
 
 /** How close (metres) the user must be for the "Unlock in Veo" button to
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
@@ -86,16 +97,22 @@ const PROPULSION_LABEL: Record<PropulsionType, string> = {
 
 export class Devices {
   private all: DevicesResponse | null = null;
-  private filter: DeviceFilter = "all";
   private areaFilter: AreaFilter = null;
   private hideUnavailable = false;
-  /** Null = no battery filter. Empty set = filter is "on" but excludes
-   *  everything. Set of bucket indices = restrict to those buckets. */
-  private batteryBuckets: Set<BatteryBucket> | null = null;
-  // Default to battery-range coloring rather than device type (per product
-  // direction). Falls back to type icons automatically until enough range
-  // data arrives to compute quartile thresholds.
-  private colorMode: ColorMode = "range";
+  /** Ride-type and model toggles: everything enabled by default, users
+   *  click to *disable*. Unrecognized models are never filtered out. */
+  private rideTypes = new Set<RideType>(ALL_RIDE_TYPES);
+  private models = new Set<ModelKey>(ALL_MODELS);
+  /** Minimum battery percentage (0 = off). When > 0, devices without a
+   *  usable battery_percent are hidden too — an unknown charge can't
+   *  satisfy a minimum. */
+  private minBattery = 0;
+  private quality: QualityFilter = "any";
+  // Iconography: inner badge style + gauge ring (default on) + the signal
+  // that colors both. Battery gauge is the flagship default look.
+  private iconStyle: IconStyle = "use";
+  private dataSource: DataSource = "battery";
+  private gauge = true;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -115,8 +132,6 @@ export class Devices {
   ) {}
 
   addLayers(): void {
-    registerDeviceIcons(this.map);
-
     this.map.addSource(SRC, {
       type: "geojson",
       data: emptyFC(),
@@ -204,7 +219,10 @@ export class Devices {
       source: SRC,
       filter: ["!", ["has", "point_count"]],
       layout: {
-        "icon-image": iconByType(),
+        // Composite badge (inner style + optional gauge ring) generated on
+        // a canvas per unique key; apply() annotates every feature with its
+        // icon_key and registers any missing images before setData.
+        "icon-image": ["get", "icon_key"],
         "icon-size": [
           "interpolate",
           ["linear"],
@@ -866,8 +884,26 @@ export class Devices {
     this.apply();
   }
 
-  setFilter(filter: DeviceFilter): void {
-    this.filter = filter;
+  /** Ride-type toggles (default: both). Empty set hides everything. */
+  setRideTypes(types: ReadonlySet<RideType>): void {
+    this.rideTypes = new Set(types);
+    this.apply();
+  }
+
+  /** Model toggles (default: all). Unrecognized models are unaffected. */
+  setModels(models: ReadonlySet<ModelKey>): void {
+    this.models = new Set(models);
+    this.apply();
+  }
+
+  /** Minimum battery percentage (0 disables the filter). */
+  setMinBattery(pct: number): void {
+    this.minBattery = Math.max(0, Math.min(100, Math.round(pct)));
+    this.apply();
+  }
+
+  setQuality(q: QualityFilter): void {
+    this.quality = q;
     this.apply();
   }
 
@@ -883,16 +919,19 @@ export class Devices {
     this.apply();
   }
 
-  /** Restrict to devices in the given battery quartile bucket(s). Pass null
-   *  to clear the filter; pass an empty set to hide all batteried devices. */
-  setBatteryFilter(buckets: Set<BatteryBucket> | null): void {
-    this.batteryBuckets = buckets;
+  setIconStyle(style: IconStyle): void {
+    this.iconStyle = style;
+    this.apply(); // icon keys are data-driven — re-annotate + re-set data
+  }
+
+  setDataSource(source: DataSource): void {
+    this.dataSource = source;
     this.apply();
   }
 
-  setColorMode(mode: ColorMode): void {
-    this.colorMode = mode;
-    this.applyPaint();
+  setGauge(on: boolean): void {
+    this.gauge = on;
+    this.apply();
   }
 
   /** Get the currently-shown feature subset (for downstream tools like the cluster finder). */
@@ -904,8 +943,16 @@ export class Devices {
   private filtered(): DevicesResponse["features"] {
     if (!this.all) return [];
     let feats = this.all.features;
-    if (this.filter !== "all") {
-      feats = feats.filter((f) => f.properties.form_factor === this.filter);
+    if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
+      feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
+    }
+    if (this.models.size < ALL_MODELS.length) {
+      // Only *recognized* models can be toggled off; mystery hardware
+      // always stays visible (it's what the model-report flow feeds on).
+      feats = feats.filter((f) => {
+        const key = modelKeyOf(f.properties);
+        return key === null || this.models.has(key);
+      });
     }
     if (this.hideUnavailable) {
       feats = feats.filter(
@@ -914,19 +961,19 @@ export class Devices {
           !asBool(f.properties.is_reserved),
       );
     }
-    if (this.batteryBuckets) {
-      const allowed = this.batteryBuckets;
-      const t = this.thresholds;
-      // No thresholds yet → no device can satisfy a bucket-filter, hide all.
-      if (!t) {
-        feats = [];
-      } else {
-        feats = feats.filter((f) => {
-          const pct = asNumber(f.properties.battery_percent);
-          const b = bucketFor(pct, t);
-          return b !== null && allowed.has(b);
-        });
-      }
+    if (this.minBattery > 0) {
+      const min = this.minBattery;
+      feats = feats.filter((f) => {
+        const pct = asNumber(f.properties.battery_percent);
+        return pct !== null && pct >= min;
+      });
+    }
+    if (this.quality !== "any") {
+      const wantOk = this.quality === "ok-only";
+      feats = feats.filter((f) => {
+        const tier = f.properties.reliability_tier;
+        return wantOk ? tier === "ok" : tier !== "risk";
+      });
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
       const polys = this.areaFilter;
@@ -942,37 +989,75 @@ export class Devices {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     if (!src || !this.all) return;
     const feats = this.filtered();
+    this.annotateIconKeys(feats);
     src.setData({ type: "FeatureCollection", features: feats });
     this.applyPaint();
     const total = this.all.features.length;
     for (const cb of this.countListeners) cb(feats.length, total);
   }
 
-  /** Push the current display mode into the point-layer's icon + text
-   *  expressions. In "Range" mode each marker is a colored bucket disc
-   *  with the percentage rendered inside; in "Device type" mode it's the
-   *  emoji badge with no text. Cheap to call repeatedly. */
+  /** Stamp every displayed feature with its composite icon key and make
+   *  sure the map's image atlas has an image for each unique key. */
+  private annotateIconKeys(feats: DevicesResponse["features"]): void {
+    const needed = new Set<string>();
+    for (const f of feats) {
+      const key = this.iconKeyFor(f.properties);
+      (f.properties as DeviceProperties & { icon_key?: string }).icon_key = key;
+      needed.add(key);
+    }
+    for (const key of needed) {
+      if (this.map.hasImage(key)) continue;
+      this.map.addImage(key, makeCompositeIcon(key), { pixelRatio: 2 });
+    }
+  }
+
+  private iconKeyFor(p: DeviceProperties): string {
+    const pct = asNumber(p.battery_percent);
+    const tier = normalizeTier(p.reliability_tier) ?? "unknown";
+
+    let inner: string;
+    if (this.iconStyle === "use") {
+      inner = `use-${rideTypeOf(p)}`;
+    } else if (this.iconStyle === "model") {
+      inner = `model-${modelKeyOf(p) ?? "unk"}`;
+    } else if (this.dataSource === "reliability") {
+      inner = `dr-${tier}`;
+    } else {
+      const b = this.thresholds ? bucketFor(pct, this.thresholds) : null;
+      inner = `db-${b ?? "x"}`;
+    }
+
+    let ring: string;
+    if (!this.gauge) {
+      ring = "off";
+    } else if (this.dataSource === "reliability") {
+      ring = `r-${tier}`;
+    } else {
+      // Quantize to 5% steps so the atlas stays small (≤21 ring variants).
+      ring = pct === null ? "b-x" : `b-${Math.round(pct / 5) * 5}`;
+    }
+    return `ik|${inner}|${ring}`;
+  }
+
+  /** The percentage text overlay only makes sense on the "data" badge with
+   *  the battery source; everything else renders icon-only. */
   private applyPaint(): void {
-    const rangeMode = this.colorMode === "range" && this.thresholds;
-    const iconExpr =
-      this.colorMode === "reliability"
-        ? iconByReliability()
-        : rangeMode
-          ? iconByRange(this.thresholds!)
-          : iconByType();
-    const textExpr: maplibregl.ExpressionSpecification | string = rangeMode
+    const battText =
+      this.iconStyle === "data" &&
+      this.dataSource === "battery" &&
+      this.thresholds;
+    const textExpr: maplibregl.ExpressionSpecification | string = battText
       ? textByPercent()
       : "";
-    const textColorExpr: maplibregl.ExpressionSpecification | string = rangeMode
+    const textColorExpr: maplibregl.ExpressionSpecification | string = battText
       ? textColorByBucket(this.thresholds!)
       : "#ffffff";
     try {
-      this.map.setLayoutProperty(POINT_LAYER, "icon-image", iconExpr);
       this.map.setLayoutProperty(POINT_LAYER, "text-field", textExpr);
       this.map.setPaintProperty(POINT_LAYER, "text-color", textColorExpr);
     } catch {
-      // Layer might not be added yet (early calls); addLayers will install
-      // the default iconByType() expression.
+      // Layer might not be added yet (early calls) — addLayers installs
+      // the defaults.
     }
   }
 
@@ -1072,52 +1157,28 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
   return null;
 }
 
-/** Per-form-factor icon expression — the default "Device type" display. */
-function iconByType(): maplibregl.ExpressionSpecification {
-  return [
-    "match",
-    ["get", "form_factor"],
-    "scooter",
-    "dev-scooter",
-    "bicycle",
-    "dev-bicycle",
-    "dev-unknown",
-  ];
+/** Ride posture for the "Device use" icon style and the ride-type filter:
+ *  the server-corrected `vehicle_use_type` decides, with the seated models
+ *  (Cosmo, Apollo) as the tiebreaker when it's absent. */
+export function rideTypeOf(p: {
+  vehicle_use_type?: string | null;
+  vehicle_model_name?: string | null;
+}): RideType {
+  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  if (p.vehicle_use_type === "sitting" || model === "cosmo" || model === "apollo") {
+    return "sitting";
+  }
+  return "standing";
 }
 
-/** Tier-based icon expression for the "Reliability" display. */
-function iconByReliability(): maplibregl.ExpressionSpecification {
-  return [
-    "match",
-    ["get", "reliability_tier"],
-    "ok",
-    "dev-rel-ok",
-    "risk",
-    "dev-rel-risk",
-    "dev-rel-unknown",
-  ];
-}
-
-/** Quartile-based icon expression for the "Range" display. Reads the
- *  pre-annotated battery_percent (see annotateBatteryPercent). Devices
- *  without a percentage fall through to the neutral missing icon. */
-function iconByRange(
-  t: BatteryThresholds,
-): maplibregl.ExpressionSpecification {
-  // coalesce(null) → -1 so step's "below first stop" branch catches it.
-  return [
-    "step",
-    ["to-number", ["coalesce", ["get", "battery_percent"], -1]],
-    "dev-batt-missing",
-    0,
-    "dev-batt-0",
-    t.p25,
-    "dev-batt-1",
-    t.p50,
-    "dev-batt-2",
-    t.p75,
-    "dev-batt-3",
-  ];
+/** Recognized Veo model, or null for mystery hardware. */
+export function modelKeyOf(p: {
+  vehicle_model_name?: string | null;
+}): ModelKey | null {
+  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  return model === "astro" || model === "cosmo" || model === "apollo"
+    ? (model as ModelKey)
+    : null;
 }
 
 /** Text-field expression for the "Range" display: e.g. "73%". Empty
@@ -1184,89 +1245,167 @@ function annotateBatteryPercent(
   }
 }
 
-/** Register the eight device-marker icons on the map's image atlas. Each
- *  is a small circular badge: type-mode icons hold a 🛴/🚲/❓ emoji on a
- *  white field; range-mode icons hold a battery bar glyph on the bucket's
- *  signature color. Idempotent (safe to call after style reloads). */
-function registerDeviceIcons(map: Map): void {
-  const typeIcons: Array<[string, string]> = [
-    ["dev-scooter", "🛴"],
-    ["dev-bicycle", "🚲"],
-    ["dev-unknown", "❓"],
-  ];
-  for (const [id, emoji] of typeIcons) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeEmojiBadge(emoji), { pixelRatio: 2 });
-  }
-  // The four bucket badges are blank colored discs — the percentage text
-  // is rendered on top via the symbol layer's text-field. Missing keeps
-  // its inscribed "?" since there's no percentage to overlay.
-  const bucketBgs: Array<[string, string]> = [
-    ["dev-batt-0", BATTERY_COLOR[0]],
-    ["dev-batt-1", BATTERY_COLOR[1]],
-    ["dev-batt-2", BATTERY_COLOR[2]],
-    ["dev-batt-3", BATTERY_COLOR[3]],
-  ];
-  for (const [id, bg] of bucketBgs) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeBlankBadge(bg), { pixelRatio: 2 });
-  }
-  if (!map.hasImage("dev-batt-missing")) {
-    map.addImage(
-      "dev-batt-missing",
-      makeGlyphBadge("?", BATTERY_MISSING_COLOR, "#ffffff"),
-      { pixelRatio: 2 },
-    );
-  }
-  // Reliability-tier badges: ✓ / ? / ! on the tier's signature color.
-  const relIcons: Array<[string, string, string, string]> = [
-    ["dev-rel-ok", "✓", RELIABILITY_COLOR.ok, "#ffffff"],
-    ["dev-rel-unknown", "?", RELIABILITY_COLOR.unknown, "#3a2a00"],
-    ["dev-rel-risk", "!", RELIABILITY_COLOR.risk, "#ffffff"],
-  ];
-  for (const [id, glyph, bg, fg] of relIcons) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeGlyphBadge(glyph, bg, fg), { pixelRatio: 2 });
-  }
+// ---------- Composite marker icons (inner badge + gauge ring) ----------
+
+/** Gauge colors by fixed thirds — matches the "green / amber / red" read
+ *  the design asks for (55% shows amber, 100% full green). */
+export function gaugeColor(pct: number): string {
+  if (pct >= 67) return "#1b8a3f";
+  if (pct >= 34) return "#f5b400";
+  return "#c62828";
 }
 
-/** White circular badge holding a centered emoji, used in "Device type"
- *  display mode. Drawn at 2× pixel density so it stays crisp on retina. */
-function makeEmojiBadge(emoji: string): ImageData {
+/** Build one composite marker image from its `ik|<inner>|<ring>` key.
+ *
+ *  Ring encodings: `off` (no gauge — inner badge drawn full size),
+ *  `b-<pct>` (battery: thin full ring + thick arc clockwise from 12
+ *  o'clock covering pct% of the circumference, both in the gauge color),
+ *  `b-x` (no battery data: thin neutral ring), `r-<tier>` (reliability:
+ *  solid thick ring in the tier color).
+ *
+ *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
+ *  `model-astro|cosmo|apollo|unk` (two-letter tag on white),
+ *  `db-<bucket|x>` (battery disc, % text overlays via the symbol layer),
+ *  `dr-<tier>` (reliability disc with ✓/?/! glyph). */
+function makeCompositeIcon(key: string): ImageData {
+  const [, inner = "", ring = "off"] = key.split("|");
   const px = 64; // 32 logical px at pixelRatio 2
   const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, "#ffffff", "#374151", 2.5);
-  ctx.fillStyle = "#000";
-  ctx.font = `${Math.round(px * 0.55)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(emoji, px / 2, px / 2 + px * 0.03);
+  const cx = px / 2;
+
+  let innerRadius = px / 2 - 2.5; // gauge off → full-size badge
+  if (ring !== "off") {
+    innerRadius = px / 2 - 11.5; // leave room for the ring
+    const ringR = px / 2 - 4.5;
+    if (ring.startsWith("b-")) {
+      const raw = ring.slice(2);
+      if (raw === "x") {
+        // No battery data: a thin neutral ring, no arc.
+        strokeRing(ctx, cx, ringR, BATTERY_MISSING_COLOR, 2.5);
+      } else {
+        const pct = Math.max(0, Math.min(100, Number(raw)));
+        const color = gaugeColor(pct);
+        // Thin full-circumference outline…
+        strokeRing(ctx, cx, ringR, color, 2.5);
+        // …plus the thick arc, clockwise from 12 o'clock, sized to pct.
+        if (pct > 0) {
+          ctx.beginPath();
+          ctx.arc(
+            cx,
+            cx,
+            ringR,
+            -Math.PI / 2,
+            -Math.PI / 2 + (Math.PI * 2 * pct) / 100,
+          );
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 7;
+          ctx.lineCap = pct >= 100 ? "butt" : "round";
+          ctx.stroke();
+        }
+      }
+    } else if (ring.startsWith("r-")) {
+      const tier = ring.slice(2) as ReliabilityTier;
+      strokeRing(ctx, cx, ringR, RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown, 6);
+    }
+  }
+
+  drawInnerBadge(ctx, cx, innerRadius, inner);
   return ctx.getImageData(0, 0, px, px);
 }
 
-/** Blank colored circle used as the background for the four "Range"
- *  buckets; the percentage text rides on top via the symbol layer's
- *  text-field. */
-function makeBlankBadge(bg: string): ImageData {
-  const px = 64;
-  const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
-  return ctx.getImageData(0, 0, px, px);
+function strokeRing(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  color: string,
+  width: number,
+): void {
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
 }
 
-/** Colored circular badge holding a centered text glyph. Used for the
- *  "?" missing-range badge (and previously for the bucket glyphs before
- *  the text-overlay redesign). */
-function makeGlyphBadge(glyph: string, bg: string, fg: string): ImageData {
-  const px = 64;
-  const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
-  ctx.fillStyle = fg;
-  ctx.font = `bold ${Math.round(px * 0.7)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+const MODEL_TAG: Record<string, string> = {
+  astro: "As",
+  cosmo: "Co",
+  apollo: "Ap",
+  unk: "?",
+};
+
+function drawInnerBadge(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  inner: string,
+): void {
+  const d = r * 2;
+  if (inner.startsWith("use-")) {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    const emoji = inner === "use-sitting" ? "🚲" : "🛴";
+    ctx.fillStyle = "#000";
+    ctx.font = `${Math.round(d * 0.62)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(emoji, cx, cx + d * 0.03);
+  } else if (inner.startsWith("model-")) {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    ctx.fillStyle = "#1a2230";
+    ctx.font = `bold ${Math.round(d * 0.46)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
+  } else if (inner.startsWith("db-")) {
+    const raw = inner.slice(3);
+    if (raw === "x") {
+      fillCircle(ctx, cx, r, BATTERY_MISSING_COLOR, "#ffffff", 2);
+      glyph(ctx, cx, d, "?", "#ffffff");
+    } else {
+      const bucket = Number(raw) as BatteryBucket;
+      fillCircle(ctx, cx, r, BATTERY_COLOR[bucket] ?? BATTERY_MISSING_COLOR, "#ffffff", 2);
+      // Percentage text overlays via the symbol layer's text-field.
+    }
+  } else if (inner.startsWith("dr-")) {
+    const tier = inner.slice(3) as ReliabilityTier;
+    const bg = RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown;
+    fillCircle(ctx, cx, r, bg, "#ffffff", 2);
+    const mark = tier === "ok" ? "✓" : tier === "risk" ? "!" : "?";
+    glyph(ctx, cx, d, mark, tier === "unknown" ? "#3a2a00" : "#ffffff");
+  } else {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+  }
+}
+
+function fillCircle(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  fill: string,
+  stroke: string,
+  strokeWidth: number,
+): void {
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = strokeWidth;
+  ctx.fill();
+  ctx.stroke();
+}
+
+function glyph(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  d: number,
+  mark: string,
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.round(d * 0.6)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(glyph, px / 2, px / 2 + px * 0.04);
-  return ctx.getImageData(0, 0, px, px);
+  ctx.fillText(mark, cx, cx + d * 0.04);
 }
 
 function newCanvasCtx(px: number): CanvasRenderingContext2D {
@@ -1276,24 +1415,6 @@ function newCanvasCtx(px: number): CanvasRenderingContext2D {
   const ctx = c.getContext("2d");
   if (!ctx) throw new Error("2D context unavailable for marker icon");
   return ctx;
-}
-
-function drawCircleBg(
-  ctx: CanvasRenderingContext2D,
-  px: number,
-  fill: string,
-  stroke: string,
-  strokeWidth: number,
-): void {
-  const cx = px / 2;
-  const r = px / 2 - strokeWidth;
-  ctx.fillStyle = fill;
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = strokeWidth;
-  ctx.beginPath();
-  ctx.arc(cx, cx, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
 }
 
 /** Approximate a great-circle of `radiusMeters` around (lng, lat) as a

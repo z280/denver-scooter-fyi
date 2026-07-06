@@ -37,6 +37,40 @@
       <button
         class="drawer-tab"
         type="button"
+        data-drawer="iconography"
+        aria-pressed="false"
+        aria-controls="drawer-iconography"
+        title="Iconography"
+      >
+        <!-- Gauge ring around a dot -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3a9 9 0 1 1-8.3 5.5" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+        <span class="sr-only">Iconography</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="recommended"
+        aria-pressed="false"
+        aria-controls="drawer-recommended"
+        title="Recommended Devices"
+      >
+        <!-- List -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="8" y1="6" x2="21" y2="6" />
+          <line x1="8" y1="12" x2="21" y2="12" />
+          <line x1="8" y1="18" x2="21" y2="18" />
+          <line x1="3" y1="6" x2="3.01" y2="6" />
+          <line x1="3" y1="12" x2="3.01" y2="12" />
+          <line x1="3" y1="18" x2="3.01" y2="18" />
+        </svg>
+        <span class="sr-only">Recommended Devices</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
         data-drawer="areas"
         aria-pressed="false"
         aria-controls="drawer-areas"
@@ -103,13 +137,32 @@
         <button class="drawer-close" type="button" aria-label="Close Devices">&times;</button>
       </header>
       <div class="drawer-body">
-        <section class="control-group" aria-labelledby="device-filter-label">
-          <h3 id="device-filter-label" class="control-label">Device type</h3>
-          <div id="device-filter-seg" class="segmented" role="radiogroup" aria-labelledby="device-filter-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-filter="all">All</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-filter="scooter">Scooters</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-filter="bicycle">E-bikes</button>
+        <section class="control-group" aria-labelledby="ride-type-label">
+          <h3 id="ride-type-label" class="control-label">Ride type</h3>
+          <p class="control-hint">All on by default — tap to hide a type.</p>
+          <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
+            <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
+            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Sitting</button>
           </div>
+        </section>
+
+        <section class="control-group" aria-labelledby="model-filter-label">
+          <h3 id="model-filter-label" class="control-label">Model</h3>
+          <div id="model-filter" class="toggle-stack" role="group" aria-labelledby="model-filter-label">
+            <button class="toggle-card is-active" type="button" data-model="astro" aria-pressed="true">
+              <strong>Astro</strong>
+              <span>Standing scooter</span>
+            </button>
+            <button class="toggle-card is-active" type="button" data-model="cosmo" aria-pressed="true">
+              <strong>Cosmo</strong>
+              <span>Seated, no pedals</span>
+            </button>
+            <button class="toggle-card is-active" type="button" data-model="apollo" aria-pressed="true">
+              <strong>Apollo</strong>
+              <span>Seated, with pedals · 2 passenger</span>
+            </button>
+          </div>
+          <p class="control-hint">Unrecognized models always stay visible.</p>
         </section>
 
         <section class="control-group">
@@ -120,48 +173,103 @@
           </label>
         </section>
 
-        <!-- One block owns everything battery: the quartile filter and the
-             range coloring live together so filtering and styling read as
-             two faces of the same attribute. -->
-        <section class="control-group" aria-labelledby="battery-filter-label">
-          <h3 id="battery-filter-label" class="control-label">Battery &amp; range</h3>
-          <p class="control-hint">Only show devices with…</p>
-          <div id="battery-filter" class="battery-filter" role="group" aria-labelledby="battery-filter-label">
-            <button class="batt-btn" type="button" data-bucket="0" aria-pressed="false" title="Bottom 25% of range">▁ 😢</button>
-            <button class="batt-btn" type="button" data-bucket="1" aria-pressed="false" title="25–50% of range">▃ 😐</button>
-            <button class="batt-btn" type="button" data-bucket="2" aria-pressed="false" title="50–75% of range">▅ 🙂</button>
-            <button class="batt-btn" type="button" data-bucket="3" aria-pressed="false" title="Top 25% of range">█ 😁</button>
+        <section class="control-group" aria-labelledby="battery-min-label">
+          <h3 id="battery-min-label" class="control-label">Minimum battery percentage</h3>
+          <div class="battery-slider">
+            <input
+              type="range"
+              id="battery-min"
+              min="0"
+              max="100"
+              step="5"
+              value="0"
+              aria-labelledby="battery-min-label"
+            />
+            <output id="battery-min-value" for="battery-min">Off</output>
           </div>
-          <p id="battery-filter-hint" class="battery-filter__hint" hidden>
-            Not enough range data yet to bucket.
+          <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
+        </section>
+
+        <section class="control-group" aria-labelledby="quality-label">
+          <h3 id="quality-label" class="control-label">Quality</h3>
+          <div id="quality-seg" class="segmented" role="radiogroup" aria-labelledby="quality-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-quality="any">Any</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="no-risk">Hide high-risk</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="ok-only">Reliable only</button>
+          </div>
+          <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
+        </section>
+
+        <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
+      </div>
+    </aside>
+
+    <!-- ---------- Iconography drawer ---------- -->
+    <aside class="drawer" id="drawer-iconography" aria-labelledby="drawer-iconography-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-iconography-h">Iconography</h2>
+        <button class="drawer-close" type="button" aria-label="Close Iconography">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <section class="control-group" aria-labelledby="icon-style-label">
+          <h3 id="icon-style-label" class="control-label">Icon style</h3>
+          <div id="icon-style-seg" class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="use">Device use</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-style="model">Model</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-style="data">Data</button>
+          </div>
+          <p class="control-hint">
+            Device use shows 🛴 standing / 🚲 sitting. Model tags Astro (As),
+            Cosmo (Co), Apollo (Ap). Data colors each dot by the source below.
           </p>
-          <label class="switch battery-color-switch">
-            <input type="checkbox" id="color-by-range" checked />
-            <span>Color dots by range</span>
+        </section>
+
+        <section class="control-group" aria-labelledby="data-source-label">
+          <h3 id="data-source-label" class="control-label">Data source</h3>
+          <div id="data-source-seg" class="segmented" role="radiogroup" aria-labelledby="data-source-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="battery">Battery %</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-source="reliability">Reliability</button>
+          </div>
+        </section>
+
+        <section class="control-group" aria-labelledby="gauge-label">
+          <h3 id="gauge-label" class="control-label">Gauge ring</h3>
+          <label class="switch">
+            <input type="checkbox" id="gauge-toggle" checked />
+            <span>Ring each device with its gauge</span>
           </label>
+          <p class="control-hint">
+            Battery: the ring fills clockwise from 12 o'clock to the charge
+            level — full green ring at 100%, a sliver at 5%. Reliability: the
+            ring takes the tier's color.
+          </p>
           <div class="legend batt-legend" aria-hidden="true">
             <div class="legend__bar">
               <span class="legend__swatch" style="background: #c62828"></span>
               <span class="legend__swatch" style="background: #f5b400"></span>
-              <span class="legend__swatch" style="background: #7ec850"></span>
               <span class="legend__swatch" style="background: #1b8a3f"></span>
             </div>
             <div class="legend__scale"><span>empty</span><span>full</span></div>
           </div>
-        </section>
-
-        <section class="control-group" aria-labelledby="reliability-label">
-          <h3 id="reliability-label" class="control-label">Reliability</h3>
-          <label class="switch">
-            <input type="checkbox" id="color-by-reliability" />
-            <span>Color dots by reliability</span>
-          </label>
           <div class="rel-legend" aria-hidden="true">
             <span><i style="background: #1b8a3f"></i> likely rideable</span>
             <span><i style="background: #f5b400"></i> unknown</span>
             <span><i style="background: #c62828"></i> high risk</span>
           </div>
           <p class="control-hint">High-risk devices always render faded on the map.</p>
+        </section>
+      </div>
+    </aside>
+
+    <!-- ---------- Recommended Devices drawer ---------- -->
+    <aside class="drawer" id="drawer-recommended" aria-labelledby="drawer-recommended-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-recommended-h">Recommended Devices</h2>
+        <button class="drawer-close" type="button" aria-label="Close Recommended Devices">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <section class="control-group" id="recommended-body" aria-live="polite">
+          <!-- populated by recommend.ts -->
         </section>
       </div>
     </aside>
