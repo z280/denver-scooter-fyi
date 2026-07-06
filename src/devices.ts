@@ -1311,14 +1311,14 @@ interface PopupProps {
  *  `reliability_reasons` to every feature so paint expressions and popups
  *  tell the same story.
  *
- *  Merge rule: the WORST of the server's tier and the local evidence-based
- *  assessment. The live API has been observed shipping `reliability_tier:
- *  "ok"` for devices that are simultaneously idle for days and rated
- *  `quality_designation: "poor"` by its own quality model — so the server
- *  tier may demote a device (it can see private signals we can't) but
- *  never promote one past what the public quality/dwell/failed-start
- *  evidence supports. Reasons are always computed locally. Mutates the
- *  input — call once per fresh DevicesResponse. */
+ *  The local assessment mirrors the API's own reliability formula (see
+ *  assessReliability), so server and client agree except for the one
+ *  deliberate client-side addition: the pre-ghost caution band (clean
+ *  dwell 48–96h shows "unknown" where the server still says "ok"). The
+ *  merge takes the WORST of the two tiers, which applies that band and
+ *  otherwise defers to whichever side has more evidence. Reasons are
+ *  always computed locally. Mutates the input — call once per fresh
+ *  DevicesResponse. */
 function annotateReliability(features: DevicesResponse["features"]): void {
   const now = Date.now();
   for (const f of features) {

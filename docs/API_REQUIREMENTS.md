@@ -35,18 +35,29 @@ Consequences, already reflected in the frontend:
 
 ### 1.2 Public reliability signal
 
-> **Calibration bug observed in production (2026-07-06):** the live feed
-> ships `reliability_tier: "ok"` for devices that are simultaneously idle
-> 2–7+ days AND rated `quality_designation: "poor"` by the API's own
-> quality model (518 idle≥48h devices tier=ok; 172 of them idle≥3d with
-> quality=poor in one snapshot). The tier formula apparently ignores dwell
-> and the quality designation. Please recalibrate server-side — at minimum,
-> multi-day dwell or quality=poor should demote a device out of "ok".
-> Until then the frontend merges defensively: it displays the WORST of the
-> server tier and its local assessment (quality/dwell/failed-starts/
-> reports), so the server tier can demote but never promote a device past
-> the public evidence. Note the quality scale now observed in production is
-> `poor | acceptable | good | great | N/A` — please document it in API.md.
+> **Semantics confirmed with the API team (2026-07-06)** — the earlier
+> "calibration bug" read was wrong. Quality and reliability answer
+> different questions by design (veo-audit `src/quality.py`, locked by
+> `tests/test_quality.py`):
+>
+> - `quality_designation` (`N/A → poor → acceptable → good → great`):
+>   baseline from battery range, minus demerits (1 failed start −1;
+>   dwell ≥24h −2, ≥12h −1, or ≥6 daylight hours −1); hard `poor` on a
+>   live negative report or >1 failed start; `N/A` = disabled/reserved/
+>   rangeless.
+> - `reliability_tier` collapses only the FAILURE signals ("will it
+>   unlock?"), first-match-wins: `high_risk` on a live negative report,
+>   ≥2 failed starts, 1 failed start + ≥24h dwell, or ≥96h clean dwell
+>   (ghost); `unknown` when never state-tracked or quality is N/A;
+>   else `ok` — including a single fresh failed start (a lone bike_id
+>   rotation could be a rebalancer scan).
+>
+> The frontend mirrors this formula exactly for its fallback tier and its
+> human-readable reasons, with ONE deliberate divergence: clean dwell in
+> 48–96h displays as the client's middle tier ("Unknown risk" caution)
+> since the server has no tier between ok and the 96h ghost rule. Remaining
+> ask: document the quality scale + tier formula in API.md so the contract
+> is public.
 
 Preferred: compute server-side and expose a single field on the public
 devices endpoint:
