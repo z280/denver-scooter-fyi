@@ -8,6 +8,49 @@
 import { API_BASE } from "./api.ts";
 import { getAuth } from "./map-auth.js";
 
+/** The device-failure report types the API accepts
+ *  (POST /api/v1/reports/device — pattern ^(failed_unlock|dead_battery|damaged)$). */
+export type DeviceReportType = "failed_unlock" | "dead_battery" | "damaged";
+
+export interface DeviceReport {
+  /** Stable per-vehicle HMAC (public). The API requires ≥16 chars. */
+  vehicle_identifier: string;
+  report_type: DeviceReportType;
+  lat?: number;
+  lng?: number;
+}
+
+/** One-tap device-failure report. Returns whether the API de-duped it
+ *  against a recent identical report. Anonymous is allowed; a bearer token
+ *  rides along when signed in. Throws on network/HTTP failure. */
+export async function submitDeviceReport(
+  report: DeviceReport,
+): Promise<{ deduped: boolean }> {
+  const body: Record<string, unknown> = {
+    vehicle_identifier: report.vehicle_identifier,
+    report_type: report.report_type,
+  };
+  if (report.lat !== undefined && report.lng !== undefined) {
+    body.report_lat = report.lat;
+    body.report_lon = report.lng;
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const auth = getAuth();
+  if (auth) headers.Authorization = `Bearer ${auth.token}`;
+
+  const res = await fetch(`${API_BASE}/api/v1/reports/device`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Report failed (HTTP ${res.status})`);
+  const data = (await res.json()) as { deduped?: boolean };
+  return { deduped: data.deduped === true };
+}
+
 export interface ModelReport {
   device_id: string;
   /** Stable per-vehicle HMAC when present — lets the API tie reports to a

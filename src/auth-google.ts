@@ -127,13 +127,19 @@ export async function renderGoogleButton(
   container: HTMLElement,
   h: GoogleAuthHandlers,
 ): Promise<void> {
-  const id = await ensureInit(h);
-  id?.renderButton(container, {
-    type: "standard",
-    theme: "outline",
-    size: "large",
-    text: "continue_with",
-    shape: "pill",
-    logo_alignment: "left",
-  });
+  try {
+    const id = await ensureInit(h);
+    id?.renderButton(container, {
+      type: "standard",
+      theme: "outline",
+      size: "large",
+      text: "continue_with",
+      shape: "pill",
+      logo_alignment: "left",
+    });
+  } catch (e) {
+    // GIS blocked (adblock / privacy / offline) — surface it rather than
+    // leaving an unhandled rejection; magic-link sign-in still works.
+    h.onError?.(e as Error);
+  }
 }
