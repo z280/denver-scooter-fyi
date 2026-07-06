@@ -7,7 +7,7 @@
 // bottom button hands off to native walking directions.
 
 import type { Map as MLMap, LngLatBoundsLike } from "maplibre-gl";
-import type { Devices } from "./devices.ts";
+import { modelKeyOf, type Devices, type ModelKey } from "./devices.ts";
 import type { DeviceProperties } from "./api.ts";
 import {
   distanceMeters,
@@ -36,6 +36,8 @@ export interface RecommendContext {
 export interface RankedOption {
   id: string;
   name: string;
+  /** Recognized Veo model — drives the row's silhouette glyph. */
+  model: ModelKey | null;
   desc: string;
   lng: number;
   lat: number;
@@ -104,6 +106,7 @@ export function rankDevices(
     out.push({
       id: p.device_id,
       name: deviceName(p),
+      model: modelKeyOf(p),
       desc: `${walkMinutes(meters)} min away`,
       lng,
       lat,
@@ -217,8 +220,14 @@ export class RecommendedDevices {
       if (opt.id === this.selectedId) row.classList.add("is-selected");
 
       const title = el("div", "ride-option__title");
+      title.append(el("span", "ride-option__rank", `${i + 1}`));
+      if (opt.model) {
+        const glyph = el("img", "ride-option__glyph");
+        glyph.src = `/${opt.model}.svg`;
+        glyph.alt = "";
+        title.append(glyph);
+      }
       title.append(
-        el("span", "ride-option__rank", `${i + 1}`),
         el("strong", undefined, opt.name),
         el("span", "ride-option__desc", opt.desc),
       );

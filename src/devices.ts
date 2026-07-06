@@ -132,6 +132,10 @@ export class Devices {
   ) {}
 
   addLayers(): void {
+    // Kick off the model-silhouette decode; when it lands, re-annotate so
+    // Model-style markers upgrade from letter tags to the real silhouettes.
+    void loadModelIcons().then(() => this.apply());
+
     this.map.addSource(SRC, {
       type: "geojson",
       data: emptyFC(),
@@ -1019,7 +1023,10 @@ export class Devices {
     if (this.iconStyle === "use") {
       inner = `use-${rideTypeOf(p)}`;
     } else if (this.iconStyle === "model") {
-      inner = `model-${modelKeyOf(p) ?? "unk"}`;
+      const mk = modelKeyOf(p);
+      // Silhouette badge once its SVG has decoded; letter tag until then
+      // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
+      inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
     } else if (this.dataSource === "reliability") {
       inner = `dr-${tier}`;
     } else {
@@ -1247,6 +1254,34 @@ function annotateBatteryPercent(
 
 // ---------- Composite marker icons (inner badge + gauge ring) ----------
 
+/** The vehicle silhouettes for the "Model" icon style — hand-drawn SVGs in
+ *  /public, square-viewBoxed and pre-clipped to a circle, so each one IS
+ *  the inner badge face. Decoded once at startup; until they're ready (or
+ *  if one fails), the two-letter tags render instead. */
+const MODEL_ICON_URL: Record<ModelKey, string> = {
+  astro: "/astro.svg",
+  cosmo: "/cosmo.svg",
+  apollo: "/apollo.svg",
+};
+const modelIconImages: Partial<Record<ModelKey, HTMLImageElement>> = {};
+let modelIconsLoading: Promise<void> | null = null;
+
+function loadModelIcons(): Promise<void> {
+  modelIconsLoading ??= Promise.all(
+    (Object.keys(MODEL_ICON_URL) as ModelKey[]).map(async (key) => {
+      const img = new Image();
+      img.src = MODEL_ICON_URL[key];
+      try {
+        await img.decode();
+        modelIconImages[key] = img;
+      } catch {
+        // Missing/broken asset — the letter tag stays as the fallback.
+      }
+    }),
+  ).then(() => undefined);
+  return modelIconsLoading;
+}
+
 /** Gauge colors by fixed thirds — matches the "green / amber / red" read
  *  the design asks for (55% shows amber, 100% full green). */
 export function gaugeColor(pct: number): string {
@@ -1349,6 +1384,19 @@ function drawInnerBadge(
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(emoji, cx, cx + d * 0.03);
+  } else if (inner.startsWith("msvg-")) {
+    // The SVG is pre-clipped to a circle, so it IS the badge face — white
+    // disc behind it for contrast, clip to be safe, silhouette on top.
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    const img = modelIconImages[inner.slice(5) as ModelKey];
+    if (img) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cx, r - 1, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, cx - r, cx - r, d, d);
+      ctx.restore();
+    }
   } else if (inner.startsWith("model-")) {
     fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
     ctx.fillStyle = "#1a2230";

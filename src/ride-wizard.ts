@@ -235,11 +235,12 @@ export class RideWizard {
     });
 
     // Type sub-picker, shown only when "Exact device type" is the priority.
+    // Each chip wears its model's silhouette (Astro / Cosmo / Apollo).
     typeRow.append(el("span", "ride-wizard__typerow-label", "Which type?"));
-    const typeDefs: { value: RideTypeChoice; label: string }[] = [
-      { value: "standing", label: "🛴 Standing scooter" },
-      { value: "seated", label: "🪑 Seated scooter" },
-      { value: "ebike", label: "🚲 E-bike" },
+    const typeDefs: { value: RideTypeChoice; label: string; svg: string }[] = [
+      { value: "standing", label: "Standing scooter", svg: "/astro.svg" },
+      { value: "seated", label: "Seated scooter", svg: "/cosmo.svg" },
+      { value: "ebike", label: "E-bike", svg: "/apollo.svg" },
     ];
     const typeBtns: HTMLButtonElement[] = [];
     const syncTypes = (): void => {
@@ -250,7 +251,11 @@ export class RideWizard {
       }
     };
     for (const def of typeDefs) {
-      const b = el("button", "ride-wizard__typechip", def.label);
+      const b = el("button", "ride-wizard__typechip");
+      const glyph = el("img", "ride-wizard__typechip-glyph");
+      glyph.src = def.svg;
+      glyph.alt = "";
+      b.append(glyph, document.createTextNode(def.label));
       b.type = "button";
       b.dataset.type = def.value;
       b.addEventListener("click", () => {

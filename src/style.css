@@ -2226,3 +2226,37 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   font-size: 13px;
   color: var(--fg-muted);
 }
+
+/* ---------- Model silhouettes (public/{astro,cosmo,apollo}.svg) ---------- */
+.toggle-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.toggle-card__icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+.toggle-card:not(.is-active) .toggle-card__icon {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.toggle-card__text {
+  min-width: 0;
+}
+.ride-option__glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  align-self: center;
+}
+.ride-wizard__typechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ride-wizard__typechip-glyph {
+  width: 17px;
+  height: 17px;
+}
