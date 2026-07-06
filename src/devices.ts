@@ -53,6 +53,25 @@ export type DataSource = "battery" | "reliability";
 export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
 export const ALL_MODELS: readonly ModelKey[] = ["astro", "cosmo", "apollo"];
 
+// ----- Gauge design options ("📐 Design Options" in the Iconography drawer).
+export type GaugeDisplay = "always" | "hover";
+export type GaugeThickness = "thin" | "standard" | "large" | "xlarge";
+export type GaugePlacement = "surrounding" | "gap" | "biggap";
+
+/** One-character encodings baked into icon keys so each design variant
+ *  gets its own atlas image. */
+const THICKNESS_CHAR: Record<GaugeThickness, string> = {
+  thin: "T",
+  standard: "S",
+  large: "L",
+  xlarge: "X",
+};
+const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
+  surrounding: "S",
+  gap: "G",
+  biggap: "B",
+};
+
 /** How close (metres) the user must be for the "Unlock in Veo" button to
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
  *  tight enough that the button means "you're at this scooter." */
@@ -68,7 +87,16 @@ const CLUSTER_LAYER = "device-clusters";
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
 const COUNT_LAYER = "device-cluster-count";
 const POINT_LAYER = "device-points";
+/** Overlay that draws the gauge-ringed icon for just the hovered device
+ *  when the gauge display mode is "On Hover". */
+const HOVER_LAYER = "device-points-hover";
 const FLAG_LAYER = "device-negative-flag";
+/** Filter that matches nothing — the hover layer's idle state. */
+const HOVER_NONE: maplibregl.FilterSpecification = [
+  "==",
+  ["get", "device_id"],
+  "__none__",
+];
 /** Layers with their own click behavior — a click that hits one of these
  *  should not also trigger the map-click region filter beneath it. */
 export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
@@ -115,6 +143,12 @@ export class Devices {
   private iconData: DataSource = "reliability";
   private gaugeData: DataSource = "battery";
   private gauge = true;
+  // Design options: on-hover display swaps the ring onto a hover overlay
+  // layer; thickness/placement are baked into every icon key.
+  private gaugeDisplay: GaugeDisplay = "always";
+  private gaugeThickness: GaugeThickness = "standard";
+  private gaugePlacement: GaugePlacement = "surrounding";
+  private hoverDeviceId: string | null = null;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -279,6 +313,76 @@ export class Devices {
         ],
       },
     });
+
+    // "On Hover" gauge display: this overlay draws the ringed variant of
+    // exactly one device (the hovered one) above the base points. The base
+    // icons reserve the ring's space (ring spec "hoff"), so hovering adds
+    // the ring without the badge popping in size.
+    this.map.addLayer({
+      id: HOVER_LAYER,
+      type: "symbol",
+      source: SRC,
+      filter: HOVER_NONE,
+      layout: {
+        "icon-image": ["get", "icon_key_hover"],
+        "icon-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          0.55,
+          14,
+          0.85,
+          17,
+          1.1,
+        ],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "text-field": "",
+        "text-font": ["Noto Sans Medium"],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          7,
+          14,
+          10.5,
+          17,
+          13,
+        ],
+        "text-anchor": "center",
+        "text-offset": [0, 0],
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        "text-padding": 0,
+      },
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "rgba(0,0,0,0.25)",
+        "text-halo-width": 0.6,
+        "icon-opacity": [
+          "match",
+          ["get", "reliability_tier"],
+          "risk",
+          0.45,
+          1,
+        ],
+      },
+    });
+
+    this.map.on("mousemove", POINT_LAYER, (e) => {
+      if (!this.gauge || this.gaugeDisplay !== "hover") return;
+      const id = e.features?.[0]?.properties?.device_id;
+      if (!id || String(id) === this.hoverDeviceId) return;
+      this.hoverDeviceId = String(id);
+      this.map.setFilter(HOVER_LAYER, [
+        "all",
+        ["!", ["has", "point_count"]],
+        ["==", ["get", "device_id"], this.hoverDeviceId],
+      ]);
+    });
+    this.map.on("mouseleave", POINT_LAYER, () => this.clearHover());
 
     // Range-circle source/layers: a single device's reachable-distance halo,
     // toggled from the popup's "Show on map" affordance. Beneath the device
@@ -944,7 +1048,35 @@ export class Devices {
 
   setGauge(on: boolean): void {
     this.gauge = on;
+    if (!on) this.clearHover();
     this.apply();
+  }
+
+  /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
+   *  space and only draws it (via the hover overlay) under the pointer. */
+  setGaugeDisplay(mode: GaugeDisplay): void {
+    this.gaugeDisplay = mode;
+    if (mode === "always") this.clearHover();
+    this.apply();
+  }
+
+  setGaugeThickness(t: GaugeThickness): void {
+    this.gaugeThickness = t;
+    this.apply();
+  }
+
+  setGaugePlacement(p: GaugePlacement): void {
+    this.gaugePlacement = p;
+    this.apply();
+  }
+
+  private clearHover(): void {
+    this.hoverDeviceId = null;
+    try {
+      this.map.setFilter(HOVER_LAYER, HOVER_NONE);
+    } catch {
+      // Layer not added yet — nothing to clear.
+    }
   }
 
   /** Get the currently-shown feature subset (for downstream tools like the cluster finder). */
@@ -1009,14 +1141,26 @@ export class Devices {
     for (const cb of this.countListeners) cb(feats.length, total);
   }
 
-  /** Stamp every displayed feature with its composite icon key and make
-   *  sure the map's image atlas has an image for each unique key. */
+  /** Stamp every displayed feature with its composite icon key (plus the
+   *  ringed hover variant in On-Hover display) and make sure the map's
+   *  image atlas has an image for each unique key. */
   private annotateIconKeys(feats: DevicesResponse["features"]): void {
+    const hoverMode = this.gauge && this.gaugeDisplay === "hover";
     const needed = new Set<string>();
     for (const f of feats) {
-      const key = this.iconKeyFor(f.properties);
-      (f.properties as DeviceProperties & { icon_key?: string }).icon_key = key;
-      needed.add(key);
+      const props = f.properties as DeviceProperties & {
+        icon_key?: string;
+        icon_key_hover?: string;
+      };
+      const { base, ringed } = this.iconKeysFor(f.properties);
+      props.icon_key = base;
+      needed.add(base);
+      if (hoverMode) {
+        props.icon_key_hover = ringed;
+        needed.add(ringed);
+      } else {
+        delete props.icon_key_hover;
+      }
     }
     for (const key of needed) {
       if (this.map.hasImage(key)) continue;
@@ -1024,7 +1168,7 @@ export class Devices {
     }
   }
 
-  private iconKeyFor(p: DeviceProperties): string {
+  private iconKeysFor(p: DeviceProperties): { base: string; ringed: string } {
     const pct = asNumber(p.battery_percent);
     const tier = normalizeTier(p.reliability_tier) ?? "unknown";
 
@@ -1044,15 +1188,25 @@ export class Devices {
     }
 
     let ring: string;
-    if (!this.gauge) {
-      ring = "off";
-    } else if (this.gaugeData === "reliability") {
+    if (this.gaugeData === "reliability") {
       ring = `r-${tier}`;
     } else {
       // Quantize to 5% steps so the atlas stays small (≤21 ring variants).
       ring = pct === null ? "b-x" : `b-${Math.round(pct / 5) * 5}`;
     }
-    return `ik|${inner}|${ring}`;
+
+    const design =
+      THICKNESS_CHAR[this.gaugeThickness] + PLACEMENT_CHAR[this.gaugePlacement];
+    const ringed = `ik|${inner}|${ring}|${design}`;
+    // Base icon: full ring when always-on; ring space reserved but empty in
+    // hover mode (so the hover overlay adds the ring without a size pop);
+    // full-size badge when the gauge is off entirely.
+    const base = !this.gauge
+      ? `ik|${inner}|off|${design}`
+      : this.gaugeDisplay === "hover"
+        ? `ik|${inner}|hoff|${design}`
+        : ringed;
+    return { base, ringed };
   }
 
   /** The percentage text overlay only makes sense on the "data" badge with
@@ -1069,8 +1223,12 @@ export class Devices {
       ? textColorByBucket(this.thresholds!)
       : "#ffffff";
     try {
-      this.map.setLayoutProperty(POINT_LAYER, "text-field", textExpr);
-      this.map.setPaintProperty(POINT_LAYER, "text-color", textColorExpr);
+      // The hover overlay mirrors the base layer's text so the percentage
+      // stays visible while its ringed icon covers the base badge.
+      for (const layer of [POINT_LAYER, HOVER_LAYER]) {
+        this.map.setLayoutProperty(layer, "text-field", textExpr);
+        this.map.setPaintProperty(layer, "text-color", textColorExpr);
+      }
     } catch {
       // Layer might not be added yet (early calls) — addLayers installs
       // the defaults.
@@ -1330,38 +1488,62 @@ export function whenModelIconsReady(): Promise<void> {
   return loadModelIcons();
 }
 
-/** Build one composite marker image from its `ik|<inner>|<ring>` key.
+/** Ring stroke widths per Design Options thickness (at the 64px canvas):
+ *  arc = the battery progress arc, outline = the thin full-circumference
+ *  battery outline, solid = the uniform reliability ring. */
+const RING_THICKNESS: Record<
+  string,
+  { arc: number; outline: number; solid: number }
+> = {
+  T: { arc: 4.5, outline: 1.8, solid: 4 },
+  S: { arc: 7, outline: 2.5, solid: 6 },
+  L: { arc: 9.5, outline: 3, solid: 8 },
+  X: { arc: 12, outline: 3.5, solid: 10 },
+};
+/** Extra pixels between the badge edge and the ring per placement. */
+const RING_GAP: Record<string, number> = { S: 0, G: 3.5, B: 7 };
+
+/** Build one composite marker image from its
+ *  `ik|<inner>|<ring>|<design>` key.
  *
  *  Ring encodings: `off` (no gauge — inner badge drawn full size),
+ *  `hoff` (On-Hover display: the ring's space is reserved but nothing is
+ *  drawn, so the hover overlay adds the ring without a size pop),
  *  `b-<pct>` (battery: thin full ring + thick arc clockwise from 12
  *  o'clock covering pct% of the circumference, both in the gauge color),
  *  `b-x` (no battery data: thin neutral ring), `r-<tier>` (reliability:
  *  solid thick ring in the tier color).
  *
+ *  Design encodings (two chars): thickness T/S/L/X (thin/standard/large/
+ *  xlarge) then placement S/G/B (surrounding/gap/big gap).
+ *
  *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
- *  `model-astro|cosmo|apollo|unk` (two-letter tag on white),
+ *  `msvg-*` (model silhouette), `model-*` (two-letter tag fallback),
  *  `db-<bucket|x>` (battery disc, % text overlays via the symbol layer),
  *  `dr-<tier>` (reliability disc with ✓/?/! glyph). */
 function makeCompositeIcon(key: string): ImageData {
-  const [, inner = "", ring = "off"] = key.split("|");
+  const [, inner = "", ring = "off", design = "SS"] = key.split("|");
+  const th = RING_THICKNESS[design[0]] ?? RING_THICKNESS.S;
+  const gap = RING_GAP[design[1]] ?? 0;
   const px = 64; // 32 logical px at pixelRatio 2
   const ctx = newCanvasCtx(px);
   const cx = px / 2;
 
   let innerRadius = px / 2 - 2.5; // gauge off → full-size badge
   if (ring !== "off") {
-    innerRadius = px / 2 - 11.5; // leave room for the ring
-    const ringR = px / 2 - 4.5;
+    const maxStroke = Math.max(th.arc, th.solid);
+    const ringR = px / 2 - (maxStroke / 2 + 1);
+    innerRadius = Math.max(6, ringR - maxStroke / 2 - 2 - gap);
     if (ring.startsWith("b-")) {
       const raw = ring.slice(2);
       if (raw === "x") {
         // No battery data: a thin neutral ring, no arc.
-        strokeRing(ctx, cx, ringR, BATTERY_MISSING_COLOR, 2.5);
+        strokeRing(ctx, cx, ringR, BATTERY_MISSING_COLOR, th.outline);
       } else {
         const pct = Math.max(0, Math.min(100, Number(raw)));
         const color = gaugeColor(pct);
         // Thin full-circumference outline…
-        strokeRing(ctx, cx, ringR, color, 2.5);
+        strokeRing(ctx, cx, ringR, color, th.outline);
         // …plus the thick arc, clockwise from 12 o'clock, sized to pct.
         if (pct > 0) {
           ctx.beginPath();
@@ -1373,15 +1555,22 @@ function makeCompositeIcon(key: string): ImageData {
             -Math.PI / 2 + (Math.PI * 2 * pct) / 100,
           );
           ctx.strokeStyle = color;
-          ctx.lineWidth = 7;
+          ctx.lineWidth = th.arc;
           ctx.lineCap = pct >= 100 ? "butt" : "round";
           ctx.stroke();
         }
       }
     } else if (ring.startsWith("r-")) {
       const tier = ring.slice(2) as ReliabilityTier;
-      strokeRing(ctx, cx, ringR, RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown, 6);
+      strokeRing(
+        ctx,
+        cx,
+        ringR,
+        RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown,
+        th.solid,
+      );
     }
+    // ring === "hoff": reserved space only, nothing drawn.
   }
 
   drawInnerBadge(ctx, cx, innerRadius, inner);

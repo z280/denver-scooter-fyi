@@ -247,6 +247,33 @@
             <span>Ring each device with its gauge</span>
           </label>
           <div id="gauge-body">
+            <h3 class="control-label icono-sublabel">📐 Design Options</h3>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-display-label">Display</span>
+              <div id="gauge-display-seg" class="segmented" role="radiogroup" aria-labelledby="gauge-display-label">
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-display="always">Always</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-display="hover">On Hover</button>
+              </div>
+            </div>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-thickness-label">✨ Gauge thickness</span>
+              <div id="gauge-thickness-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="gauge-thickness-label">
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="thin">Thin</button>
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-thickness="standard">Standard</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="large">Large</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="xlarge">XLarge</button>
+              </div>
+            </div>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-placement-label">✨ Gauge placement</span>
+              <div id="gauge-placement-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="gauge-placement-label">
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-placement="surrounding">Surrounding</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-placement="gap">Gap</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-placement="biggap">Big Gap</button>
+              </div>
+            </div>
+            <p class="control-hint design-upsell">✨ Premium features available to all users for a limited time.</p>
+
             <h3 id="data-source-label" class="control-label icono-sublabel">Gauge data</h3>
             <div id="data-source-seg" class="segmented" role="radiogroup" aria-labelledby="data-source-label">
               <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="battery">Battery %</button>

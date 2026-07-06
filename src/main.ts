@@ -16,6 +16,9 @@ import {
   type QualityFilter,
   type IconStyle,
   type DataSource,
+  type GaugeDisplay,
+  type GaugeThickness,
+  type GaugePlacement,
 } from "./devices.ts";
 import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
@@ -544,6 +547,23 @@ function wireIconography(): void {
   let style: IconStyle = "use";
   let iconData: DataSource = "reliability";
   let gaugeData: DataSource = "battery";
+  let thickness: GaugeThickness = "standard";
+  let placement: GaugePlacement = "surrounding";
+  const THICK_CHAR: Record<GaugeThickness, string> = {
+    thin: "T",
+    standard: "S",
+    large: "L",
+    xlarge: "X",
+  };
+  const PLACE_CHAR: Record<GaugePlacement, string> = {
+    surrounding: "S",
+    gap: "G",
+    biggap: "B",
+  };
+  /** Ring spec → full icon key carrying the current design options, so the
+   *  example rows and legend preview exactly what the map will draw. */
+  const k = (inner: string, ring: string): string =>
+    `ik|${inner}|${ring}|${THICK_CHAR[thickness]}${PLACE_CHAR[placement]}`;
 
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -582,15 +602,15 @@ function wireIconography(): void {
     if (style === "use") {
       styleDetail.append(
         el("p", "icono-detail__title", "Ride Types:"),
-        item("ik|use-sitting|off", "Seated"),
-        item("ik|use-standing|off", "Standing"),
+        item(k("use-sitting", "off"), "Seated"),
+        item(k("use-standing", "off"), "Standing"),
       );
     } else if (style === "model") {
       styleDetail.append(
         el("p", "icono-detail__title", "Device Models"),
-        item("ik|msvg-astro|off", "Veo Astro — Standing scooter"),
-        item("ik|msvg-cosmo|off", "Veo Cosmo — One passenger glider (no pedals)"),
-        item("ik|msvg-apollo|off", "Veo Apollo — Two passenger e-bike w/ pedals"),
+        item(k("msvg-astro", "off"), "Veo Astro — Standing scooter"),
+        item(k("msvg-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
+        item(k("msvg-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
       );
     } else {
       styleDetail.append(
@@ -602,15 +622,15 @@ function wireIconography(): void {
       );
       if (iconData === "battery") {
         styleDetail.append(
-          item("ik|db-3|off", "100%", { text: "100", color: "#ffffff" }),
-          item("ik|db-1|off", "50%", { text: "50", color: "#3a2a00" }),
-          item("ik|db-0|off", "25%", { text: "25", color: "#ffffff" }),
+          item(k("db-3", "off"), "100%", { text: "100", color: "#ffffff" }),
+          item(k("db-1", "off"), "50%", { text: "50", color: "#3a2a00" }),
+          item(k("db-0", "off"), "25%", { text: "25", color: "#ffffff" }),
         );
       } else {
         styleDetail.append(
-          item("ik|dr-ok|off", "Likely Ridable"),
-          item("ik|dr-unknown|off", "Unknown"),
-          item("ik|dr-risk|off", "High Risk"),
+          item(k("dr-ok", "off"), "Likely Ridable"),
+          item(k("dr-unknown", "off"), "Unknown"),
+          item(k("dr-risk", "off"), "High Risk"),
         );
       }
     }
@@ -624,15 +644,15 @@ function wireIconography(): void {
     if (!gauge.checked) return;
     if (gaugeData === "battery") {
       gaugeDetail.append(
-        item("ik|x|b-100", "Full"),
-        item("ik|x|b-50", "50%"),
-        item("ik|x|b-25", "25%"),
+        item(k("x", "b-100"), "Full"),
+        item(k("x", "b-50"), "50%"),
+        item(k("x", "b-25"), "25%"),
       );
     } else {
       gaugeDetail.append(
-        item("ik|x|r-ok", "Likely ridable"),
-        item("ik|x|r-unknown", "Unknown"),
-        item("ik|x|r-risk", "Questionable"),
+        item(k("x", "r-ok"), "Likely ridable"),
+        item(k("x", "r-unknown"), "Unknown"),
+        item(k("x", "r-risk"), "Questionable"),
       );
     }
   };
@@ -655,29 +675,29 @@ function wireIconography(): void {
     legendEl.append(head("Icons"));
     if (style === "use") {
       legendEl.append(
-        icon("ik|use-sitting|off", "Seated ride (Cosmo glider or Apollo e-bike)"),
-        icon("ik|use-standing|off", "Standing scooter (Astro)"),
+        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider or Apollo e-bike)"),
+        icon(k("use-standing", "off"), "Standing scooter (Astro)"),
       );
     } else if (style === "model") {
       legendEl.append(
-        icon("ik|msvg-astro|off", "Veo Astro — standing scooter"),
-        icon("ik|msvg-cosmo|off", "Veo Cosmo — one passenger glider (no pedals)"),
-        icon("ik|msvg-apollo|off", "Veo Apollo — two passenger e-bike w/ pedals"),
-        icon("ik|model-unk|off", "Unrecognized model — tap its pin to tell us!"),
+        icon(k("msvg-astro", "off"), "Veo Astro — standing scooter"),
+        icon(k("msvg-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
+        icon(k("msvg-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon(k("model-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
       );
     } else if (iconData === "battery") {
       legendEl.append(
-        icon("ik|db-3|off", "Battery: top quartile", { text: "100", color: "#ffffff" }),
-        icon("ik|db-2|off", "Battery: 50–75% quartile", { text: "65", color: "#1f3a14" }),
-        icon("ik|db-1|off", "Battery: 25–50% quartile", { text: "40", color: "#3a2a00" }),
-        icon("ik|db-0|off", "Battery: bottom quartile", { text: "15", color: "#ffffff" }),
-        icon("ik|db-x|off", "No battery data"),
+        icon(k("db-3", "off"), "Battery: top quartile", { text: "100", color: "#ffffff" }),
+        icon(k("db-2", "off"), "Battery: 50–75% quartile", { text: "65", color: "#1f3a14" }),
+        icon(k("db-1", "off"), "Battery: 25–50% quartile", { text: "40", color: "#3a2a00" }),
+        icon(k("db-0", "off"), "Battery: bottom quartile", { text: "15", color: "#ffffff" }),
+        icon(k("db-x", "off"), "No battery data"),
       );
     } else {
       legendEl.append(
-        icon("ik|dr-ok|off", "Likely ridable"),
-        icon("ik|dr-unknown|off", "Unknown reliability"),
-        icon("ik|dr-risk|off", "High risk — rendered faded on the map"),
+        icon(k("dr-ok", "off"), "Likely ridable"),
+        icon(k("dr-unknown", "off"), "Unknown reliability"),
+        icon(k("dr-risk", "off"), "High risk — rendered faded on the map"),
       );
     }
 
@@ -685,17 +705,17 @@ function wireIconography(): void {
       legendEl.append(head("Gauge"));
       if (gaugeData === "battery") {
         legendEl.append(
-          icon("ik|x|b-100", "Gauge ring: 100% battery — full green ring"),
-          icon("ik|x|b-75", "Gauge ring: ~75% battery"),
-          icon("ik|x|b-50", "Gauge ring: ~50% battery (amber)"),
-          icon("ik|x|b-25", "Gauge ring: ~25% battery (red)"),
-          icon("ik|x|b-x", "Gauge ring: no battery data (thin gray outline)"),
+          icon(k("x", "b-100"), "Gauge ring: 100% battery — full green ring"),
+          icon(k("x", "b-75"), "Gauge ring: ~75% battery"),
+          icon(k("x", "b-50"), "Gauge ring: ~50% battery (amber)"),
+          icon(k("x", "b-25"), "Gauge ring: ~25% battery (red)"),
+          icon(k("x", "b-x"), "Gauge ring: no battery data (thin gray outline)"),
         );
       } else {
         legendEl.append(
-          icon("ik|x|r-ok", "Gauge ring: likely ridable"),
-          icon("ik|x|r-unknown", "Gauge ring: unknown reliability"),
-          icon("ik|x|r-risk", "Gauge ring: questionable — high risk"),
+          icon(k("x", "r-ok"), "Gauge ring: likely ridable"),
+          icon(k("x", "r-unknown"), "Gauge ring: unknown reliability"),
+          icon(k("x", "r-risk"), "Gauge ring: questionable — high risk"),
         );
       }
     }
@@ -738,6 +758,30 @@ function wireIconography(): void {
       renderAll();
     },
   );
+  // 📐 Design Options.
+  const setDisplay = wireSeg(
+    "#gauge-display-seg",
+    (b) => b.dataset.display ?? "always",
+    (v) => devices.setGaugeDisplay(v as GaugeDisplay),
+  );
+  const setThickness = wireSeg(
+    "#gauge-thickness-seg",
+    (b) => b.dataset.thickness ?? "standard",
+    (v) => {
+      thickness = v as GaugeThickness;
+      devices.setGaugeThickness(thickness);
+      renderAll(); // examples + legend preview the new ring weight
+    },
+  );
+  const setPlacement = wireSeg(
+    "#gauge-placement-seg",
+    (b) => b.dataset.placement ?? "surrounding",
+    (v) => {
+      placement = v as GaugePlacement;
+      devices.setGaugePlacement(placement);
+      renderAll();
+    },
+  );
   gauge.addEventListener("change", () => {
     devices.setGauge(gauge.checked);
     renderAll();
@@ -751,6 +795,9 @@ function wireIconography(): void {
     setStyle("use");
     setIconSrc("reliability");
     setGaugeSrc("battery");
+    setDisplay("always");
+    setThickness("standard");
+    setPlacement("surrounding");
     if (!gauge.checked) {
       gauge.checked = true;
       gauge.dispatchEvent(new Event("change"));
