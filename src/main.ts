@@ -23,11 +23,16 @@ import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize } from "./hexdensity.ts";
-import { consumePendingMagicLink } from "./auth-magic-link.ts";
+import {
+  consumePendingMagicLink,
+  requestMagicLink,
+  isProbablyEmail,
+} from "./auth-magic-link.ts";
+import { initGoogleSignIn, isGoogleConfigured } from "./auth-google.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
-import { getAuth, isAuthenticated, signIn, signOut } from "./map-auth.js";
+import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -943,20 +948,67 @@ function wireAccount(): void {
       countdownTimer = window.setTimeout(render, 60_000);
     } else {
       const intro = el("p", "account-intro");
-      intro.append(
-        document.createTextNode("Sign in with your "),
-        el("strong", undefined, "scooter-club"),
-        document.createTextNode(
-          " GitHub account to unlock per-scooter plate numbers, dwell time, and start-attempt history.",
-        ),
-      );
-      const signinBtn = el("button", "login-btn", "Sign in with GitHub");
-      signinBtn.type = "button";
-      signinBtn.addEventListener("click", () => {
-        // Come back to wherever we were after the GitHub round-trip.
-        signIn(location.pathname + location.search);
+      intro.textContent =
+        "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
+      body.append(intro);
+
+      // Sign in with Google — only when a client id is configured (otherwise
+      // no third-party script loads). Its callback persists a session, so we
+      // reload to refetch everything authenticated.
+      if (isGoogleConfigured()) {
+        const gWrap = el("div", "account-google");
+        body.append(gWrap);
+        void initGoogleSignIn({
+          container: gWrap,
+          onSignedIn: () => location.reload(),
+          onError: (err) => {
+            const msg = el("p", "account-error", err.message);
+            gWrap.after(msg);
+          },
+        });
+        body.append(el("div", "account-or", "or"));
+      }
+
+      // Magic link — always available (Postmark). Emails a one-time sign-in
+      // link; consumePendingMagicLink() redeems it when the user returns.
+      const form = el("form", "account-magic");
+      const input = el("input", "select");
+      input.type = "email";
+      input.required = true;
+      input.placeholder = "you@email.com";
+      input.autocomplete = "email";
+      input.setAttribute("aria-label", "Email address");
+      const submit = el("button", "login-btn", "Email me a sign-in link");
+      submit.type = "submit";
+      const status = el("p", "account-magic-status");
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      form.append(input, submit, status);
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = input.value.trim();
+        if (!isProbablyEmail(email)) {
+          status.textContent = "Enter a valid email address.";
+          return;
+        }
+        submit.disabled = true;
+        status.textContent = "Sending…";
+        requestMagicLink(email)
+          .then(() => {
+            form.replaceChildren(
+              el(
+                "p",
+                "account-magic-status",
+                "📧 Check your inbox for a sign-in link (valid 15 minutes).",
+              ),
+            );
+          })
+          .catch(() => {
+            submit.disabled = false;
+            status.textContent = "Couldn't send right now — please try again.";
+          });
       });
-      body.append(intro, signinBtn);
+      body.append(form);
     }
   };
 
