@@ -1,7 +1,11 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
-import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
+import {
+  fetchDevicesAuto,
+  type BoundaryLayer,
+  type DeviceInclude,
+} from "./api.ts";
 import { createMap } from "./map.ts";
 import {
   initialTheme,
@@ -131,6 +135,15 @@ let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let resetAllFilters: () => void = () => {};
 let resetIconography: () => void = () => {};
+// Ride mode fetches the lean payload (the API's low-end-phone diet); the
+// analysis surface needs the h3 + rank extras. Assigned by wireModes /
+// startRefreshLoop.
+let leanFetch = false;
+let requestRefresh: () => void = () => {};
+
+function fetchIncludes(): DeviceInclude[] {
+  return leanFetch ? [] : ["h3", "ranks"];
+}
 
 const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
   standing: "🛴 Standing only",
@@ -214,7 +227,9 @@ function refreshChips(): void {
 }
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
-const devicesPromise = fetchDevicesAuto().catch((e) => {
+// Analysis is the default surface, so the first fetch carries the full
+// include set (h3 for hex density, ranks for the Battery Rankings modal).
+const devicesPromise = fetchDevicesAuto(undefined, fetchIncludes()).catch((e) => {
   console.error("initial device fetch failed", e);
   return null;
 });
@@ -1128,6 +1143,7 @@ function wireModes(): void {
    *  wizard docks as a side panel on small screens. */
   const setRideSurface = (on: boolean): void => {
     rideActive = on;
+    leanFetch = on; // riders get the lean payload; analysis gets extras
     document.body.classList.toggle("mode-ride", on);
     map.resize();
   };
@@ -1158,6 +1174,9 @@ function wireModes(): void {
     // re-entering never shows a stale list from the prior location/answers.
     recommended?.clear();
     setActive("analysis");
+    // Ride-mode ticks fetched the lean payload; refresh now so analysis
+    // tools (hex density, battery rankings) get their fields back promptly.
+    requestRefresh();
   };
 
   const enterRide = (): void => {
@@ -1642,7 +1661,7 @@ function startRefreshLoop(): void {
     inFlight?.abort();
     inFlight = new AbortController();
     try {
-      const resp = await fetchDevicesAuto(inFlight.signal);
+      const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
       equity.update(resp.features);
       hexDensity.update(resp.features);
@@ -1662,6 +1681,7 @@ function startRefreshLoop(): void {
     }
   };
 
+  requestRefresh = () => void tick();
   setInterval(tick, REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {

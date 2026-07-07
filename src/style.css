@@ -2669,3 +2669,11 @@ body.mode-ride .device-popup__ranks-link {
 .map-tooltip strong {
   font-size: 13px;
 }
+
+/* Wizard model cards (Exact-device-type sub-picker) stack full-width. */
+.ride-wizard__modelcard {
+  width: 100%;
+}
+.ride-wizard__typerow-label {
+  width: 100%;
+}

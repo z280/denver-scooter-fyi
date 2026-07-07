@@ -23,9 +23,9 @@ import { RELIABILITY_LABEL, type ReliabilityTier } from "./reliability.ts";
  *  the one the rider picks just carries most of the weight. */
 export type RidePriority = "type" | "quality" | "distance";
 
-/** Device-type preference, asked only when "Exact device type" is the
- *  priority. Maps onto Veo's line-up via model name + use type. */
-export type RideTypeChoice = "standing" | "seated" | "ebike";
+/** Model preference, asked only when "Exact device type" is the priority.
+ *  Users pick the Veo model by name (Astro / Cosmo / Apollo). */
+export type RideTypeChoice = ModelKey;
 
 export interface RecommendContext {
   from: LngLat;
@@ -48,8 +48,12 @@ export interface RankedOption {
   score: number;
 }
 
-const PRIORITY_WEIGHT = 2.4; // the picked factor
-const OTHER_WEIGHT = 0.8; // the two remaining factors
+// The picked factor DOMINATES: 12× each remaining factor, so (per UAT)
+// "least walking distance" really surfaces the closest rideable scooters —
+// battery/quality can only break near-ties (~100 m of walk), never bump a
+// closer likely-rideable device off the list.
+const PRIORITY_WEIGHT = 6.0;
+const OTHER_WEIGHT = 0.5;
 /** Distance beyond which the walk score bottoms out (and candidates are
  *  effectively out of walking range). */
 const MAX_WALK_M = 2_500;
@@ -314,17 +318,19 @@ function deviceName(p: DeviceProperties): string {
   return p.form_factor === "bicycle" ? "E-bike" : "Scooter";
 }
 
-/** Type preference match, keyed off the server-corrected `vehicle_use_type`
- *  (sitting vs standing) with model names as the tiebreaker. */
+/** Model preference match. A recognized model must match exactly; for
+ *  mystery hardware, fall back to posture/form so the preference still
+ *  means something. */
 function matchesType(p: DeviceProperties, choice: RideTypeChoice): boolean {
-  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  const mk = modelKeyOf(p);
+  if (mk) return mk === choice;
   const seated = p.vehicle_use_type === "sitting";
   switch (choice) {
-    case "standing":
-      return model === "astro" || (p.form_factor === "scooter" && !seated);
-    case "seated":
-      return model === "cosmo" || (p.form_factor === "scooter" && seated);
-    case "ebike":
-      return model === "apollo" || p.form_factor === "bicycle";
+    case "astro":
+      return p.form_factor === "scooter" && !seated;
+    case "cosmo":
+      return p.form_factor === "scooter" && seated;
+    case "apollo":
+      return p.form_factor === "bicycle";
   }
 }

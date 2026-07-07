@@ -1467,6 +1467,14 @@ function annotateBatteryPercent(
     const props = f.properties as DeviceProperties & {
       battery_percent?: number;
     };
+    // The API now ships a server-computed battery_percent (per-type max
+    // range it actually knows). Trust it when present; the derive-from-
+    // observed-max path below is the fallback for older payloads.
+    const server = asNumber(props.battery_percent);
+    if (server !== null) {
+      props.battery_percent = Math.max(0, Math.min(100, Math.round(server)));
+      continue;
+    }
     // Clear stale values from a prior fetch so missing devices don't
     // carry over a phantom percentage.
     delete props.battery_percent;

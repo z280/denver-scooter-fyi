@@ -40,7 +40,7 @@ export class RideWizard {
   private step: "consent" | "awaiting" | "interview" | "processing" | null =
     null;
   private priority: RidePriority = "distance";
-  private typeChoice: RideTypeChoice = "standing";
+  private typeChoice: RideTypeChoice = "astro";
   private cleanupFns: (() => void)[] = [];
 
   constructor(
@@ -49,10 +49,30 @@ export class RideWizard {
     private readonly hooks: RideWizardHooks,
   ) {}
 
-  /** Open the wizard at the consent step. */
+  /** Open the wizard. Consent only appears when it's actually needed: a
+   *  fresh fix skips straight to the interview, and an already-granted
+   *  browser permission skips to "Awaiting…" (no prompt will fire). */
   start(): void {
     this.root.hidden = false;
+    if (this.locate.current()) {
+      this.hooks.onConsentGranted();
+      this.renderInterview();
+      return;
+    }
     this.renderConsent();
+    // The Permissions API is async — show consent immediately, then leap
+    // past it if the browser reports geolocation is already granted.
+    navigator.permissions
+      ?.query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        if (status.state === "granted" && this.step === "consent") {
+          this.hooks.onConsentGranted();
+          this.renderAwaiting();
+        }
+      })
+      .catch(() => {
+        // Permissions API unavailable — the consent modal stands.
+      });
   }
 
   isOpen(): boolean {
@@ -234,13 +254,20 @@ export class RideWizard {
       list.append(btn);
     });
 
-    // Type sub-picker, shown only when "Exact device type" is the priority.
-    // Each chip wears its model's badge (Astro / Cosmo / Apollo).
-    typeRow.append(el("span", "ride-wizard__typerow-label", "Which type?"));
-    const typeDefs: { value: RideTypeChoice; label: string; svg: string }[] = [
-      { value: "standing", label: "Standing scooter", svg: "/astro.png" },
-      { value: "seated", label: "Seated scooter", svg: "/cosmo.png" },
-      { value: "ebike", label: "E-bike", svg: "/apollo.png" },
+    // Model sub-picker, shown only when "Exact device type" is the
+    // priority. The same model cards as the Filters drawer: badge art +
+    // name + description (per UAT: pick by Cosmo/Astro/Apollo, not by
+    // abstract posture labels).
+    typeRow.append(el("span", "ride-wizard__typerow-label", "Which model?"));
+    const typeDefs: {
+      value: RideTypeChoice;
+      name: string;
+      desc: string;
+      svg: string;
+    }[] = [
+      { value: "astro", name: "Astro", desc: "Standing scooter", svg: "/astro.png" },
+      { value: "cosmo", name: "Cosmo", desc: "One passenger glider (no pedals)", svg: "/cosmo.png" },
+      { value: "apollo", name: "Apollo", desc: "Two passenger e-bike w/ pedals", svg: "/apollo.png" },
     ];
     const typeBtns: HTMLButtonElement[] = [];
     const syncTypes = (): void => {
@@ -251,11 +278,16 @@ export class RideWizard {
       }
     };
     for (const def of typeDefs) {
-      const b = el("button", "ride-wizard__typechip");
-      const glyph = el("img", "ride-wizard__typechip-glyph");
+      const b = el("button", "toggle-card ride-wizard__modelcard");
+      const glyph = el("img", "toggle-card__icon");
       glyph.src = def.svg;
       glyph.alt = "";
-      b.append(glyph, document.createTextNode(def.label));
+      const text = el("span", "toggle-card__text");
+      text.append(
+        el("strong", undefined, def.name),
+        el("span", undefined, def.desc),
+      );
+      b.append(glyph, text);
       b.type = "button";
       b.dataset.type = def.value;
       b.addEventListener("click", () => {

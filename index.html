@@ -240,6 +240,40 @@
           <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
         </section>
 
+        <section class="control-group" aria-labelledby="area-filter-label">
+          <h3 id="area-filter-label" class="control-label">Only show devices in…</h3>
+          <label class="switch">
+            <input type="checkbox" id="area-filter-enable" />
+            <span>Filter devices by area</span>
+          </label>
+          <div id="area-filter-body" class="area-filter-body" hidden>
+            <label class="area-filter-by">
+              <span>Area type</span>
+              <select id="area-filter-category" class="select">
+                <option value="">Choose a category…</option>
+                <option value="community_network">City Region</option>
+                <option value="v1">Disadvantaged Areas (v1)</option>
+                <option value="v2">Disadvantaged Areas (v2)</option>
+                <option value="council_district">Council District</option>
+                <option value="neighborhood">Neighborhood</option>
+              </select>
+            </label>
+            <div id="area-filter-multi" class="area-multi" hidden>
+              <input
+                id="area-filter-search"
+                class="select"
+                type="search"
+                placeholder="Search areas…"
+                aria-label="Search the list of areas"
+              />
+              <ul id="area-filter-options" class="area-options"></ul>
+            </div>
+            <p id="area-filter-status" class="area-status" hidden></p>
+            <p class="control-hint">Tip: you can also click a region right on the map to add or remove it.</p>
+            <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
+          </div>
+        </section>
+
         <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
       </div>
     </aside>
@@ -412,39 +446,6 @@
           <div id="hexbin-legend" class="legend" hidden></div>
         </section>
 
-        <section class="control-group" aria-labelledby="area-filter-label">
-          <h3 id="area-filter-label" class="control-label">Only show devices in…</h3>
-          <label class="switch">
-            <input type="checkbox" id="area-filter-enable" />
-            <span>Filter devices by area</span>
-          </label>
-          <div id="area-filter-body" class="area-filter-body" hidden>
-            <label class="area-filter-by">
-              <span>Area type</span>
-              <select id="area-filter-category" class="select">
-                <option value="">Choose a category…</option>
-                <option value="community_network">City Region</option>
-                <option value="v1">Disadvantaged Areas (v1)</option>
-                <option value="v2">Disadvantaged Areas (v2)</option>
-                <option value="council_district">Council District</option>
-                <option value="neighborhood">Neighborhood</option>
-              </select>
-            </label>
-            <div id="area-filter-multi" class="area-multi" hidden>
-              <input
-                id="area-filter-search"
-                class="select"
-                type="search"
-                placeholder="Search areas…"
-                aria-label="Search the list of areas"
-              />
-              <ul id="area-filter-options" class="area-options"></ul>
-            </div>
-            <p id="area-filter-status" class="area-status" hidden></p>
-            <p class="control-hint">Tip: you can also click a region right on the map to add or remove it.</p>
-            <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
-          </div>
-        </section>
       </div>
     </aside>
 
