@@ -18,7 +18,7 @@ export interface ReliabilityInfo {
  *  badge. ok/risk reuse the app's pass/fail colors; unknown is the same
  *  amber as the mid battery bucket. */
 export const RELIABILITY_COLOR: Record<ReliabilityTier, string> = {
-  ok: "#1b8a3f",
+  ok: "#238636",
   unknown: "#f5b400",
   risk: "#c62828",
 };

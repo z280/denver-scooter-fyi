@@ -12,6 +12,7 @@ import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
 import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { currentTheme, setManualTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   comparatorCostCents,
@@ -51,6 +52,12 @@ const BUILDINGS_3D_LAYER = "ride-buildings-3d";
  *  ground already behind them. ~0.3 puts the dot ~80% of the way down. */
 const RIDE_FOCUS_OFFSET_FRAC = 0.3;
 
+/** 3D-building extrusion fill per app theme (paint expression territory —
+ *  MapLibre paints don't read CSS variables). */
+function buildingsColor(): string {
+  return currentTheme() === "dark" ? "#1b2733" : "#d3d7e0";
+}
+
 export class RideHud {
   private state: HudState = "hidden";
   private root: HTMLElement;
@@ -65,7 +72,6 @@ export class RideHud {
   private lastFix: { pos: LngLat; t: number } | null = null;
   private startPos: LngLat | null = null;
   private startedInZone = false;
-  private night = window.matchMedia("(prefers-color-scheme: dark)").matches;
   private userMarker: maplibregl.Marker | null = null;
   private lastBearing = 0;
   private following = false;
@@ -88,6 +94,18 @@ export class RideHud {
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && this.state === "riding") void this.acquireWakeLock();
     });
+    // The HUD's night palette rides on the app theme (data-theme CSS), but
+    // the 3D buildings are a MapLibre paint — recolor them on theme change,
+    // whichever control (HUD ☀/☾, map toggle, sun-sync) flipped it.
+    window.addEventListener("scooter:theme", () => {
+      if (this.map.getLayer(BUILDINGS_3D_LAYER)) {
+        this.map.setPaintProperty(
+          BUILDINGS_3D_LAYER,
+          "fill-extrusion-color",
+          buildingsColor(),
+        );
+      }
+    });
   }
 
   /** Open the pre-ride start screen. */
@@ -98,7 +116,6 @@ export class RideHud {
   private setState(state: HudState): void {
     this.state = state;
     this.root.hidden = state === "hidden";
-    this.root.classList.toggle("is-night", this.night);
     // Only the riding state is a transparent frame over the live map; the
     // others are solid cards. `ride-active` on <body> hides the app chrome
     // (drawers, mode pill, chips, map controls) for every non-hidden state.
@@ -167,15 +184,9 @@ export class RideHud {
         this.setState("armed");
         break;
       case "toggle-night":
-        this.night = !this.night;
-        this.root.classList.toggle("is-night", this.night);
-        if (this.map.getLayer(BUILDINGS_3D_LAYER)) {
-          this.map.setPaintProperty(
-            BUILDINGS_3D_LAYER,
-            "fill-extrusion-color",
-            this.night ? "#1b2733" : "#d3d7e0",
-          );
-        }
+        // Flips the WHOLE app (CSS tokens + basemap flavor), not just the
+        // HUD — the constructor's theme listener recolors the 3D buildings.
+        setManualTheme(currentTheme() === "dark" ? "light" : "dark");
         break;
       case "adjust":
         this.root
@@ -364,7 +375,7 @@ export class RideHud {
           source: buildings.source,
           "source-layer": "buildings",
           paint: {
-            "fill-extrusion-color": this.night ? "#1b2733" : "#d3d7e0",
+            "fill-extrusion-color": buildingsColor(),
             "fill-extrusion-height": [
               "coalesce",
               ["to-number", ["get", "render_height"]],

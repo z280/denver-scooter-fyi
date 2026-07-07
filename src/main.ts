@@ -4,6 +4,13 @@ import "./style.css";
 import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
 import { createMap } from "./map.ts";
 import {
+  initialTheme,
+  isSunSyncEnabled,
+  setSunSync,
+  startSunSync,
+  ThemeControl,
+} from "./theme.ts";
+import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
   type DeviceFilter,
@@ -45,7 +52,12 @@ function need<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const { map, geolocate } = createMap("map");
+const theme0 = initialTheme();
+document.documentElement.dataset.theme = theme0;
+const { map, geolocate } = createMap("map", theme0);
+// Added AFTER createMap (which registers geolocate in top-right) so the
+// theme toggle stacks directly below the location control.
+map.addControl(new ThemeControl(theme0), "top-right");
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
@@ -166,6 +178,7 @@ void renderCompliance(need("compliance")).catch((e) => {
 wireSecretUnlock();
 wireAccount();
 wireRideHud();
+wireSunSync();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
@@ -199,6 +212,64 @@ function equityZones(): Promise<IndexedFeature[]> {
 function wireRideHud(): void {
   const hud = new RideHud(need("ride-hud"), equityZones, map);
   need("ride-open").addEventListener("click", () => hud.open());
+}
+
+// ---------- Sun-synced theme ----------
+
+// The 🌗 toggle in the mode bar: theme follows actual sunrise/sunset in
+// Denver (light by day, dark by night). Enabling shows the sponsor popup.
+function wireSunSync(): void {
+  const btn = need<HTMLButtonElement>("sun-sync-toggle");
+  const render = (on: boolean): void => {
+    btn.classList.toggle("is-active", on);
+    btn.setAttribute("aria-pressed", String(on));
+  };
+  render(isSunSyncEnabled());
+  window.addEventListener("scooter:sunsync", (e) => {
+    render((e as CustomEvent<boolean>).detail);
+  });
+  btn.addEventListener("click", () => {
+    const on = !isSunSyncEnabled();
+    setSunSync(on);
+    if (on) showPremiumPopup();
+  });
+  startSunSync();
+}
+
+function showPremiumPopup(): void {
+  document.querySelector(".premium-popup")?.remove();
+  const popup = document.createElement("div");
+  popup.className = "premium-popup";
+  popup.setAttribute("role", "status");
+  popup.setAttribute("aria-live", "polite");
+
+  const text = document.createElement("p");
+  text.className = "premium-popup__text";
+  text.append(
+    "✨ This is a premium feature, brought to you for free in Summer 2026 by ",
+  );
+  const link = document.createElement("a");
+  link.href = "https://weseeyouveo.com";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "WeSeeYouVeo.com";
+  text.append(link);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "premium-popup__close";
+  close.setAttribute("aria-label", "Dismiss");
+  close.textContent = "×";
+
+  const remove = (): void => {
+    window.clearTimeout(timer);
+    popup.remove();
+  };
+  const timer = window.setTimeout(remove, 8000);
+  close.addEventListener("click", remove);
+
+  popup.append(text, close);
+  document.body.appendChild(popup);
 }
 
 map.on("load", async () => {
