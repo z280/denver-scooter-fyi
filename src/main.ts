@@ -2,6 +2,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
 import {
+  API_BASE,
   fetchDevicesAuto,
   type BoundaryLayer,
   type DeviceInclude,
@@ -1380,6 +1381,40 @@ function wireFreshnessCollapse(): void {
   sync();
 }
 
+// ---------- Supporter checkout ----------
+
+/** Ask the API for a Stripe Checkout URL and open it. Feature-detected:
+ *  until POST /api/v1/billing/checkout ships (API_REQUIREMENTS §4.1), the
+ *  button degrades to a friendly "not live yet" note. */
+async function openSupporterCheckout(
+  btn: HTMLButtonElement,
+  note: HTMLElement,
+): Promise<void> {
+  const auth = getAuth();
+  if (!auth) return;
+  btn.disabled = true;
+  note.textContent = "Opening checkout…";
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/billing/checkout`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as { url?: string };
+    if (!data.url) throw new Error("no checkout url");
+    note.textContent = "";
+    window.open(data.url, "_blank", "noopener");
+  } catch {
+    note.textContent =
+      "Checkout isn't live quite yet — the Stripe hookup is in progress.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- Account drawer ----------
 
 // Renders the Account drawer body based on map-auth state and keeps the
@@ -1395,6 +1430,7 @@ function wireAccount(): void {
   let adminCheckedToken: string | null = null;
   let adminIsOn = false;
   let adminEmail: string | undefined;
+  let supporterOn = false;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -1451,6 +1487,42 @@ function wireAccount(): void {
         body.append(badge);
       }
 
+      // Supporter status (⭐) or the become-a-supporter pitch. Perks are
+      // personalization only — the audit itself is never paywalled.
+      if (adminCheckedToken === auth.token) {
+        if (supporterOn) {
+          const badge = el("div", "account-supporter");
+          const srow = el("div", "account-admin__row");
+          srow.append(
+            el("span", "account-admin__icon", "⭐"),
+            el("strong", undefined, "Supporter"),
+          );
+          badge.append(
+            srow,
+            el("p", "account-supporter__note", "Thanks for keeping the data flowing."),
+          );
+          body.append(badge);
+        } else {
+          const up = el("div", "account-support");
+          up.append(
+            el(
+              "p",
+              "account-support__pitch",
+              "Support the audit → keep the data flowing. Perks are personal (ride history, favorites, themes) — the audit itself stays free.",
+            ),
+          );
+          const supBtn = el("button", "login-btn", "⭐ Become a supporter");
+          supBtn.type = "button";
+          const supNote = el("p", "account-magic-status");
+          supNote.setAttribute("role", "status");
+          supBtn.addEventListener("click", () => {
+            void openSupporterCheckout(supBtn, supNote);
+          });
+          up.append(supBtn, supNote);
+          body.append(up);
+        }
+      }
+
       const signoutBtn = el(
         "button",
         "login-btn login-btn--secondary",
@@ -1478,7 +1550,8 @@ function wireAccount(): void {
         void fetchSessionInfo().then((info) => {
           adminIsOn = isAdminSession(info);
           adminEmail = info?.email;
-          if (adminIsOn) render();
+          supporterOn = info?.supporter === true;
+          render();
         });
       }
 

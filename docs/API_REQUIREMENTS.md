@@ -281,15 +281,29 @@ attribution, and supporter features.
 
 ## 4. Supporter tier (unblocks frontend Phase 5)
 
-### 4.1 Stripe webhook
+### 4.1 Stripe (UPDATED 2026-07-07: subscription + trial)
 
-- `POST /webhooks/stripe` — verify the Stripe signature; handle
-  `checkout.session.completed` (Payment Link, pay-what-you-want): read
-  `client_reference_id` (account id), set `supporter: true`, store amount
-  + timestamp. Handle refund events by clearing the flag only on full
-  refund.
-- No other Stripe surface needed — no products API, no customer portal in
-  v1.
+Stripe is configured dashboard-side as a **subscription product with a
+trial** (supersedes the original pay-what-you-want Payment Link sketch).
+
+- `POST /api/v1/billing/checkout` (auth: any signed-in session) → `{ url }`.
+  Create a Stripe Checkout Session: `mode=subscription`, the supporter
+  price (trial comes from the price's settings), `client_reference_id` =
+  account id, success/cancel URLs back to `https://denver.scooter.fyi/`.
+  **The frontend Account drawer already calls this** (⭐ Become a
+  supporter) and degrades to a friendly "not live yet" note until it
+  ships.
+- `POST /webhooks/stripe` — verify the signature. `supporter: true` while
+  the subscription status is `trialing` or `active`
+  (`checkout.session.completed`, `customer.subscription.updated`);
+  `false` when it reaches `canceled`/`unpaid` at period end. Store the
+  Stripe customer + subscription ids on the account.
+- `GET /api/v1/auth/session` keeps exposing `supporter` (the frontend
+  already renders the ⭐ badge from it).
+- Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`;
+  register the webhook endpoint in the Stripe dashboard.
+- No customer portal in v1 (add `POST /api/v1/billing/portal` later for
+  self-serve cancel).
 
 ### 4.2 Ride history
 

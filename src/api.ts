@@ -308,19 +308,24 @@ export async function fetchDevicesAuto(
   } catch (e) {
     const err = e as { code?: string; name?: string; status?: number };
     if (err?.name === "AbortError") throw e;
-    // Fall back to public when the failure is "auth not usable" or "server
-    // having a moment". Everything else (403 / 404 / other 4xx, network or
-    // CORS errors which surface as TypeError with no `code`, malformed
-    // responses) gets rethrown so it doesn't silently degrade behind a
-    // working-looking public fetch.
+    // Fall back to public for ANY auth/HTTP failure from the private
+    // endpoint. This used to rethrow non-5xx statuses so misconfiguration
+    // stayed visible — but the private endpoint is admin-gated, so every
+    // rider-scope session (magic link!) got a 403 and an empty map. The
+    // public fleet is always the right degraded answer; the warn keeps
+    // misconfigurations visible in devtools. Only genuine network/CORS
+    // errors (TypeError, no `code`) still rethrow, since the public fetch
+    // would hit the same wall.
     const fallbackable =
       err?.code === "NO_AUTH" ||
       err?.code === "TOKEN_REJECTED" ||
-      (err?.code === "HTTP_ERROR" &&
-        typeof err.status === "number" &&
-        err.status >= 500 &&
-        err.status < 600);
+      err?.code === "HTTP_ERROR";
     if (!fallbackable) throw e;
+    if (err?.code === "HTTP_ERROR") {
+      console.warn(
+        `private devices fetch failed (HTTP ${err.status}); showing public data`,
+      );
+    }
     return fetchDevices(signal, include);
   }
 }
