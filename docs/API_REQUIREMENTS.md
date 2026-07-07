@@ -35,6 +35,30 @@ Consequences, already reflected in the frontend:
 
 ### 1.2 Public reliability signal
 
+> **Semantics confirmed with the API team (2026-07-06)** — the earlier
+> "calibration bug" read was wrong. Quality and reliability answer
+> different questions by design (veo-audit `src/quality.py`, locked by
+> `tests/test_quality.py`):
+>
+> - `quality_designation` (`N/A → poor → acceptable → good → great`):
+>   baseline from battery range, minus demerits (1 failed start −1;
+>   dwell ≥24h −2, ≥12h −1, or ≥6 daylight hours −1); hard `poor` on a
+>   live negative report or >1 failed start; `N/A` = disabled/reserved/
+>   rangeless.
+> - `reliability_tier` collapses only the FAILURE signals ("will it
+>   unlock?"), first-match-wins: `high_risk` on a live negative report,
+>   ≥2 failed starts, 1 failed start + ≥24h dwell, or ≥96h clean dwell
+>   (ghost); `unknown` when never state-tracked or quality is N/A;
+>   else `ok` — including a single fresh failed start (a lone bike_id
+>   rotation could be a rebalancer scan).
+>
+> The frontend mirrors this formula exactly for its fallback tier and its
+> human-readable reasons, with ONE deliberate divergence: clean dwell in
+> 48–96h displays as the client's middle tier ("Unknown risk" caution)
+> since the server has no tier between ok and the 96h ghost rule. Remaining
+> ask: document the quality scale + tier formula in API.md so the contract
+> is public.
+
 Preferred: compute server-side and expose a single field on the public
 devices endpoint:
 
@@ -47,6 +71,84 @@ devices endpoint:
   then explain the tier ("idle 4 days · 2 failed starts") instead of
   showing an opaque grade.
 - Document the tier formula in the repo so the audit stays reproducible.
+
+### 1.4 Dwell recalibration + peer-relative outliers (NEW)
+
+Current dwell handling is too lenient. Production evidence (2026-07-06
+snapshot, 8,449 devices): citywide dwell p50=7.2h, p90=48h, p95=76h — a
+device idle 48h is a top-decile outlier, yet 520 devices idle ≥48h carried
+`reliability_tier: ok` because the ghost rule waits for 96h (~p97).
+
+1. **Peer set:** the device's h3 r9 cell plus its 6 neighbors
+   (`gridDisk(r9, 1)`) — the same ~0.74 km² as an r8 cell but centered on
+   the device, so edge-parked scooters aren't judged against the wrong
+   side of a fixed hex. On today's data: 98% of devices get ≥5 peers (vs
+   70% bare-r9 / 97% r8) and ~750 outliers flag, ~480 currently tier=ok.
+   <5 peers → expand to `gridDisk(r9, 2)`, then citywide. Plain r8 is an
+   acceptable fallback implementation (97% coverage, near-identical
+   counts) — kRing just removes the grid-boundary lottery.
+2. **Outlier definition:** dwell percentile ≥ 0.90 among ≥5 peers AND
+   dwell ≥ 3× peer median AND dwell ≥ 24h (absolute floor so
+   high-turnover blocks can't flag healthy scooters).
+3. **Use in both rankings:** quality −1 demerit for dwell-outliers;
+   reliability ghost rule tightened 96h → 72h (flags 409 vs 234 today),
+   plus dwell-outlier AND ≥48h → `high_risk`. Keep the report/
+   failed-start rules and one-fresh-failed-start leniency unchanged.
+4. **Expose the evidence:** `dwell_percentile_hood` (0–100, null when <5
+   peers after fallbacks) and `dwell_peer_median_hours`, so the frontend
+   can explain verdicts ("idle 31h — 5× its block's typical 6h").
+5. Compute at query time, lock in tests (sparse fallback, 24h floor,
+   busy-cell outlier, slow-cell non-flag, 72h boundary), document in
+   API.md. The frontend mirrors the tier formula and will drop its
+   interim 48–96h client-side caution band once this ships.
+
+### 1.5 Payload diet — carry low-end phones (NEW)
+
+`/api/v1/devices/current` is ~8 MB of JSON every 90 s. Fine on a laptop;
+hostile to budget Androids. The frontend also client-computes things the
+server already knows. Requests:
+
+1. **Server-computed `battery_percent`** (0–100 int, null when unknown),
+   derived against per-type max range — replaces the frontend's
+   derive-max-from-fleet approximation and is a step toward dropping
+   `current_range_meters` + the rank fields from the default payload.
+2. **Lean default field set** via `?include=` opt-ins: by default DROP the
+   seven `range_rank_*` / `range_percentile_by_type` fields (analysis
+   modal requests them with `?include=ranks`) and the three `h3_*_index`
+   fields once §1.6 ships (`?include=h3`). Estimated ~35–40% payload cut
+   before compression.
+3. **Transport:** confirm brotli/gzip on the CDN for this route; serve an
+   `ETag` per cycle_id so unchanged 90-s polls 304 out.
+4. Optional, later: a server-side equity estimate endpoint
+   (`GET /api/v1/equity-estimate?ranks=1,2` → % + counts) so low-end
+   clients can skip the 8k-point point-in-polygon pass.
+
+### 1.6 H3 aggregate layers (NEW — unblocks analysis-mode hex visualizations)
+
+`GET /api/v1/h3/aggregates?res=8|9|10` → per-occupied-cell metrics,
+computed once per 10-minute cycle and CDN-cached (~10 min):
+
+```
+{ "res": 9, "cycle_id": "…", "snapshot_time": "…",
+  "cells": { "<h3 index as string>": {
+      "device_count": 14,
+      "trips_started_24h": 31,        // bike_id rotation + movement = a start
+      "starts_per_hour_peak": 4,      // max hourly rate in the window
+      "avg_battery_percent": 62,
+      "risk_share": 0.21,             // fraction high_risk
+      "avg_dwell_hours": 9.4
+  }, … } }
+```
+
+- Start counting: a successful start = the state tracker seeing a device
+  leave its spot (the same movement that resets dwell); failed starts are
+  already counted separately. Trailing-24h window, per cell.
+- Cell ids as STRINGS (the raw-integer h3 indexes already force the
+  frontend to re-quote them before JSON.parse — please string-encode here
+  from day one).
+- Frontend renders these as choropleth hex layers in the Areas menu
+  (density / usage / battery / reliability at r8/r9/r10) and retires its
+  client-side per-refresh hex aggregation over 8k points.
 
 ### 1.3 Equity-rank boundaries `er1`–`er6` (DONE — live & verified)
 

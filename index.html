@@ -26,13 +26,47 @@
         data-drawer="devices"
         aria-pressed="false"
         aria-controls="drawer-devices"
-        title="Devices"
+        title="Filters"
       >
         <!-- Funnel / sieve -->
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
-        <span class="sr-only">Devices</span>
+        <span class="sr-only">Filters</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="iconography"
+        aria-pressed="false"
+        aria-controls="drawer-iconography"
+        title="Iconography"
+      >
+        <!-- Gauge ring around a dot -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3a9 9 0 1 1-8.3 5.5" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+        <span class="sr-only">Iconography</span>
+      </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="recommended"
+        aria-pressed="false"
+        aria-controls="drawer-recommended"
+        title="Recommended Devices"
+      >
+        <!-- List -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="8" y1="6" x2="21" y2="6" />
+          <line x1="8" y1="12" x2="21" y2="12" />
+          <line x1="8" y1="18" x2="21" y2="18" />
+          <line x1="3" y1="6" x2="3.01" y2="6" />
+          <line x1="3" y1="12" x2="3.01" y2="12" />
+          <line x1="3" y1="18" x2="3.01" y2="18" />
+        </svg>
+        <span class="sr-only">Recommended Devices</span>
       </button>
       <button
         class="drawer-tab"
@@ -96,20 +130,48 @@
       </button>
     </nav>
 
-    <!-- ---------- Devices drawer ---------- -->
+    <!-- ---------- Filters drawer (internal id "devices") ---------- -->
     <aside class="drawer" id="drawer-devices" aria-labelledby="drawer-devices-h" aria-hidden="true">
       <header class="drawer-header">
-        <h2 class="drawer-title" id="drawer-devices-h">Devices</h2>
-        <button class="drawer-close" type="button" aria-label="Close Devices">&times;</button>
+        <h2 class="drawer-title" id="drawer-devices-h">Filters</h2>
+        <button class="drawer-close" type="button" aria-label="Close Filters">&times;</button>
       </header>
       <div class="drawer-body">
-        <section class="control-group" aria-labelledby="device-filter-label">
-          <h3 id="device-filter-label" class="control-label">Device type</h3>
-          <div id="device-filter-seg" class="segmented" role="radiogroup" aria-labelledby="device-filter-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-filter="all">All</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-filter="scooter">Scooters</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-filter="bicycle">E-bikes</button>
+        <section class="control-group" aria-labelledby="ride-type-label">
+          <h3 id="ride-type-label" class="control-label">Ride type</h3>
+          <p class="control-hint">All on by default — tap to hide a type.</p>
+          <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
+            <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
+            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Seated</button>
           </div>
+        </section>
+
+        <section class="control-group" aria-labelledby="model-filter-label">
+          <h3 id="model-filter-label" class="control-label">Model</h3>
+          <div id="model-filter" class="toggle-stack" role="group" aria-labelledby="model-filter-label">
+            <button class="toggle-card is-active" type="button" data-model="astro" aria-pressed="true">
+              <img class="toggle-card__icon" src="/astro.svg" alt="" />
+              <span class="toggle-card__text">
+                <strong>Astro</strong>
+                <span>Standing scooter</span>
+              </span>
+            </button>
+            <button class="toggle-card is-active" type="button" data-model="cosmo" aria-pressed="true">
+              <img class="toggle-card__icon" src="/cosmo.svg" alt="" />
+              <span class="toggle-card__text">
+                <strong>Cosmo</strong>
+                <span>One passenger glider (no pedals)</span>
+              </span>
+            </button>
+            <button class="toggle-card is-active" type="button" data-model="apollo" aria-pressed="true">
+              <img class="toggle-card__icon" src="/apollo.svg" alt="" />
+              <span class="toggle-card__text">
+                <strong>Apollo</strong>
+                <span>Two passenger e-bike w/ pedals</span>
+              </span>
+            </button>
+          </div>
+          <p class="control-hint">Unrecognized models always stay visible.</p>
         </section>
 
         <section class="control-group">
@@ -120,48 +182,139 @@
           </label>
         </section>
 
-        <!-- One block owns everything battery: the quartile filter and the
-             range coloring live together so filtering and styling read as
-             two faces of the same attribute. -->
-        <section class="control-group" aria-labelledby="battery-filter-label">
-          <h3 id="battery-filter-label" class="control-label">Battery &amp; range</h3>
-          <p class="control-hint">Only show devices with…</p>
-          <div id="battery-filter" class="battery-filter" role="group" aria-labelledby="battery-filter-label">
-            <button class="batt-btn" type="button" data-bucket="0" aria-pressed="false" title="Bottom 25% of range">▁ 😢</button>
-            <button class="batt-btn" type="button" data-bucket="1" aria-pressed="false" title="25–50% of range">▃ 😐</button>
-            <button class="batt-btn" type="button" data-bucket="2" aria-pressed="false" title="50–75% of range">▅ 🙂</button>
-            <button class="batt-btn" type="button" data-bucket="3" aria-pressed="false" title="Top 25% of range">█ 😁</button>
+        <section class="control-group" aria-labelledby="battery-min-label">
+          <h3 id="battery-min-label" class="control-label">Minimum battery percentage</h3>
+          <div class="battery-slider">
+            <input
+              type="range"
+              id="battery-min"
+              min="0"
+              max="100"
+              step="5"
+              value="0"
+              aria-labelledby="battery-min-label"
+            />
+            <output id="battery-min-value" for="battery-min">Off</output>
           </div>
-          <p id="battery-filter-hint" class="battery-filter__hint" hidden>
-            Not enough range data yet to bucket.
-          </p>
-          <label class="switch battery-color-switch">
-            <input type="checkbox" id="color-by-range" checked />
-            <span>Color dots by range</span>
-          </label>
-          <div class="legend batt-legend" aria-hidden="true">
-            <div class="legend__bar">
-              <span class="legend__swatch" style="background: #c62828"></span>
-              <span class="legend__swatch" style="background: #f5b400"></span>
-              <span class="legend__swatch" style="background: #7ec850"></span>
-              <span class="legend__swatch" style="background: #1b8a3f"></span>
-            </div>
-            <div class="legend__scale"><span>empty</span><span>full</span></div>
+          <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
+        </section>
+
+        <section class="control-group" aria-labelledby="quality-label">
+          <h3 id="quality-label" class="control-label">Quality</h3>
+          <div id="quality-seg" class="segmented" role="radiogroup" aria-labelledby="quality-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-quality="any">Any</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="no-risk">Hide high-risk</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="ok-only">Reliable only</button>
+          </div>
+          <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
+        </section>
+
+        <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
+      </div>
+    </aside>
+
+    <!-- ---------- Iconography drawer ---------- -->
+    <aside class="drawer" id="drawer-iconography" aria-labelledby="drawer-iconography-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-iconography-h">Iconography</h2>
+        <button class="drawer-close" type="button" aria-label="Close Iconography">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <section class="control-group" aria-labelledby="icon-style-label">
+          <h3 id="icon-style-label" class="control-label">Icon style</h3>
+          <div id="icon-style-seg" class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="use">Ride type</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-style="model">Model</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-style="data">Data</button>
+          </div>
+          <!-- Filled by wireIconography(): only details pertinent to the
+               selected style, with live renderer previews. -->
+          <div id="icono-style-detail" class="icono-detail"></div>
+        </section>
+
+        <section class="control-group" id="icon-data-section" aria-labelledby="icon-data-label" hidden>
+          <h3 id="icon-data-label" class="control-label">Icon data</h3>
+          <div id="icon-data-seg" class="segmented" role="radiogroup" aria-labelledby="icon-data-label">
+            <button class="seg-btn" role="radio" aria-checked="false" data-source="battery">Battery %</button>
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="reliability">Reliability</button>
           </div>
         </section>
 
-        <section class="control-group" aria-labelledby="reliability-label">
-          <h3 id="reliability-label" class="control-label">Reliability</h3>
+        <section class="control-group" aria-labelledby="gauge-label">
+          <h3 id="gauge-label" class="control-label">Gauge ring</h3>
           <label class="switch">
-            <input type="checkbox" id="color-by-reliability" />
-            <span>Color dots by reliability</span>
+            <input type="checkbox" id="gauge-toggle" checked />
+            <span>Ring each device with its gauge</span>
           </label>
-          <div class="rel-legend" aria-hidden="true">
-            <span><i style="background: #1b8a3f"></i> likely rideable</span>
-            <span><i style="background: #f5b400"></i> unknown</span>
-            <span><i style="background: #c62828"></i> high risk</span>
+          <div id="gauge-body">
+            <h3 class="control-label icono-sublabel">📐 Design Options</h3>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-display-label">Display</span>
+              <div id="gauge-display-seg" class="segmented" role="radiogroup" aria-labelledby="gauge-display-label">
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-display="always">Always</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-display="hover">On Hover</button>
+              </div>
+            </div>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-thickness-label">✨ Gauge thickness</span>
+              <div id="gauge-thickness-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="gauge-thickness-label">
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="thin">Thin</button>
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-thickness="standard">Standard</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="large">Large</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-thickness="xlarge">XLarge</button>
+              </div>
+            </div>
+            <div class="design-opt">
+              <span class="design-opt__label" id="gauge-placement-label">✨ Gauge placement</span>
+              <div id="gauge-placement-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="gauge-placement-label">
+                <button class="seg-btn is-active" role="radio" aria-checked="true" data-placement="surrounding">Surrounding</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-placement="gap">Gap</button>
+                <button class="seg-btn" role="radio" aria-checked="false" data-placement="biggap">Big Gap</button>
+              </div>
+            </div>
+            <p class="control-hint design-upsell">✨ Premium features available to all users for a limited time.</p>
+
+            <h3 id="data-source-label" class="control-label icono-sublabel">Gauge data</h3>
+            <div id="data-source-seg" class="segmented" role="radiogroup" aria-labelledby="data-source-label">
+              <button class="seg-btn is-active" role="radio" aria-checked="true" data-source="battery">Battery %</button>
+              <button class="seg-btn" role="radio" aria-checked="false" data-source="reliability">Reliability</button>
+            </div>
+            <div id="icono-gauge-detail" class="icono-detail"></div>
           </div>
-          <p class="control-hint">High-risk devices always render faded on the map.</p>
+        </section>
+
+        <section class="control-group" aria-labelledby="tooltip-label">
+          <h3 id="tooltip-label" class="control-label">✨ Hover tooltip</h3>
+          <label class="switch">
+            <input type="checkbox" id="tooltip-toggle" checked />
+            <span>Show device essentials on hover</span>
+          </label>
+          <p class="control-hint">Model, battery, and quality at a glance — no click needed.</p>
+        </section>
+
+        <section class="control-group" aria-labelledby="legend-label">
+          <h3 id="legend-label" class="control-label">Legend</h3>
+          <label class="switch">
+            <input type="checkbox" id="legend-toggle" />
+            <span>Show icon legend on the map</span>
+          </label>
+          <p class="control-hint icono-hint">
+            Every icon and gauge-ring permutation, below the menu on the left.
+            Hover any for a description.
+          </p>
+        </section>
+      </div>
+    </aside>
+
+    <!-- ---------- Recommended Devices drawer ---------- -->
+    <aside class="drawer" id="drawer-recommended" aria-labelledby="drawer-recommended-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-recommended-h">Recommended Devices</h2>
+        <button class="drawer-close" type="button" aria-label="Close Recommended Devices">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <section class="control-group" id="recommended-body" aria-live="polite">
+          <!-- populated by recommend.ts -->
         </section>
       </div>
     </aside>
@@ -345,18 +498,33 @@
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
-    <!-- Intent-mode presets (bottom center): one-tap setups for the two main
-         audiences. Manual control changes drop back to an unlabeled custom
-         state — the presets never lock anything. -->
+    <!-- Use-case switch (bottom center): "Find a ride" runs the guided
+         wizard surface; "Analysis" is the full civic/data surface with the
+         drawer tabs. The Account (login) tab is shared by both. -->
     <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
       <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
-      <button class="mode-btn" type="button" data-mode="audit">📊 Audit</button>
+      <button class="mode-btn is-active" type="button" data-mode="analysis">📊 Analysis</button>
       <button class="mode-btn" type="button" id="ride-open">🧭 Ride</button>
     </div>
+
+    <!-- Find-a-ride wizard (consent → interview → ranked options). Content
+         built by ride-wizard.ts; floats over the map on desktop, docks as a
+         right-side panel on small screens. -->
+    <aside
+      id="ride-wizard"
+      class="ride-wizard"
+      role="dialog"
+      aria-labelledby="ride-wizard-title"
+      hidden
+    ></aside>
 
     <!-- Full-screen in-ride HUD (speed / clock / cost). Content built by
          ride-hud.ts; hidden until the rider opens it. -->
     <div id="ride-hud" class="ride-hud" hidden></div>
+
+    <!-- On-map icon legend (Iconography drawer toggle). Populated by
+         wireIconography(); sits below the left tab strip. -->
+    <div id="icon-legend" class="icon-legend" role="img" aria-label="Icon legend" hidden></div>
 
     <!-- Brand link (bottom-left, beside the zoom controls) -->
     <a
@@ -374,8 +542,12 @@
 
     <!-- Freshness footer (bottom-right) -->
     <div id="freshness" class="freshness" role="status" aria-live="polite">
-      <span class="freshness-dot" aria-hidden="true"></span>
-      <span id="freshness-text">Connecting…</span>
+      <span class="freshness__line freshness__line--time">
+        <span class="freshness-dot" aria-hidden="true"></span>
+        <span id="freshness-text">Connecting…</span>
+      </span>
+      <span class="freshness__line" id="freshness-count" hidden></span>
+      <span class="freshness__line" id="freshness-map" hidden></span>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

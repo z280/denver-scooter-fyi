@@ -1103,21 +1103,31 @@ body {
   right: 12px;
   z-index: 30;
   display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
-  font-size: 12.5px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 12px;
+  font-size: 12px;
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
   color: var(--fg);
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   /* Disable iOS double-tap zoom, tap highlight, and text selection so the
      SOS gesture target feels button-like. */
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+}
+.freshness__line {
+  white-space: nowrap;
+}
+.freshness__line--time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .freshness-dot {
   width: 8px;
@@ -1865,4 +1875,574 @@ body.ride-active .maplibregl-ctrl {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* ---------- Ride-mode surface ---------- */
+
+/* Each use case gets its own buttons. Ride mode never shows the map-layers
+   (Areas), Tools, or Compliance menus; Analysis never shows the Recommended
+   Devices list. Filters (Devices) and Iconography work in BOTH modes, and
+   the Account (login) tab is the shared button across both. */
+body.mode-ride .drawer-tab[data-drawer="areas"],
+body.mode-ride .drawer-tab[data-drawer="tools"],
+body.mode-ride .drawer-tab[data-drawer="compliance"],
+body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
+  display: none;
+}
+
+/* ---------- Find-a-ride wizard ---------- */
+
+.ride-wizard {
+  position: fixed;
+  /* Desktop: centered on the 75% line of the page, ~40% wide, floating over
+     the map and leaving a thick-ish strip of map along the right edge. */
+  left: 75%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40vw;
+  max-width: 560px;
+  max-height: 86dvh;
+  overflow-y: auto;
+  z-index: 28; /* over the map + mode pill (25), under drawers (30) */
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.ride-wizard__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 0;
+}
+.ride-wizard__title {
+  margin: 0;
+  font-size: 16px;
+}
+.ride-wizard__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.ride-wizard__close:hover {
+  background: rgba(0, 114, 178, 0.08);
+  color: var(--fg);
+}
+.ride-wizard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+.ride-wizard__lede {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ride-wizard__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-wizard__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ride-wizard__spinner {
+  width: 26px;
+  height: 26px;
+  margin: 6px auto 0;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: ride-spin 0.9s linear infinite;
+}
+@keyframes ride-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Interview choices */
+.ride-wizard__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-wizard__choice {
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  cursor: pointer;
+}
+.ride-wizard__choice.is-active {
+  border-color: var(--accent);
+  background: rgba(0, 114, 178, 0.07);
+}
+.ride-wizard__choice-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+.ride-wizard__typerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ride-wizard__typerow-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.ride-wizard__typechip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 5px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ride-wizard__typechip.is-active {
+  border-color: var(--accent);
+  background: rgba(0, 114, 178, 0.1);
+  color: var(--accent);
+}
+
+/* Ranked results */
+.ride-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ride-option {
+  appearance: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.ride-option:hover {
+  border-color: var(--accent);
+}
+/* Selected: bold border + drop shadow. */
+.ride-option.is-selected {
+  border: 3px solid var(--accent);
+  padding: 9px 11px; /* keep content from shifting as the border thickens */
+  box-shadow: 0 10px 26px rgba(20, 30, 50, 0.3);
+}
+.ride-option__title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13.5px;
+}
+.ride-option__rank {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+.ride-option__desc {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-option__meta {
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+.ride-option__warnings {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fail);
+}
+.ride-wizard__route {
+  width: 100%;
+}
+
+/* Limited room (mobile): the wizard becomes a right-side panel and the map
+   keeps the left of the screen — beside the panel, not underneath it.
+   main.ts calls map.resize() when the surface toggles. */
+@media (max-width: 720px) {
+  .ride-wizard {
+    left: auto;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    transform: none;
+    width: min(320px, 78vw);
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    border-top: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  body.mode-ride #map {
+    width: auto;
+    right: min(320px, 78vw);
+  }
+  /* Keep the mode pill reachable beside the docked panel. */
+  body.mode-ride .mode-switch {
+    left: 12px;
+    transform: none;
+  }
+}
+
+/* ---------- Filter controls: toggle groups, battery slider, clear-all ---------- */
+
+/* Everything-on-by-default toggle groups (ride type, model): active =
+   showing, inactive = filtered out. */
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.toggle-pill {
+  appearance: none;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.toggle-pill.is-active {
+  border-color: var(--accent);
+  background: rgba(0, 114, 178, 0.08);
+  color: var(--fg);
+  opacity: 1;
+}
+.toggle-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.toggle-card {
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  color: var(--fg-muted);
+  border-radius: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.toggle-card.is-active {
+  border-color: var(--accent);
+  background: rgba(0, 114, 178, 0.06);
+  color: var(--fg);
+  opacity: 1;
+}
+.toggle-card strong {
+  display: block;
+  font-size: 13px;
+}
+.toggle-card span {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* Minimum-battery slider: the accent color tracks the gauge color for the
+   current value (set from JS). */
+.battery-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.battery-slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.battery-slider output {
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clear All Filters: deliberately plain — text only, no filter iconography. */
+.clear-filters-btn {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 9px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.clear-filters-btn:hover {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+/* ---------- Recommended Devices drawer ---------- */
+.recommend-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+/* ---------- Model silhouettes (public/{astro,cosmo,apollo}.svg) ---------- */
+.toggle-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.toggle-card__icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+.toggle-card:not(.is-active) .toggle-card__icon {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.toggle-card__text {
+  min-width: 0;
+}
+.ride-option__glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  align-self: center;
+}
+.ride-wizard__typechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ride-wizard__typechip-glyph {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---------- Iconography drawer: contextual details + on-map legend ---------- */
+
+/* Slightly larger reading text in this drawer, with breathing room below
+   each selector toggle. */
+#drawer-iconography .control-hint,
+.icono-detail {
+  font-size: 13px;
+}
+.icono-detail {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.icono-detail:empty {
+  display: none;
+}
+.icono-detail__title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.icono-detail__note {
+  margin: 0 0 2px;
+  color: var(--fg-muted);
+}
+.icono-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.icono-item img {
+  flex: none; /* sized via width/height attrs to mirror map scale */
+}
+.icono-sublabel {
+  margin-top: 14px;
+}
+#gauge-body .segmented {
+  margin-bottom: 2px;
+}
+
+/* On-map legend: docked below the left tab-strip menu (top set by JS). */
+.icon-legend {
+  position: fixed;
+  left: 12px;
+  z-index: 26; /* under the tab strip (32) and drawers (30) */
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  justify-items: center;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  max-height: calc(100dvh - 480px);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.icon-legend img {
+  display: block;
+  cursor: help; /* sized via width/height attrs to mirror map scale */
+}
+.icon-legend__head {
+  grid-column: 1 / -1;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+}
+
+/* ---------- Gauge Design Options ---------- */
+.design-opt {
+  margin-top: 10px;
+}
+.design-opt__label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.segmented--tight .seg-btn {
+  font-size: 11.5px;
+  padding: 6px 2px;
+}
+.design-upsell {
+  margin: 12px 0 2px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+/* ---------- Battery Rankings modal (analysis-mode nerd stats) ---------- */
+.device-popup__ranks-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+}
+/* The rankings are an analysis tool — riders never see the link. */
+body.mode-ride .device-popup__ranks-link {
+  display: none;
+}
+.ranks-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.ranks-modal__card {
+  width: min(320px, 92vw);
+  background: #fff;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.ranks-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ranks-modal__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.ranks-modal__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.ranks-modal__close:hover {
+  background: rgba(0, 114, 178, 0.08);
+  color: var(--fg);
+}
+.ranks-modal__hint {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ---------- ✨ Essentials hover tooltip ---------- */
+.map-tooltip {
+  position: fixed;
+  z-index: 65;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  max-width: 200px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--fg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.map-tooltip strong {
+  font-size: 13px;
 }

@@ -20,6 +20,7 @@ import {
 } from "./battery.ts";
 import {
   assessReliability,
+  worstTier,
   RELIABILITY_COLOR,
   RELIABILITY_LABEL,
   type ReliabilityTier,
@@ -38,9 +39,39 @@ import {
   type DeviceReportType,
 } from "./reports.ts";
 
-export type DeviceFilter = "all" | "scooter" | "bicycle";
 export type AreaFilter = IndexedFeature[] | null;
-export type ColorMode = "type" | "range" | "reliability";
+/** Ride posture, the primary "what am I sitting on" split. Derived from the
+ *  server-corrected `vehicle_use_type` with model names as tiebreaker. */
+export type RideType = "sitting" | "standing";
+/** Veo's recognized model line-up (unrecognized models are never filtered). */
+export type ModelKey = "astro" | "cosmo" | "apollo";
+export type QualityFilter = "any" | "no-risk" | "ok-only";
+/** What the marker's inner badge depicts. */
+export type IconStyle = "use" | "model" | "data";
+/** Which signal colors the gauge ring (and the "data" badge). */
+export type DataSource = "battery" | "reliability";
+
+export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
+export const ALL_MODELS: readonly ModelKey[] = ["astro", "cosmo", "apollo"];
+
+// ----- Gauge design options ("📐 Design Options" in the Iconography drawer).
+export type GaugeDisplay = "always" | "hover";
+export type GaugeThickness = "thin" | "standard" | "large" | "xlarge";
+export type GaugePlacement = "surrounding" | "gap" | "biggap";
+
+/** One-character encodings baked into icon keys so each design variant
+ *  gets its own atlas image. */
+const THICKNESS_CHAR: Record<GaugeThickness, string> = {
+  thin: "T",
+  standard: "S",
+  large: "L",
+  xlarge: "X",
+};
+const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
+  surrounding: "S",
+  gap: "G",
+  biggap: "B",
+};
 
 /** How close (metres) the user must be for the "Unlock in Veo" button to
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
@@ -57,7 +88,16 @@ const CLUSTER_LAYER = "device-clusters";
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
 const COUNT_LAYER = "device-cluster-count";
 const POINT_LAYER = "device-points";
+/** Overlay that draws the gauge-ringed icon for just the hovered device
+ *  when the gauge display mode is "On Hover". */
+const HOVER_LAYER = "device-points-hover";
 const FLAG_LAYER = "device-negative-flag";
+/** Filter that matches nothing — the hover layer's idle state. */
+const HOVER_NONE: maplibregl.FilterSpecification = [
+  "==",
+  ["get", "device_id"],
+  "__none__",
+];
 /** Layers with their own click behavior — a click that hits one of these
  *  should not also trigger the map-click region filter beneath it. */
 export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
@@ -67,8 +107,8 @@ export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
  *  missing model falls through to a "Tell us!" report prompt. */
 const VEO_MODELS: Record<string, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
-  cosmo: { name: "Veo Cosmo", desc: "Seated, no pedals" },
-  apollo: { name: "Veo Apollo", desc: "Seated, with pedals · 2 passenger" },
+  cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
+  apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
 };
 
 function veoModel(
@@ -86,16 +126,32 @@ const PROPULSION_LABEL: Record<PropulsionType, string> = {
 
 export class Devices {
   private all: DevicesResponse | null = null;
-  private filter: DeviceFilter = "all";
   private areaFilter: AreaFilter = null;
   private hideUnavailable = false;
-  /** Null = no battery filter. Empty set = filter is "on" but excludes
-   *  everything. Set of bucket indices = restrict to those buckets. */
-  private batteryBuckets: Set<BatteryBucket> | null = null;
-  // Default to battery-range coloring rather than device type (per product
-  // direction). Falls back to type icons automatically until enough range
-  // data arrives to compute quartile thresholds.
-  private colorMode: ColorMode = "range";
+  /** Ride-type and model toggles: everything enabled by default, users
+   *  click to *disable*. Unrecognized models are never filtered out. */
+  private rideTypes = new Set<RideType>(ALL_RIDE_TYPES);
+  private models = new Set<ModelKey>(ALL_MODELS);
+  /** Minimum battery percentage (0 = off). When > 0, devices without a
+   *  usable battery_percent are hidden too — an unknown charge can't
+   *  satisfy a minimum. */
+  private minBattery = 0;
+  private quality: QualityFilter = "any";
+  // Iconography: inner badge style + gauge ring (default on). The badge
+  // ("icon data") and the ring ("gauge data") have independent signals so
+  // riders can see reliability in the icon while the ring tracks battery.
+  private iconStyle: IconStyle = "use";
+  private iconData: DataSource = "reliability";
+  private gaugeData: DataSource = "battery";
+  private gauge = true;
+  // Design options: on-hover display swaps the ring onto a hover overlay
+  // layer; thickness/placement are baked into every icon key.
+  private gaugeDisplay: GaugeDisplay = "always";
+  private gaugeThickness: GaugeThickness = "standard";
+  private gaugePlacement: GaugePlacement = "surrounding";
+  private hoverDeviceId: string | null = null;
+  /** ✨ Essentials-on-hover tooltip, default on. */
+  private tooltipOn = true;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -115,7 +171,9 @@ export class Devices {
   ) {}
 
   addLayers(): void {
-    registerDeviceIcons(this.map);
+    // Kick off the model-silhouette decode; when it lands, re-annotate so
+    // Model-style markers upgrade from letter tags to the real silhouettes.
+    void loadModelIcons().then(() => this.apply());
 
     this.map.addSource(SRC, {
       type: "geojson",
@@ -204,7 +262,10 @@ export class Devices {
       source: SRC,
       filter: ["!", ["has", "point_count"]],
       layout: {
-        "icon-image": iconByType(),
+        // Composite badge (inner style + optional gauge ring) generated on
+        // a canvas per unique key; apply() annotates every feature with its
+        // icon_key and registers any missing images before setData.
+        "icon-image": ["get", "icon_key"],
         "icon-size": [
           "interpolate",
           ["linear"],
@@ -255,6 +316,89 @@ export class Devices {
         ],
       },
     });
+
+    // "On Hover" gauge display: this overlay draws the ringed variant of
+    // exactly one device (the hovered one) above the base points. The base
+    // icons reserve the ring's space (ring spec "hoff"), so hovering adds
+    // the ring without the badge popping in size.
+    this.map.addLayer({
+      id: HOVER_LAYER,
+      type: "symbol",
+      source: SRC,
+      filter: HOVER_NONE,
+      layout: {
+        "icon-image": ["get", "icon_key_hover"],
+        "icon-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          0.55,
+          14,
+          0.85,
+          17,
+          1.1,
+        ],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "text-field": "",
+        "text-font": ["Noto Sans Medium"],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          7,
+          14,
+          10.5,
+          17,
+          13,
+        ],
+        "text-anchor": "center",
+        "text-offset": [0, 0],
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        "text-padding": 0,
+      },
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "rgba(0,0,0,0.25)",
+        "text-halo-width": 0.6,
+        "icon-opacity": [
+          "match",
+          ["get", "reliability_tier"],
+          "risk",
+          0.45,
+          1,
+        ],
+      },
+    });
+
+    this.map.on("mousemove", POINT_LAYER, (e) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      const props = f.properties as PopupProps;
+      // On-hover gauge ring.
+      if (this.gauge && this.gaugeDisplay === "hover") {
+        const id = String(props.device_id ?? "");
+        if (id && id !== this.hoverDeviceId) {
+          this.hoverDeviceId = id;
+          this.map.setFilter(HOVER_LAYER, [
+            "all",
+            ["!", ["has", "point_count"]],
+            ["==", ["get", "device_id"], id],
+          ]);
+        }
+      }
+      // ✨ Essentials tooltip (premium): model + battery + quality.
+      if (this.tooltipOn) showMapTooltip(e.originalEvent, props);
+    });
+    this.map.on("mouseleave", POINT_LAYER, () => {
+      this.clearHover();
+      hideMapTooltip();
+    });
+    // The click popup takes over — don't double-annotate the device.
+    this.map.on("click", () => hideMapTooltip());
 
     // Range-circle source/layers: a single device's reachable-distance halo,
     // toggled from the popup's "Show on map" affordance. Beneath the device
@@ -514,26 +658,28 @@ export class Devices {
         );
       }
 
-      // Range-rank rows. (Per-H3-cell ranks were removed — see the
-      // hexagon-density map tool in the Areas panel for spatial views.)
+      // Range-rank rows are API-computed but too wonky for the popup
+      // proper — they live in a modal behind a "Show Battery Rankings"
+      // link, and the link itself is analysis-mode-only (hidden via CSS in
+      // ride mode).
+      const rankRows: string[] = [];
       const percentile = asNumber(props.range_percentile_by_type);
       if (percentile !== null) {
-        publicRows.push(
+        rankRows.push(
           `<dt>Range percentile</dt><dd>${formatPercentile(percentile)} <span class="device-popup__hint">vs same drivetrain</span></dd>`,
         );
       }
       const rankAllDevices = formatRank(props.range_rank_all_devices);
       if (rankAllDevices !== null) {
-        publicRows.push(
-          `<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`,
-        );
+        rankRows.push(`<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`);
       }
       const rankByType = formatRank(props.range_rank_all_by_type);
       if (rankByType !== null) {
-        publicRows.push(
-          `<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`,
-        );
+        rankRows.push(`<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`);
       }
+      const ranksLink = rankRows.length
+        ? `<button type="button" class="device-popup__ranks-link text-btn" data-action="show-ranks">Show Battery Rankings</button>`
+        : "";
 
       // Quality + reliability rows — all now public. quality_designation,
       // negative-report flag, dwell time, and failed starts ship on the
@@ -618,6 +764,7 @@ export class Devices {
             ${publicRows.join("")}
           </dl>
           ${qualityBlock}
+          ${ranksLink}
           ${reportProblemBlock}
         </div>`;
       const authColumn = privateRows.length
@@ -648,6 +795,15 @@ export class Devices {
         this.locate.showLineTo(here);
         this.popup.on("close", () => this.locate.clearLine());
       }
+
+      // "Show Battery Rankings" → the nerd-stats modal (analysis mode only;
+      // the link is display:none'd in ride mode).
+      const ranksBtn = this.popup
+        .getElement()
+        ?.querySelector<HTMLButtonElement>('[data-action="show-ranks"]');
+      ranksBtn?.addEventListener("click", () => {
+        openRanksModal(rankRows);
+      });
 
       // Wire the "Show/Hide on map" range-circle toggle, if rendered.
       const toggleBtn = this.popup
@@ -866,8 +1022,26 @@ export class Devices {
     this.apply();
   }
 
-  setFilter(filter: DeviceFilter): void {
-    this.filter = filter;
+  /** Ride-type toggles (default: both). Empty set hides everything. */
+  setRideTypes(types: ReadonlySet<RideType>): void {
+    this.rideTypes = new Set(types);
+    this.apply();
+  }
+
+  /** Model toggles (default: all). Unrecognized models are unaffected. */
+  setModels(models: ReadonlySet<ModelKey>): void {
+    this.models = new Set(models);
+    this.apply();
+  }
+
+  /** Minimum battery percentage (0 disables the filter). */
+  setMinBattery(pct: number): void {
+    this.minBattery = Math.max(0, Math.min(100, Math.round(pct)));
+    this.apply();
+  }
+
+  setQuality(q: QualityFilter): void {
+    this.quality = q;
     this.apply();
   }
 
@@ -883,16 +1057,60 @@ export class Devices {
     this.apply();
   }
 
-  /** Restrict to devices in the given battery quartile bucket(s). Pass null
-   *  to clear the filter; pass an empty set to hide all batteried devices. */
-  setBatteryFilter(buckets: Set<BatteryBucket> | null): void {
-    this.batteryBuckets = buckets;
+  setIconStyle(style: IconStyle): void {
+    this.iconStyle = style;
+    this.apply(); // icon keys are data-driven — re-annotate + re-set data
+  }
+
+  /** Signal shown by the "Data" badge style. */
+  setIconData(source: DataSource): void {
+    this.iconData = source;
     this.apply();
   }
 
-  setColorMode(mode: ColorMode): void {
-    this.colorMode = mode;
-    this.applyPaint();
+  /** Signal the gauge ring is colored/sized by. */
+  setGaugeData(source: DataSource): void {
+    this.gaugeData = source;
+    this.apply();
+  }
+
+  setGauge(on: boolean): void {
+    this.gauge = on;
+    if (!on) this.clearHover();
+    this.apply();
+  }
+
+  /** ✨ Essentials-on-hover tooltip (model · battery · quality). */
+  setHoverTooltip(on: boolean): void {
+    this.tooltipOn = on;
+    if (!on) hideMapTooltip();
+  }
+
+  /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
+   *  space and only draws it (via the hover overlay) under the pointer. */
+  setGaugeDisplay(mode: GaugeDisplay): void {
+    this.gaugeDisplay = mode;
+    if (mode === "always") this.clearHover();
+    this.apply();
+  }
+
+  setGaugeThickness(t: GaugeThickness): void {
+    this.gaugeThickness = t;
+    this.apply();
+  }
+
+  setGaugePlacement(p: GaugePlacement): void {
+    this.gaugePlacement = p;
+    this.apply();
+  }
+
+  private clearHover(): void {
+    this.hoverDeviceId = null;
+    try {
+      this.map.setFilter(HOVER_LAYER, HOVER_NONE);
+    } catch {
+      // Layer not added yet — nothing to clear.
+    }
   }
 
   /** Get the currently-shown feature subset (for downstream tools like the cluster finder). */
@@ -904,8 +1122,16 @@ export class Devices {
   private filtered(): DevicesResponse["features"] {
     if (!this.all) return [];
     let feats = this.all.features;
-    if (this.filter !== "all") {
-      feats = feats.filter((f) => f.properties.form_factor === this.filter);
+    if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
+      feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
+    }
+    if (this.models.size < ALL_MODELS.length) {
+      // Only *recognized* models can be toggled off; mystery hardware
+      // always stays visible (it's what the model-report flow feeds on).
+      feats = feats.filter((f) => {
+        const key = modelKeyOf(f.properties);
+        return key === null || this.models.has(key);
+      });
     }
     if (this.hideUnavailable) {
       feats = feats.filter(
@@ -914,19 +1140,19 @@ export class Devices {
           !asBool(f.properties.is_reserved),
       );
     }
-    if (this.batteryBuckets) {
-      const allowed = this.batteryBuckets;
-      const t = this.thresholds;
-      // No thresholds yet → no device can satisfy a bucket-filter, hide all.
-      if (!t) {
-        feats = [];
-      } else {
-        feats = feats.filter((f) => {
-          const pct = asNumber(f.properties.battery_percent);
-          const b = bucketFor(pct, t);
-          return b !== null && allowed.has(b);
-        });
-      }
+    if (this.minBattery > 0) {
+      const min = this.minBattery;
+      feats = feats.filter((f) => {
+        const pct = asNumber(f.properties.battery_percent);
+        return pct !== null && pct >= min;
+      });
+    }
+    if (this.quality !== "any") {
+      const wantOk = this.quality === "ok-only";
+      feats = feats.filter((f) => {
+        const tier = f.properties.reliability_tier;
+        return wantOk ? tier === "ok" : tier !== "risk";
+      });
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
       const polys = this.areaFilter;
@@ -942,37 +1168,104 @@ export class Devices {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     if (!src || !this.all) return;
     const feats = this.filtered();
+    this.annotateIconKeys(feats);
     src.setData({ type: "FeatureCollection", features: feats });
     this.applyPaint();
     const total = this.all.features.length;
     for (const cb of this.countListeners) cb(feats.length, total);
   }
 
-  /** Push the current display mode into the point-layer's icon + text
-   *  expressions. In "Range" mode each marker is a colored bucket disc
-   *  with the percentage rendered inside; in "Device type" mode it's the
-   *  emoji badge with no text. Cheap to call repeatedly. */
+  /** Stamp every displayed feature with its composite icon key (plus the
+   *  ringed hover variant in On-Hover display) and make sure the map's
+   *  image atlas has an image for each unique key. */
+  private annotateIconKeys(feats: DevicesResponse["features"]): void {
+    const hoverMode = this.gauge && this.gaugeDisplay === "hover";
+    const needed = new Set<string>();
+    for (const f of feats) {
+      const props = f.properties as DeviceProperties & {
+        icon_key?: string;
+        icon_key_hover?: string;
+      };
+      const { base, ringed } = this.iconKeysFor(f.properties);
+      props.icon_key = base;
+      needed.add(base);
+      if (hoverMode) {
+        props.icon_key_hover = ringed;
+        needed.add(ringed);
+      } else {
+        delete props.icon_key_hover;
+      }
+    }
+    for (const key of needed) {
+      if (this.map.hasImage(key)) continue;
+      this.map.addImage(key, makeCompositeIcon(key), { pixelRatio: 2 });
+    }
+  }
+
+  private iconKeysFor(p: DeviceProperties): { base: string; ringed: string } {
+    const pct = asNumber(p.battery_percent);
+    const tier = normalizeTier(p.reliability_tier) ?? "unknown";
+
+    let inner: string;
+    if (this.iconStyle === "use") {
+      inner = `use-${rideTypeOf(p)}`;
+    } else if (this.iconStyle === "model") {
+      const mk = modelKeyOf(p);
+      // Silhouette badge once its SVG has decoded; letter tag until then
+      // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
+      inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
+    } else if (this.iconData === "reliability") {
+      inner = `dr-${tier}`;
+    } else {
+      const b = this.thresholds ? bucketFor(pct, this.thresholds) : null;
+      inner = `db-${b ?? "x"}`;
+    }
+
+    let ring: string;
+    if (this.gaugeData === "reliability") {
+      ring = `r-${tier}`;
+    } else {
+      // Quantize to 5% steps so the atlas stays small (≤21 ring variants).
+      ring = pct === null ? "b-x" : `b-${Math.round(pct / 5) * 5}`;
+    }
+
+    const design =
+      THICKNESS_CHAR[this.gaugeThickness] + PLACEMENT_CHAR[this.gaugePlacement];
+    const ringed = `ik|${inner}|${ring}|${design}`;
+    // Base icon: full ring when always-on; ring space reserved but empty in
+    // hover mode (so the hover overlay adds the ring without a size pop);
+    // full-size badge when the gauge is off entirely.
+    const base = !this.gauge
+      ? `ik|${inner}|off|${design}`
+      : this.gaugeDisplay === "hover"
+        ? `ik|${inner}|hoff|${design}`
+        : ringed;
+    return { base, ringed };
+  }
+
+  /** The percentage text overlay only makes sense on the "data" badge with
+   *  the battery source; everything else renders icon-only. */
   private applyPaint(): void {
-    const rangeMode = this.colorMode === "range" && this.thresholds;
-    const iconExpr =
-      this.colorMode === "reliability"
-        ? iconByReliability()
-        : rangeMode
-          ? iconByRange(this.thresholds!)
-          : iconByType();
-    const textExpr: maplibregl.ExpressionSpecification | string = rangeMode
+    const battText =
+      this.iconStyle === "data" &&
+      this.iconData === "battery" &&
+      this.thresholds;
+    const textExpr: maplibregl.ExpressionSpecification | string = battText
       ? textByPercent()
       : "";
-    const textColorExpr: maplibregl.ExpressionSpecification | string = rangeMode
+    const textColorExpr: maplibregl.ExpressionSpecification | string = battText
       ? textColorByBucket(this.thresholds!)
       : "#ffffff";
     try {
-      this.map.setLayoutProperty(POINT_LAYER, "icon-image", iconExpr);
-      this.map.setLayoutProperty(POINT_LAYER, "text-field", textExpr);
-      this.map.setPaintProperty(POINT_LAYER, "text-color", textColorExpr);
+      // The hover overlay mirrors the base layer's text so the percentage
+      // stays visible while its ringed icon covers the base badge.
+      for (const layer of [POINT_LAYER, HOVER_LAYER]) {
+        this.map.setLayoutProperty(layer, "text-field", textExpr);
+        this.map.setPaintProperty(layer, "text-color", textColorExpr);
+      }
     } catch {
-      // Layer might not be added yet (early calls); addLayers will install
-      // the default iconByType() expression.
+      // Layer might not be added yet (early calls) — addLayers installs
+      // the defaults.
     }
   }
 
@@ -1038,6 +1331,7 @@ interface PopupProps {
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
   // client-derived (annotated in setData)
+  battery_percent?: number | string | null;
   reliability_tier?: string | null;
   reliability_reasons?: string | null;
   // private (authed only)
@@ -1049,17 +1343,25 @@ interface PopupProps {
 
 /** Attach a canonical `reliability_tier` + human-readable
  *  `reliability_reasons` to every feature so paint expressions and popups
- *  tell the same story. Prefers the server's tier (normalizing its
- *  "high_risk" to our "risk") and falls back to a local assessment when the
- *  server omits it. Reasons are always computed locally from the now-public
- *  quality/dwell/failed-start signals. Mutates the input — call once per
- *  fresh DevicesResponse. */
+ *  tell the same story.
+ *
+ *  The local assessment mirrors the API's own reliability formula (see
+ *  assessReliability), so server and client agree except for the one
+ *  deliberate client-side addition: the pre-ghost caution band (clean
+ *  dwell 48–96h shows "unknown" where the server still says "ok"). The
+ *  merge takes the WORST of the two tiers, which applies that band and
+ *  otherwise defers to whichever side has more evidence. Reasons are
+ *  always computed locally. Mutates the input — call once per fresh
+ *  DevicesResponse. */
 function annotateReliability(features: DevicesResponse["features"]): void {
   const now = Date.now();
   for (const f of features) {
     const props = f.properties;
     const info = assessReliability(props, now);
-    props.reliability_tier = normalizeTier(props.reliability_tier) ?? info.tier;
+    const serverTier = normalizeTier(props.reliability_tier);
+    props.reliability_tier = serverTier
+      ? worstTier(serverTier, info.tier)
+      : info.tier;
     props.reliability_reasons = info.reasons.join(" · ");
   }
 }
@@ -1072,52 +1374,28 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
   return null;
 }
 
-/** Per-form-factor icon expression — the default "Device type" display. */
-function iconByType(): maplibregl.ExpressionSpecification {
-  return [
-    "match",
-    ["get", "form_factor"],
-    "scooter",
-    "dev-scooter",
-    "bicycle",
-    "dev-bicycle",
-    "dev-unknown",
-  ];
+/** Ride posture for the "Device use" icon style and the ride-type filter:
+ *  the server-corrected `vehicle_use_type` decides, with the seated models
+ *  (Cosmo, Apollo) as the tiebreaker when it's absent. */
+export function rideTypeOf(p: {
+  vehicle_use_type?: string | null;
+  vehicle_model_name?: string | null;
+}): RideType {
+  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  if (p.vehicle_use_type === "sitting" || model === "cosmo" || model === "apollo") {
+    return "sitting";
+  }
+  return "standing";
 }
 
-/** Tier-based icon expression for the "Reliability" display. */
-function iconByReliability(): maplibregl.ExpressionSpecification {
-  return [
-    "match",
-    ["get", "reliability_tier"],
-    "ok",
-    "dev-rel-ok",
-    "risk",
-    "dev-rel-risk",
-    "dev-rel-unknown",
-  ];
-}
-
-/** Quartile-based icon expression for the "Range" display. Reads the
- *  pre-annotated battery_percent (see annotateBatteryPercent). Devices
- *  without a percentage fall through to the neutral missing icon. */
-function iconByRange(
-  t: BatteryThresholds,
-): maplibregl.ExpressionSpecification {
-  // coalesce(null) → -1 so step's "below first stop" branch catches it.
-  return [
-    "step",
-    ["to-number", ["coalesce", ["get", "battery_percent"], -1]],
-    "dev-batt-missing",
-    0,
-    "dev-batt-0",
-    t.p25,
-    "dev-batt-1",
-    t.p50,
-    "dev-batt-2",
-    t.p75,
-    "dev-batt-3",
-  ];
+/** Recognized Veo model, or null for mystery hardware. */
+export function modelKeyOf(p: {
+  vehicle_model_name?: string | null;
+}): ModelKey | null {
+  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  return model === "astro" || model === "cosmo" || model === "apollo"
+    ? (model as ModelKey)
+    : null;
 }
 
 /** Text-field expression for the "Range" display: e.g. "73%". Empty
@@ -1184,89 +1462,302 @@ function annotateBatteryPercent(
   }
 }
 
-/** Register the eight device-marker icons on the map's image atlas. Each
- *  is a small circular badge: type-mode icons hold a 🛴/🚲/❓ emoji on a
- *  white field; range-mode icons hold a battery bar glyph on the bucket's
- *  signature color. Idempotent (safe to call after style reloads). */
-function registerDeviceIcons(map: Map): void {
-  const typeIcons: Array<[string, string]> = [
-    ["dev-scooter", "🛴"],
-    ["dev-bicycle", "🚲"],
-    ["dev-unknown", "❓"],
-  ];
-  for (const [id, emoji] of typeIcons) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeEmojiBadge(emoji), { pixelRatio: 2 });
+// ---------- Composite marker icons (inner badge + gauge ring) ----------
+
+/** The vehicle silhouettes for the "Model" icon style — hand-drawn SVGs in
+ *  /public, square-viewBoxed and pre-clipped to a circle, so each one IS
+ *  the inner badge face. Decoded once at startup; until they're ready (or
+ *  if one fails), the two-letter tags render instead. */
+const MODEL_ICON_URL: Record<ModelKey, string> = {
+  astro: "/astro.svg",
+  cosmo: "/cosmo.svg",
+  apollo: "/apollo.svg",
+};
+const modelIconImages: Partial<Record<ModelKey, HTMLImageElement>> = {};
+let modelIconsLoading: Promise<void> | null = null;
+
+function loadModelIcons(): Promise<void> {
+  modelIconsLoading ??= Promise.all(
+    (Object.keys(MODEL_ICON_URL) as ModelKey[]).map(async (key) => {
+      const img = new Image();
+      img.src = MODEL_ICON_URL[key];
+      try {
+        await img.decode();
+        modelIconImages[key] = img;
+      } catch {
+        // Missing/broken asset — the letter tag stays as the fallback.
+      }
+    }),
+  ).then(() => undefined);
+  return modelIconsLoading;
+}
+
+/** Gauge colors by fixed thirds — matches the "green / amber / red" read
+ *  the design asks for (55% shows amber, 100% full green). */
+export function gaugeColor(pct: number): string {
+  if (pct >= 67) return "#1b8a3f";
+  if (pct >= 34) return "#f5b400";
+  return "#c62828";
+}
+
+/** Render one composite icon key to a data URL — powers the Iconography
+ *  drawer's example rows and the on-map legend, so what they show is the
+ *  exact renderer output. Optional overlay text mimics the symbol layer's
+ *  percentage overlay on "Data · battery" badges. */
+export interface IconPreview {
+  url: string;
+  /** Logical (CSS) pixel size of the icon — canvases vary by design now
+   *  that rings grow outward, so previews scale to match the map. */
+  logicalPx: number;
+}
+
+export function iconPreviewURL(
+  key: string,
+  overlay?: { text: string; color: string },
+): IconPreview {
+  const data = makeCompositeIcon(key);
+  const c = document.createElement("canvas");
+  c.width = data.width;
+  c.height = data.height;
+  const ctx = c.getContext("2d");
+  if (!ctx) return { url: "", logicalPx: 32 };
+  ctx.putImageData(data, 0, 0);
+  if (overlay) {
+    ctx.fillStyle = overlay.color;
+    // Size the overlay against the fixed badge, not the (variable) canvas.
+    ctx.font = `bold ${Math.round(RINGED_BADGE_R * 0.9)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(overlay.text, data.width / 2, data.height / 2 + 1);
   }
-  // The four bucket badges are blank colored discs — the percentage text
-  // is rendered on top via the symbol layer's text-field. Missing keeps
-  // its inscribed "?" since there's no percentage to overlay.
-  const bucketBgs: Array<[string, string]> = [
-    ["dev-batt-0", BATTERY_COLOR[0]],
-    ["dev-batt-1", BATTERY_COLOR[1]],
-    ["dev-batt-2", BATTERY_COLOR[2]],
-    ["dev-batt-3", BATTERY_COLOR[3]],
-  ];
-  for (const [id, bg] of bucketBgs) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeBlankBadge(bg), { pixelRatio: 2 });
+  return { url: c.toDataURL(), logicalPx: data.width / 2 };
+}
+
+/** Resolves when the model silhouettes have decoded (or failed) — callers
+ *  re-render model previews after this so the SVGs replace letter tags. */
+export function whenModelIconsReady(): Promise<void> {
+  return loadModelIcons();
+}
+
+/** Ring stroke widths per Design Options thickness (at the 64px canvas):
+ *  arc = the battery progress arc, outline = the thin full-circumference
+ *  battery outline, solid = the uniform reliability ring. */
+const RING_THICKNESS: Record<
+  string,
+  { arc: number; outline: number; solid: number }
+> = {
+  T: { arc: 4.5, outline: 1.8, solid: 4 },
+  S: { arc: 7, outline: 2.5, solid: 6 },
+  L: { arc: 9.5, outline: 3, solid: 8 },
+  X: { arc: 12, outline: 3.5, solid: 10 },
+};
+/** Extra pixels between the badge edge and the ring per placement. */
+const RING_GAP: Record<string, number> = { S: 0, G: 3.5, B: 7 };
+
+/** The badge radius used whenever a gauge ring is in play. FIXED across
+ *  every thickness/placement combination — the ring grows OUTWARD (the
+ *  canvas gets bigger), the icon never shrinks. Chosen so the default
+ *  Standard/Surrounding gauge icon renders exactly as before. */
+const RINGED_BADGE_R = 20.5;
+
+/** Ring center-line radius and total canvas size for a design. Exported
+ *  shape so previews can scale correctly. */
+function ringGeometry(
+  th: { arc: number; outline: number; solid: number },
+  gap: number,
+): { ringR: number; px: number } {
+  const maxStroke = Math.max(th.arc, th.solid);
+  const ringR = RINGED_BADGE_R + 2.5 + gap + maxStroke / 2;
+  let px = Math.ceil((ringR + maxStroke / 2 + 1.5) * 2);
+  if (px % 2) px += 1; // even size keeps the center crisp
+  return { ringR, px };
+}
+
+/** Build one composite marker image from its
+ *  `ik|<inner>|<ring>|<design>` key.
+ *
+ *  Ring encodings: `off` (no gauge — inner badge drawn full size),
+ *  `hoff` (On-Hover display: ring geometry reserved but nothing drawn, so
+ *  the hover overlay adds the ring without the badge moving),
+ *  `b-<pct>` (battery: thin full ring + thick arc clockwise from 12
+ *  o'clock covering pct% of the circumference, both in the gauge color),
+ *  `b-x` (no battery data: thin neutral ring), `r-<tier>` (reliability:
+ *  solid thick ring in the tier color).
+ *
+ *  Design encodings (two chars): thickness T/S/L/X (thin/standard/large/
+ *  xlarge) then placement S/G/B (surrounding/gap/big gap). Placement and
+ *  thickness push the ring outward from the fixed-size badge.
+ *
+ *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
+ *  `msvg-*` (model silhouette), `model-*` (two-letter tag fallback),
+ *  `db-<bucket|x>` (battery disc, % text overlays via the symbol layer),
+ *  `dr-<tier>` (reliability disc with ✓/?/! glyph). */
+function makeCompositeIcon(key: string): ImageData {
+  const [, inner = "", ring = "off", design = "SS"] = key.split("|");
+  const th = RING_THICKNESS[design[0]] ?? RING_THICKNESS.S;
+  const gap = RING_GAP[design[1]] ?? 0;
+
+  let px = 64; // 32 logical px at pixelRatio 2
+  let innerRadius = px / 2 - 2.5; // gauge off → full-size badge
+  let ringR = 0;
+  if (ring !== "off") {
+    const geo = ringGeometry(th, gap);
+    px = geo.px;
+    ringR = geo.ringR;
+    innerRadius = RINGED_BADGE_R;
   }
-  if (!map.hasImage("dev-batt-missing")) {
-    map.addImage(
-      "dev-batt-missing",
-      makeGlyphBadge("?", BATTERY_MISSING_COLOR, "#ffffff"),
-      { pixelRatio: 2 },
-    );
+  const ctx = newCanvasCtx(px);
+  const cx = px / 2;
+
+  if (ring !== "off" && ring !== "hoff") {
+    if (ring.startsWith("b-")) {
+      const raw = ring.slice(2);
+      if (raw === "x") {
+        // No battery data: a thin neutral ring, no arc.
+        strokeRing(ctx, cx, ringR, BATTERY_MISSING_COLOR, th.outline);
+      } else {
+        const pct = Math.max(0, Math.min(100, Number(raw)));
+        const color = gaugeColor(pct);
+        // Thin full-circumference outline…
+        strokeRing(ctx, cx, ringR, color, th.outline);
+        // …plus the thick arc, clockwise from 12 o'clock, sized to pct.
+        if (pct > 0) {
+          ctx.beginPath();
+          ctx.arc(
+            cx,
+            cx,
+            ringR,
+            -Math.PI / 2,
+            -Math.PI / 2 + (Math.PI * 2 * pct) / 100,
+          );
+          ctx.strokeStyle = color;
+          ctx.lineWidth = th.arc;
+          ctx.lineCap = pct >= 100 ? "butt" : "round";
+          ctx.stroke();
+        }
+      }
+    } else if (ring.startsWith("r-")) {
+      const tier = ring.slice(2) as ReliabilityTier;
+      strokeRing(
+        ctx,
+        cx,
+        ringR,
+        RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown,
+        th.solid,
+      );
+    }
   }
-  // Reliability-tier badges: ✓ / ? / ! on the tier's signature color.
-  const relIcons: Array<[string, string, string, string]> = [
-    ["dev-rel-ok", "✓", RELIABILITY_COLOR.ok, "#ffffff"],
-    ["dev-rel-unknown", "?", RELIABILITY_COLOR.unknown, "#3a2a00"],
-    ["dev-rel-risk", "!", RELIABILITY_COLOR.risk, "#ffffff"],
-  ];
-  for (const [id, glyph, bg, fg] of relIcons) {
-    if (map.hasImage(id)) continue;
-    map.addImage(id, makeGlyphBadge(glyph, bg, fg), { pixelRatio: 2 });
+
+  drawInnerBadge(ctx, cx, innerRadius, inner);
+  return ctx.getImageData(0, 0, px, px);
+}
+
+function strokeRing(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  color: string,
+  width: number,
+): void {
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+const MODEL_TAG: Record<string, string> = {
+  astro: "As",
+  cosmo: "Co",
+  apollo: "Ap",
+  unk: "?",
+};
+
+function drawInnerBadge(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  inner: string,
+): void {
+  const d = r * 2;
+  if (inner.startsWith("use-")) {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    const emoji = inner === "use-sitting" ? "🚲" : "🛴";
+    ctx.fillStyle = "#000";
+    ctx.font = `${Math.round(d * 0.62)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(emoji, cx, cx + d * 0.03);
+  } else if (inner.startsWith("msvg-")) {
+    // The SVG is pre-clipped to a circle, so it IS the badge face — white
+    // disc behind it for contrast, clip to be safe, silhouette on top.
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    const img = modelIconImages[inner.slice(5) as ModelKey];
+    if (img) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cx, r - 1, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, cx - r, cx - r, d, d);
+      ctx.restore();
+    }
+  } else if (inner.startsWith("model-")) {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
+    ctx.fillStyle = "#1a2230";
+    ctx.font = `bold ${Math.round(d * 0.46)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
+  } else if (inner.startsWith("db-")) {
+    const raw = inner.slice(3);
+    if (raw === "x") {
+      fillCircle(ctx, cx, r, BATTERY_MISSING_COLOR, "#ffffff", 2);
+      glyph(ctx, cx, d, "?", "#ffffff");
+    } else {
+      const bucket = Number(raw) as BatteryBucket;
+      fillCircle(ctx, cx, r, BATTERY_COLOR[bucket] ?? BATTERY_MISSING_COLOR, "#ffffff", 2);
+      // Percentage text overlays via the symbol layer's text-field.
+    }
+  } else if (inner.startsWith("dr-")) {
+    const tier = inner.slice(3) as ReliabilityTier;
+    const bg = RELIABILITY_COLOR[tier] ?? RELIABILITY_COLOR.unknown;
+    fillCircle(ctx, cx, r, bg, "#ffffff", 2);
+    const mark = tier === "ok" ? "✓" : tier === "risk" ? "!" : "?";
+    glyph(ctx, cx, d, mark, tier === "unknown" ? "#3a2a00" : "#ffffff");
+  } else {
+    fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
   }
 }
 
-/** White circular badge holding a centered emoji, used in "Device type"
- *  display mode. Drawn at 2× pixel density so it stays crisp on retina. */
-function makeEmojiBadge(emoji: string): ImageData {
-  const px = 64; // 32 logical px at pixelRatio 2
-  const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, "#ffffff", "#374151", 2.5);
-  ctx.fillStyle = "#000";
-  ctx.font = `${Math.round(px * 0.55)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif`;
+function fillCircle(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  r: number,
+  fill: string,
+  stroke: string,
+  strokeWidth: number,
+): void {
+  ctx.beginPath();
+  ctx.arc(cx, cx, r, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = strokeWidth;
+  ctx.fill();
+  ctx.stroke();
+}
+
+function glyph(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  d: number,
+  mark: string,
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.round(d * 0.6)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(emoji, px / 2, px / 2 + px * 0.03);
-  return ctx.getImageData(0, 0, px, px);
-}
-
-/** Blank colored circle used as the background for the four "Range"
- *  buckets; the percentage text rides on top via the symbol layer's
- *  text-field. */
-function makeBlankBadge(bg: string): ImageData {
-  const px = 64;
-  const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
-  return ctx.getImageData(0, 0, px, px);
-}
-
-/** Colored circular badge holding a centered text glyph. Used for the
- *  "?" missing-range badge (and previously for the bucket glyphs before
- *  the text-overlay redesign). */
-function makeGlyphBadge(glyph: string, bg: string, fg: string): ImageData {
-  const px = 64;
-  const ctx = newCanvasCtx(px);
-  drawCircleBg(ctx, px, bg, "#ffffff", 2.5);
-  ctx.fillStyle = fg;
-  ctx.font = `bold ${Math.round(px * 0.7)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(glyph, px / 2, px / 2 + px * 0.04);
-  return ctx.getImageData(0, 0, px, px);
+  ctx.fillText(mark, cx, cx + d * 0.04);
 }
 
 function newCanvasCtx(px: number): CanvasRenderingContext2D {
@@ -1276,24 +1767,6 @@ function newCanvasCtx(px: number): CanvasRenderingContext2D {
   const ctx = c.getContext("2d");
   if (!ctx) throw new Error("2D context unavailable for marker icon");
   return ctx;
-}
-
-function drawCircleBg(
-  ctx: CanvasRenderingContext2D,
-  px: number,
-  fill: string,
-  stroke: string,
-  strokeWidth: number,
-): void {
-  const cx = px / 2;
-  const r = px / 2 - strokeWidth;
-  ctx.fillStyle = fill;
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = strokeWidth;
-  ctx.beginPath();
-  ctx.arc(cx, cx, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
 }
 
 /** Approximate a great-circle of `radiusMeters` around (lng, lat) as a
@@ -1347,6 +1820,88 @@ function asNumber(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// ---------- ✨ Essentials hover tooltip ----------
+
+const QUALITY_EMOJI: Record<string, string> = {
+  great: "🌟",
+  good: "👍",
+  acceptable: "🆗",
+  poor: "👎",
+  "N/A": "❓",
+  "n/a": "❓",
+};
+
+let tooltipEl: HTMLDivElement | null = null;
+
+/** Tiny cursor-following card with just the essentials:
+ *    Veo Apollo
+ *    🔋 62% · Quality: 👍
+ */
+function showMapTooltip(ev: MouseEvent, p: PopupProps): void {
+  if (!tooltipEl) {
+    tooltipEl = document.createElement("div");
+    tooltipEl.className = "map-tooltip";
+    document.body.appendChild(tooltipEl);
+  }
+  const model = veoModel(p.vehicle_model_name);
+  const name = model
+    ? model.name
+    : p.vehicle_model_name
+      ? `Veo ${p.vehicle_model_name}`
+      : p.form_factor === "bicycle"
+        ? "E-bike"
+        : "Scooter";
+  const pct = asNumber(p.battery_percent);
+  const batt =
+    pct === null ? "🔋 —" : `${pct < 25 ? "🪫" : "🔋"} ${Math.round(pct)}%`;
+  const q = QUALITY_EMOJI[String(p.quality_designation ?? "")] ?? "❓";
+  tooltipEl.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${batt} · Quality: ${q}</span>`;
+
+  const pad = 14;
+  let left = ev.clientX + pad;
+  const width = 190;
+  if (left + width > window.innerWidth - 8) left = ev.clientX - width - 4;
+  tooltipEl.style.left = `${Math.max(4, left)}px`;
+  tooltipEl.style.top = `${Math.max(4, ev.clientY - 14)}px`;
+}
+
+function hideMapTooltip(): void {
+  tooltipEl?.remove();
+  tooltipEl = null;
+}
+
+/** Lightweight modal for the battery-ranking nerd stats. One at a time;
+ *  closes on ✕, backdrop click, or Escape. */
+function openRanksModal(rankRows: string[]): void {
+  document.querySelector(".ranks-modal")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "ranks-modal";
+  backdrop.innerHTML = `
+    <div class="ranks-modal__card" role="dialog" aria-modal="true" aria-labelledby="ranks-modal-title">
+      <div class="ranks-modal__head">
+        <h3 id="ranks-modal-title">Battery Rankings</h3>
+        <button type="button" class="ranks-modal__close" aria-label="Close">×</button>
+      </div>
+      <p class="ranks-modal__hint">How this device's remaining range compares to the rest of the fleet right now.</p>
+      <dl class="device-popup__meta">${rankRows.join("")}</dl>
+    </div>`;
+  const close = (): void => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") close();
+  };
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) close();
+  });
+  backdrop
+    .querySelector(".ranks-modal__close")
+    ?.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
 }
 
 /** Format an upstream rank value into a friendly string, or null when absent
