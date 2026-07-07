@@ -53,7 +53,7 @@ export const BATTERY_COLOR: Record<BatteryBucket, string> = {
   0: "#c62828", // red
   1: "#f5b400", // yellow
   2: "#7ec850", // lime green
-  3: "#1b8a3f", // dark green (matches --pass)
+  3: "#238636", // dark green (matches --pass)
 };
 
 /** Color used on the Range colorize-by map for devices missing range data. */

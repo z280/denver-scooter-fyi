@@ -1495,7 +1495,7 @@ function loadModelIcons(): Promise<void> {
 /** Gauge colors by fixed thirds — matches the "green / amber / red" read
  *  the design asks for (55% shows amber, 100% full green). */
 export function gaugeColor(pct: number): string {
-  if (pct >= 67) return "#1b8a3f";
+  if (pct >= 67) return "#238636";
   if (pct >= 34) return "#f5b400";
   return "#c62828";
 }

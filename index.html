@@ -3,7 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0d1b2a" />
+    <!-- Single theme-color kept in step with the APP theme (which can diverge
+         from the OS scheme): set below for first paint, then by applyTheme()
+         in src/theme.ts on every change. -->
+    <meta name="theme-color" content="#ffffff" />
+    <!-- No-FOUC theme guard: runs synchronously before any CSS applies (the
+         stylesheet is imported by the JS module). Mirrors the resolution in
+         src/theme.ts — sun-sync (today's cached times) > stored choice > OS. -->
+    <script>
+      (function () {
+        try {
+          var t = null;
+          if (localStorage.getItem("scooter-fyi-theme-sun") === "1") {
+            var times = JSON.parse(localStorage.getItem("scooter-fyi-sun-times"));
+            // Sun times are absolute instants — only today's (Denver date)
+            // are usable; a stale cache would render daylight as "dark".
+            var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Denver" });
+            if (times && times.date === today && isFinite(times.sunrise) && isFinite(times.sunset)) {
+              var now = Date.now();
+              t = now >= times.sunrise && now < times.sunset ? "light" : "dark";
+            }
+          }
+          if (!t) {
+            var s = localStorage.getItem("scooter-fyi-theme");
+            t = (s === "light" || s === "dark") ? s
+              : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          }
+          document.documentElement.dataset.theme = t;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", t === "dark" ? "#0d1117" : "#ffffff");
+        } catch (e) {}
+      })();
+    </script>
     <meta
       name="description"
       content="Live interactive map of every Denver Veo scooter and e-bike, with disadvantaged-area overlays and daily compliance status."
@@ -505,6 +536,13 @@
       <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
       <button class="mode-btn is-active" type="button" data-mode="analysis">📊 Analysis</button>
       <button class="mode-btn" type="button" id="ride-open">🧭 Ride</button>
+      <button
+        class="mode-btn mode-btn--sun"
+        type="button"
+        id="sun-sync-toggle"
+        aria-pressed="false"
+        title="Match the theme to sunrise and sunset in Denver"
+      >🌗 Sun sync</button>
     </div>
 
     <!-- Find-a-ride wizard (consent → interview → ranked options). Content
