@@ -1062,6 +1062,9 @@ function wireModes(): void {
     if (wizard.isOpen()) wizard.close();
     setRideSurface(false);
     applyPreset(applyNormal);
+    // Recommendations are scoped to one Find-a-ride session: drop them so
+    // re-entering never shows a stale list from the prior location/answers.
+    recommended?.clear();
     setActive("analysis");
   };
 

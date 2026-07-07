@@ -154,6 +154,7 @@ export class RecommendedDevices {
   /** Drop the ranked list (used when exiting ride mode resets the map). */
   clear(): void {
     this.ctx = null;
+    if (this.selectedId !== null) this.locate.clearLine();
     this.selectedId = null;
     this.render();
   }
@@ -175,6 +176,13 @@ export class RecommendedDevices {
       ...this.ctx,
       from,
     });
+
+    // A re-rank can drop the selected device (filter change, data refresh).
+    // Don't leave the walk preview pointing at a vanished recommendation.
+    if (this.selectedId && !ranked.some((o) => o.id === this.selectedId)) {
+      this.selectedId = null;
+      this.locate.clearLine();
+    }
 
     if (ranked.length === 0) {
       this.body.append(

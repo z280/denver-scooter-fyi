@@ -106,9 +106,12 @@ export class Locate {
   }
 
   /** Programmatically start locating (fires the browser permission prompt
-   *  if needed). Must be called from a user gesture. */
+   *  if needed). Must be called from a user gesture. Uses the same
+   *  freshness gate as current(): a stale fix means the watch died, so
+   *  re-trigger rather than no-op (otherwise the Find-a-ride "Awaiting
+   *  approval…" step could wait forever on a fix that never comes). */
   trigger(): void {
-    if (!this.position) this.control.trigger();
+    if (!this.current()) this.control.trigger();
   }
 
   /** Dashed straight line user → target (orientation aid, not a route). */
