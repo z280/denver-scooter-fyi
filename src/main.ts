@@ -1037,7 +1037,6 @@ function wireModes(): void {
   const setRideSurface = (on: boolean): void => {
     rideActive = on;
     document.body.classList.toggle("mode-ride", on);
-    need("ride-open").hidden = !on;
     map.resize();
   };
 
