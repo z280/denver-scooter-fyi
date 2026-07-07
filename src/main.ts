@@ -13,9 +13,21 @@ import {
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
-  type DeviceFilter,
+  ALL_RIDE_TYPES,
+  ALL_MODELS,
+  gaugeColor,
+  iconPreviewURL,
+  whenModelIconsReady,
+  type RideType,
+  type ModelKey,
+  type QualityFilter,
+  type IconStyle,
+  type DataSource,
+  type GaugeDisplay,
+  type GaugeThickness,
+  type GaugePlacement,
 } from "./devices.ts";
-import { type BatteryBucket } from "./battery.ts";
+import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { Freshness } from "./freshness.ts";
@@ -28,6 +40,7 @@ import {
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
+import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize } from "./hexdensity.ts";
 import {
@@ -69,7 +82,23 @@ const hexDensity = new HexDensity(map, need("hexbin-legend"));
 // wire functions.
 let clearChoropleth: () => void = () => {};
 let clearHexDensity: () => void = () => {};
-const freshness = new Freshness(need("freshness"), need("freshness-text"));
+const freshness = new Freshness(
+  need("freshness"),
+  need("freshness-text"),
+  need("freshness-count"),
+  need("freshness-map"),
+);
+
+/** Filtered devices inside the current viewport, for the pill's Map line. */
+function countDevicesInViewport(): number {
+  const bounds = map.getBounds();
+  let n = 0;
+  for (const f of devices.visibleFeatures()) {
+    const [lng, lat] = f.geometry.coordinates;
+    if (bounds.contains([lng, lat])) n++;
+  }
+  return n;
+}
 const clusters = new Clusters(
   map,
   need("cluster-list"),
@@ -90,38 +119,49 @@ const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 // resets the originating control through its normal event path so the
 // drawer UI stays in sync.
 const chips = new FilterChips(need("filter-chips"));
-let currentDeviceFilter: DeviceFilter = "all";
-let batterySelection: ReadonlySet<BatteryBucket> = new Set();
-let clearBatterySelection: () => void = () => {};
+let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
+let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
+let minBatteryPct = 0;
+let qualityOn: QualityFilter = "any";
 let lastAreaState: AreaFilterState | null = null;
+// Chip-clear + preset hooks, assigned by their wire* functions.
+let clearRideTypeFilter: () => void = () => {};
+let clearModelFilter: () => void = () => {};
+let clearBatteryMin: () => void = () => {};
+let clearQualityFilter: () => void = () => {};
+let resetAllFilters: () => void = () => {};
+let resetIconography: () => void = () => {};
 
-const DEVICE_CHIP_LABEL: Partial<Record<DeviceFilter, string>> = {
-  scooter: "🛴 Scooters only",
-  bicycle: "🚲 E-bikes only",
+const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
+  standing: "🛴 Standing only",
+  sitting: "🚲 Seated only",
 };
 
-const BUCKET_CHIP_LABEL: Record<BatteryBucket, string> = {
-  0: "bottom 25%",
-  1: "25–50%",
-  2: "50–75%",
-  3: "top 25%",
+const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
+  "no-risk": "Hiding high-risk",
+  "ok-only": "✓ Reliable only",
 };
 
 function refreshChips(): void {
   const active: Chip[] = [];
 
-  const deviceLabel = DEVICE_CHIP_LABEL[currentDeviceFilter];
-  if (deviceLabel) {
+  if (rideTypesOn.size < ALL_RIDE_TYPES.length) {
+    const only = [...rideTypesOn][0];
     active.push({
-      id: "device-type",
-      label: deviceLabel,
-      onClear: () => {
-        document
-          .querySelector<HTMLButtonElement>(
-            '#device-filter-seg .seg-btn[data-filter="all"]',
-          )
-          ?.click();
-      },
+      id: "ride-type",
+      label: only ? RIDE_TYPE_CHIP_LABEL[only] : "🚫 No ride types",
+      onClear: clearRideTypeFilter,
+    });
+  }
+
+  if (modelsOn.size < ALL_MODELS.length) {
+    const names = [...modelsOn].map(
+      (m) => m[0].toUpperCase() + m.slice(1),
+    );
+    active.push({
+      id: "models",
+      label: names.length ? `Models: ${names.join(", ")}` : "🚫 No models",
+      onClear: clearModelFilter,
     });
   }
 
@@ -137,14 +177,20 @@ function refreshChips(): void {
     });
   }
 
-  if (batterySelection.size > 0) {
-    const parts = [...batterySelection]
-      .sort((a, b) => a - b)
-      .map((b) => BUCKET_CHIP_LABEL[b]);
+  if (minBatteryPct > 0) {
     active.push({
       id: "battery",
-      label: `⚡ Range: ${parts.join(", ")}`,
-      onClear: clearBatterySelection,
+      label: `🔋 ≥ ${minBatteryPct}%`,
+      onClear: clearBatteryMin,
+    });
+  }
+
+  const qualityLabel = QUALITY_CHIP_LABEL[qualityOn];
+  if (qualityLabel) {
+    active.push({
+      id: "quality",
+      label: qualityLabel,
+      onClear: clearQualityFilter,
     });
   }
 
@@ -272,13 +318,33 @@ function showPremiumPopup(): void {
   document.body.appendChild(popup);
 }
 
+// ---------- Recommended Devices ----------
+
+// The persistent home of the Find-a-ride interview's ranked picks; re-ranks
+// on every filter change. Created at map load, fed by the wizard's
+// onInterviewDone hook in wireModes().
+let recommended: RecommendedDevices | null = null;
+
+function wireRecommended(): void {
+  recommended = new RecommendedDevices(
+    need("recommended-body"),
+    devices,
+    locate,
+    map,
+  );
+}
+
 map.on("load", async () => {
   devices.addLayers();
   buildLayerToggles();
-  wireDeviceFilter();
+  wireRideTypes();
+  wireModels();
   wireHideUnavailable();
-  wireBatteryFilter();
-  wireColorBy();
+  wireBatterySlider();
+  wireQuality();
+  wireClearFilters();
+  wireIconography();
+  wireRecommended();
   wireChoropleth();
   wireHexDensity();
   wireDrawers();
@@ -292,10 +358,15 @@ map.on("load", async () => {
     void areaFilter.toggleRegionFromMap(layer, regionName);
   }, DEVICE_INTERACTIVE_LAYERS);
 
-  // Keep the freshness pill's "Displaying x out of y" in sync with every
-  // filter change. The first fire happens right after a setData() too.
+  // Keep the freshness pill's Filters line in sync with every filter
+  // change (the first fire happens right after a setData() too), and the
+  // Map line with both filter changes and camera moves.
   devices.onCountsChange((visible, total) => {
     freshness.setCounts(visible, total);
+    freshness.setViewportCount(countDevicesInViewport());
+  });
+  map.on("moveend", () => {
+    freshness.setViewportCount(countDevicesInViewport());
   });
 
   const resp = await devicesPromise;
@@ -366,25 +437,23 @@ function setOverlayChecked(layer: BoundaryLayer, checked: boolean): void {
   cb.dispatchEvent(new Event("change"));
 }
 
-function wireDeviceFilter(): void {
-  // Scope to the device-filter segmented widget so other .seg-btn groups
-  // (e.g. the Color-by toggle in Tools) aren't swept up by the global
-  // selector this used to use.
+/** Generic single-select segmented control. Returns a programmatic setter
+ *  (used by presets/chips) keyed on the same value the buttons carry. */
+function wireSeg(
+  rootSel: string,
+  valueOf: (b: HTMLButtonElement) => string,
+  onChange: (value: string) => void,
+): (value: string) => void {
   const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(
-      "#device-filter-seg .seg-btn",
-    ),
+    document.querySelectorAll<HTMLButtonElement>(`${rootSel} .seg-btn`),
   );
-  const select = (btn: HTMLButtonElement) => {
+  const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
       const on = b === btn;
       b.classList.toggle("is-active", on);
       b.setAttribute("aria-checked", String(on));
     }
-    currentDeviceFilter = btn.dataset.filter as DeviceFilter;
-    devices.setFilter(currentDeviceFilter);
-    clusters.update(devices.visibleFeatures());
-    refreshChips();
+    onChange(valueOf(btn));
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => select(btn));
@@ -402,6 +471,114 @@ function wireDeviceFilter(): void {
       }
     });
   });
+  return (value) => {
+    const btn = btns.find((b) => valueOf(b) === value);
+    if (btn && !btn.classList.contains("is-active")) select(btn);
+  };
+}
+
+/** Multi-toggle button group where everything starts enabled and a click
+ *  disables that one member. Returns a "re-enable everything" resetter. */
+function wireToggleGroup<T extends string>(
+  btns: HTMLButtonElement[],
+  valueOf: (b: HTMLButtonElement) => T,
+  all: readonly T[],
+  onChange: (enabled: Set<T>) => void,
+): () => void {
+  const enabled = new Set<T>(all);
+  const sync = (): void => {
+    for (const b of btns) {
+      const on = enabled.has(valueOf(b));
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    onChange(new Set(enabled));
+  };
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      const v = valueOf(btn);
+      if (enabled.has(v)) enabled.delete(v);
+      else enabled.add(v);
+      sync();
+    });
+  }
+  return () => {
+    if (enabled.size === all.length) return;
+    for (const v of all) enabled.add(v);
+    sync();
+  };
+}
+
+function wireRideTypes(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      "#ride-type-filter .toggle-pill",
+    ),
+  );
+  clearRideTypeFilter = wireToggleGroup(
+    btns,
+    (b) => b.dataset.ride as RideType,
+    ALL_RIDE_TYPES,
+    (enabled) => {
+      rideTypesOn = enabled;
+      devices.setRideTypes(enabled);
+      clusters.update(devices.visibleFeatures());
+      refreshChips();
+    },
+  );
+}
+
+function wireModels(): void {
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#model-filter .toggle-card"),
+  );
+  clearModelFilter = wireToggleGroup(
+    btns,
+    (b) => b.dataset.model as ModelKey,
+    ALL_MODELS,
+    (enabled) => {
+      modelsOn = enabled;
+      devices.setModels(enabled);
+      clusters.update(devices.visibleFeatures());
+      refreshChips();
+    },
+  );
+}
+
+function wireQuality(): void {
+  const set = wireSeg(
+    "#quality-seg",
+    (b) => b.dataset.quality ?? "any",
+    (v) => {
+      qualityOn = v as QualityFilter;
+      devices.setQuality(qualityOn);
+      clusters.update(devices.visibleFeatures());
+      refreshChips();
+    },
+  );
+  clearQualityFilter = () => set("any");
+}
+
+function wireClearFilters(): void {
+  resetAllFilters = () => {
+    clearRideTypeFilter();
+    clearModelFilter();
+    clearBatteryMin();
+    clearQualityFilter();
+    const hideCb = need<HTMLInputElement>("hide-unavailable");
+    if (hideCb.checked) {
+      hideCb.checked = false;
+      hideCb.dispatchEvent(new Event("change"));
+    }
+    const areaCb = need<HTMLInputElement>("area-filter-enable");
+    if (areaCb.checked) {
+      areaCb.checked = false;
+      areaCb.dispatchEvent(new Event("change"));
+    }
+  };
+  need<HTMLButtonElement>("clear-filters").addEventListener("click", () =>
+    resetAllFilters(),
+  );
 }
 
 function wireHideUnavailable(): void {
@@ -413,88 +590,326 @@ function wireHideUnavailable(): void {
   });
 }
 
-function wireBatteryFilter(): void {
-  const root = need("battery-filter");
-  const hint = need("battery-filter-hint");
-  const btns = Array.from(
-    root.querySelectorAll<HTMLButtonElement>(".batt-btn"),
-  );
-  const selected = new Set<BatteryBucket>();
-  batterySelection = selected;
-
-  const push = (): void => {
-    devices.setBatteryFilter(selected.size > 0 ? new Set(selected) : null);
+function wireBatterySlider(): void {
+  const slider = need<HTMLInputElement>("battery-min");
+  const out = need<HTMLOutputElement>("battery-min-value");
+  const syncVisual = (): void => {
+    const v = Number(slider.value);
+    // The slider wears the gauge's color for its current value, so the
+    // control and the map rings speak the same language.
+    const color = gaugeColor(v);
+    slider.style.accentColor = v === 0 ? "" : color;
+    out.textContent = v === 0 ? "Off" : `≥ ${v}%`;
+    out.style.color = v === 0 ? "" : color;
+  };
+  slider.addEventListener("input", () => {
+    syncVisual();
+    minBatteryPct = Number(slider.value);
+    devices.setMinBattery(minBatteryPct);
     clusters.update(devices.visibleFeatures());
     refreshChips();
-  };
-
-  const deselectAll = (): void => {
-    selected.clear();
-    for (const btn of btns) {
-      btn.setAttribute("aria-pressed", "false");
-      btn.classList.remove("is-active");
-    }
-    push();
-  };
-  clearBatterySelection = deselectAll;
-
-  for (const btn of btns) {
-    btn.addEventListener("click", () => {
-      if (btn.disabled) return;
-      const b = Number(btn.dataset.bucket) as BatteryBucket;
-      if (selected.has(b)) {
-        selected.delete(b);
-        btn.setAttribute("aria-pressed", "false");
-        btn.classList.remove("is-active");
-      } else {
-        selected.add(b);
-        btn.setAttribute("aria-pressed", "true");
-        btn.classList.add("is-active");
-        // Filtering by battery auto-enables range coloring so the map gives
-        // immediate visual feedback. One-way convenience only: deselecting
-        // buckets (or clearing the filter) never turns coloring back off.
-        const colorCb = need<HTMLInputElement>("color-by-range");
-        if (!colorCb.checked) {
-          colorCb.checked = true;
-          colorCb.dispatchEvent(new Event("change"));
-        }
-      }
-      push();
-    });
-  }
-
-  // Disable the whole widget until the fleet returns enough unique range
-  // values to make four buckets. Re-render whenever thresholds change.
-  devices.onThresholdsChange((t) => {
-    const enabled = t !== null;
-    for (const btn of btns) btn.disabled = !enabled;
-    hint.hidden = enabled;
-    if (!enabled && selected.size > 0) {
-      // Drop any latent selection so the user isn't left with a hidden,
-      // active filter when data arrives sparse.
-      deselectAll();
-    }
   });
+  syncVisual();
+  clearBatteryMin = () => {
+    if (slider.value === "0") return;
+    slider.value = "0";
+    slider.dispatchEvent(new Event("input"));
+  };
 }
 
-function wireColorBy(): void {
-  // Two coloring toggles, radio-like: range and reliability are different
-  // lenses on the same dots, so turning one on turns the other off.
-  const range = need<HTMLInputElement>("color-by-range");
-  const rel = need<HTMLInputElement>("color-by-reliability");
-  const sync = () => {
-    devices.setColorMode(
-      rel.checked ? "reliability" : range.checked ? "range" : "type",
-    );
+// ---------- Iconography ----------
+
+// Icon style (ride type / model / data), independent icon-data and
+// gauge-data sources, the gauge toggle (default on), contextual example
+// rows rendered with the real icon renderer, and the on-map legend.
+function wireIconography(): void {
+  const styleDetail = need("icono-style-detail");
+  const gaugeBody = need("gauge-body");
+  const gaugeDetail = need("icono-gauge-detail");
+  const iconDataSection = need("icon-data-section");
+  const legendEl = need("icon-legend");
+  const legendToggle = need<HTMLInputElement>("legend-toggle");
+  const gauge = need<HTMLInputElement>("gauge-toggle");
+
+  // Local mirrors of the devices-side iconography state, for rendering.
+  let style: IconStyle = "use";
+  let iconData: DataSource = "reliability";
+  let gaugeData: DataSource = "battery";
+  let thickness: GaugeThickness = "standard";
+  let placement: GaugePlacement = "surrounding";
+  const THICK_CHAR: Record<GaugeThickness, string> = {
+    thin: "T",
+    standard: "S",
+    large: "L",
+    xlarge: "X",
   };
-  range.addEventListener("change", () => {
-    if (range.checked) rel.checked = false;
-    sync();
+  const PLACE_CHAR: Record<GaugePlacement, string> = {
+    surrounding: "S",
+    gap: "G",
+    biggap: "B",
+  };
+  /** Ring spec → full icon key carrying the current design options, so the
+   *  example rows and legend preview exactly what the map will draw. */
+  const k = (inner: string, ring: string): string =>
+    `ik|${inner}|${ring}|${THICK_CHAR[thickness]}${PLACE_CHAR[placement]}`;
+
+  const el = <K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className?: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const icon = (
+    key: string,
+    title: string,
+    overlay?: { text: string; color: string },
+  ): HTMLImageElement => {
+    const img = el("img");
+    const preview = iconPreviewURL(key, overlay);
+    img.src = preview.url;
+    // Canvases vary by design (rings grow outward from a fixed badge), so
+    // previews scale to match the map's relative sizes.
+    const size = Math.round(preview.logicalPx * 0.8);
+    img.width = size;
+    img.height = size;
+    img.alt = title;
+    img.title = title;
+    return img;
+  };
+  const item = (
+    key: string,
+    label: string,
+    overlay?: { text: string; color: string },
+  ): HTMLElement => {
+    const row = el("div", "icono-item");
+    row.append(icon(key, label, overlay), el("span", undefined, label));
+    return row;
+  };
+
+  // Only details pertinent to the selected icon style.
+  const renderStyleDetail = (): void => {
+    styleDetail.replaceChildren();
+    if (style === "use") {
+      styleDetail.append(
+        el("p", "icono-detail__title", "Ride Types:"),
+        item(k("use-sitting", "off"), "Seated"),
+        item(k("use-standing", "off"), "Standing"),
+      );
+    } else if (style === "model") {
+      styleDetail.append(
+        el("p", "icono-detail__title", "Device Models"),
+        item(k("msvg-astro", "off"), "Veo Astro — Standing scooter"),
+        item(k("msvg-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
+        item(k("msvg-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
+      );
+    } else {
+      styleDetail.append(
+        el(
+          "p",
+          "icono-detail__note",
+          "Data display shows battery % or reliability indicator icon for each device.",
+        ),
+      );
+      if (iconData === "battery") {
+        styleDetail.append(
+          item(k("db-3", "off"), "100%", { text: "100", color: "#ffffff" }),
+          item(k("db-1", "off"), "50%", { text: "50", color: "#3a2a00" }),
+          item(k("db-0", "off"), "25%", { text: "25", color: "#ffffff" }),
+        );
+      } else {
+        styleDetail.append(
+          item(k("dr-ok", "off"), "Likely Ridable"),
+          item(k("dr-unknown", "off"), "Unknown"),
+          item(k("dr-risk", "off"), "High Risk"),
+        );
+      }
+    }
+  };
+
+  // Gauge section: nothing below the toggle line when off; examples match
+  // the selected gauge data when on.
+  const renderGaugeDetail = (): void => {
+    gaugeBody.hidden = !gauge.checked;
+    gaugeDetail.replaceChildren();
+    if (!gauge.checked) return;
+    if (gaugeData === "battery") {
+      gaugeDetail.append(
+        item(k("x", "b-100"), "Full"),
+        item(k("x", "b-50"), "50%"),
+        item(k("x", "b-25"), "25%"),
+      );
+    } else {
+      gaugeDetail.append(
+        item(k("x", "r-ok"), "Likely ridable"),
+        item(k("x", "r-unknown"), "Unknown"),
+        item(k("x", "r-risk"), "Questionable"),
+      );
+    }
+  };
+
+  // On-map legend: every icon + gauge-ring permutation for the current
+  // settings, docked below the tab-strip menu; hover for descriptions.
+  const positionLegend = (): void => {
+    const tabs = document.getElementById("drawer-tabs");
+    if (!tabs) return;
+    const rect = tabs.getBoundingClientRect();
+    legendEl.style.top = `${Math.round(rect.bottom + 10)}px`;
+  };
+  const renderLegend = (): void => {
+    legendEl.hidden = !legendToggle.checked;
+    if (!legendToggle.checked) return;
+    legendEl.replaceChildren();
+    const head = (text: string): HTMLElement =>
+      el("span", "icon-legend__head", text);
+
+    legendEl.append(head("Icons"));
+    if (style === "use") {
+      legendEl.append(
+        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider or Apollo e-bike)"),
+        icon(k("use-standing", "off"), "Standing scooter (Astro)"),
+      );
+    } else if (style === "model") {
+      legendEl.append(
+        icon(k("msvg-astro", "off"), "Veo Astro — standing scooter"),
+        icon(k("msvg-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
+        icon(k("msvg-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon(k("model-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
+      );
+    } else if (iconData === "battery") {
+      legendEl.append(
+        icon(k("db-3", "off"), "Battery: top quartile", { text: "100", color: "#ffffff" }),
+        icon(k("db-2", "off"), "Battery: 50–75% quartile", { text: "65", color: "#1f3a14" }),
+        icon(k("db-1", "off"), "Battery: 25–50% quartile", { text: "40", color: "#3a2a00" }),
+        icon(k("db-0", "off"), "Battery: bottom quartile", { text: "15", color: "#ffffff" }),
+        icon(k("db-x", "off"), "No battery data"),
+      );
+    } else {
+      legendEl.append(
+        icon(k("dr-ok", "off"), "Likely ridable"),
+        icon(k("dr-unknown", "off"), "Unknown reliability"),
+        icon(k("dr-risk", "off"), "High risk — rendered faded on the map"),
+      );
+    }
+
+    if (gauge.checked) {
+      legendEl.append(head("Gauge"));
+      if (gaugeData === "battery") {
+        legendEl.append(
+          icon(k("x", "b-100"), "Gauge ring: 100% battery — full green ring"),
+          icon(k("x", "b-75"), "Gauge ring: ~75% battery"),
+          icon(k("x", "b-50"), "Gauge ring: ~50% battery (amber)"),
+          icon(k("x", "b-25"), "Gauge ring: ~25% battery (red)"),
+          icon(k("x", "b-x"), "Gauge ring: no battery data (thin gray outline)"),
+        );
+      } else {
+        legendEl.append(
+          icon(k("x", "r-ok"), "Gauge ring: likely ridable"),
+          icon(k("x", "r-unknown"), "Gauge ring: unknown reliability"),
+          icon(k("x", "r-risk"), "Gauge ring: questionable — high risk"),
+        );
+      }
+    }
+    positionLegend();
+  };
+  const renderAll = (): void => {
+    renderStyleDetail();
+    renderGaugeDetail();
+    renderLegend();
+  };
+
+  const setGaugeSrc = wireSeg(
+    "#data-source-seg",
+    (b) => b.dataset.source ?? "battery",
+    (v) => {
+      gaugeData = v as DataSource;
+      devices.setGaugeData(gaugeData);
+      renderAll();
+    },
+  );
+  const setIconSrc = wireSeg(
+    "#icon-data-seg",
+    (b) => b.dataset.source ?? "reliability",
+    (v) => {
+      iconData = v as DataSource;
+      devices.setIconData(iconData);
+      renderAll();
+    },
+  );
+  const setStyle = wireSeg(
+    "#icon-style-seg",
+    (b) => b.dataset.style ?? "use",
+    (v) => {
+      style = v as IconStyle;
+      devices.setIconStyle(style);
+      iconDataSection.hidden = style !== "data";
+      // Per design: choosing Data icons corrects the gauge back to battery
+      // so the badge (reliability by default) and ring stay complementary.
+      if (style === "data") setGaugeSrc("battery");
+      renderAll();
+    },
+  );
+  // 📐 Design Options.
+  const setDisplay = wireSeg(
+    "#gauge-display-seg",
+    (b) => b.dataset.display ?? "always",
+    (v) => devices.setGaugeDisplay(v as GaugeDisplay),
+  );
+  const setThickness = wireSeg(
+    "#gauge-thickness-seg",
+    (b) => b.dataset.thickness ?? "standard",
+    (v) => {
+      thickness = v as GaugeThickness;
+      devices.setGaugeThickness(thickness);
+      renderAll(); // examples + legend preview the new ring weight
+    },
+  );
+  const setPlacement = wireSeg(
+    "#gauge-placement-seg",
+    (b) => b.dataset.placement ?? "surrounding",
+    (v) => {
+      placement = v as GaugePlacement;
+      devices.setGaugePlacement(placement);
+      renderAll();
+    },
+  );
+  gauge.addEventListener("change", () => {
+    devices.setGauge(gauge.checked);
+    renderAll();
   });
-  rel.addEventListener("change", () => {
-    if (rel.checked) range.checked = false;
-    sync();
+  // ✨ Essentials-on-hover tooltip.
+  const tooltipToggle = need<HTMLInputElement>("tooltip-toggle");
+  tooltipToggle.addEventListener("change", () =>
+    devices.setHoverTooltip(tooltipToggle.checked),
+  );
+  legendToggle.addEventListener("change", renderLegend);
+  window.addEventListener("resize", () => {
+    if (legendToggle.checked) positionLegend();
   });
+
+  resetIconography = () => {
+    setStyle("use");
+    setIconSrc("reliability");
+    setGaugeSrc("battery");
+    setDisplay("always");
+    setThickness("standard");
+    setPlacement("surrounding");
+    if (!gauge.checked) {
+      gauge.checked = true;
+      gauge.dispatchEvent(new Event("change"));
+    }
+    if (!tooltipToggle.checked) {
+      tooltipToggle.checked = true;
+      tooltipToggle.dispatchEvent(new Event("change"));
+    }
+  };
+
+  // Model silhouettes decode async — refresh previews once they land.
+  void whenModelIconsReady().then(renderAll);
+  renderAll();
 }
 
 function wireChoropleth(): void {
@@ -594,13 +1009,15 @@ function wireAreaFilter(): AreaFilter {
   });
 }
 
-// ---------- Intent modes ----------
+// ---------- Use-case modes ----------
 
-// One-tap presets over the existing controls — not separate apps. "Find a
-// ride" sets the rider up (available devices, reliability coloring, offer
-// location); "Audit" sets the civic view (v1 choropleth + compliance).
-// Any manual control change afterwards clears the highlight: the user is
-// in "custom" now, and the presets never fight them for state.
+// Two surfaces over one map. "Find a ride" runs the guided wizard
+// (ride-wizard.ts): location consent → interview → ranked options; while
+// it's active the analysis drawer tabs hide and the 🧭 Ride HUD button
+// appears. "Analysis" is the full civic/data surface with every drawer.
+// The Account (login) tab is shared by both. Exiting ride mode — declining
+// consent, closing the wizard, or tapping Analysis — always resets the map
+// to its fresh-load defaults so the wizard's presets never leak.
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
@@ -608,6 +1025,7 @@ function wireModes(): void {
     ),
   );
   let applying = false;
+  let rideActive = false;
 
   const setActive = (mode: string | null): void => {
     for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
@@ -626,13 +1044,6 @@ function wireModes(): void {
       sel.dispatchEvent(new Event("change"));
     }
   };
-  const setDeviceFilter = (filter: string): void => {
-    document
-      .querySelector<HTMLButtonElement>(
-        `#device-filter-seg .seg-btn[data-filter="${filter}"]`,
-      )
-      ?.click();
-  };
   const setDrawer = (id: string | null): void => {
     const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
     if (open && open.dataset.drawer !== id) open.click();
@@ -643,54 +1054,117 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
+  /** Run a preset with the `applying` guard up so its synthetic events
+   *  don't count as manual "custom" changes. */
+  const applyPreset = (fn: () => void): void => {
+    applying = true;
+    try {
+      fn();
+    } finally {
+      applying = false;
+    }
+  };
 
-  const applyRide = (): void => {
-    setDeviceFilter("all");
-    setChecked("hide-unavailable", true);
-    setChecked("area-filter-enable", false);
-    setChecked("color-by-range", false);
-    setChecked("color-by-reliability", true);
-    setSelect("choropleth-select", "");
+  const clearOverlays = (): void => {
     for (const input of layerInputs.values()) {
       if (input.checked) {
         input.checked = false;
         input.dispatchEvent(new Event("change"));
       }
     }
-    setDrawer(null);
-    // Offer location so walk times light up. Runs inside the button tap,
-    // so the browser treats the permission prompt as user-initiated.
-    locate.trigger();
   };
 
-  const applyAudit = (): void => {
-    setDeviceFilter("all");
-    setChecked("hide-unavailable", false);
-    setChecked("area-filter-enable", false);
-    setChecked("color-by-range", false);
-    setChecked("color-by-reliability", false);
+  // Fresh-load defaults. Exiting ride mode runs this so the map comes back
+  // "normal": every filter cleared, iconography back to its defaults
+  // (device-use badges, battery gauge on), overlays and the walk line gone.
+  const applyNormal = (): void => {
+    resetAllFilters();
+    resetIconography();
+    setSelect("choropleth-select", "");
+    clearHexDensity();
+    clearOverlays();
+    setDrawer(null);
+    locate.clearLine();
+  };
+
+  // Map preset behind the wizard: a clean slate showing available devices.
+  const applyRide = (): void => {
+    resetAllFilters();
+    setChecked("hide-unavailable", true);
+    setSelect("choropleth-select", "");
+    clearOverlays();
+    setDrawer(null);
+  };
+
+  const applyAnalysis = (): void => {
+    resetAllFilters();
     setSelect("choropleth-select", "v1");
     setDrawer("compliance");
   };
 
+  /** Swap the visible surface: ride hides the analysis tabs (Account stays)
+   *  and reveals the HUD button; the map container also resizes when the
+   *  wizard docks as a side panel on small screens. */
+  const setRideSurface = (on: boolean): void => {
+    rideActive = on;
+    document.body.classList.toggle("mode-ride", on);
+    map.resize();
+  };
+
+  const wizard = new RideWizard(need("ride-wizard"), locate, {
+    onConsentGranted: () => applyPreset(applyRide),
+    onExit: () => exitRide(),
+    onLoginHint: () => {
+      const tab = document.querySelector<HTMLButtonElement>(
+        '.drawer-tab[data-drawer="person"]',
+      );
+      if (tab && !tab.classList.contains("is-active")) tab.click();
+    },
+    // Interview finished: the Recommended Devices drawer takes over as the
+    // home of the ranked list (and keeps re-ranking with the filters).
+    onInterviewDone: (priority, typeChoice, from) => {
+      recommended?.setContext({ from, priority, typeChoice });
+      setDrawer("recommended");
+    },
+  });
+
+  const exitRide = (): void => {
+    if (!rideActive) return;
+    if (wizard.isOpen()) wizard.close();
+    setRideSurface(false);
+    applyPreset(applyNormal);
+    // Recommendations are scoped to one Find-a-ride session: drop them so
+    // re-entering never shows a stale list from the prior location/answers.
+    recommended?.clear();
+    setActive("analysis");
+  };
+
+  const enterRide = (): void => {
+    setDrawer(null);
+    setRideSurface(true);
+    setActive("ride");
+    wizard.start();
+  };
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
-      applying = true;
-      try {
-        if (btn.dataset.mode === "ride") applyRide();
-        else applyAudit();
-      } finally {
-        applying = false;
+      if (btn.dataset.mode === "ride") {
+        enterRide();
+      } else if (rideActive) {
+        exitRide(); // back to a normal map — no surprise choropleth
+      } else {
+        applyPreset(applyAnalysis);
+        setActive("analysis");
       }
-      setActive(btn.dataset.mode ?? null);
     });
   }
 
   // Manual changes to any drawer control drop the mode back to custom.
-  // Capture phase so the preset's own synthetic events (guarded by
-  // `applying`) never count.
+  // Capture phase so the presets' own synthetic events (guarded by
+  // `applying`) never count. Ride mode is exempt: its surface has no
+  // analysis controls to customize.
   const toCustom = (e: Event): void => {
-    if (applying) return;
+    if (applying || rideActive) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest?.(".drawer")) setActive(null);
   };

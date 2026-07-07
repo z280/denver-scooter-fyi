@@ -39,48 +39,108 @@ export interface ReliabilitySignals {
   first_observed_at_location?: string | null;
 }
 
-/** Server quality labels that carry no negative signal: "good"/"ok" mean
- *  healthy, "N/A" means the server hasn't assessed the device — neither
- *  should count against it. Live API emits "good" and "N/A" today. */
-const CLEAN_QUALITY: ReadonlySet<string> = new Set(["ok", "good", "N/A", "n/a"]);
+const TIER_RANK: Record<ReliabilityTier, number> = {
+  ok: 0,
+  unknown: 1,
+  risk: 2,
+};
 
+/** The more pessimistic of two tiers. Used to merge the server's tier with
+ *  the local assessment: the server can demote a device (it may see
+ *  signals we can't) but never promote it past the public evidence. */
+export function worstTier(a: ReliabilityTier, b: ReliabilityTier): ReliabilityTier {
+  return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
+}
+
+/** Clean dwell beyond this is the API's "ghost scooter" rule: nobody has
+ *  ridden it in four days, something is probably wrong even if nothing was
+ *  flagged. (Dwell and failed-start counters reset when a device moves, so
+ *  every signal is scoped to its current parking spot.) */
+const GHOST_HOURS = 96;
+/** One failed start is ambiguous alone (could be a rebalancer scan) but
+ *  becomes damning combined with a day of nobody riding it. */
+const CORROBORATION_HOURS = 24;
+/** CLIENT-SIDE ADDITION, not in the server formula: the server jumps
+ *  straight from "ok" to the 96h ghost rule with nothing in between, but
+ *  the frontend has a middle tier — so clean dwell in [48h, ghost) shows
+ *  as "unknown", a pre-ghost caution band. Delete this block for strict
+ *  server parity. */
+const PRE_GHOST_HOURS = 48;
+
+/** Mirror of the API's reliability formula (veo-audit src/quality.py,
+ *  compute_reliability_tier) — first-match-wins:
+ *
+ *  high_risk: live negative report; ≥2 failed starts; 1 failed start
+ *  combined with ≥24h dwell; or ≥96h dwell with no failures (ghost).
+ *  unknown: never state-tracked (no failed-start/dwell inputs), or
+ *  quality is undefined (disabled / reserved / no range data).
+ *  ok: everything else — including a single fresh failed start.
+ *
+ *  Reliability collapses only the FAILURE signals ("will it unlock?");
+ *  battery lives in quality_designation and deliberately doesn't feed
+ *  this. Used as the fallback when the server omits the tier, as the
+ *  pre-ghost demotion (see PRE_GHOST_HOURS), and to build the
+ *  human-readable reasons in every case. */
 export function assessReliability(
   p: ReliabilitySignals,
   now: number = Date.now(),
 ): ReliabilityInfo {
-  const reasons: string[] = [];
-  let score = 0;
-
-  if (truthy(p.is_disabled)) {
-    score += 2;
-    reasons.push("marked out of service");
-  }
-  if (truthy(p.has_negative_report)) {
-    score += 1;
-    reasons.push("open negative report");
-  }
-  // quality_designation is a free-form server label; the live API emits
-  // "good" for healthy devices. Only clean designations pass — anything
-  // unrecognized is treated as a caution, not silently ignored.
-  const quality = p.quality_designation;
-  if (quality && !CLEAN_QUALITY.has(quality)) {
-    score += 1;
-    reasons.push(`flagged ${quality.replace(/_/g, " ")}`);
-  }
   const failed = num(p.number_failed_starts);
-  if (failed !== null && failed > 0) {
-    score += failed >= 3 ? 2 : 1;
-    reasons.push(`${failed} failed start${failed === 1 ? "" : "s"} logged`);
-  }
   const idleHours = hoursSince(p.first_observed_at_location, now);
-  if (idleHours !== null && idleHours >= 48) {
-    score += idleHours >= 7 * 24 ? 2 : 1;
+
+  // ---- high-risk checks run first, so a disabled scooter with failures
+  // still surfaces as risk rather than hiding behind "unknown".
+  if (truthy(p.has_negative_report)) {
+    return { tier: "risk", reasons: ["negative report in the last 24h"] };
+  }
+  if (failed !== null && failed >= 2) {
+    return { tier: "risk", reasons: [`${failed} failed starts logged`] };
+  }
+  if (
+    failed === 1 &&
+    idleHours !== null &&
+    idleHours >= CORROBORATION_HOURS
+  ) {
+    return {
+      tier: "risk",
+      reasons: [`1 failed start + idle ${formatIdle(idleHours)}`],
+    };
+  }
+  if (idleHours !== null && idleHours >= GHOST_HOURS) {
+    return {
+      tier: "risk",
+      reasons: [`ghost scooter — idle ${formatIdle(idleHours)}`],
+    };
+  }
+
+  // ---- unknown: no state tracking, or quality is undefined.
+  if (failed === null && idleHours === null) {
+    return { tier: "unknown", reasons: ["not state-tracked yet"] };
+  }
+  if (truthy(p.is_disabled)) {
+    return { tier: "unknown", reasons: ["marked out of service"] };
+  }
+  if (p.quality_designation === "N/A" || p.quality_designation === "n/a") {
+    return { tier: "unknown", reasons: ["no quality data"] };
+  }
+
+  // ---- pre-ghost caution band (client-side; see PRE_GHOST_HOURS).
+  if (idleHours !== null && idleHours >= PRE_GHOST_HOURS) {
+    return {
+      tier: "unknown",
+      reasons: [`idle ${formatIdle(idleHours)} — approaching ghost status`],
+    };
+  }
+
+  // ---- ok. A single fresh failed start is deliberate leniency; still
+  // worth a footnote under the verdict.
+  const reasons: string[] = [];
+  if (failed === 1) {
+    reasons.push("1 failed start (unconfirmed — could be a rebalancer scan)");
+  } else if (idleHours !== null && idleHours >= CORROBORATION_HOURS) {
     reasons.push(`idle ${formatIdle(idleHours)}`);
   }
-
-  const tier: ReliabilityTier =
-    score >= 3 ? "risk" : score >= 1 ? "unknown" : "ok";
-  return { tier, reasons };
+  return { tier: "ok", reasons };
 }
 
 function truthy(v: unknown): boolean {
