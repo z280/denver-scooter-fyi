@@ -29,7 +29,15 @@ jobs:
       - run: npm ci
 
       # tsc --noEmit + vite build. Fails the run on any type error.
+      # VITE_* vars are baked in at BUILD time — this site builds here and
+      # only uploads dist/ to Pages (Direct Upload), so Pages-dashboard env
+      # vars never apply. The Google client id must live in this repo's
+      # Actions secrets/variables (Settings -> Secrets and variables ->
+      # Actions, name: VITE_GOOGLE_CLIENT_ID). It's a public identifier
+      # (it ships in the JS bundle), so a repo Variable is fine too.
       - run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID || vars.VITE_GOOGLE_CLIENT_ID }}
 
       # Direct Upload of dist/. Push to main -> production deploy. A PR deploys
       # to a stable per-PR preview URL. The --branch value is built only from

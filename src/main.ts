@@ -236,7 +236,6 @@ const devicesPromise = fetchDevicesAuto(undefined, fetchIncludes()).catch((e) =>
 void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
-wireSecretUnlock();
 wireAccount();
 wireRideHud();
 wireSunSync();
@@ -1381,133 +1380,6 @@ function wireFreshnessCollapse(): void {
   sync();
 }
 
-// ---------- Secret unlock ----------
-
-// Reveal the Account drawer tab when the user taps the freshness pill 9 times
-// in a row. Each tap counts the same — no morse, no long/short distinction —
-// so it works reliably on touchscreens. Idle > 2.5s resets the count.
-// Right-clicking the pill (desktop) or holding it for 2s (mobile) opens a
-// live readout of the tap progress that auto-hides 2.4s after the last tap.
-function wireSecretUnlock(): void {
-  const target = document.getElementById("freshness");
-  const tab = document.querySelector<HTMLButtonElement>(
-    '.drawer-tab[data-drawer="person"]',
-  );
-  if (!target || !tab) return;
-
-  const TARGET_TAPS = 9;
-  const RESET_MS = 2500;
-  const POPUP_HIDE_MS = 2400;
-  const LONG_PRESS_MS = 2000;
-
-  let taps = 0;
-  let pressStart = 0;
-  let resetTimer: number | undefined;
-  let popupTimer: number | undefined;
-  let longPressTimer: number | undefined;
-  let longPressTriggered = false;
-
-  const popup = document.createElement("div");
-  popup.className = "tap-popup";
-  popup.setAttribute("role", "status");
-  popup.setAttribute("aria-live", "polite");
-  popup.hidden = true;
-  document.body.appendChild(popup);
-
-  const renderPopup = (): void => {
-    if (popup.hidden) return;
-    popup.textContent = taps ? `${taps} / ${TARGET_TAPS} taps` : "(awaiting taps)";
-  };
-  const showPopup = (): void => {
-    popup.hidden = false;
-    renderPopup();
-    scheduleHide();
-  };
-  const hidePopup = (): void => {
-    popup.hidden = true;
-  };
-  const scheduleHide = (): void => {
-    window.clearTimeout(popupTimer);
-    popupTimer = window.setTimeout(hidePopup, POPUP_HIDE_MS);
-  };
-
-  const reset = (): void => {
-    taps = 0;
-    renderPopup();
-  };
-  const scheduleReset = (): void => {
-    window.clearTimeout(resetTimer);
-    resetTimer = window.setTimeout(reset, RESET_MS);
-  };
-
-  target.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    showPopup();
-  });
-
-  target.addEventListener("pointerdown", (e) => {
-    // Only react to primary button / touch / pen.
-    if (e.button !== undefined && e.button !== 0) return;
-    pressStart = performance.now();
-    longPressTriggered = false;
-    window.clearTimeout(resetTimer);
-    window.clearTimeout(longPressTimer);
-    // Mobile-friendly alternative to right-click: holding 2s opens the popup.
-    longPressTimer = window.setTimeout(() => {
-      longPressTriggered = true;
-      showPopup();
-    }, LONG_PRESS_MS);
-  });
-
-  target.addEventListener("pointerup", (e) => {
-    window.clearTimeout(longPressTimer);
-    if (pressStart === 0) return;
-    if (longPressTriggered) {
-      // The hold was a "show popup" gesture, not a tap — don't record it.
-      pressStart = 0;
-      longPressTriggered = false;
-      e.preventDefault();
-      return;
-    }
-    pressStart = 0;
-    taps += 1;
-    if (!popup.hidden) {
-      renderPopup();
-      scheduleHide();
-    }
-    if (taps >= TARGET_TAPS) {
-      reset();
-      hidePopup();
-      revealAccountTab();
-      tab.focus();
-    } else {
-      scheduleReset();
-    }
-    e.preventDefault();
-  });
-
-  // Cancel an in-flight press if the pointer leaves the element.
-  target.addEventListener("pointercancel", () => {
-    window.clearTimeout(longPressTimer);
-    pressStart = 0;
-    longPressTriggered = false;
-    scheduleReset();
-  });
-}
-
-/** Make the Account tab visible. Called either on SOS unlock or, for users
- *  who are already signed in (e.g. after the auth-callback redirect lands
- *  back here on next page load), at startup so they keep access to the
- *  drawer without re-doing the secret gesture. */
-function revealAccountTab(): void {
-  const tab = document.querySelector<HTMLButtonElement>(
-    '.drawer-tab[data-drawer="person"]',
-  );
-  if (!tab) return;
-  tab.classList.remove("is-hidden");
-  tab.removeAttribute("hidden");
-}
-
 // ---------- Account drawer ----------
 
 // Renders the Account drawer body based on map-auth state and keeps the
@@ -1515,11 +1387,6 @@ function revealAccountTab(): void {
 function wireAccount(): void {
   const body = document.getElementById("account-body");
   if (!body) return;
-
-  // If the user is already signed in (most common after the auth-callback
-  // redirect lands them back on "/" with a fresh sessionStorage blob), the
-  // hidden tab gate would otherwise lock them out of their own controls.
-  if (isAuthenticated()) revealAccountTab();
 
   let countdownTimer: number | undefined;
   // Admin status is resolved once per token (identity comes from
