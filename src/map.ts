@@ -123,7 +123,12 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
   // actually happen; in a normal browser the container is never 0×0 and the
   // guard doesn't even start.
   if (map.getContainer().clientWidth === 0) {
+    let cancelled = false;
+    map.once("remove", () => {
+      cancelled = true;
+    });
     const settle = (): void => {
+      if (cancelled) return; // map removed — don't poll (or resize) a corpse
       const el = map.getContainer();
       const canvas = map.getCanvas();
       const w = el.clientWidth;

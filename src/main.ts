@@ -313,6 +313,12 @@ function showPremiumPopup(): void {
   };
   const timer = window.setTimeout(remove, 8000);
   close.addEventListener("click", remove);
+  // Engagement cancels the auto-dismiss (WCAG 2.2.1 Timing Adjustable):
+  // once the user hovers or focuses the popup — e.g. tabbing toward the
+  // sponsor link — it stays until explicitly closed.
+  const cancelAutoDismiss = (): void => window.clearTimeout(timer);
+  popup.addEventListener("pointerenter", cancelAutoDismiss);
+  popup.addEventListener("focusin", cancelAutoDismiss);
 
   popup.append(text, close);
   document.body.appendChild(popup);

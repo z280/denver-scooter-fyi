@@ -19,11 +19,23 @@ const SUN_TIMES_KEY = "scooter-fyi-sun-times";
 // Denver, CO — the app's fixed service area, so no geolocation needed.
 const DENVER_LAT = 39.7392;
 const DENVER_LNG = -104.9903;
+const DENVER_TZ = "America/Denver";
 
 interface SunTimes {
   /** Epoch ms, from api.sunrise-sunset.org (UTC ISO, formatted=0). */
   sunrise: number;
   sunset: number;
+  /** YYYY-MM-DD in America/Denver. The cache is only valid on this date —
+   *  sun times are absolute instants, so yesterday's sunset would otherwise
+   *  classify all of today's daylight as "after sunset" = dark. */
+  date: string;
+}
+
+/** Today's calendar date in Denver (en-CA formats as YYYY-MM-DD). Also what
+ *  we pass to the API: its default "today" is resolved in UTC, which from
+ *  ~6 PM Denver time onward is already tomorrow. */
+function denverDateToday(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: DENVER_TZ });
 }
 
 // ---------- Theme resolution ----------
@@ -50,6 +62,7 @@ function cachedSunTimes(): SunTimes | null {
     const raw = localStorage.getItem(SUN_TIMES_KEY);
     if (!raw) return null;
     const t = JSON.parse(raw) as SunTimes;
+    if (t.date !== denverDateToday()) return null; // stale — never trust it
     return Number.isFinite(t.sunrise) && Number.isFinite(t.sunset) ? t : null;
   } catch {
     return null;
@@ -74,6 +87,11 @@ let mapLoaded = false;
 let pendingFlavor: Flavor | null = null;
 
 function bindMap(map: maplibregl.Map): void {
+  // One map per app is the design. Fail loudly on a second bind rather than
+  // silently rebinding and orphaning the first map's theme updates.
+  if (boundMap && boundMap !== map) {
+    throw new Error("theme.ts is already bound to a different map");
+  }
   boundMap = map;
   mapLoaded = map.isStyleLoaded() === true;
   map.once("load", () => {
@@ -85,15 +103,29 @@ function bindMap(map: maplibregl.Map): void {
   });
 }
 
+function unbindMap(map: maplibregl.Map): void {
+  if (boundMap === map) {
+    boundMap = null;
+    mapLoaded = false;
+    pendingFlavor = null;
+  }
+}
+
 export function currentTheme(): Theme {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
 /** Set the theme everywhere: <html> attribute (drives all CSS tokens), the
- *  basemap flavor, and a `scooter:theme` event for UI that renders theme
- *  state (the toggle control, the ride HUD's 3D buildings). */
+ *  basemap flavor, the browser-chrome `theme-color`, and a `scooter:theme`
+ *  event for UI that renders theme state (the toggle control, the ride
+ *  HUD's 3D buildings). */
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
+  // The static meta reflects the OS scheme at best; the app theme can
+  // diverge (manual pick, sun-sync), so keep browser chrome in step here.
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", theme === "dark" ? "#0d1117" : "#ffffff");
   if (boundMap) {
     if (mapLoaded) setBasemapFlavor(boundMap, theme);
     else pendingFlavor = theme;
@@ -117,23 +149,32 @@ export function setManualTheme(theme: Theme): void {
 
 let sunTimer: number | undefined;
 
-export function isSunSyncEnabled(): boolean {
+// In-memory source of truth; storage is a best-effort persistence layer.
+// If this were read back from localStorage, enabling sun-sync with storage
+// unavailable (private mode) would silently no-op: the post-fetch re-check
+// would see "disabled" and bail while the toggle showed active.
+let sunSyncOn = ((): boolean => {
   try {
     return localStorage.getItem(SUN_KEY) === "1";
   } catch {
     return false;
   }
+})();
+
+export function isSunSyncEnabled(): boolean {
+  return sunSyncOn;
 }
 
 /** Turn sun-sync on/off. Off reverts to the manual/OS theme (unless the
  *  caller is about to apply its own, e.g. a manual toggle). Emits
  *  `scooter:sunsync` so toggle UI can mirror the state. */
 export function setSunSync(on: boolean, opts?: { reapply?: boolean }): void {
+  sunSyncOn = on;
   try {
     if (on) localStorage.setItem(SUN_KEY, "1");
     else localStorage.removeItem(SUN_KEY);
   } catch {
-    /* private mode — works for this page load only */
+    /* private mode — in-memory flag still works for this page load */
   }
   window.clearTimeout(sunTimer);
   if (on) {
@@ -154,9 +195,12 @@ export function startSunSync(): void {
 }
 
 async function fetchSunTimes(): Promise<SunTimes | null> {
+  // Pin the date explicitly: the API's default "today" resolves in UTC, so
+  // Denver evenings (UTC has rolled over) would get tomorrow's times.
+  const date = denverDateToday();
   try {
     const res = await fetch(
-      `https://api.sunrise-sunset.org/json?lat=${DENVER_LAT}&lng=${DENVER_LNG}&formatted=0`,
+      `https://api.sunrise-sunset.org/json?lat=${DENVER_LAT}&lng=${DENVER_LNG}&formatted=0&date=${date}`,
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
@@ -167,6 +211,7 @@ async function fetchSunTimes(): Promise<SunTimes | null> {
     const times: SunTimes = {
       sunrise: Date.parse(body.results.sunrise),
       sunset: Date.parse(body.results.sunset),
+      date,
     };
     if (!Number.isFinite(times.sunrise) || !Number.isFinite(times.sunset)) {
       return null;
@@ -187,7 +232,15 @@ async function fetchSunTimes(): Promise<SunTimes | null> {
 async function syncToSun(): Promise<void> {
   const times = (await fetchSunTimes()) ?? cachedSunTimes();
   // Re-check after the await: the user may have toggled off mid-fetch.
-  if (!times || !isSunSyncEnabled()) return;
+  if (!isSunSyncEnabled()) return;
+  if (!times) {
+    // Offline/blocked with no valid cache. Keep the current theme but retry
+    // in a minute — enabling sun-sync must never be a silent permanent
+    // no-op behind an active-looking toggle.
+    window.clearTimeout(sunTimer);
+    sunTimer = window.setTimeout(() => void syncToSun(), 60_000);
+    return;
+  }
   applyTheme(themeForTimes(times));
   scheduleSunFlip(times);
 }
@@ -211,6 +264,7 @@ function scheduleSunFlip(times: SunTimes): void {
  *  clicking makes a manual pick for the other theme. */
 export class ThemeControl implements maplibregl.IControl {
   private theme: Theme;
+  private map: maplibregl.Map | null = null;
   private container: HTMLDivElement | null = null;
   private btn: HTMLButtonElement | null = null;
   private readonly media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -234,6 +288,7 @@ export class ThemeControl implements maplibregl.IControl {
 
   onAdd(map: maplibregl.Map): HTMLElement {
     bindMap(map);
+    this.map = map;
     const container = document.createElement("div");
     container.className = "maplibregl-ctrl maplibregl-ctrl-group theme-ctrl";
     const btn = document.createElement("button");
@@ -255,6 +310,8 @@ export class ThemeControl implements maplibregl.IControl {
   onRemove(): void {
     this.media.removeEventListener("change", this.onMedia);
     window.removeEventListener("scooter:theme", this.onTheme);
+    if (this.map) unbindMap(this.map);
+    this.map = null;
     this.container?.remove();
     this.container = null;
     this.btn = null;

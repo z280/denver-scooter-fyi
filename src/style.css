@@ -1234,8 +1234,11 @@ body {
   border-top: 1px solid var(--border);
 }
 /* MapLibre's zoom +/- glyphs are baked-in dark SVGs — invert them in dark
-   mode (the geolocate + theme buttons already use currentColor masks). */
-:root[data-theme="dark"] .maplibregl-ctrl button .maplibregl-ctrl-icon {
+   mode. Scoped to the zoom buttons ONLY: `filter` applies to the final
+   rasterized element, so a broad selector would also invert the geolocate/
+   theme icons' currentColor masks (muted gray → olive, accent → orange). */
+:root[data-theme="dark"] .maplibregl-ctrl button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
+:root[data-theme="dark"] .maplibregl-ctrl button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
   filter: invert(1) hue-rotate(180deg);
 }
 .maplibregl-ctrl-attrib.maplibregl-compact {
@@ -2063,6 +2066,19 @@ body.ride-active .maplibregl-ctrl {
   /* Track the lifted mode pill so the sponsor note doesn't cover it. */
   .premium-popup {
     bottom: 112px;
+  }
+}
+
+/* Four full-text mode buttons total ~379px of pills — too wide below
+   ~400px, clipping off both edges. Wrap into centered rows. The width must
+   be explicit: a wrapped flex row inside a shrink-to-fit fixed box would
+   otherwise collapse to its widest button and stack all four vertically. */
+@media (max-width: 480px) {
+  .mode-switch {
+    width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 22px;
   }
 }
 

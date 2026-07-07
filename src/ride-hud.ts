@@ -12,7 +12,7 @@ import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
 import { FIRST_DEVICE_LAYER } from "./devices.ts";
-import { currentTheme, setManualTheme } from "./theme.ts";
+import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   comparatorCostCents,
@@ -169,6 +169,7 @@ export class RideHud {
         this.stopSensors();
         this.exitFollowCam();
         this.exitImmersive();
+        this.restoreTheme();
         this.setState("hidden");
         break;
       case "start-now":
@@ -186,7 +187,11 @@ export class RideHud {
       case "toggle-night":
         // Flips the WHOLE app (CSS tokens + basemap flavor), not just the
         // HUD — the constructor's theme listener recolors the 3D buildings.
-        setManualTheme(currentTheme() === "dark" ? "light" : "dark");
+        // Deliberately ride-scoped: no persistence, and sun-sync stays
+        // enabled. A mid-ride glance at the other theme must not steal the
+        // user's durable preference; exiting the HUD restores the resolved
+        // theme (sun-sync > stored > OS).
+        applyTheme(currentTheme() === "dark" ? "light" : "dark");
         break;
       case "adjust":
         this.root
@@ -210,9 +215,18 @@ export class RideHud {
         break;
       case "done":
         this.exitImmersive();
+        this.restoreTheme();
         this.setState("hidden");
         break;
     }
+  }
+
+  /** Undo any ride-scoped ☀/☾ flips: re-resolve the theme from its durable
+   *  sources (sun-sync > stored choice > OS). No-op when nothing changed,
+   *  so the basemap isn't rebuilt on every HUD exit. */
+  private restoreTheme(): void {
+    const resolved = initialTheme();
+    if (resolved !== currentTheme()) applyTheme(resolved);
   }
 
   /** Best-effort immersive landscape: fullscreen the HUD and lock to
