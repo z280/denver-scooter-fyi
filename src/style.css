@@ -2677,3 +2677,24 @@ body.mode-ride .device-popup__ranks-link {
 .ride-wizard__typerow-label {
   width: 100%;
 }
+
+/* ---------- Freshness pill: mobile collapse ---------- */
+/* Narrow screens shrink the pill to just the status dot; tapping (wired in
+   main.ts) expands it briefly. Desktop never collapses. */
+@media (max-width: 640px) {
+  .freshness--collapsed {
+    padding: 10px;
+    gap: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .freshness--collapsed .freshness__line {
+    display: none;
+  }
+  .freshness--collapsed .freshness__line--time {
+    display: inline-flex;
+  }
+  .freshness--collapsed #freshness-text {
+    display: none;
+  }
+}

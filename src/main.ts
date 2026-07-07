@@ -240,6 +240,7 @@ wireSecretUnlock();
 wireAccount();
 wireRideHud();
 wireSunSync();
+wireFreshnessCollapse();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
@@ -1341,6 +1342,43 @@ function wireDrawers(): void {
       tab?.focus();
     }
   });
+}
+
+// ---------- Freshness pill mobile collapse ----------
+
+// On narrow screens the three-line pill shrinks to just the status dot;
+// tapping expands it for a few seconds. Expansion is tap-triggered and
+// collapse is idle-triggered (never tap-toggled) so the pill coexists with
+// the secret-unlock tap counter on the same element.
+function wireFreshnessCollapse(): void {
+  const root = need("freshness");
+  const mq = window.matchMedia("(max-width: 640px)");
+  let expanded = false;
+  let idleTimer: number | undefined;
+
+  const sync = (): void => {
+    root.classList.toggle("freshness--collapsed", mq.matches && !expanded);
+  };
+  const scheduleCollapse = (): void => {
+    window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => {
+      expanded = false;
+      sync();
+    }, 6_000);
+  };
+
+  root.addEventListener("click", () => {
+    if (!mq.matches) return;
+    expanded = true;
+    sync();
+    scheduleCollapse();
+  });
+  mq.addEventListener("change", () => {
+    expanded = false;
+    window.clearTimeout(idleTimer);
+    sync();
+  });
+  sync();
 }
 
 // ---------- Secret unlock ----------
