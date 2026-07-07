@@ -231,7 +231,7 @@ export class RecommendedDevices {
       title.append(el("span", "ride-option__rank", `${i + 1}`));
       if (opt.model) {
         const glyph = el("img", "ride-option__glyph");
-        glyph.src = `/${opt.model}.svg`;
+        glyph.src = `/${opt.model}.png`;
         glyph.alt = "";
         title.append(glyph);
       }

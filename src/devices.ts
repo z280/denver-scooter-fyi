@@ -1464,14 +1464,15 @@ function annotateBatteryPercent(
 
 // ---------- Composite marker icons (inner badge + gauge ring) ----------
 
-/** The vehicle silhouettes for the "Model" icon style — hand-drawn SVGs in
- *  /public, square-viewBoxed and pre-clipped to a circle, so each one IS
- *  the inner badge face. Decoded once at startup; until they're ready (or
- *  if one fails), the two-letter tags render instead. */
+/** The vehicle badges for the "Model" icon style — full-color circular
+ *  badge art in /public, square PNGs pre-clipped to a circle (transparent
+ *  corners), so each one IS the inner badge face. Decoded once at startup;
+ *  until they're ready (or if one fails), the two-letter tags render
+ *  instead. */
 const MODEL_ICON_URL: Record<ModelKey, string> = {
-  astro: "/astro.svg",
-  cosmo: "/cosmo.svg",
-  apollo: "/apollo.svg",
+  astro: "/astro.png",
+  cosmo: "/cosmo.png",
+  apollo: "/apollo.png",
 };
 const modelIconImages: Partial<Record<ModelKey, HTMLImageElement>> = {};
 let modelIconsLoading: Promise<void> | null = null;
@@ -1558,7 +1559,9 @@ const RING_GAP: Record<string, number> = { S: 0, G: 3.5, B: 7 };
  *  every thickness/placement combination — the ring grows OUTWARD (the
  *  canvas gets bigger), the icon never shrinks. Chosen so the default
  *  Standard/Surrounding gauge icon renders exactly as before. */
-const RINGED_BADGE_R = 20.5;
+// Bumped from 20.5 for the full-color badge art — the illustrated faces
+// need a touch more width than the old silhouettes to stay readable.
+const RINGED_BADGE_R = 23;
 
 /** Ring center-line radius and total canvas size for a design. Exported
  *  shape so previews can scale correctly. */
