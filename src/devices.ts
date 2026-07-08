@@ -87,6 +87,10 @@ const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
 
 const SRC = "devices";
+/** Base clustering radius (px) at the default ✨ Icon size; setIconScale
+ *  scales it with the badges so bigger icons cluster sooner instead of
+ *  piling into overlap, and smaller icons spread out more individuals. */
+const CLUSTER_RADIUS = 50;
 const CLUSTER_LAYER = "device-clusters";
 /** Overlays insert before this id so device markers stay on top. */
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
@@ -186,7 +190,7 @@ export class Devices {
       type: "geojson",
       data: emptyFC(),
       cluster: true,
-      clusterRadius: 50,
+      clusterRadius: CLUSTER_RADIUS,
       clusterMaxZoom: 13,
     });
 
@@ -1073,7 +1077,9 @@ export class Devices {
 
   /** ✨ Icon size: rescale the on-map device badges. `factor` multiplies
    *  the zoom→size ramp (1 = default); the % text overlays scale with the
-   *  badge so they stay inside it. */
+   *  badge so they stay inside it. The clustering radius scales in step,
+   *  so enlarged icons merge into clusters instead of overlapping and
+   *  shrunken icons resolve into more individuals. */
   setIconScale(factor: number): void {
     this.iconScale = factor;
     for (const layer of [POINT_LAYER, HOVER_LAYER]) {
@@ -1081,6 +1087,11 @@ export class Devices {
       this.map.setLayoutProperty(layer, "icon-size", this.iconSizeExpr());
       this.map.setLayoutProperty(layer, "text-size", this.textSizeExpr());
     }
+    const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
+    src?.setClusterOptions({
+      cluster: true,
+      clusterRadius: Math.round(CLUSTER_RADIUS * factor),
+    });
   }
 
   private iconSizeExpr(): ExpressionSpecification {
