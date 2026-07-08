@@ -886,6 +886,17 @@ function wireIconography(): void {
     devices.setGauge(gauge.checked);
     renderAll();
   });
+  // ✨ Icon size: scales the on-map badges (and their % text overlays).
+  // The drawer previews keep their fixed size — they demonstrate style,
+  // not scale.
+  const iconSize = need<HTMLInputElement>("icon-size");
+  const iconSizeValue = need("icon-size-value");
+  const applyIconSize = (): void => {
+    const pct = Number(iconSize.value) || 100;
+    iconSizeValue.textContent = `${pct}%`;
+    devices.setIconScale(pct / 100);
+  };
+  iconSize.addEventListener("input", applyIconSize);
   // ✨ Essentials-on-hover tooltip.
   const tooltipToggle = need<HTMLInputElement>("tooltip-toggle");
   tooltipToggle.addEventListener("change", () =>
@@ -903,6 +914,10 @@ function wireIconography(): void {
     setDisplay("always");
     setThickness("standard");
     setPlacement("surrounding");
+    if (iconSize.value !== "100") {
+      iconSize.value = "100";
+      applyIconSize();
+    }
     if (!gauge.checked) {
       gauge.checked = true;
       gauge.dispatchEvent(new Event("change"));
@@ -913,7 +928,7 @@ function wireIconography(): void {
     }
   };
 
-  // Model silhouettes decode async — refresh previews once they land.
+  // Model badges decode async — refresh previews once they land.
   void whenModelIconsReady().then(renderAll);
   renderAll();
 }

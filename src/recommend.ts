@@ -36,7 +36,7 @@ export interface RecommendContext {
 export interface RankedOption {
   id: string;
   name: string;
-  /** Recognized Veo model — drives the row's silhouette glyph. */
+  /** Recognized Veo model — drives the row's badge glyph. */
   model: ModelKey | null;
   desc: string;
   lng: number;
@@ -231,7 +231,7 @@ export class RecommendedDevices {
       title.append(el("span", "ride-option__rank", `${i + 1}`));
       if (opt.model) {
         const glyph = el("img", "ride-option__glyph");
-        glyph.src = `/${opt.model}.svg`;
+        glyph.src = `/${opt.model}.png`;
         glyph.alt = "";
         title.append(glyph);
       }

@@ -235,12 +235,12 @@ export class RideWizard {
     });
 
     // Type sub-picker, shown only when "Exact device type" is the priority.
-    // Each chip wears its model's silhouette (Astro / Cosmo / Apollo).
+    // Each chip wears its model's badge (Astro / Cosmo / Apollo).
     typeRow.append(el("span", "ride-wizard__typerow-label", "Which type?"));
     const typeDefs: { value: RideTypeChoice; label: string; svg: string }[] = [
-      { value: "standing", label: "Standing scooter", svg: "/astro.svg" },
-      { value: "seated", label: "Seated scooter", svg: "/cosmo.svg" },
-      { value: "ebike", label: "E-bike", svg: "/apollo.svg" },
+      { value: "standing", label: "Standing scooter", svg: "/astro.png" },
+      { value: "seated", label: "Seated scooter", svg: "/cosmo.png" },
+      { value: "ebike", label: "E-bike", svg: "/apollo.png" },
     ];
     const typeBtns: HTMLButtonElement[] = [];
     const syncTypes = (): void => {

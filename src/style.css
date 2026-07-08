@@ -2466,8 +2466,10 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .toggle-card__icon {
   flex: none;
-  width: 30px;
-  height: 30px;
+  /* A touch wider than the old 30px silhouettes — the full-color badge art
+     needs the room to read. */
+  width: 34px;
+  height: 34px;
 }
 .toggle-card:not(.is-active) .toggle-card__icon {
   opacity: 0.4;
@@ -2478,8 +2480,8 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ride-option__glyph {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 23px;
+  height: 23px;
   align-self: center;
 }
 .ride-wizard__typechip {
@@ -2488,8 +2490,8 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   gap: 5px;
 }
 .ride-wizard__typechip-glyph {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
 }
 
 /* ---------- Iconography drawer: contextual details + on-map legend ---------- */

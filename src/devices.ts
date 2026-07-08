@@ -1,4 +1,8 @@
-import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
+import maplibregl, {
+  type Map,
+  type GeoJSONSource,
+  type ExpressionSpecification,
+} from "maplibre-gl";
 import { isAuthenticated } from "./map-auth.js";
 import type {
   DeviceProperties,
@@ -83,6 +87,16 @@ const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
 
 const SRC = "devices";
+/** Base clustering radius (px) at the default ✨ Icon size; setIconScale
+ *  scales it with the badges so bigger icons cluster sooner instead of
+ *  piling into overlap, and smaller icons spread out more individuals.
+ *  Retuned 50 → 40 with the badge art: the full-color badges are worth
+ *  seeing individually, so default clustering merges less eagerly. */
+const CLUSTER_RADIUS = 40;
+/** Devices de-cluster above this zoom. Passed explicitly on every
+ *  setClusterOptions call so no MapLibre version can reset it to the
+ *  supercluster default (16) when only the radius changes. */
+const CLUSTER_MAX_ZOOM = 13;
 const CLUSTER_LAYER = "device-clusters";
 /** Overlays insert before this id so device markers stay on top. */
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
@@ -164,6 +178,9 @@ export class Devices {
   /** Observers notified after every apply() with the current
    *  visible-feature count and the unfiltered fleet total. */
   private countListeners = new Set<(visible: number, total: number) => void>();
+  /** ✨ Icon size preference — multiplies the zoom→size ramps for the
+   *  device badges and their text overlays (1 = default). */
+  private iconScale = 1;
 
   constructor(
     private readonly map: Map,
@@ -171,16 +188,16 @@ export class Devices {
   ) {}
 
   addLayers(): void {
-    // Kick off the model-silhouette decode; when it lands, re-annotate so
-    // Model-style markers upgrade from letter tags to the real silhouettes.
+    // Kick off the model-badge decode; when it lands, re-annotate so
+    // Model-style markers upgrade from letter tags to the real badge art.
     void loadModelIcons().then(() => this.apply());
 
     this.map.addSource(SRC, {
       type: "geojson",
       data: emptyFC(),
       cluster: true,
-      clusterRadius: 50,
-      clusterMaxZoom: 13,
+      clusterRadius: CLUSTER_RADIUS,
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
     });
 
     this.map.addLayer({
@@ -266,17 +283,7 @@ export class Devices {
         // a canvas per unique key; apply() annotates every feature with its
         // icon_key and registers any missing images before setData.
         "icon-image": ["get", "icon_key"],
-        "icon-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          0.55,
-          14,
-          0.85,
-          17,
-          1.1,
-        ],
+        "icon-size": this.iconSizeExpr(),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         // Text overlay is empty in "Device type" mode; applyPaint() swaps
@@ -284,17 +291,7 @@ export class Devices {
         // percentage renders inside the colored badge.
         "text-field": "",
         "text-font": ["Noto Sans Medium"],
-        "text-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          7,
-          14,
-          10.5,
-          17,
-          13,
-        ],
+        "text-size": this.textSizeExpr(),
         "text-anchor": "center",
         "text-offset": [0, 0],
         "text-allow-overlap": true,
@@ -328,32 +325,12 @@ export class Devices {
       filter: HOVER_NONE,
       layout: {
         "icon-image": ["get", "icon_key_hover"],
-        "icon-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          0.55,
-          14,
-          0.85,
-          17,
-          1.1,
-        ],
+        "icon-size": this.iconSizeExpr(),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         "text-field": "",
         "text-font": ["Noto Sans Medium"],
-        "text-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          7,
-          14,
-          10.5,
-          17,
-          13,
-        ],
+        "text-size": this.textSizeExpr(),
         "text-anchor": "center",
         "text-offset": [0, 0],
         "text-allow-overlap": true,
@@ -1104,6 +1081,48 @@ export class Devices {
     this.apply();
   }
 
+  /** ✨ Icon size: rescale the on-map device badges. `factor` multiplies
+   *  the zoom→size ramp (1 = default); the % text overlays scale with the
+   *  badge so they stay inside it. The clustering radius scales in step,
+   *  so enlarged icons merge into clusters instead of overlapping and
+   *  shrunken icons resolve into more individuals. */
+  setIconScale(factor: number): void {
+    this.iconScale = factor;
+    for (const layer of [POINT_LAYER, HOVER_LAYER]) {
+      if (!this.map.getLayer(layer)) continue;
+      this.map.setLayoutProperty(layer, "icon-size", this.iconSizeExpr());
+      this.map.setLayoutProperty(layer, "text-size", this.textSizeExpr());
+    }
+    const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
+    src?.setClusterOptions({
+      cluster: true,
+      clusterRadius: Math.round(CLUSTER_RADIUS * factor),
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
+    });
+  }
+
+  private iconSizeExpr(): ExpressionSpecification {
+    const s = this.iconScale;
+    // prettier-ignore
+    return [
+      "interpolate", ["linear"], ["zoom"],
+      10, 0.55 * s,
+      14, 0.85 * s,
+      17, 1.1 * s,
+    ];
+  }
+
+  private textSizeExpr(): ExpressionSpecification {
+    const s = this.iconScale;
+    // prettier-ignore
+    return [
+      "interpolate", ["linear"], ["zoom"],
+      10, 7 * s,
+      14, 10.5 * s,
+      17, 13 * s,
+    ];
+  }
+
   private clearHover(): void {
     this.hoverDeviceId = null;
     try {
@@ -1211,7 +1230,7 @@ export class Devices {
       inner = `use-${rideTypeOf(p)}`;
     } else if (this.iconStyle === "model") {
       const mk = modelKeyOf(p);
-      // Silhouette badge once its SVG has decoded; letter tag until then
+      // Badge art once its image has decoded; letter tag until then
       // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
       inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
     } else if (this.iconData === "reliability") {
@@ -1464,14 +1483,15 @@ function annotateBatteryPercent(
 
 // ---------- Composite marker icons (inner badge + gauge ring) ----------
 
-/** The vehicle silhouettes for the "Model" icon style — hand-drawn SVGs in
- *  /public, square-viewBoxed and pre-clipped to a circle, so each one IS
- *  the inner badge face. Decoded once at startup; until they're ready (or
- *  if one fails), the two-letter tags render instead. */
+/** The vehicle badges for the "Model" icon style — full-color circular
+ *  badge art in /public, square PNGs pre-clipped to a circle (transparent
+ *  corners), so each one IS the inner badge face. Decoded once at startup;
+ *  until they're ready (or if one fails), the two-letter tags render
+ *  instead. */
 const MODEL_ICON_URL: Record<ModelKey, string> = {
-  astro: "/astro.svg",
-  cosmo: "/cosmo.svg",
-  apollo: "/apollo.svg",
+  astro: "/astro.png",
+  cosmo: "/cosmo.png",
+  apollo: "/apollo.png",
 };
 const modelIconImages: Partial<Record<ModelKey, HTMLImageElement>> = {};
 let modelIconsLoading: Promise<void> | null = null;
@@ -1533,8 +1553,9 @@ export function iconPreviewURL(
   return { url: c.toDataURL(), logicalPx: data.width / 2 };
 }
 
-/** Resolves when the model silhouettes have decoded (or failed) — callers
- *  re-render model previews after this so the SVGs replace letter tags. */
+/** Resolves when the model badges have decoded (or failed) — callers
+ *  re-render model previews after this so the badge art replaces letter
+ *  tags. */
 export function whenModelIconsReady(): Promise<void> {
   return loadModelIcons();
 }
@@ -1558,7 +1579,9 @@ const RING_GAP: Record<string, number> = { S: 0, G: 3.5, B: 7 };
  *  every thickness/placement combination — the ring grows OUTWARD (the
  *  canvas gets bigger), the icon never shrinks. Chosen so the default
  *  Standard/Surrounding gauge icon renders exactly as before. */
-const RINGED_BADGE_R = 20.5;
+// Bumped from 20.5 for the full-color badge art — the illustrated faces
+// need a touch more width than the old silhouettes to stay readable.
+const RINGED_BADGE_R = 23;
 
 /** Ring center-line radius and total canvas size for a design. Exported
  *  shape so previews can scale correctly. */
@@ -1589,7 +1612,8 @@ function ringGeometry(
  *  thickness push the ring outward from the fixed-size badge.
  *
  *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
- *  `msvg-*` (model silhouette), `model-*` (two-letter tag fallback),
+ *  `msvg-*` (model badge art; key prefix is historical), `model-*`
+ *  (two-letter tag fallback),
  *  `db-<bucket|x>` (battery disc, % text overlays via the symbol layer),
  *  `dr-<tier>` (reliability disc with ✓/?/! glyph). */
 function makeCompositeIcon(key: string): ImageData {
@@ -1689,8 +1713,8 @@ function drawInnerBadge(
     ctx.textBaseline = "middle";
     ctx.fillText(emoji, cx, cx + d * 0.03);
   } else if (inner.startsWith("msvg-")) {
-    // The SVG is pre-clipped to a circle, so it IS the badge face — white
-    // disc behind it for contrast, clip to be safe, silhouette on top.
+    // The badge PNG is pre-clipped to a circle, so it IS the badge face —
+    // white disc behind it for contrast, clip to be safe, art on top.
     fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
     const img = modelIconImages[inner.slice(5) as ModelKey];
     if (img) {
