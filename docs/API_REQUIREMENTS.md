@@ -53,11 +53,11 @@ Consequences, already reflected in the frontend:
 >   rotation could be a rebalancer scan).
 >
 > The frontend mirrors this formula exactly for its fallback tier and its
-> human-readable reasons, with ONE deliberate divergence: clean dwell in
-> 48–96h displays as the client's middle tier ("Unknown risk" caution)
-> since the server has no tier between ok and the 96h ghost rule. Remaining
-> ask: document the quality scale + tier formula in API.md so the contract
-> is public.
+> human-readable reasons. The client's interim 48–96h caution band was
+> removed once §1.4 shipped (2026-07-08): the server's recalibrated 72h
+> ghost rule + peer-outlier demotion now cover that gap, so server and
+> client agree again. Remaining ask: document the quality scale + tier
+> formula in API.md so the contract is public.
 
 Preferred: compute server-side and expose a single field on the public
 devices endpoint:
@@ -72,7 +72,14 @@ devices endpoint:
   showing an opaque grade.
 - Document the tier formula in the repo so the audit stays reproducible.
 
-### 1.4 Dwell recalibration + peer-relative outliers (NEW)
+### 1.4 Dwell recalibration + peer-relative outliers (SHIPPED — veo-audit PR #19)
+
+> **Status 2026-07-08:** live server-side, exactly as specified below —
+> r9-kRing(1) peer set, ≥p90 + ≥3× median + 24h floor outlier rule, ghost
+> tightened 96h → 72h, dwell-outlier + ≥48h → `high_risk`, and the public
+> evidence fields `dwell_percentile_hood` / `dwell_peer_median_hours`. The
+> frontend mirrors the recalibrated formula (src/reliability.ts) and has
+> dropped its interim 48–96h caution band as promised.
 
 Current dwell handling is too lenient. Production evidence (2026-07-06
 snapshot, 8,449 devices): citywide dwell p50=7.2h, p90=48h, p95=76h — a
@@ -102,7 +109,18 @@ device idle 48h is a top-decile outlier, yet 520 devices idle ≥48h carried
    API.md. The frontend mirrors the tier formula and will drop its
    interim 48–96h client-side caution band once this ships.
 
-### 1.5 Payload diet — carry low-end phones (NEW)
+### 1.5 Payload diet — carry low-end phones (SHIPPED)
+
+> **Status 2026-07-08:** live — server `battery_percent`, lean default
+> payload with `?include=h3,ranks` opt-ins (unknown tokens 400). The
+> frontend requests the includes only on the analysis surface and goes
+> lean in ride mode. Additionally, veo-audit PR #19 replaces the retired
+> `/api/v1/private/devices/current` with `GET /api/v1/user/devices/current`
+> (any signed-in rider gets the public field set; ADMIN_EMAILS sessions —
+> via either sign-in door — additionally get `vehicle_plate`,
+> `first_ever_observed_at`, `max_observed_range_meters/_at`; same query
+> params; `Cache-Control: private, max-age=30`). The map's authed fetch
+> now targets it, falling back to the public endpoint until it deploys.
 
 `/api/v1/devices/current` is ~8 MB of JSON every 90 s. Fine on a laptop;
 hostile to budget Androids. The frontend also client-computes things the
@@ -123,7 +141,12 @@ server already knows. Requests:
    (`GET /api/v1/equity-estimate?ranks=1,2` → % + counts) so low-end
    clients can skip the 8k-point point-in-polygon pass.
 
-### 1.6 H3 aggregate layers (NEW — unblocks analysis-mode hex visualizations)
+### 1.6 H3 aggregate layers (SHIPPED — frontend UI pending)
+
+> **Status 2026-07-08:** `GET /api/v1/h3/aggregates?res=8|9|10` is live
+> with the exact cell metrics below (string-keyed cells, 10-min CDN
+> cache). The Areas-menu choropleth UI that consumes it is the next
+> frontend work item.
 
 `GET /api/v1/h3/aggregates?res=8|9|10` → per-occupied-cell metrics,
 computed once per 10-minute cycle and CDN-cached (~10 min):
@@ -281,15 +304,46 @@ attribution, and supporter features.
 
 ## 4. Supporter tier (unblocks frontend Phase 5)
 
-### 4.1 Stripe webhook
+### 4.1 Stripe (UPDATED 2026-07-08: two tiers — donate + subscribe)
 
-- `POST /webhooks/stripe` — verify the Stripe signature; handle
-  `checkout.session.completed` (Payment Link, pay-what-you-want): read
-  `client_reference_id` (account id), set `supporter: true`, store amount
-  + timestamp. Handle refund events by clearing the flag only on full
-  refund.
-- No other Stripe surface needed — no products API, no customer portal in
-  v1.
+Two independent, stackable tiers (supersedes the single-supporter
+subscription sketch):
+
+- **⭐ `supporter`** — a one-time donation. Sticky: once earned, never
+  revoked.
+- **✨ `premium_user`** — a subscription with a trial. True while the
+  subscription is `trialing`/`active`; lapses back to false.
+
+Endpoints (auth: any signed-in session; both → `{ url }`):
+
+- `POST /api/v1/billing/donate` — Checkout Session `mode=payment` against
+  a one-time price (dashboard: enable "customer chooses amount" for
+  pay-what-you-want), `client_reference_id` = account id, success/cancel
+  URLs back to `https://denver.scooter.fyi/`.
+- `POST /api/v1/billing/checkout` — Checkout Session `mode=subscription`
+  against the premium price (trial comes from the price's settings), same
+  reference + return URLs.
+- **The frontend Account drawer already calls both** ("⭐ Donate once" /
+  "✨ Go Premium (free trial)") and degrades each to a friendly "not live
+  yet" note until it ships.
+
+Webhook `POST /webhooks/stripe` — verify the signature:
+
+- `checkout.session.completed` with `mode=payment` → `supporter: true`
+  (permanent). Store the payment intent id.
+- `checkout.session.completed` / `customer.subscription.updated` with a
+  subscription in `trialing`/`active` → `premium_user: true`; `false`
+  when it reaches `canceled`/`unpaid` at period end. Store the Stripe
+  customer + subscription ids on the account.
+
+`GET /api/v1/auth/session` exposes **both** `supporter` and
+`premium_user` (the frontend renders ⭐/✨ badges from them).
+
+- Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`
+  (premium subscription price) and `STRIPE_DONATION_PRICE_ID` (one-time
+  price); register the webhook endpoint in the Stripe dashboard.
+- No customer portal in v1 (add `POST /api/v1/billing/portal` later for
+  self-serve cancel).
 
 ### 4.2 Ride history
 

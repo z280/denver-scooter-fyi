@@ -37,6 +37,8 @@ export interface ReliabilitySignals {
   quality_designation?: string | null;
   number_failed_starts?: number | string | null;
   first_observed_at_location?: string | null;
+  dwell_percentile_hood?: number | string | null;
+  dwell_peer_median_hours?: number | string | null;
 }
 
 const TIER_RANK: Record<ReliabilityTier, number> = {
@@ -52,35 +54,36 @@ export function worstTier(a: ReliabilityTier, b: ReliabilityTier): ReliabilityTi
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
 }
 
-/** Clean dwell beyond this is the API's "ghost scooter" rule: nobody has
- *  ridden it in four days, something is probably wrong even if nothing was
- *  flagged. (Dwell and failed-start counters reset when a device moves, so
- *  every signal is scoped to its current parking spot.) */
-const GHOST_HOURS = 96;
+/** Clean dwell beyond this is the API's "ghost scooter" rule — recalibrated
+ *  server-side from 96h to 72h (48h is already the citywide p90). Dwell and
+ *  failed-start counters reset when a device moves, so every signal is
+ *  scoped to its current parking spot. */
+const GHOST_HOURS = 72;
 /** One failed start is ambiguous alone (could be a rebalancer scan) but
  *  becomes damning combined with a day of nobody riding it. */
 const CORROBORATION_HOURS = 24;
-/** CLIENT-SIDE ADDITION, not in the server formula: the server jumps
- *  straight from "ok" to the 96h ghost rule with nothing in between, but
- *  the frontend has a middle tier — so clean dwell in [48h, ghost) shows
- *  as "unknown", a pre-ghost caution band. Delete this block for strict
- *  server parity. */
-const PRE_GHOST_HOURS = 48;
+/** Peer-relative dwell outlier (API_REQUIREMENTS §1.4, now live): dwell
+ *  percentile ≥90 among the H3-neighborhood peers AND ≥3× the peer median
+ *  AND past the 24h floor. Combined with ≥48h dwell it demotes to risk. */
+const OUTLIER_PERCENTILE = 90;
+const OUTLIER_MEDIAN_RATIO = 3;
+const OUTLIER_RISK_HOURS = 48;
 
-/** Mirror of the API's reliability formula (veo-audit src/quality.py,
- *  compute_reliability_tier) — first-match-wins:
+/** Mirror of the API's recalibrated reliability formula (veo-audit
+ *  src/quality.py, compute_reliability_tier) — first-match-wins:
  *
  *  high_risk: live negative report; ≥2 failed starts; 1 failed start
- *  combined with ≥24h dwell; or ≥96h dwell with no failures (ghost).
+ *  combined with ≥24h dwell; ≥72h dwell with no failures (ghost); or a
+ *  peer-relative dwell outlier (≥48h dwell, ≥p90 among H3 r9-kRing(1)
+ *  neighbors, ≥3× the peer median).
  *  unknown: never state-tracked (no failed-start/dwell inputs), or
  *  quality is undefined (disabled / reserved / no range data).
  *  ok: everything else — including a single fresh failed start.
  *
  *  Reliability collapses only the FAILURE signals ("will it unlock?");
  *  battery lives in quality_designation and deliberately doesn't feed
- *  this. Used as the fallback when the server omits the tier, as the
- *  pre-ghost demotion (see PRE_GHOST_HOURS), and to build the
- *  human-readable reasons in every case. */
+ *  this. Used as the fallback when the server omits the tier and to
+ *  build the human-readable reasons in every case. */
 export function assessReliability(
   p: ReliabilitySignals,
   now: number = Date.now(),
@@ -113,6 +116,29 @@ export function assessReliability(
     };
   }
 
+  // ---- peer-relative dwell outlier with ≥48h dwell → risk. Uses the
+  // now-public dwell_percentile_hood / dwell_peer_median_hours fields so
+  // the verdict can cite the neighborhood baseline.
+  const pctile = num(p.dwell_percentile_hood);
+  const peerMedian = num(p.dwell_peer_median_hours);
+  if (
+    idleHours !== null &&
+    idleHours >= OUTLIER_RISK_HOURS &&
+    pctile !== null &&
+    pctile >= OUTLIER_PERCENTILE &&
+    peerMedian !== null &&
+    idleHours >= Math.max(CORROBORATION_HOURS, OUTLIER_MEDIAN_RATIO * peerMedian)
+  ) {
+    const ratio = peerMedian > 0 ? Math.round(idleHours / peerMedian) : null;
+    return {
+      tier: "risk",
+      reasons: [
+        `idle ${formatIdle(idleHours)}` +
+          (ratio ? ` — ${ratio}× its block's typical ${formatIdle(peerMedian)}` : " — a neighborhood outlier"),
+      ],
+    };
+  }
+
   // ---- unknown: no state tracking, or quality is undefined.
   if (failed === null && idleHours === null) {
     return { tier: "unknown", reasons: ["not state-tracked yet"] };
@@ -122,14 +148,6 @@ export function assessReliability(
   }
   if (p.quality_designation === "N/A" || p.quality_designation === "n/a") {
     return { tier: "unknown", reasons: ["no quality data"] };
-  }
-
-  // ---- pre-ghost caution band (client-side; see PRE_GHOST_HOURS).
-  if (idleHours !== null && idleHours >= PRE_GHOST_HOURS) {
-    return {
-      tier: "unknown",
-      reasons: [`idle ${formatIdle(idleHours)} — approaching ghost status`],
-    };
   }
 
   // ---- ok. A single fresh failed start is deliberate leniency; still

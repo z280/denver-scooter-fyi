@@ -64,7 +64,11 @@ export function clearSession(): void {
 export interface SessionInfo {
   email?: string;
   scopes?: string[];
+  /** One-time donor (⭐). Sticky: set by a completed donation checkout. */
   supporter?: boolean;
+  /** Active subscriber (✨). True while the Stripe subscription is
+   *  trialing/active; drops back to false when it lapses. */
+  premium_user?: boolean;
   admin?: boolean;
   expires?: string;
 }

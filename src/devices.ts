@@ -673,8 +673,15 @@ export class Devices {
         );
       }
       if (props.first_observed_at_location) {
+        // Peer context (public since the §1.4 recalibration): how this
+        // dwell compares to scooters in the same H3 neighborhood.
+        const peerMedian = asNumber(props.dwell_peer_median_hours);
+        const peerHint =
+          peerMedian !== null && peerMedian > 0
+            ? ` <span class="device-popup__hint">block median ${escapeHtml(formatDwellHours(peerMedian))}</span>`
+            : "";
         qualityRows.push(
-          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}</dd>`,
+          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
         );
       }
       const failedStarts = asNumber(props.number_failed_starts);
@@ -684,9 +691,10 @@ export class Devices {
         );
       }
 
-      // Private detail rows — only present when the authenticated fetch ran.
-      // Post-revert this is just the plate (never public) and the all-time
-      // first-seen stamp (private lookup only).
+      // Admin detail rows — only present when the authenticated fetch ran
+      // AND the session's email is in ADMIN_EMAILS (/user/devices/current
+      // adds these on top of the public field set): plate, all-time
+      // first-seen stamp, and the best range ever observed.
       const privateRows: string[] = [];
       if (props.vehicle_plate) {
         privateRows.push(
@@ -696,6 +704,15 @@ export class Devices {
       if (props.first_ever_observed_at) {
         privateRows.push(
           `<dt>First seen ever</dt><dd>${escapeHtml(formatDate(props.first_ever_observed_at))}</dd>`,
+        );
+      }
+      const maxRange = asNumber(props.max_observed_range_meters);
+      if (maxRange !== null && maxRange > 0) {
+        const maxRangeAt = props.max_observed_range_at
+          ? ` <span class="device-popup__hint">${escapeHtml(formatDate(props.max_observed_range_at))}</span>`
+          : "";
+        privateRows.push(
+          `<dt>Max observed range</dt><dd>${escapeHtml(formatRange(maxRange))}${maxRangeAt}</dd>`,
         );
       }
 
@@ -1349,29 +1366,34 @@ interface PopupProps {
   // quality flags
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
+  // dwell-vs-peers context (public since the §1.4 recalibration)
+  dwell_percentile_hood?: number | string | null;
+  dwell_peer_median_hours?: number | string | null;
   // client-derived (annotated in setData)
   battery_percent?: number | string | null;
   reliability_tier?: string | null;
   reliability_reasons?: string | null;
-  // private (authed only)
+  // admin-only extras (ride along on /user/devices/current for
+  // ADMIN_EMAILS sessions)
   vehicle_plate?: string;
   first_observed_at_location?: string;
   number_failed_starts?: number | string;
   first_ever_observed_at?: string;
+  max_observed_range_meters?: number | string | null;
+  max_observed_range_at?: string | null;
 }
 
 /** Attach a canonical `reliability_tier` + human-readable
  *  `reliability_reasons` to every feature so paint expressions and popups
  *  tell the same story.
  *
- *  The local assessment mirrors the API's own reliability formula (see
- *  assessReliability), so server and client agree except for the one
- *  deliberate client-side addition: the pre-ghost caution band (clean
- *  dwell 48–96h shows "unknown" where the server still says "ok"). The
- *  merge takes the WORST of the two tiers, which applies that band and
- *  otherwise defers to whichever side has more evidence. Reasons are
- *  always computed locally. Mutates the input — call once per fresh
- *  DevicesResponse. */
+ *  The local assessment mirrors the API's own recalibrated reliability
+ *  formula (see assessReliability) — 72h ghost rule plus the peer-relative
+ *  dwell-outlier demotion — so server and client should agree. The merge
+ *  still takes the WORST of the two tiers, deferring to whichever side has
+ *  more evidence (the server may see signals we can't; a lean payload may
+ *  hide inputs from us). Reasons are always computed locally. Mutates the
+ *  input — call once per fresh DevicesResponse. */
 function annotateReliability(features: DevicesResponse["features"]): void {
   const now = Date.now();
   for (const f of features) {
@@ -1467,6 +1489,14 @@ function annotateBatteryPercent(
     const props = f.properties as DeviceProperties & {
       battery_percent?: number;
     };
+    // The API now ships a server-computed battery_percent (per-type max
+    // range it actually knows). Trust it when present; the derive-from-
+    // observed-max path below is the fallback for older payloads.
+    const server = asNumber(props.battery_percent);
+    if (server !== null) {
+      props.battery_percent = Math.max(0, Math.min(100, Math.round(server)));
+      continue;
+    }
     // Clear stale values from a prior fetch so missing devices don't
     // carry over a phantom percentage.
     delete props.battery_percent;
@@ -1970,6 +2000,21 @@ function formatDwell(iso: string): string {
   if (hours < 24) return `${hours}h ${minutes % 60}m`;
   const days = Math.floor(hours / 24);
   return `${days}d ${hours % 24}h`;
+}
+
+/** Hour count → the same "3d 4h" shape as formatDwell, for the peer-median
+ *  hint so the two dwell figures in the popup read alike. */
+function formatDwellHours(hours: number): string {
+  const minutes = Math.max(0, Math.round(hours * 60));
+  if (minutes < 60) return `${minutes}m`;
+  const wholeHours = Math.floor(minutes / 60);
+  if (wholeHours < 24) {
+    const m = minutes % 60;
+    return m ? `${wholeHours}h ${m}m` : `${wholeHours}h`;
+  }
+  const days = Math.floor(wholeHours / 24);
+  const h = wholeHours % 24;
+  return h ? `${days}d ${h}h` : `${days}d`;
 }
 
 /** Map the server's rider-posture code to a friendly word. Unknown values

@@ -82,6 +82,11 @@ export interface DeviceProperties {
   number_failed_starts?: number;
   /** When the device first appeared at its current spot (dwell start). Public. */
   first_observed_at_location?: string;
+  /** Peer-relative dwell: this device's dwell percentile among its H3
+   *  neighborhood peers (0–100; null when <5 peers), and the peers'
+   *  median dwell — the comparison baseline the reliability formula uses. */
+  dwell_percentile_hood?: number | null;
+  dwell_peer_median_hours?: number | null;
   // ----- Client-derived (not on the wire): battery_percent (0–100) computed
   // against the observed-max range for the device's propulsion type, since
   // the public endpoint doesn't expose per-type `max_range_meters`.
@@ -92,6 +97,8 @@ export interface DeviceProperties {
   // their GBFS feed), so the "Unlock in Veo" deep link is authenticated-only.
   vehicle_plate?: string;
   first_ever_observed_at?: string;
+  max_observed_range_meters?: number | null;
+  max_observed_range_at?: string | null;
 }
 
 export interface DevicesResponse {
@@ -209,10 +216,21 @@ function parseDevicesResponse(text: string): DevicesResponse {
   return JSON.parse(fixed) as DevicesResponse;
 }
 
+/** Optional payload extras (the API's lean-by-default diet): "h3" restores
+ *  the three h3_*_index fields, "ranks" the range rank/percentile fields. */
+export type DeviceInclude = "h3" | "ranks";
+
+function includeQuery(include?: readonly DeviceInclude[]): string {
+  return include && include.length ? `?include=${include.join(",")}` : "";
+}
+
 /** Every Denver device's current position via the public endpoint. */
-export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
+export function fetchDevices(
+  signal?: AbortSignal,
+  include?: readonly DeviceInclude[],
+): Promise<DevicesResponse> {
   return getJSON<DevicesResponse>(
-    "/api/v1/devices/current",
+    `/api/v1/devices/current${includeQuery(include)}`,
     signal,
     parseDevicesResponse,
   );
@@ -285,31 +303,42 @@ async function authedGetText(
  */
 export async function fetchDevicesAuto(
   signal?: AbortSignal,
+  include?: readonly DeviceInclude[],
 ): Promise<DevicesResponse> {
-  if (!isAuthenticated()) return fetchDevices(signal);
+  if (!isAuthenticated()) return fetchDevices(signal, include);
   try {
     const text = await authedGetText(
-      "/api/v1/private/devices/current",
+      // The signed-in map feed (veo-audit PR #19): any rider session gets
+      // the public field set; ADMIN_EMAILS sessions (either sign-in door)
+      // additionally get plates + first-ever/max-range. Same query params
+      // as the public endpoint. Until it deploys, the 404 falls through to
+      // the public fetch below.
+      `/api/v1/user/devices/current${includeQuery(include)}`,
       signal,
     );
     return parseDevicesResponse(text);
   } catch (e) {
     const err = e as { code?: string; name?: string; status?: number };
     if (err?.name === "AbortError") throw e;
-    // Fall back to public when the failure is "auth not usable" or "server
-    // having a moment". Everything else (403 / 404 / other 4xx, network or
-    // CORS errors which surface as TypeError with no `code`, malformed
-    // responses) gets rethrown so it doesn't silently degrade behind a
-    // working-looking public fetch.
+    // Fall back to public for ANY auth/HTTP failure from the private
+    // endpoint. This used to rethrow non-5xx statuses so misconfiguration
+    // stayed visible — but the private endpoint is admin-gated, so every
+    // rider-scope session (magic link!) got a 403 and an empty map. The
+    // public fleet is always the right degraded answer; the warn keeps
+    // misconfigurations visible in devtools. Only genuine network/CORS
+    // errors (TypeError, no `code`) still rethrow, since the public fetch
+    // would hit the same wall.
     const fallbackable =
       err?.code === "NO_AUTH" ||
       err?.code === "TOKEN_REJECTED" ||
-      (err?.code === "HTTP_ERROR" &&
-        typeof err.status === "number" &&
-        err.status >= 500 &&
-        err.status < 600);
+      err?.code === "HTTP_ERROR";
     if (!fallbackable) throw e;
-    return fetchDevices(signal);
+    if (err?.code === "HTTP_ERROR") {
+      console.warn(
+        `private devices fetch failed (HTTP ${err.status}); showing public data`,
+      );
+    }
+    return fetchDevices(signal, include);
   }
 }
 

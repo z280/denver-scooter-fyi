@@ -1,7 +1,12 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
-import { fetchDevicesAuto, type BoundaryLayer } from "./api.ts";
+import {
+  API_BASE,
+  fetchDevicesAuto,
+  type BoundaryLayer,
+  type DeviceInclude,
+} from "./api.ts";
 import { createMap } from "./map.ts";
 import {
   initialTheme,
@@ -131,6 +136,15 @@ let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let resetAllFilters: () => void = () => {};
 let resetIconography: () => void = () => {};
+// Ride mode fetches the lean payload (the API's low-end-phone diet); the
+// analysis surface needs the h3 + rank extras. Assigned by wireModes /
+// startRefreshLoop.
+let leanFetch = false;
+let requestRefresh: () => void = () => {};
+
+function fetchIncludes(): DeviceInclude[] {
+  return leanFetch ? [] : ["h3", "ranks"];
+}
 
 const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
   standing: "🛴 Standing only",
@@ -214,17 +228,19 @@ function refreshChips(): void {
 }
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
-const devicesPromise = fetchDevicesAuto().catch((e) => {
+// Analysis is the default surface, so the first fetch carries the full
+// include set (h3 for hex density, ranks for the Battery Rankings modal).
+const devicesPromise = fetchDevicesAuto(undefined, fetchIncludes()).catch((e) => {
   console.error("initial device fetch failed", e);
   return null;
 });
 void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
-wireSecretUnlock();
 wireAccount();
 wireRideHud();
 wireSunSync();
+wireFreshnessCollapse();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
@@ -1128,6 +1144,7 @@ function wireModes(): void {
    *  wizard docks as a side panel on small screens. */
   const setRideSurface = (on: boolean): void => {
     rideActive = on;
+    leanFetch = on; // riders get the lean payload; analysis gets extras
     document.body.classList.toggle("mode-ride", on);
     map.resize();
   };
@@ -1158,6 +1175,9 @@ function wireModes(): void {
     // re-entering never shows a stale list from the prior location/answers.
     recommended?.clear();
     setActive("analysis");
+    // Ride-mode ticks fetched the lean payload; refresh now so analysis
+    // tools (hex density, battery rankings) get their fields back promptly.
+    requestRefresh();
   };
 
   const enterRide = (): void => {
@@ -1324,131 +1344,92 @@ function wireDrawers(): void {
   });
 }
 
-// ---------- Secret unlock ----------
+// ---------- Freshness pill mobile collapse ----------
 
-// Reveal the Account drawer tab when the user taps the freshness pill 9 times
-// in a row. Each tap counts the same — no morse, no long/short distinction —
-// so it works reliably on touchscreens. Idle > 2.5s resets the count.
-// Right-clicking the pill (desktop) or holding it for 2s (mobile) opens a
-// live readout of the tap progress that auto-hides 2.4s after the last tap.
-function wireSecretUnlock(): void {
-  const target = document.getElementById("freshness");
-  const tab = document.querySelector<HTMLButtonElement>(
-    '.drawer-tab[data-drawer="person"]',
-  );
-  if (!target || !tab) return;
+// On narrow screens the three-line pill shrinks to just the status dot;
+// tapping expands it for a few seconds. Expansion is tap-triggered and
+// collapse is idle-triggered (never tap-toggled) so a stray second tap
+// can't flicker it shut while someone is reading.
+function wireFreshnessCollapse(): void {
+  const root = need("freshness");
+  const mq = window.matchMedia("(max-width: 640px)");
+  let expanded = false;
+  let idleTimer: number | undefined;
 
-  const TARGET_TAPS = 9;
-  const RESET_MS = 2500;
-  const POPUP_HIDE_MS = 2400;
-  const LONG_PRESS_MS = 2000;
-
-  let taps = 0;
-  let pressStart = 0;
-  let resetTimer: number | undefined;
-  let popupTimer: number | undefined;
-  let longPressTimer: number | undefined;
-  let longPressTriggered = false;
-
-  const popup = document.createElement("div");
-  popup.className = "tap-popup";
-  popup.setAttribute("role", "status");
-  popup.setAttribute("aria-live", "polite");
-  popup.hidden = true;
-  document.body.appendChild(popup);
-
-  const renderPopup = (): void => {
-    if (popup.hidden) return;
-    popup.textContent = taps ? `${taps} / ${TARGET_TAPS} taps` : "(awaiting taps)";
+  const sync = (): void => {
+    root.classList.toggle("freshness--collapsed", mq.matches && !expanded);
   };
-  const showPopup = (): void => {
-    popup.hidden = false;
-    renderPopup();
-    scheduleHide();
-  };
-  const hidePopup = (): void => {
-    popup.hidden = true;
-  };
-  const scheduleHide = (): void => {
-    window.clearTimeout(popupTimer);
-    popupTimer = window.setTimeout(hidePopup, POPUP_HIDE_MS);
+  const scheduleCollapse = (): void => {
+    window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => {
+      expanded = false;
+      sync();
+    }, 6_000);
   };
 
-  const reset = (): void => {
-    taps = 0;
-    renderPopup();
-  };
-  const scheduleReset = (): void => {
-    window.clearTimeout(resetTimer);
-    resetTimer = window.setTimeout(reset, RESET_MS);
-  };
-
-  target.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    showPopup();
+  root.addEventListener("click", () => {
+    if (!mq.matches) return;
+    expanded = true;
+    sync();
+    scheduleCollapse();
   });
-
-  target.addEventListener("pointerdown", (e) => {
-    // Only react to primary button / touch / pen.
-    if (e.button !== undefined && e.button !== 0) return;
-    pressStart = performance.now();
-    longPressTriggered = false;
-    window.clearTimeout(resetTimer);
-    window.clearTimeout(longPressTimer);
-    // Mobile-friendly alternative to right-click: holding 2s opens the popup.
-    longPressTimer = window.setTimeout(() => {
-      longPressTriggered = true;
-      showPopup();
-    }, LONG_PRESS_MS);
+  mq.addEventListener("change", () => {
+    expanded = false;
+    window.clearTimeout(idleTimer);
+    sync();
   });
-
-  target.addEventListener("pointerup", (e) => {
-    window.clearTimeout(longPressTimer);
-    if (pressStart === 0) return;
-    if (longPressTriggered) {
-      // The hold was a "show popup" gesture, not a tap — don't record it.
-      pressStart = 0;
-      longPressTriggered = false;
-      e.preventDefault();
-      return;
-    }
-    pressStart = 0;
-    taps += 1;
-    if (!popup.hidden) {
-      renderPopup();
-      scheduleHide();
-    }
-    if (taps >= TARGET_TAPS) {
-      reset();
-      hidePopup();
-      revealAccountTab();
-      tab.focus();
-    } else {
-      scheduleReset();
-    }
-    e.preventDefault();
-  });
-
-  // Cancel an in-flight press if the pointer leaves the element.
-  target.addEventListener("pointercancel", () => {
-    window.clearTimeout(longPressTimer);
-    pressStart = 0;
-    longPressTriggered = false;
-    scheduleReset();
-  });
+  sync();
 }
 
-/** Make the Account tab visible. Called either on SOS unlock or, for users
- *  who are already signed in (e.g. after the auth-callback redirect lands
- *  back here on next page load), at startup so they keep access to the
- *  drawer without re-doing the secret gesture. */
-function revealAccountTab(): void {
-  const tab = document.querySelector<HTMLButtonElement>(
-    '.drawer-tab[data-drawer="person"]',
-  );
-  if (!tab) return;
-  tab.classList.remove("is-hidden");
-  tab.removeAttribute("hidden");
+// ---------- Supporter checkout ----------
+
+/** Ask the API for a Stripe Checkout URL and open it. Two doors share
+ *  this (API_REQUIREMENTS §4.1): POST /api/v1/billing/donate (one-time
+ *  donation → sticky ⭐ supporter) and POST /api/v1/billing/checkout
+ *  (subscription + trial → ✨ premium_user while active). Feature-detected:
+ *  until an endpoint ships, its button degrades to a friendly "not live
+ *  yet" note.
+ *
+ *  Must be called directly from the click handler: the placeholder tab is
+ *  opened BEFORE the first await, while we're still in the user-gesture
+ *  call stack — window.open after `await fetch` gets popup-blocked in
+ *  Safari. The tab is then pointed at Stripe (or closed on failure); if
+ *  the browser blocked even the synchronous open, fall back to navigating
+ *  this tab (Checkout redirects back via its success/cancel URLs). */
+async function openBillingCheckout(
+  path: string,
+  btn: HTMLButtonElement,
+  note: HTMLElement,
+): Promise<void> {
+  const auth = getAuth();
+  if (!auth) return;
+  btn.disabled = true;
+  note.textContent = "Opening checkout…";
+  const popup = window.open("", "_blank");
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as { url?: string };
+    if (!data.url) throw new Error("no checkout url");
+    note.textContent = "";
+    if (popup) {
+      popup.location.href = data.url;
+    } else {
+      window.location.assign(data.url);
+    }
+  } catch {
+    popup?.close();
+    note.textContent =
+      "Checkout isn't live quite yet — the Stripe hookup is in progress.";
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---------- Account drawer ----------
@@ -1459,11 +1440,6 @@ function wireAccount(): void {
   const body = document.getElementById("account-body");
   if (!body) return;
 
-  // If the user is already signed in (most common after the auth-callback
-  // redirect lands them back on "/" with a fresh sessionStorage blob), the
-  // hidden tab gate would otherwise lock them out of their own controls.
-  if (isAuthenticated()) revealAccountTab();
-
   let countdownTimer: number | undefined;
   // Admin status is resolved once per token (identity comes from
   // /auth/session, not the token blob). Cached so the minute-tick re-render
@@ -1471,6 +1447,8 @@ function wireAccount(): void {
   let adminCheckedToken: string | null = null;
   let adminIsOn = false;
   let adminEmail: string | undefined;
+  let supporterOn = false;
+  let premiumOn = false;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -1527,6 +1505,77 @@ function wireAccount(): void {
         body.append(badge);
       }
 
+      // Two support tiers, independently held (API_REQUIREMENTS §4.1):
+      // ⭐ Supporter = one-time donation, sticky; ✨ Premium = subscription
+      // (trialing/active). Perks are personalization only — the audit
+      // itself is never paywalled.
+      if (adminCheckedToken === auth.token) {
+        if (supporterOn) {
+          const badge = el("div", "account-supporter");
+          const srow = el("div", "account-admin__row");
+          srow.append(
+            el("span", "account-admin__icon", "⭐"),
+            el("strong", undefined, "Supporter"),
+          );
+          badge.append(
+            srow,
+            el("p", "account-supporter__note", "Thanks for keeping the data flowing."),
+          );
+          body.append(badge);
+        }
+        if (premiumOn) {
+          const badge = el("div", "account-supporter account-supporter--premium");
+          const prow = el("div", "account-admin__row");
+          prow.append(
+            el("span", "account-admin__icon", "✨"),
+            el("strong", undefined, "Premium"),
+          );
+          badge.append(
+            prow,
+            el(
+              "p",
+              "account-supporter__note",
+              "Subscription active — the ✨ personalization perks are yours for keeps.",
+            ),
+          );
+          body.append(badge);
+        }
+        if (!supporterOn || !premiumOn) {
+          const up = el("div", "account-support");
+          up.append(
+            el(
+              "p",
+              "account-support__pitch",
+              "Keep the data flowing: a one-time donation makes you a ⭐ Supporter; a ✨ Premium subscription (free trial) funds the audit and owns the personalization perks — the audit itself stays free for everyone.",
+            ),
+          );
+          const supNote = el("p", "account-magic-status");
+          supNote.setAttribute("role", "status");
+          if (!supporterOn) {
+            const donateBtn = el("button", "login-btn", "⭐ Donate once");
+            donateBtn.type = "button";
+            donateBtn.addEventListener("click", () => {
+              void openBillingCheckout("/api/v1/billing/donate", donateBtn, supNote);
+            });
+            up.append(donateBtn);
+          }
+          if (!premiumOn) {
+            const premBtn = el(
+              "button",
+              "login-btn login-btn--secondary",
+              "✨ Go Premium (free trial)",
+            );
+            premBtn.type = "button";
+            premBtn.addEventListener("click", () => {
+              void openBillingCheckout("/api/v1/billing/checkout", premBtn, supNote);
+            });
+            up.append(premBtn);
+          }
+          up.append(supNote);
+          body.append(up);
+        }
+      }
+
       const signoutBtn = el(
         "button",
         "login-btn login-btn--secondary",
@@ -1554,7 +1603,9 @@ function wireAccount(): void {
         void fetchSessionInfo().then((info) => {
           adminIsOn = isAdminSession(info);
           adminEmail = info?.email;
-          if (adminIsOn) render();
+          supporterOn = info?.supporter === true;
+          premiumOn = info?.premium_user === true;
+          render();
         });
       }
 
@@ -1642,7 +1693,7 @@ function startRefreshLoop(): void {
     inFlight?.abort();
     inFlight = new AbortController();
     try {
-      const resp = await fetchDevicesAuto(inFlight.signal);
+      const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
       equity.update(resp.features);
       hexDensity.update(resp.features);
@@ -1662,6 +1713,7 @@ function startRefreshLoop(): void {
     }
   };
 
+  requestRefresh = () => void tick();
   setInterval(tick, REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {

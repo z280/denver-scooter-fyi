@@ -165,9 +165,6 @@ body {
   background: var(--accent);
   color: var(--accent-ink);
 }
-.drawer-tab.is-hidden {
-  display: none;
-}
 
 /* ---------- Drawers (slide in from behind the tab strip) ---------- */
 .drawer {
@@ -944,24 +941,6 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- Tap-progress readout popup ---------- */
-.tap-popup {
-  position: fixed;
-  bottom: 52px;
-  right: 12px;
-  z-index: 40;
-  padding: 6px 10px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: var(--shadow);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
-  letter-spacing: 0.08em;
-  color: var(--fg);
-  white-space: nowrap;
-  pointer-events: none;
-}
 .brand-link img {
   display: block;
   /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
@@ -1317,7 +1296,7 @@ body {
   border-radius: 12px;
   box-shadow: var(--shadow);
   /* Disable iOS double-tap zoom, tap highlight, and text selection so the
-     SOS gesture target feels button-like. */
+     tap-to-expand target feels button-like on mobile. */
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -2668,4 +2647,66 @@ body.mode-ride .device-popup__ranks-link {
 }
 .map-tooltip strong {
   font-size: 13px;
+}
+
+/* Wizard model cards (Exact-device-type sub-picker) stack full-width. */
+.ride-wizard__modelcard {
+  width: 100%;
+}
+.ride-wizard__typerow-label {
+  width: 100%;
+}
+
+/* ---------- Freshness pill: mobile collapse ---------- */
+/* Narrow screens shrink the pill to just the status dot; tapping (wired in
+   main.ts) expands it briefly. Desktop never collapses. */
+@media (max-width: 640px) {
+  .freshness--collapsed {
+    padding: 10px;
+    gap: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .freshness--collapsed .freshness__line {
+    display: none;
+  }
+  .freshness--collapsed .freshness__line--time {
+    display: inline-flex;
+  }
+  .freshness--collapsed #freshness-text {
+    display: none;
+  }
+}
+
+/* ---------- Supporter badge / upsell (Account drawer) ---------- */
+/* Same warn-tinted tokens as .account-admin so the badge reads correctly
+   in both themes (hardcoded light yellows go light-on-light in dark). */
+.account-supporter {
+  margin: 10px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--warn-fg);
+  background: var(--warn-soft);
+  border-radius: 10px;
+}
+/* ✨ Premium (subscription) variant: accent-tinted so the two tiers read
+   as distinct at a glance. */
+.account-supporter--premium {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.account-supporter__note {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.account-support {
+  margin: 10px 0;
+}
+.account-support .login-btn {
+  margin-bottom: 6px;
+}
+.account-support__pitch {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
 }
