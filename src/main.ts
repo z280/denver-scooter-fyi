@@ -928,7 +928,7 @@ function wireIconography(): void {
     }
   };
 
-  // Model silhouettes decode async — refresh previews once they land.
+  // Model badges decode async — refresh previews once they land.
   void whenModelIconsReady().then(renderAll);
   renderAll();
 }

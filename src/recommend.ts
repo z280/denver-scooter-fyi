@@ -36,7 +36,7 @@ export interface RecommendContext {
 export interface RankedOption {
   id: string;
   name: string;
-  /** Recognized Veo model — drives the row's silhouette glyph. */
+  /** Recognized Veo model — drives the row's badge glyph. */
   model: ModelKey | null;
   desc: string;
   lng: number;

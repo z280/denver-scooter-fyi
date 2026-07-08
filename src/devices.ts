@@ -89,8 +89,14 @@ const RANGE_LINE_LAYER = "device-range-line";
 const SRC = "devices";
 /** Base clustering radius (px) at the default ✨ Icon size; setIconScale
  *  scales it with the badges so bigger icons cluster sooner instead of
- *  piling into overlap, and smaller icons spread out more individuals. */
-const CLUSTER_RADIUS = 50;
+ *  piling into overlap, and smaller icons spread out more individuals.
+ *  Retuned 50 → 40 with the badge art: the full-color badges are worth
+ *  seeing individually, so default clustering merges less eagerly. */
+const CLUSTER_RADIUS = 40;
+/** Devices de-cluster above this zoom. Passed explicitly on every
+ *  setClusterOptions call so no MapLibre version can reset it to the
+ *  supercluster default (16) when only the radius changes. */
+const CLUSTER_MAX_ZOOM = 13;
 const CLUSTER_LAYER = "device-clusters";
 /** Overlays insert before this id so device markers stay on top. */
 export const FIRST_DEVICE_LAYER = CLUSTER_LAYER;
@@ -182,8 +188,8 @@ export class Devices {
   ) {}
 
   addLayers(): void {
-    // Kick off the model-silhouette decode; when it lands, re-annotate so
-    // Model-style markers upgrade from letter tags to the real silhouettes.
+    // Kick off the model-badge decode; when it lands, re-annotate so
+    // Model-style markers upgrade from letter tags to the real badge art.
     void loadModelIcons().then(() => this.apply());
 
     this.map.addSource(SRC, {
@@ -191,7 +197,7 @@ export class Devices {
       data: emptyFC(),
       cluster: true,
       clusterRadius: CLUSTER_RADIUS,
-      clusterMaxZoom: 13,
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
     });
 
     this.map.addLayer({
@@ -1091,6 +1097,7 @@ export class Devices {
     src?.setClusterOptions({
       cluster: true,
       clusterRadius: Math.round(CLUSTER_RADIUS * factor),
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
     });
   }
 
@@ -1223,7 +1230,7 @@ export class Devices {
       inner = `use-${rideTypeOf(p)}`;
     } else if (this.iconStyle === "model") {
       const mk = modelKeyOf(p);
-      // Silhouette badge once its SVG has decoded; letter tag until then
+      // Badge art once its image has decoded; letter tag until then
       // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
       inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
     } else if (this.iconData === "reliability") {
@@ -1546,8 +1553,9 @@ export function iconPreviewURL(
   return { url: c.toDataURL(), logicalPx: data.width / 2 };
 }
 
-/** Resolves when the model silhouettes have decoded (or failed) — callers
- *  re-render model previews after this so the SVGs replace letter tags. */
+/** Resolves when the model badges have decoded (or failed) — callers
+ *  re-render model previews after this so the badge art replaces letter
+ *  tags. */
 export function whenModelIconsReady(): Promise<void> {
   return loadModelIcons();
 }
@@ -1604,7 +1612,8 @@ function ringGeometry(
  *  thickness push the ring outward from the fixed-size badge.
  *
  *  Inner encodings: `use-standing|use-sitting` (🛴/🚲 on white),
- *  `msvg-*` (model silhouette), `model-*` (two-letter tag fallback),
+ *  `msvg-*` (model badge art; key prefix is historical), `model-*`
+ *  (two-letter tag fallback),
  *  `db-<bucket|x>` (battery disc, % text overlays via the symbol layer),
  *  `dr-<tier>` (reliability disc with ✓/?/! glyph). */
 function makeCompositeIcon(key: string): ImageData {
@@ -1704,8 +1713,8 @@ function drawInnerBadge(
     ctx.textBaseline = "middle";
     ctx.fillText(emoji, cx, cx + d * 0.03);
   } else if (inner.startsWith("msvg-")) {
-    // The SVG is pre-clipped to a circle, so it IS the badge face — white
-    // disc behind it for contrast, clip to be safe, silhouette on top.
+    // The badge PNG is pre-clipped to a circle, so it IS the badge face —
+    // white disc behind it for contrast, clip to be safe, art on top.
     fillCircle(ctx, cx, r, "#ffffff", "#374151", 2);
     const img = modelIconImages[inner.slice(5) as ModelKey];
     if (img) {
