@@ -1348,8 +1348,8 @@ function wireDrawers(): void {
 
 // On narrow screens the three-line pill shrinks to just the status dot;
 // tapping expands it for a few seconds. Expansion is tap-triggered and
-// collapse is idle-triggered (never tap-toggled) so the pill coexists with
-// the secret-unlock tap counter on the same element.
+// collapse is idle-triggered (never tap-toggled) so a stray second tap
+// can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
   const mq = window.matchMedia("(max-width: 640px)");
@@ -1385,7 +1385,14 @@ function wireFreshnessCollapse(): void {
 
 /** Ask the API for a Stripe Checkout URL and open it. Feature-detected:
  *  until POST /api/v1/billing/checkout ships (API_REQUIREMENTS §4.1), the
- *  button degrades to a friendly "not live yet" note. */
+ *  button degrades to a friendly "not live yet" note.
+ *
+ *  Must be called directly from the click handler: the placeholder tab is
+ *  opened BEFORE the first await, while we're still in the user-gesture
+ *  call stack — window.open after `await fetch` gets popup-blocked in
+ *  Safari. The tab is then pointed at Stripe (or closed on failure); if
+ *  the browser blocked even the synchronous open, fall back to navigating
+ *  this tab (Checkout redirects back via its success/cancel URLs). */
 async function openSupporterCheckout(
   btn: HTMLButtonElement,
   note: HTMLElement,
@@ -1394,6 +1401,7 @@ async function openSupporterCheckout(
   if (!auth) return;
   btn.disabled = true;
   note.textContent = "Opening checkout…";
+  const popup = window.open("", "_blank");
   try {
     const res = await fetch(`${API_BASE}/api/v1/billing/checkout`, {
       method: "POST",
@@ -1406,8 +1414,13 @@ async function openSupporterCheckout(
     const data = (await res.json()) as { url?: string };
     if (!data.url) throw new Error("no checkout url");
     note.textContent = "";
-    window.open(data.url, "_blank", "noopener");
+    if (popup) {
+      popup.location.href = data.url;
+    } else {
+      window.location.assign(data.url);
+    }
   } catch {
+    popup?.close();
     note.textContent =
       "Checkout isn't live quite yet — the Stripe hookup is in progress.";
   } finally {

@@ -2679,11 +2679,13 @@ body.mode-ride .device-popup__ranks-link {
 }
 
 /* ---------- Supporter badge / upsell (Account drawer) ---------- */
+/* Same warn-tinted tokens as .account-admin so the badge reads correctly
+   in both themes (hardcoded light yellows go light-on-light in dark). */
 .account-supporter {
   margin: 10px 0;
   padding: 9px 11px;
-  border: 1px solid #e7c757;
-  background: #fdf6df;
+  border: 1px solid var(--warn-fg);
+  background: var(--warn-soft);
   border-radius: 10px;
 }
 .account-supporter__note {

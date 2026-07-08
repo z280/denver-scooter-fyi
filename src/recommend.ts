@@ -48,11 +48,15 @@ export interface RankedOption {
   score: number;
 }
 
-// The picked factor DOMINATES: 12× each remaining factor, so (per UAT)
-// "least walking distance" really surfaces the closest rideable scooters —
-// battery/quality can only break near-ties (~100 m of walk), never bump a
-// closer likely-rideable device off the list.
-const PRIORITY_WEIGHT = 6.0;
+// The picked factor DOMINATES: 30× each remaining factor. Break-even math
+// for "least walking distance": the two non-priority factors can swing a
+// score by at most 0.65 (0.5 × quality range 1.0 + 0.5 × type-nudge range
+// 0.3), while distance moves PRIORITY_WEIGHT/MAX_WALK_M per meter — so the
+// most extra walk that battery/quality can override is 0.65 × 2500 / 15
+// ≈ 108 m, about a minute. Anything farther, the closer device wins.
+// (At the previous 6.0 that window was ~270 m — enough to rank a 3-min
+// walk below a 5-min one, the exact UAT complaint.)
+const PRIORITY_WEIGHT = 15;
 const OTHER_WEIGHT = 0.5;
 /** Distance beyond which the walk score bottoms out (and candidates are
  *  effectively out of walking range). */
