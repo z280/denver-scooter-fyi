@@ -1,4 +1,8 @@
-import maplibregl, { type Map, type GeoJSONSource } from "maplibre-gl";
+import maplibregl, {
+  type Map,
+  type GeoJSONSource,
+  type ExpressionSpecification,
+} from "maplibre-gl";
 import { isAuthenticated } from "./map-auth.js";
 import type {
   DeviceProperties,
@@ -164,6 +168,9 @@ export class Devices {
   /** Observers notified after every apply() with the current
    *  visible-feature count and the unfiltered fleet total. */
   private countListeners = new Set<(visible: number, total: number) => void>();
+  /** ✨ Icon size preference — multiplies the zoom→size ramps for the
+   *  device badges and their text overlays (1 = default). */
+  private iconScale = 1;
 
   constructor(
     private readonly map: Map,
@@ -266,17 +273,7 @@ export class Devices {
         // a canvas per unique key; apply() annotates every feature with its
         // icon_key and registers any missing images before setData.
         "icon-image": ["get", "icon_key"],
-        "icon-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          0.55,
-          14,
-          0.85,
-          17,
-          1.1,
-        ],
+        "icon-size": this.iconSizeExpr(),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         // Text overlay is empty in "Device type" mode; applyPaint() swaps
@@ -284,17 +281,7 @@ export class Devices {
         // percentage renders inside the colored badge.
         "text-field": "",
         "text-font": ["Noto Sans Medium"],
-        "text-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          7,
-          14,
-          10.5,
-          17,
-          13,
-        ],
+        "text-size": this.textSizeExpr(),
         "text-anchor": "center",
         "text-offset": [0, 0],
         "text-allow-overlap": true,
@@ -328,32 +315,12 @@ export class Devices {
       filter: HOVER_NONE,
       layout: {
         "icon-image": ["get", "icon_key_hover"],
-        "icon-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          0.55,
-          14,
-          0.85,
-          17,
-          1.1,
-        ],
+        "icon-size": this.iconSizeExpr(),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         "text-field": "",
         "text-font": ["Noto Sans Medium"],
-        "text-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          10,
-          7,
-          14,
-          10.5,
-          17,
-          13,
-        ],
+        "text-size": this.textSizeExpr(),
         "text-anchor": "center",
         "text-offset": [0, 0],
         "text-allow-overlap": true,
@@ -1102,6 +1069,40 @@ export class Devices {
   setGaugePlacement(p: GaugePlacement): void {
     this.gaugePlacement = p;
     this.apply();
+  }
+
+  /** ✨ Icon size: rescale the on-map device badges. `factor` multiplies
+   *  the zoom→size ramp (1 = default); the % text overlays scale with the
+   *  badge so they stay inside it. */
+  setIconScale(factor: number): void {
+    this.iconScale = factor;
+    for (const layer of [POINT_LAYER, HOVER_LAYER]) {
+      if (!this.map.getLayer(layer)) continue;
+      this.map.setLayoutProperty(layer, "icon-size", this.iconSizeExpr());
+      this.map.setLayoutProperty(layer, "text-size", this.textSizeExpr());
+    }
+  }
+
+  private iconSizeExpr(): ExpressionSpecification {
+    const s = this.iconScale;
+    // prettier-ignore
+    return [
+      "interpolate", ["linear"], ["zoom"],
+      10, 0.55 * s,
+      14, 0.85 * s,
+      17, 1.1 * s,
+    ];
+  }
+
+  private textSizeExpr(): ExpressionSpecification {
+    const s = this.iconScale;
+    // prettier-ignore
+    return [
+      "interpolate", ["linear"], ["zoom"],
+      10, 7 * s,
+      14, 10.5 * s,
+      17, 13 * s,
+    ];
   }
 
   private clearHover(): void {
