@@ -1383,9 +1383,12 @@ function wireFreshnessCollapse(): void {
 
 // ---------- Supporter checkout ----------
 
-/** Ask the API for a Stripe Checkout URL and open it. Feature-detected:
- *  until POST /api/v1/billing/checkout ships (API_REQUIREMENTS §4.1), the
- *  button degrades to a friendly "not live yet" note.
+/** Ask the API for a Stripe Checkout URL and open it. Two doors share
+ *  this (API_REQUIREMENTS §4.1): POST /api/v1/billing/donate (one-time
+ *  donation → sticky ⭐ supporter) and POST /api/v1/billing/checkout
+ *  (subscription + trial → ✨ premium_user while active). Feature-detected:
+ *  until an endpoint ships, its button degrades to a friendly "not live
+ *  yet" note.
  *
  *  Must be called directly from the click handler: the placeholder tab is
  *  opened BEFORE the first await, while we're still in the user-gesture
@@ -1393,7 +1396,8 @@ function wireFreshnessCollapse(): void {
  *  Safari. The tab is then pointed at Stripe (or closed on failure); if
  *  the browser blocked even the synchronous open, fall back to navigating
  *  this tab (Checkout redirects back via its success/cancel URLs). */
-async function openSupporterCheckout(
+async function openBillingCheckout(
+  path: string,
   btn: HTMLButtonElement,
   note: HTMLElement,
 ): Promise<void> {
@@ -1403,7 +1407,7 @@ async function openSupporterCheckout(
   note.textContent = "Opening checkout…";
   const popup = window.open("", "_blank");
   try {
-    const res = await fetch(`${API_BASE}/api/v1/billing/checkout`, {
+    const res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${auth.token}`,
@@ -1444,6 +1448,7 @@ function wireAccount(): void {
   let adminIsOn = false;
   let adminEmail: string | undefined;
   let supporterOn = false;
+  let premiumOn = false;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -1500,8 +1505,10 @@ function wireAccount(): void {
         body.append(badge);
       }
 
-      // Supporter status (⭐) or the become-a-supporter pitch. Perks are
-      // personalization only — the audit itself is never paywalled.
+      // Two support tiers, independently held (API_REQUIREMENTS §4.1):
+      // ⭐ Supporter = one-time donation, sticky; ✨ Premium = subscription
+      // (trialing/active). Perks are personalization only — the audit
+      // itself is never paywalled.
       if (adminCheckedToken === auth.token) {
         if (supporterOn) {
           const badge = el("div", "account-supporter");
@@ -1515,23 +1522,56 @@ function wireAccount(): void {
             el("p", "account-supporter__note", "Thanks for keeping the data flowing."),
           );
           body.append(badge);
-        } else {
+        }
+        if (premiumOn) {
+          const badge = el("div", "account-supporter account-supporter--premium");
+          const prow = el("div", "account-admin__row");
+          prow.append(
+            el("span", "account-admin__icon", "✨"),
+            el("strong", undefined, "Premium"),
+          );
+          badge.append(
+            prow,
+            el(
+              "p",
+              "account-supporter__note",
+              "Subscription active — the ✨ personalization perks are yours for keeps.",
+            ),
+          );
+          body.append(badge);
+        }
+        if (!supporterOn || !premiumOn) {
           const up = el("div", "account-support");
           up.append(
             el(
               "p",
               "account-support__pitch",
-              "Support the audit → keep the data flowing. Perks are personal (ride history, favorites, themes) — the audit itself stays free.",
+              "Keep the data flowing: a one-time donation makes you a ⭐ Supporter; a ✨ Premium subscription (free trial) funds the audit and owns the personalization perks — the audit itself stays free for everyone.",
             ),
           );
-          const supBtn = el("button", "login-btn", "⭐ Become a supporter");
-          supBtn.type = "button";
           const supNote = el("p", "account-magic-status");
           supNote.setAttribute("role", "status");
-          supBtn.addEventListener("click", () => {
-            void openSupporterCheckout(supBtn, supNote);
-          });
-          up.append(supBtn, supNote);
+          if (!supporterOn) {
+            const donateBtn = el("button", "login-btn", "⭐ Donate once");
+            donateBtn.type = "button";
+            donateBtn.addEventListener("click", () => {
+              void openBillingCheckout("/api/v1/billing/donate", donateBtn, supNote);
+            });
+            up.append(donateBtn);
+          }
+          if (!premiumOn) {
+            const premBtn = el(
+              "button",
+              "login-btn login-btn--secondary",
+              "✨ Go Premium (free trial)",
+            );
+            premBtn.type = "button";
+            premBtn.addEventListener("click", () => {
+              void openBillingCheckout("/api/v1/billing/checkout", premBtn, supNote);
+            });
+            up.append(premBtn);
+          }
+          up.append(supNote);
           body.append(up);
         }
       }
@@ -1564,6 +1604,7 @@ function wireAccount(): void {
           adminIsOn = isAdminSession(info);
           adminEmail = info?.email;
           supporterOn = info?.supporter === true;
+          premiumOn = info?.premium_user === true;
           render();
         });
       }

@@ -2688,6 +2688,12 @@ body.mode-ride .device-popup__ranks-link {
   background: var(--warn-soft);
   border-radius: 10px;
 }
+/* ✨ Premium (subscription) variant: accent-tinted so the two tiers read
+   as distinct at a glance. */
+.account-supporter--premium {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .account-supporter__note {
   margin: 3px 0 0;
   font-size: 12px;
@@ -2695,6 +2701,9 @@ body.mode-ride .device-popup__ranks-link {
 }
 .account-support {
   margin: 10px 0;
+}
+.account-support .login-btn {
+  margin-bottom: 6px;
 }
 .account-support__pitch {
   margin: 0 0 8px;

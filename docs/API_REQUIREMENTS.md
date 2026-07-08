@@ -304,27 +304,44 @@ attribution, and supporter features.
 
 ## 4. Supporter tier (unblocks frontend Phase 5)
 
-### 4.1 Stripe (UPDATED 2026-07-07: subscription + trial)
+### 4.1 Stripe (UPDATED 2026-07-08: two tiers — donate + subscribe)
 
-Stripe is configured dashboard-side as a **subscription product with a
-trial** (supersedes the original pay-what-you-want Payment Link sketch).
+Two independent, stackable tiers (supersedes the single-supporter
+subscription sketch):
 
-- `POST /api/v1/billing/checkout` (auth: any signed-in session) → `{ url }`.
-  Create a Stripe Checkout Session: `mode=subscription`, the supporter
-  price (trial comes from the price's settings), `client_reference_id` =
-  account id, success/cancel URLs back to `https://denver.scooter.fyi/`.
-  **The frontend Account drawer already calls this** (⭐ Become a
-  supporter) and degrades to a friendly "not live yet" note until it
-  ships.
-- `POST /webhooks/stripe` — verify the signature. `supporter: true` while
-  the subscription status is `trialing` or `active`
-  (`checkout.session.completed`, `customer.subscription.updated`);
-  `false` when it reaches `canceled`/`unpaid` at period end. Store the
-  Stripe customer + subscription ids on the account.
-- `GET /api/v1/auth/session` keeps exposing `supporter` (the frontend
-  already renders the ⭐ badge from it).
-- Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`;
-  register the webhook endpoint in the Stripe dashboard.
+- **⭐ `supporter`** — a one-time donation. Sticky: once earned, never
+  revoked.
+- **✨ `premium_user`** — a subscription with a trial. True while the
+  subscription is `trialing`/`active`; lapses back to false.
+
+Endpoints (auth: any signed-in session; both → `{ url }`):
+
+- `POST /api/v1/billing/donate` — Checkout Session `mode=payment` against
+  a one-time price (dashboard: enable "customer chooses amount" for
+  pay-what-you-want), `client_reference_id` = account id, success/cancel
+  URLs back to `https://denver.scooter.fyi/`.
+- `POST /api/v1/billing/checkout` — Checkout Session `mode=subscription`
+  against the premium price (trial comes from the price's settings), same
+  reference + return URLs.
+- **The frontend Account drawer already calls both** ("⭐ Donate once" /
+  "✨ Go Premium (free trial)") and degrades each to a friendly "not live
+  yet" note until it ships.
+
+Webhook `POST /webhooks/stripe` — verify the signature:
+
+- `checkout.session.completed` with `mode=payment` → `supporter: true`
+  (permanent). Store the payment intent id.
+- `checkout.session.completed` / `customer.subscription.updated` with a
+  subscription in `trialing`/`active` → `premium_user: true`; `false`
+  when it reaches `canceled`/`unpaid` at period end. Store the Stripe
+  customer + subscription ids on the account.
+
+`GET /api/v1/auth/session` exposes **both** `supporter` and
+`premium_user` (the frontend renders ⭐/✨ badges from them).
+
+- Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`
+  (premium subscription price) and `STRIPE_DONATION_PRICE_ID` (one-time
+  price); register the webhook endpoint in the Stripe dashboard.
 - No customer portal in v1 (add `POST /api/v1/billing/portal` later for
   self-serve cancel).
 
