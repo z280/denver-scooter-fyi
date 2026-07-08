@@ -82,6 +82,11 @@ export interface DeviceProperties {
   number_failed_starts?: number;
   /** When the device first appeared at its current spot (dwell start). Public. */
   first_observed_at_location?: string;
+  /** Peer-relative dwell: this device's dwell percentile among its H3
+   *  neighborhood peers (0–100; null when <5 peers), and the peers'
+   *  median dwell — the comparison baseline the reliability formula uses. */
+  dwell_percentile_hood?: number | null;
+  dwell_peer_median_hours?: number | null;
   // ----- Client-derived (not on the wire): battery_percent (0–100) computed
   // against the observed-max range for the device's propulsion type, since
   // the public endpoint doesn't expose per-type `max_range_meters`.
@@ -92,6 +97,8 @@ export interface DeviceProperties {
   // their GBFS feed), so the "Unlock in Veo" deep link is authenticated-only.
   vehicle_plate?: string;
   first_ever_observed_at?: string;
+  max_observed_range_meters?: number | null;
+  max_observed_range_at?: string | null;
 }
 
 export interface DevicesResponse {
@@ -301,7 +308,12 @@ export async function fetchDevicesAuto(
   if (!isAuthenticated()) return fetchDevices(signal, include);
   try {
     const text = await authedGetText(
-      `/api/v1/private/devices/current${includeQuery(include)}`,
+      // The signed-in map feed (veo-audit PR #19): any rider session gets
+      // the public field set; ADMIN_EMAILS sessions (either sign-in door)
+      // additionally get plates + first-ever/max-range. Same query params
+      // as the public endpoint. Until it deploys, the 404 falls through to
+      // the public fetch below.
+      `/api/v1/user/devices/current${includeQuery(include)}`,
       signal,
     );
     return parseDevicesResponse(text);
