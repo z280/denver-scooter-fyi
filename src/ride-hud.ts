@@ -11,7 +11,14 @@
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { FIRST_DEVICE_LAYER, ALL_MODELS, type ModelKey } from "./devices.ts";
+
+/** The slice of the device layer the HUD drives: ride-scoped tap behavior
+ *  and on-map visibility filtering. */
+export interface RideDeviceControl {
+  setRideActive(on: boolean): void;
+  setRideModelFilter(models: ReadonlySet<ModelKey> | null): void;
+}
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
@@ -78,6 +85,10 @@ export class RideHud {
   private needleEl: SVGElement | null = null;
   /** Map camera state captured on ride start, restored on exit. */
   private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
+  /** Which models the follow-cam shows (HUD "Show" pills). Reset to all at
+   *  the start of each ride; all-selected means no filter (also shows
+   *  unrecognized hardware), an empty selection shows none. */
+  private rideModels = new Set<ModelKey>(ALL_MODELS);
 
   constructor(
     container: HTMLElement,
@@ -86,6 +97,8 @@ export class RideHud {
     /** The main map — the HUD frames it and drives a follow-cam during a
      *  ride, so the rider sees themselves move instead of a blank panel. */
     private readonly map: MLMap,
+    /** Device layer control: ride-scoped tap behavior + visibility filter. */
+    private readonly deviceCtl: RideDeviceControl,
   ) {
     this.root = container;
     this.root.addEventListener("click", (e) => this.onClick(e));
@@ -119,8 +132,13 @@ export class RideHud {
     // Only the riding state is a transparent frame over the live map; the
     // others are solid cards. `ride-active` on <body> hides the app chrome
     // (drawers, mode pill, chips, map controls) for every non-hidden state.
-    this.root.classList.toggle("is-riding", state === "riding");
+    const riding = state === "riding";
+    this.root.classList.toggle("is-riding", riding);
     document.body.classList.toggle("ride-active", state !== "hidden");
+    // Long-press-to-open device taps only while the follow-cam is live; drop
+    // the ride-scoped visibility filter whenever we leave it.
+    this.deviceCtl.setRideActive(riding);
+    if (!riding) this.deviceCtl.setRideModelFilter(null);
     if (state === "armed") this.renderArmed();
   }
 
@@ -213,12 +231,42 @@ export class RideHud {
       case "end":
         void this.endRide();
         break;
+      case "dev": {
+        const model = btn.dataset.model as ModelKey;
+        if (this.rideModels.has(model)) this.rideModels.delete(model);
+        else this.rideModels.add(model);
+        const on = this.rideModels.has(model);
+        btn.classList.toggle("is-on", on);
+        btn.setAttribute("aria-pressed", String(on));
+        this.applyRideModels();
+        break;
+      }
       case "done":
         this.exitImmersive();
         this.restoreTheme();
         this.setState("hidden");
         break;
     }
+  }
+
+  /** Chips for the adjust panel's "Show" row, reflecting the current
+   *  selection. Deselecting all hides every device from the follow-cam. */
+  private deviceChipsMarkup(): string {
+    return (["astro", "cosmo", "apollo"] as ModelKey[])
+      .map((m) => {
+        const on = this.rideModels.has(m);
+        const label = m[0].toUpperCase() + m.slice(1);
+        return `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="dev" data-model="${m}" aria-pressed="${on}">${label}</button>`;
+      })
+      .join("");
+  }
+
+  /** Push the current model selection to the map. All selected → no filter
+   *  (also shows unrecognized hardware); a partial set restricts to those
+   *  models; none selected → an empty set hides every device. */
+  private applyRideModels(): void {
+    const all = this.rideModels.size === ALL_MODELS.length;
+    this.deviceCtl.setRideModelFilter(all ? null : new Set(this.rideModels));
   }
 
   /** Undo any ride-scoped ☀/☾ flips: re-resolve the theme from its durable
@@ -324,6 +372,7 @@ export class RideHud {
     this.startPos = null;
     this.startedInZone = false;
     this.lastBearing = 0;
+    this.rideModels = new Set(ALL_MODELS); // every ride starts showing all
     this.setState("riding");
     this.renderRiding();
     this.enterFollowCam();
@@ -463,6 +512,10 @@ export class RideHud {
             <span>Rate</span>
             <select id="hud-rate-live" class="select">${rateOptions}</select>
           </label>
+          <div class="hud-adjust-row hud-devrow">
+            <span class="hud-devrow__label">Show</span>
+            ${this.deviceChipsMarkup()}
+          </div>
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
             <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>

@@ -1685,11 +1685,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
-  color: #10151c;
   font-variant-numeric: tabular-nums;
 }
-:root[data-theme="dark"] .ride-hud {
+/* The solid card states (armed / countdown / summary) paint the full sheet;
+   the riding state must stay transparent so the follow-cam shows through.
+   Scoping the fill to :not(.is-riding) keeps the dark rule from out-
+   specifying `.ride-hud.is-riding { background: transparent }` and blacking
+   out the whole map in dark mode. */
+.ride-hud:not(.is-riding) {
+  background: #ffffff;
+  color: #10151c;
+}
+:root[data-theme="dark"] .ride-hud:not(.is-riding) {
   background: #000000;
   color: #7dffa0;
 }
@@ -1891,6 +1898,34 @@ body {
 }
 .hud-adjust-row { display: flex; gap: 6px; }
 .hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
+
+/* "Show" device-visibility pills in the adjust panel: filter which scooters
+   the follow-cam draws (deselect all → none). */
+.hud-devrow { align-items: center; flex-wrap: wrap; }
+.hud-devrow__label {
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.hud-chip {
+  appearance: none;
+  border: 2px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 1 1 0;
+  opacity: 0.5;
+}
+.hud-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 1;
+}
 
 /* Analog speedometer, bottom-right. */
 .speedo {
@@ -2510,8 +2545,72 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 .icono-item img {
   flex: none; /* sized via width/height attrs to mirror map scale */
 }
+/* Every preview icon (detail rows + legend) enlarges on tap. */
+.icono-preview {
+  cursor: zoom-in;
+}
+/* Comic/Letter switch sits tight under the "Device Models" title. */
+.icono-modelicon {
+  margin: 2px 0 4px;
+}
 .icono-sublabel {
   margin-top: 14px;
+}
+
+/* Enlarged-icon lightbox: tap a preview to inspect it big; dismiss on ✕,
+   any tap, or Escape. */
+.icon-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(9, 12, 17, 0.62);
+  backdrop-filter: blur(3px);
+}
+.icon-lightbox__box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 22px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.icon-lightbox__img {
+  width: clamp(160px, 58vw, 240px);
+  height: auto;
+  image-rendering: auto;
+}
+.icon-lightbox__cap {
+  max-width: 240px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.icon-lightbox__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  appearance: none;
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.icon-lightbox__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 #gauge-body .segmented {
   margin-bottom: 2px;

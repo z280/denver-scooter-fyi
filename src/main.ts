@@ -27,6 +27,7 @@ import {
   type ModelKey,
   type QualityFilter,
   type IconStyle,
+  type ModelIcon,
   type DataSource,
   type GaugeDisplay,
   type GaugeThickness,
@@ -272,7 +273,7 @@ function equityZones(): Promise<IndexedFeature[]> {
 }
 
 function wireRideHud(): void {
-  const hud = new RideHud(need("ride-hud"), equityZones, map);
+  const hud = new RideHud(need("ride-hud"), equityZones, map, devices);
   need("ride-open").addEventListener("click", () => hud.open());
 }
 
@@ -644,6 +645,46 @@ function wireBatterySlider(): void {
 // Icon style (ride type / model / data), independent icon-data and
 // gauge-data sources, the gauge toggle (default on), contextual example
 // rows rendered with the real icon renderer, and the on-map legend.
+/** Enlarge a preview icon in a dismissible overlay. Closes on the ✕, on any
+ *  tap (an "additional tap"), or Escape. */
+function openIconLightbox(url: string, label: string): void {
+  document.querySelector(".icon-lightbox")?.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "icon-lightbox";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", `${label} — enlarged icon`);
+
+  const box = document.createElement("div");
+  box.className = "icon-lightbox__box";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "icon-lightbox__close";
+  close.setAttribute("aria-label", "Close");
+  close.textContent = "×";
+  const big = document.createElement("img");
+  big.className = "icon-lightbox__img";
+  big.src = url;
+  big.alt = label;
+  const cap = document.createElement("div");
+  cap.className = "icon-lightbox__cap";
+  cap.textContent = label;
+  box.append(close, big, cap);
+  overlay.append(box);
+
+  const dismiss = (): void => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") dismiss();
+  };
+  // The overlay covers the whole screen, so a tap anywhere (including on the
+  // enlarged icon) dismisses it — alongside the explicit ✕.
+  overlay.addEventListener("click", dismiss);
+  document.addEventListener("keydown", onKey);
+  document.body.append(overlay);
+}
+
 function wireIconography(): void {
   const styleDetail = need("icono-style-detail");
   const gaugeBody = need("gauge-body");
@@ -655,10 +696,11 @@ function wireIconography(): void {
 
   // Local mirrors of the devices-side iconography state, for rendering.
   let style: IconStyle = "use";
+  let modelIcon: ModelIcon = "comic";
   let iconData: DataSource = "reliability";
   let gaugeData: DataSource = "battery";
   let thickness: GaugeThickness = "standard";
-  let placement: GaugePlacement = "surrounding";
+  let placement: GaugePlacement = "gap";
   const THICK_CHAR: Record<GaugeThickness, string> = {
     thin: "T",
     standard: "S",
@@ -690,7 +732,7 @@ function wireIconography(): void {
     title: string,
     overlay?: { text: string; color: string },
   ): HTMLImageElement => {
-    const img = el("img");
+    const img = el("img", "icono-preview");
     const preview = iconPreviewURL(key, overlay);
     img.src = preview.url;
     // Canvases vary by design (rings grow outward from a fixed badge), so
@@ -699,7 +741,9 @@ function wireIconography(): void {
     img.width = size;
     img.height = size;
     img.alt = title;
-    img.title = title;
+    img.title = `${title} — tap to enlarge`;
+    // Tap any preview to inspect it at a legible size (item: enlarge-on-tap).
+    img.addEventListener("click", () => openIconLightbox(preview.url, title));
     return img;
   };
   const item = (
@@ -712,6 +756,32 @@ function wireIconography(): void {
     return row;
   };
 
+  // Comic-vs-letter switch for the Model style, rebuilt with the detail rows.
+  const modelIconToggle = (): HTMLElement => {
+    const seg = el("div", "segmented icono-modelicon");
+    seg.setAttribute("role", "radiogroup");
+    seg.setAttribute("aria-label", "Model icon style");
+    for (const [val, label] of [
+      ["comic", "Comic"],
+      ["letter", "Letter"],
+    ] as const) {
+      const b = el("button", "seg-btn", label);
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      const on = modelIcon === val;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", String(on));
+      b.addEventListener("click", () => {
+        if (modelIcon === val) return;
+        modelIcon = val;
+        devices.setModelIcon(modelIcon);
+        renderAll();
+      });
+      seg.append(b);
+    }
+    return seg;
+  };
+
   // Only details pertinent to the selected icon style.
   const renderStyleDetail = (): void => {
     styleDetail.replaceChildren();
@@ -722,11 +792,13 @@ function wireIconography(): void {
         item(k("use-standing", "off"), "Standing"),
       );
     } else if (style === "model") {
+      const c = modelIcon === "comic";
       styleDetail.append(
         el("p", "icono-detail__title", "Device Models"),
-        item(k("msvg-astro", "off"), "Veo Astro — Standing scooter"),
-        item(k("msvg-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
-        item(k("msvg-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
+        modelIconToggle(),
+        item(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — Standing scooter"),
+        item(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
+        item(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
       );
     } else {
       styleDetail.append(
@@ -795,11 +867,12 @@ function wireIconography(): void {
         icon(k("use-standing", "off"), "Standing scooter (Astro)"),
       );
     } else if (style === "model") {
+      const c = modelIcon === "comic";
       legendEl.append(
-        icon(k("msvg-astro", "off"), "Veo Astro — standing scooter"),
-        icon(k("msvg-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
-        icon(k("msvg-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
-        icon(k("model-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
+        icon(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — standing scooter"),
+        icon(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
+        icon(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon(k(c ? "model-unk" : "ml-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
       );
     } else if (iconData === "battery") {
       legendEl.append(
@@ -852,12 +925,18 @@ function wireIconography(): void {
       renderAll();
     },
   );
+  const opposite = (s: DataSource): DataSource =>
+    s === "battery" ? "reliability" : "battery";
   const setIconSrc = wireSeg(
     "#icon-data-seg",
     (b) => b.dataset.source ?? "reliability",
     (v) => {
       iconData = v as DataSource;
       devices.setIconData(iconData);
+      // Keep the icon and ring showing different signals: flip the gauge to
+      // the opposite source (icon reliability → battery ring, and vice
+      // versa) whenever the gauge is on.
+      if (gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
   );
@@ -868,9 +947,9 @@ function wireIconography(): void {
       style = v as IconStyle;
       devices.setIconStyle(style);
       iconDataSection.hidden = style !== "data";
-      // Per design: choosing Data icons corrects the gauge back to battery
-      // so the badge (reliability by default) and ring stay complementary.
-      if (style === "data") setGaugeSrc("battery");
+      // Entering Data icons: point the gauge at whatever the badge isn't
+      // showing, so the two stay complementary.
+      if (style === "data" && gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
   );
@@ -900,6 +979,8 @@ function wireIconography(): void {
   );
   gauge.addEventListener("change", () => {
     devices.setGauge(gauge.checked);
+    // Turning the ring on in Data mode: default it to the badge's opposite.
+    if (gauge.checked && style === "data") setGaugeSrc(opposite(iconData));
     renderAll();
   });
   // ✨ Icon size: scales the on-map badges (and their % text overlays).
@@ -924,12 +1005,16 @@ function wireIconography(): void {
   });
 
   resetIconography = () => {
+    if (modelIcon !== "comic") {
+      modelIcon = "comic";
+      devices.setModelIcon("comic");
+    }
     setStyle("use");
     setIconSrc("reliability");
     setGaugeSrc("battery");
     setDisplay("always");
     setThickness("standard");
-    setPlacement("surrounding");
+    setPlacement("gap");
     if (iconSize.value !== "100") {
       iconSize.value = "100";
       applyIconSize();
