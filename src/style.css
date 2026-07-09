@@ -885,6 +885,20 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+/* Step-2 code entry: same column layout, set off from the email form. */
+.account-code {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.account-code input {
+  letter-spacing: 0.28em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 .account-magic-status {
   margin: 2px 0 0;
   font-size: 12.5px;

@@ -18,7 +18,7 @@
 // provided (VITE_GOOGLE_CLIENT_ID → config.GOOGLE_OAUTH_CLIENT_ID).
 
 import { API_BASE } from "./api.ts";
-import { GOOGLE_OAUTH_CLIENT_ID } from "./config.ts";
+import { GOOGLE_AUTH_ENABLED, GOOGLE_OAUTH_CLIENT_ID } from "./config.ts";
 import { isSession, persistSession } from "./auth-session.ts";
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
@@ -50,9 +50,12 @@ let scriptPromise: Promise<GsiIdApi> | null = null;
 let initialized = false;
 let handlers: GoogleAuthHandlers | null = null;
 
-/** Whether Google sign-in can be offered (a client id is configured). */
+/** Whether Google sign-in can be offered: enabled by the master switch AND a
+ *  client id is configured. Both One Tap and the drawer button gate on this,
+ *  so flipping GOOGLE_AUTH_ENABLED off retires the whole Google door (no
+ *  script loads) without touching this module. */
 export function isGoogleConfigured(): boolean {
-  return GOOGLE_OAUTH_CLIENT_ID.length > 0;
+  return GOOGLE_AUTH_ENABLED && GOOGLE_OAUTH_CLIENT_ID.length > 0;
 }
 
 /** Load the GIS client script once and resolve its id API. */

@@ -224,19 +224,35 @@ attribution, and supporter features.
   gates today (plates history, failed-start details, future admin
   endpoints).
 
-### 2.3 Magic-link sign-in (Postmark)
+### 2.3 Email sign-in — magic link + verification code (Postmark)
+
+One "email me" request, two ways to finish (link or code). The frontend
+offers both from the Account drawer; the emailed message carries both.
 
 - `POST /api/v1/auth/magic-link` with `{ email }` → always returns 202
   (no account-existence oracle). Issues a single-use token, 15-minute TTL,
-  stored hashed; sends via the existing Postmark transactional account
-  with a link like `https://denver.scooter.fyi/auth?ml=<token>`.
+  stored hashed, **plus a paired 6-digit verification code** (same
+  identity/TTL/single-use, also stored hashed); sends via the existing
+  Postmark transactional account. The email contains **both** a link like
+  `https://denver.scooter.fyi/auth?ml=<token>` **and** the 6-digit code, so
+  the recipient can tap the link or type the code.
 - `POST /api/v1/auth/redeem` with `{ token }` → verifies single-use +
-  TTL, upserts account by email, mints a session, burns the token.
-- **Magic-link sessions never carry the `admin` scope**, even for
-  allowlisted emails — admin requires the Google door. One trust decision,
-  enforced server-side.
-- Rate limits: 3 links/hour per email, 10/hour per IP. Postmark send
+  TTL, upserts account by email, mints a session, burns the token (and its
+  paired code).
+- `POST /api/v1/auth/verify-code` with `{ email, code }` → verifies the
+  code against that email (single-use + TTL), upserts account by email,
+  mints a session, burns the code (and its paired link token). Wrong/expired
+  code → 401. Throttle guesses (e.g. lock after 5 wrong tries per code).
+- **Email-sign-in sessions never carry the `admin` scope** (neither the link
+  nor the code path), even for allowlisted emails — admin requires the
+  Google door. One trust decision, enforced server-side.
+- Rate limits: 3 sends/hour per email, 10/hour per IP. Postmark send
   failures surface as 502 with a friendly detail.
+
+> **Frontend status:** Google sign-in is disabled for now
+> (`GOOGLE_AUTH_ENABLED = false` in `src/config.ts`); email sign-in (magic
+> link + verification code) is the only offered path. Flip that flag back on
+> to restore the Google door.
 
 ### 2.4 Profile
 

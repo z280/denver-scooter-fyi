@@ -69,10 +69,17 @@ export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEn
   [...OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
+/** Master switch for the Google sign-in door. Off for now — email sign-in
+ *  (magic link + verification code) is the only offered path. Flip back to
+ *  `true` to restore Google One Tap and the "Continue with Google" button;
+ *  a configured VITE_GOOGLE_CLIENT_ID is still required on top of this. */
+export const GOOGLE_AUTH_ENABLED = false;
+
 /** Google OAuth Web client id for Sign in with Google (see auth-google.ts).
  *  Empty until you create one in Google Cloud Console and set
  *  VITE_GOOGLE_CLIENT_ID — the Google door stays hidden and loads no
- *  third-party script while this is blank. */
+ *  third-party script while this is blank (or while GOOGLE_AUTH_ENABLED is
+ *  false). */
 export const GOOGLE_OAUTH_CLIENT_ID: string =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 

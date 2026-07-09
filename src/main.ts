@@ -52,7 +52,9 @@ import { HexDensity, type HexSize } from "./hexdensity.ts";
 import {
   consumePendingMagicLink,
   requestMagicLink,
+  verifyEmailCode,
   isProbablyEmail,
+  isProbablyCode,
 } from "./auth-magic-link.ts";
 import {
   renderGoogleButton,
@@ -1730,46 +1732,94 @@ function wireAccount(): void {
         body.append(el("div", "account-or", "or"));
       }
 
-      // Magic link — always available (Postmark). Emails a one-time sign-in
-      // link; consumePendingMagicLink() redeems it when the user returns.
-      const form = el("form", "account-magic");
-      const input = el("input", "select");
-      input.type = "email";
-      input.required = true;
-      input.placeholder = "you@email.com";
-      input.autocomplete = "email";
-      input.setAttribute("aria-label", "Email address");
-      const submit = el("button", "login-btn", "Email me a sign-in link");
-      submit.type = "submit";
-      const status = el("p", "account-magic-status");
-      status.setAttribute("role", "status");
-      status.setAttribute("aria-live", "polite");
-      form.append(input, submit, status);
-      form.addEventListener("submit", (e) => {
+      // Email sign-in (Postmark) — the only door for now. One request emails
+      // BOTH a one-time link and a 6-digit code; the user can tap the link
+      // (consumePendingMagicLink() redeems it on return) or type the code
+      // here. Two sibling forms: email → code.
+      const emailForm = el("form", "account-magic");
+      const emailInput = el("input", "select");
+      emailInput.type = "email";
+      emailInput.required = true;
+      emailInput.placeholder = "you@email.com";
+      emailInput.autocomplete = "email";
+      emailInput.setAttribute("aria-label", "Email address");
+      const emailSubmit = el("button", "login-btn", "Email me a sign-in link & code");
+      emailSubmit.type = "submit";
+      const emailStatus = el("p", "account-magic-status");
+      emailStatus.setAttribute("role", "status");
+      emailStatus.setAttribute("aria-live", "polite");
+      emailForm.append(emailInput, emailSubmit, emailStatus);
+
+      // Step 2: enter the emailed verification code. Hidden until an email is
+      // sent; the link path never needs it.
+      const codeForm = el("form", "account-code");
+      codeForm.hidden = true;
+      const codeHint = el(
+        "p",
+        "account-magic-status",
+        "📧 Check your inbox — tap the sign-in link, or enter the 6-digit code (valid 15 minutes):",
+      );
+      const codeInput = el("input", "select");
+      codeInput.type = "text";
+      codeInput.inputMode = "numeric";
+      codeInput.autocomplete = "one-time-code";
+      codeInput.maxLength = 6;
+      codeInput.pattern = "\\d{6}";
+      codeInput.placeholder = "123456";
+      codeInput.setAttribute("aria-label", "6-digit verification code");
+      const codeSubmit = el("button", "login-btn", "Verify code");
+      codeSubmit.type = "submit";
+      const codeStatus = el("p", "account-magic-status");
+      codeStatus.setAttribute("role", "status");
+      codeStatus.setAttribute("aria-live", "polite");
+      codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
+
+      let sentEmail = "";
+      emailForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        const email = input.value.trim();
+        const email = emailInput.value.trim();
         if (!isProbablyEmail(email)) {
-          status.textContent = "Enter a valid email address.";
+          emailStatus.textContent = "Enter a valid email address.";
           return;
         }
-        submit.disabled = true;
-        status.textContent = "Sending…";
+        emailSubmit.disabled = true;
+        emailStatus.textContent = "Sending…";
         requestMagicLink(email)
           .then(() => {
-            form.replaceChildren(
-              el(
-                "p",
-                "account-magic-status",
-                "📧 Check your inbox for a sign-in link (valid 15 minutes).",
-              ),
-            );
+            sentEmail = email;
+            emailSubmit.disabled = false;
+            emailSubmit.textContent = "Resend email";
+            emailStatus.textContent = "";
+            codeForm.hidden = false;
+            codeInput.focus();
           })
           .catch(() => {
-            submit.disabled = false;
-            status.textContent = "Couldn't send right now — please try again.";
+            emailSubmit.disabled = false;
+            emailStatus.textContent =
+              "Couldn't send right now — please try again.";
           });
       });
-      body.append(form);
+
+      codeForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const code = codeInput.value.trim();
+        if (!isProbablyCode(code)) {
+          codeStatus.textContent = "Enter the 6-digit code from your email.";
+          return;
+        }
+        codeSubmit.disabled = true;
+        codeStatus.textContent = "Verifying…";
+        // Success persists the session; reload so every fetch is authed.
+        verifyEmailCode(sentEmail, code)
+          .then(() => location.reload())
+          .catch(() => {
+            codeSubmit.disabled = false;
+            codeStatus.textContent =
+              "That code didn't work — check it or resend.";
+          });
+      });
+
+      body.append(emailForm, codeForm);
     }
   };
 
