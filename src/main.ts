@@ -1149,6 +1149,15 @@ function wireModes(): void {
     map.resize();
   };
 
+  // The map only reserves the right strip while the wizard is actually
+  // docked (mobile). Once the interview hands off to the ranked list the
+  // wizard hides, so drop the reservation and resize — otherwise the map
+  // stays shrunk and leaves an empty white bar where the panel used to be.
+  const setWizardDocked = (on: boolean): void => {
+    document.body.classList.toggle("wizard-open", on);
+    map.resize();
+  };
+
   const wizard = new RideWizard(need("ride-wizard"), locate, {
     onConsentGranted: () => applyPreset(applyRide),
     onExit: () => exitRide(),
@@ -1161,6 +1170,7 @@ function wireModes(): void {
     // Interview finished: the Recommended Devices drawer takes over as the
     // home of the ranked list (and keeps re-ranking with the filters).
     onInterviewDone: (priority, typeChoice, from) => {
+      setWizardDocked(false);
       recommended?.setContext({ from, priority, typeChoice });
       setDrawer("recommended");
     },
@@ -1169,6 +1179,7 @@ function wireModes(): void {
   const exitRide = (): void => {
     if (!rideActive) return;
     if (wizard.isOpen()) wizard.close();
+    setWizardDocked(false);
     setRideSurface(false);
     applyPreset(applyNormal);
     // Recommendations are scoped to one Find-a-ride session: drop them so
@@ -1185,6 +1196,7 @@ function wireModes(): void {
     setRideSurface(true);
     setActive("ride");
     wizard.start();
+    setWizardDocked(true);
   };
 
   for (const btn of btns) {

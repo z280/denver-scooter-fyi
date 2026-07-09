@@ -2300,8 +2300,11 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 
 /* Limited room (mobile): the wizard becomes a right-side panel and the map
-   keeps the left of the screen — beside the panel, not underneath it.
-   main.ts calls map.resize() when the surface toggles. */
+   keeps the left of the screen — beside the panel, not underneath it. The
+   shrink is gated on `wizard-open`, not `mode-ride`, so once the wizard
+   closes (interview done → ranked list) the map reclaims the full width
+   instead of stranding an empty strip on the right. main.ts calls
+   map.resize() whenever the wizard docks or undocks. */
 @media (max-width: 720px) {
   .ride-wizard {
     left: auto;
@@ -2317,12 +2320,12 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
     border-right: 0;
     border-bottom: 0;
   }
-  body.mode-ride #map {
+  body.mode-ride.wizard-open #map {
     width: auto;
     right: min(320px, 78vw);
   }
   /* Keep the mode pill reachable beside the docked panel. */
-  body.mode-ride .mode-switch {
+  body.mode-ride.wizard-open .mode-switch {
     left: 12px;
     transform: none;
   }
