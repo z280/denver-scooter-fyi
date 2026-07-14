@@ -1,23 +1,26 @@
 // Email sign-in — magic link + verification code (Postmark-delivered).
 //
-// One "email me" request, two ways to finish, mapped to
-// docs/API_REQUIREMENTS.md §2.3:
-//   1. requestMagicLink(email) → POST /api/v1/auth/magic-link. The API always
-//      answers 202 (no account-existence oracle) and emails BOTH a one-time
-//      link like https://denver.scooter.fyi/auth?ml=<token> AND a 6-digit
-//      verification code (same single-use token, 15-minute TTL).
-//   2a. Link path: the user taps the link and lands back on the site;
-//       redeemMagicLink() (via consumePendingMagicLink() at startup) exchanges
-//       ?ml=<token> at POST /api/v1/auth/redeem for the bearer session.
-//   2b. Code path: the user types the 6-digit code; verifyEmailCode(email,
-//       code) exchanges it at POST /api/v1/auth/verify-code for the session.
-//   Either way we persist the returned session.
+// Two independent doors on the same email, matching the veo-audit backend
+// (see its API.md / API_REQUIREMENTS.md §2.3). Each sends its OWN email:
+//   • Link door:
+//       1. requestMagicLink(email) → POST /api/v1/auth/magic-link → 202. The
+//          API emails a one-time link like
+//          https://denver.scooter.fyi/auth?ml=<token> (15-minute TTL).
+//       2. The user taps it and lands back here; consumePendingMagicLink() at
+//          startup exchanges ?ml=<token> at POST /api/v1/auth/redeem for the
+//          bearer session.
+//   • Code door:
+//       1. requestLoginCode(email) → POST /api/v1/auth/code → 202. The API
+//          emails a short AA000AA code (2 letters, 3 digits, 2 letters;
+//          10-minute TTL).
+//       2. The user types it; verifyEmailCode(email, code) exchanges it at
+//          POST /api/v1/auth/code/verify for the session.
+//   Either way we persist the returned {token, expires} session.
 //
 // No third-party script, no client id — email sign-in is the lighter door.
-// This module is safe to wire at startup now: consumePendingMagicLink() is
-// inert unless a ?ml= param is actually present, and verifyEmailCode() only
-// runs when the user submits a code, so both stay dormant until the endpoints
-// exist.
+// consumePendingMagicLink() is inert unless a ?ml= param is present, and the
+// code calls only run on user action, so all of this stays dormant until the
+// user signs in.
 
 import { API_BASE } from "./api.ts";
 import { isSession, persistSession } from "./auth-session.ts";
@@ -31,10 +34,17 @@ export function isProbablyEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-/** The emailed verification code is a 6-digit number. Client-side shape check
- *  only — the API decides validity/expiry. */
+/** Uppercase and drop spaces/hyphens the user may have typed, matching the
+ *  backend's normalization before it validates/hashes the code. */
+export function normalizeCode(value: string): string {
+  return (value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+/** The emailed code is AA000AA — 2 letters, 3 digits, 2 letters (letters
+ *  exclude I/O server-side, but we don't enforce that client-side). Shape
+ *  check only; the API decides validity/expiry. */
 export function isProbablyCode(value: string): boolean {
-  return /^\d{6}$/.test(value.trim());
+  return /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/.test(normalizeCode(value));
 }
 
 /**
@@ -56,6 +66,24 @@ export async function requestMagicLink(email: string): Promise<void> {
   }
 }
 
+/**
+ * Ask the API to email a short AA000AA sign-in code (POST /api/v1/auth/code).
+ * Separate email from the magic link. Resolves on success (202/200); the
+ * caller then shows the code-entry step.
+ */
+export async function requestLoginCode(email: string): Promise<void> {
+  const trimmed = email.trim();
+  if (!isProbablyEmail(trimmed)) throw new Error("Enter a valid email address");
+  const res = await fetch(`${API_BASE}/api/v1/auth/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email: trimmed }),
+  });
+  if (res.status !== 202 && res.status !== 200) {
+    throw new Error(`Could not send sign-in code (HTTP ${res.status})`);
+  }
+}
+
 /** Exchange a one-time token for a session and persist it. */
 export async function redeemMagicLink(token: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/auth/redeem`, {
@@ -72,15 +100,18 @@ export async function redeemMagicLink(token: string): Promise<void> {
 }
 
 /**
- * Exchange an emailed 6-digit verification code (with the email it was sent
- * to) for a session and persist it. Mirrors redeemMagicLink for the code
- * door — the API burns the code on success. Throws on a wrong/expired code.
+ * Exchange an emailed AA000AA verification code (with the email it was sent
+ * to) for a session and persist it (POST /api/v1/auth/code/verify). Mirrors
+ * redeemMagicLink for the code door — the API burns the code on success, and
+ * caps wrong tries. Throws on a wrong/expired code.
  */
 export async function verifyEmailCode(email: string, code: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/auth/verify-code`, {
+  const res = await fetch(`${API_BASE}/api/v1/auth/code/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ email: email.trim(), code: code.trim() }),
+    // Backend normalizes too, but send it clean (uppercased, separators
+    // stripped) so what we validate is what we submit.
+    body: JSON.stringify({ email: email.trim(), code: normalizeCode(code) }),
   });
   if (!res.ok) {
     throw new Error(`Code invalid or expired (HTTP ${res.status})`);

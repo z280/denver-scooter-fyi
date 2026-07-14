@@ -226,33 +226,41 @@ attribution, and supporter features.
 
 ### 2.3 Email sign-in — magic link + verification code (Postmark)
 
-One "email me" request, two ways to finish (link or code). The frontend
-offers both from the Account drawer; the emailed message carries both.
+Two **independent** doors on the same email, each with its own request and
+its own email (this mirrors the implemented `z280/veo-audit` backend — see
+its `API.md`). The frontend offers both from the Account drawer.
 
-- `POST /api/v1/auth/magic-link` with `{ email }` → always returns 202
-  (no account-existence oracle). Issues a single-use token, 15-minute TTL,
-  stored hashed, **plus a paired 6-digit verification code** (same
-  identity/TTL/single-use, also stored hashed); sends via the existing
-  Postmark transactional account. The email contains **both** a link like
-  `https://denver.scooter.fyi/auth?ml=<token>` **and** the 6-digit code, so
-  the recipient can tap the link or type the code.
-- `POST /api/v1/auth/redeem` with `{ token }` → verifies single-use +
-  TTL, upserts account by email, mints a session, burns the token (and its
-  paired code).
-- `POST /api/v1/auth/verify-code` with `{ email, code }` → verifies the
-  code against that email (single-use + TTL), upserts account by email,
-  mints a session, burns the code (and its paired link token). Wrong/expired
-  code → 401. Throttle guesses (e.g. lock after 5 wrong tries per code).
-- **Email-sign-in sessions never carry the `admin` scope** (neither the link
-  nor the code path), even for allowlisted emails — admin requires the
-  Google door. One trust decision, enforced server-side.
-- Rate limits: 3 sends/hour per email, 10/hour per IP. Postmark send
-  failures surface as 502 with a friendly detail.
+- `GET /api/v1/auth/config` → `{ google_client_id, google_enabled,
+  magic_link_enabled, code_enabled }` (public, cacheable). The single source
+  of truth for which doors to render and the GIS client id to init with.
+- **Link door**
+  - `POST /api/v1/auth/magic-link` with `{ email }` → always `202
+    { sent: true }` (no account-existence oracle). Emails a single-use link
+    `https://denver.scooter.fyi/auth?ml=<token>`, 15-minute TTL, stored
+    hashed. `502` if the sender fails, `503` if Postmark is unconfigured.
+  - `POST /api/v1/auth/redeem` with `{ token }` → `{ token, expires }`.
+    Single-use; `401` if invalid/expired/already-used.
+- **Code door** (separate email from the link)
+  - `POST /api/v1/auth/code` with `{ email }` → always `202 { sent: true }`.
+    Emails a short **`AA000AA`** code (2 letters, 3 digits, 2 letters;
+    letters exclude I/O), 10-minute TTL, stored hashed. Only the newest code
+    per email stays live.
+  - `POST /api/v1/auth/code/verify` with `{ email, code }` → `{ token,
+    expires }`. Case-insensitive; spaces/hyphens ignored. `401` if wrong,
+    expired, used, or after too many wrong tries (5 — which burns the code).
+    Verify attempts rate-limited 30/hour per IP.
+- **Email-sign-in sessions never carry the `admin` scope** (neither door),
+  even for allowlisted emails — the `admin` scope is a Google-only signal,
+  set server-side in `session_scopes()`.
+- Rate limits (each door): 3 sends/hour per email, 10/hour per IP. Postmark
+  send failures surface as 502 with a friendly detail.
 
 > **Frontend status:** Google sign-in is disabled for now
-> (`GOOGLE_AUTH_ENABLED = false` in `src/config.ts`); email sign-in (magic
-> link + verification code) is the only offered path. Flip that flag back on
-> to restore the Google door.
+> (`GOOGLE_AUTH_ENABLED = false` in `src/config.ts`); email sign-in (typed
+> code as the default, magic link as the alternate) is the only offered
+> path. Flip that flag back on to restore the Google door. The frontend
+> currently hardcodes Google config rather than reading `GET
+> /api/v1/auth/config`; adopting that endpoint is a sensible follow-up.
 
 ### 2.4 Profile
 

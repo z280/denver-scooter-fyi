@@ -52,6 +52,7 @@ import { HexDensity, type HexSize } from "./hexdensity.ts";
 import {
   consumePendingMagicLink,
   requestMagicLink,
+  requestLoginCode,
   verifyEmailCode,
   isProbablyEmail,
   isProbablyCode,
@@ -1732,10 +1733,12 @@ function wireAccount(): void {
         body.append(el("div", "account-or", "or"));
       }
 
-      // Email sign-in (Postmark) — the only door for now. One request emails
-      // BOTH a one-time link and a 6-digit code; the user can tap the link
-      // (consumePendingMagicLink() redeems it on return) or type the code
-      // here. Two sibling forms: email → code.
+      // Email sign-in (Postmark) — the only door for now. Two independent
+      // ways to finish, each its own email (matching the veo-audit backend):
+      //   • a typed AA000AA code (POST /auth/code → /auth/code/verify), the
+      //     in-tab default; and
+      //   • a magic link (POST /auth/magic-link), redeemed on return by
+      //     consumePendingMagicLink().
       const emailForm = el("form", "account-magic");
       const emailInput = el("input", "select");
       emailInput.type = "email";
@@ -1743,30 +1746,33 @@ function wireAccount(): void {
       emailInput.placeholder = "you@email.com";
       emailInput.autocomplete = "email";
       emailInput.setAttribute("aria-label", "Email address");
-      const emailSubmit = el("button", "login-btn", "Email me a sign-in link & code");
+      const emailSubmit = el("button", "login-btn", "Email me a sign-in code");
       emailSubmit.type = "submit";
+      // Secondary door: a magic link instead of a typed code.
+      const linkBtn = el("button", "text-btn", "Prefer a link? Email me one instead");
+      linkBtn.type = "button";
       const emailStatus = el("p", "account-magic-status");
       emailStatus.setAttribute("role", "status");
       emailStatus.setAttribute("aria-live", "polite");
-      emailForm.append(emailInput, emailSubmit, emailStatus);
+      emailForm.append(emailInput, emailSubmit, linkBtn, emailStatus);
 
-      // Step 2: enter the emailed verification code. Hidden until an email is
-      // sent; the link path never needs it.
+      // Step 2: enter the emailed AA000AA code. Hidden until a code is sent;
+      // the link door never needs it.
       const codeForm = el("form", "account-code");
       codeForm.hidden = true;
       const codeHint = el(
         "p",
         "account-magic-status",
-        "📧 Check your inbox — tap the sign-in link, or enter the 6-digit code (valid 15 minutes):",
+        "📧 Check your inbox and enter the code (like AB123XY, valid 10 minutes):",
       );
       const codeInput = el("input", "select");
       codeInput.type = "text";
-      codeInput.inputMode = "numeric";
       codeInput.autocomplete = "one-time-code";
-      codeInput.maxLength = 6;
-      codeInput.pattern = "\\d{6}";
-      codeInput.placeholder = "123456";
-      codeInput.setAttribute("aria-label", "6-digit verification code");
+      codeInput.autocapitalize = "characters";
+      codeInput.spellcheck = false;
+      codeInput.maxLength = 9; // AA000AA (7) plus a stray space/hyphen or two
+      codeInput.placeholder = "AB123XY";
+      codeInput.setAttribute("aria-label", "Sign-in code");
       const codeSubmit = el("button", "login-btn", "Verify code");
       codeSubmit.type = "submit";
       const codeStatus = el("p", "account-magic-status");
@@ -1775,36 +1781,69 @@ function wireAccount(): void {
       codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
 
       let sentEmail = "";
-      emailForm.addEventListener("submit", (e) => {
-        e.preventDefault();
+      const validEmail = (): string | null => {
         const email = emailInput.value.trim();
         if (!isProbablyEmail(email)) {
           emailStatus.textContent = "Enter a valid email address.";
-          return;
+          return null;
         }
+        return email;
+      };
+
+      // Primary: email a typed code, then reveal the code-entry step.
+      emailForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = validEmail();
+        if (!email) return;
         emailSubmit.disabled = true;
+        linkBtn.disabled = true;
         emailStatus.textContent = "Sending…";
-        requestMagicLink(email)
+        requestLoginCode(email)
           .then(() => {
             sentEmail = email;
             emailSubmit.disabled = false;
-            emailSubmit.textContent = "Resend email";
+            linkBtn.disabled = false;
+            emailSubmit.textContent = "Resend code";
             emailStatus.textContent = "";
             codeForm.hidden = false;
             codeInput.focus();
           })
           .catch(() => {
             emailSubmit.disabled = false;
+            linkBtn.disabled = false;
             emailStatus.textContent =
-              "Couldn't send right now — please try again.";
+              "Couldn't send the code right now — please try again.";
+          });
+      });
+
+      // Secondary: email a magic link instead (self-contained; redeemed on
+      // return), and tuck the code step away if it was showing.
+      linkBtn.addEventListener("click", () => {
+        const email = validEmail();
+        if (!email) return;
+        emailSubmit.disabled = true;
+        linkBtn.disabled = true;
+        emailStatus.textContent = "Sending…";
+        requestMagicLink(email)
+          .then(() => {
+            codeForm.hidden = true;
+            emailStatus.textContent =
+              "📧 Check your inbox for a sign-in link (valid 15 minutes).";
+          })
+          .catch(() => {
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            emailStatus.textContent =
+              "Couldn't send the link right now — please try again.";
           });
       });
 
       codeForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        const code = codeInput.value.trim();
+        const code = codeInput.value;
         if (!isProbablyCode(code)) {
-          codeStatus.textContent = "Enter the 6-digit code from your email.";
+          codeStatus.textContent =
+            "Enter the code from your email (like AB123XY).";
           return;
         }
         codeSubmit.disabled = true;
