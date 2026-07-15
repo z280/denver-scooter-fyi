@@ -90,6 +90,13 @@ const UNLOCK_PROXIMITY_M = 75;
 const RIDE_LONGPRESS_MS = 450;
 const RIDE_TOOLTIP_MS = 2200;
 
+/** How close (metres) the user must be to report a scooter's parking. A
+ *  parking complaint is only credible from someone who can actually see the
+ *  vehicle, so we gate on a live GPS fix AND sight distance. Looser than the
+ *  unlock radius (you can see a badly-parked scooter from across the street)
+ *  but still local — you can't report parking for a scooter across town. */
+const PARKING_REPORT_PROXIMITY_M = 100;
+
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
@@ -851,33 +858,49 @@ export class Devices {
              </div>`
           : "";
 
-      // "Report bad parking to Veo" — a deep link into Veo's public Zendesk
-      // form with this vehicle + location pre-filled (see veoParkingReportUrl).
-      // Unlike the crowdsource chips above (which POST to our own API), this
-      // routes the complaint to the operator who's actually responsible for
-      // repositioning it. Always offered — anyone can report a scooter they
-      // can see, no plate or auth required; we prefill whatever we know.
-      const parkingReportUrl = veoParkingReportUrl({
-        lat: coords[1],
-        lng: coords[0],
-        plate: props.vehicle_plate ?? null,
-        modelName: props.vehicle_model_name
-          ? String(props.vehicle_model_name)
-          : model
-            ? model.name
+      // "Report bad parking to Veo" — routes the complaint to the operator
+      // responsible for repositioning it (Veo's public Zendesk form, deep-
+      // linked with this vehicle + location pre-filled) AND records it as an
+      // improperly_parked report on our own API (the compliance signal).
+      //
+      // Gated: a parking complaint is only credible from someone who can see
+      // the vehicle, so it needs (1) a live GPS fix and (2) sight distance.
+      // When those aren't met we say why instead of offering the action —
+      // same pattern as the unlock block above.
+      const parkNearEnough =
+        user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M;
+      let veoParkReportBlock: string;
+      if (user && parkNearEnough) {
+        const parkingReportUrl = veoParkingReportUrl({
+          lat: coords[1],
+          lng: coords[0],
+          plate: props.vehicle_plate ?? null,
+          modelName: props.vehicle_model_name
+            ? String(props.vehicle_model_name)
+            : model
+              ? model.name
+              : null,
+          vehicleId: props.vehicle_identifier
+            ? String(props.vehicle_identifier)
             : null,
-        vehicleId: props.vehicle_identifier
-          ? String(props.vehicle_identifier)
-          : null,
-        dwellText: props.first_observed_at_location
-          ? formatDwell(props.first_observed_at_location)
-          : null,
-      });
-      const veoParkReportBlock = `
-        <div class="device-popup__veo-report">
-          <a class="device-popup__veo-report-link" href="${escapeHtml(parkingReportUrl)}" target="_blank" rel="noopener">🚧 Report bad parking to Veo</a>
-          <span class="device-popup__veo-report-hint">Opens Veo's form with this vehicle &amp; location pre-filled — you review &amp; send.</span>
-        </div>`;
+          dwellText: props.first_observed_at_location
+            ? formatDwell(props.first_observed_at_location)
+            : null,
+        });
+        veoParkReportBlock = `
+          <div class="device-popup__veo-report">
+            <a class="device-popup__veo-report-link" data-action="report-parking" href="${escapeHtml(parkingReportUrl)}" target="_blank" rel="noopener">🚧 Report bad parking to Veo</a>
+            <span class="device-popup__veo-report-hint">Opens Veo's form with this vehicle &amp; location pre-filled — you review &amp; send.</span>
+          </div>`;
+      } else {
+        const why = user
+          ? "Walk within sight of this scooter to report its parking."
+          : "Turn on your location to report bad parking.";
+        veoParkReportBlock = `
+          <div class="device-popup__veo-report">
+            <span class="device-popup__veo-report-gate">🔒 ${escapeHtml(why)}</span>
+          </div>`;
+      }
 
       // Primary (always-present) column. The authenticated data, when
       // available, rides in a SECOND column beside this one so the popup
@@ -1009,6 +1032,28 @@ export class Devices {
                 reportChips.forEach((c) => (c.disabled = false));
                 setDeviceStatus("Couldn't send — please try again.", "error");
               });
+          });
+        });
+      }
+
+      // "Report bad parking to Veo" — the anchor opens Veo's Zendesk form
+      // (default nav, new tab). Alongside that, fire an improperly_parked
+      // report to our own API so the parking signal lands in the compliance
+      // aggregate. Fire-and-forget: never preventDefault (the Zendesk hand-off
+      // must not depend on our POST), and only when we have a valid 16-hex
+      // vehicle_identifier for the API to accept.
+      const parkLink = popupEl?.querySelector<HTMLAnchorElement>(
+        '[data-action="report-parking"]',
+      );
+      if (parkLink && /^[0-9a-f]{16}$/.test(vid)) {
+        parkLink.addEventListener("click", () => {
+          submitDeviceReport({
+            vehicle_identifier: vid,
+            report_type: "improperly_parked",
+            lat: coords[1],
+            lng: coords[0],
+          }).catch(() => {
+            /* best-effort; the rider's Veo report is what matters here */
           });
         });
       }

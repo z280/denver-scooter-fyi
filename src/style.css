@@ -1629,6 +1629,10 @@ body {
   font-size: 10.5px;
   color: var(--fg-muted);
 }
+.device-popup__veo-report-gate {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
 
 /* ---------- Popup two-column layout (when authenticated data is present) ---------- */
 .device-popup__body--two-col {
