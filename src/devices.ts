@@ -52,6 +52,9 @@ export type ModelKey = "astro" | "cosmo" | "apollo";
 export type QualityFilter = "any" | "no-risk" | "ok-only";
 /** What the marker's inner badge depicts. */
 export type IconStyle = "use" | "model" | "data";
+/** How the "Model" icon style draws each badge: illustrated comic art, or a
+ *  single model-tinted letter (A / C / P). */
+export type ModelIcon = "comic" | "letter";
 /** Which signal colors the gauge ring (and the "data" badge). */
 export type DataSource = "battery" | "reliability";
 
@@ -81,6 +84,11 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
  *  tight enough that the button means "you're at this scooter." */
 const UNLOCK_PROXIMITY_M = 75;
+
+/** Active-ride device taps: hold this long to open the full popup; a shorter
+ *  tap only flashes the essentials tooltip (auto-hidden after that). */
+const RIDE_LONGPRESS_MS = 450;
+const RIDE_TOOLTIP_MS = 2200;
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -155,6 +163,7 @@ export class Devices {
   // ("icon data") and the ring ("gauge data") have independent signals so
   // riders can see reliability in the icon while the ring tracks battery.
   private iconStyle: IconStyle = "use";
+  private modelIcon: ModelIcon = "comic";
   private iconData: DataSource = "reliability";
   private gaugeData: DataSource = "battery";
   private gauge = true;
@@ -162,10 +171,27 @@ export class Devices {
   // layer; thickness/placement are baked into every icon key.
   private gaugeDisplay: GaugeDisplay = "always";
   private gaugeThickness: GaugeThickness = "standard";
-  private gaugePlacement: GaugePlacement = "surrounding";
+  private gaugePlacement: GaugePlacement = "gap";
   private hoverDeviceId: string | null = null;
   /** ✨ Essentials-on-hover tooltip, default on. */
   private tooltipOn = true;
+  // ----- Active-ride (follow-cam HUD) interaction state.
+  /** While riding, a short tap only shows the essentials tooltip; a long
+   *  press opens the full popup — so device taps don't clutter the ride. */
+  private rideActive = false;
+  /** Ride-scoped device visibility (HUD "Show" pills). null = no ride filter
+   *  (everything, incl. unrecognized hardware); a set restricts to those
+   *  models; an empty set shows none. */
+  private rideModelFilter: ReadonlySet<ModelKey> | null = null;
+  /** In-flight long-press on a device during a ride (null between presses). */
+  private ridePress:
+    | { props: PopupProps; coords: [number, number]; longFired: boolean }
+    | null = null;
+  private ridePressTimer: number | undefined;
+  private tooltipHideTimer: number | undefined;
+  /** Timestamp of the last touch event — lets the mousedown handler ignore
+   *  the synthetic mouse events a tap emits, so a press isn't double-started. */
+  private lastTouchTs = 0;
   private thresholds: BatteryThresholds | null = null;
   private popup: maplibregl.Popup | null = null;
   /** device_id of the scooter whose range circle is currently drawn, or
@@ -449,6 +475,9 @@ export class Devices {
     });
 
     map.on("click", POINT_LAYER, (e) => {
+      // During a ride the popup opens on long-press instead (a plain tap
+      // just flashes the essentials tooltip), so it never interrupts.
+      if (this.rideActive) return;
       const feature = e.features?.[0];
       if (!feature) return;
       const geom = feature.geometry as GeoJSON.Point;
@@ -458,6 +487,34 @@ export class Devices {
       );
     });
 
+    // Ride-mode long-press: press starts a timer + flashes the tooltip; the
+    // timer opens the popup on a hold; release before it cancels (short tap).
+    // Bound for both touch and mouse so it works on a phone or in testing. A
+    // tap emits synthetic mouse events after the touch ones, so the mousedown
+    // handler ignores anything within a short window of a real touch to avoid
+    // starting the press twice.
+    const TOUCH_MOUSE_GUARD_MS = 700;
+    map.on("touchstart", POINT_LAYER, (e) => {
+      this.lastTouchTs = performance.now();
+      this.beginRidePress(e);
+    });
+    map.on("mousedown", POINT_LAYER, (e) => {
+      if (performance.now() - this.lastTouchTs < TOUCH_MOUSE_GUARD_MS) return;
+      this.beginRidePress(e);
+    });
+    map.on("touchend", () => {
+      this.lastTouchTs = performance.now();
+      this.endRidePress();
+    });
+    map.on("mouseup", () => this.endRidePress());
+    map.on("touchcancel", () => {
+      this.lastTouchTs = performance.now();
+      this.cancelRidePress();
+    });
+    // A deliberate pan cancels the hold (follow-cam easeTo isn't a drag, so
+    // it won't); otherwise the timer would fire mid-pan.
+    map.on("dragstart", () => this.cancelRidePress());
+
     for (const layer of [CLUSTER_LAYER, POINT_LAYER]) {
       map.on("mouseenter", layer, () => {
         map.getCanvas().style.cursor = "pointer";
@@ -466,6 +523,57 @@ export class Devices {
         map.getCanvas().style.cursor = "";
       });
     }
+  }
+
+  private beginRidePress(
+    e: maplibregl.MapLayerMouseEvent | maplibregl.MapLayerTouchEvent,
+  ): void {
+    if (!this.rideActive) return;
+    const f = e.features?.[0];
+    if (!f) return;
+    const props = f.properties as PopupProps;
+    const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+    this.cancelRidePress(); // clears any prior timer + stray tooltip
+    // The "hover prompt": flash the lightweight essentials tooltip on tap.
+    if (this.tooltipOn) showMapTooltip(clientPointOf(e.originalEvent), props);
+    this.ridePress = { props, coords, longFired: false };
+    this.ridePressTimer = window.setTimeout(() => {
+      if (!this.ridePress) return;
+      this.ridePress.longFired = true;
+      hideMapTooltip();
+      this.openDevicePopup(props, coords);
+    }, RIDE_LONGPRESS_MS);
+  }
+
+  private endRidePress(): void {
+    if (!this.ridePress) return;
+    const { longFired } = this.ridePress;
+    window.clearTimeout(this.ridePressTimer);
+    this.ridePress = null;
+    // Short tap (released before the hold fired): leave the essentials
+    // tooltip up briefly, then auto-hide (touch has no mouseleave).
+    if (!longFired) {
+      window.clearTimeout(this.tooltipHideTimer);
+      this.tooltipHideTimer = window.setTimeout(
+        () => hideMapTooltip(),
+        RIDE_TOOLTIP_MS,
+      );
+    }
+  }
+
+  private cancelRidePress(): void {
+    window.clearTimeout(this.ridePressTimer);
+    window.clearTimeout(this.tooltipHideTimer);
+    this.ridePress = null;
+    // An aborted press (pan / touchcancel / re-press) must not strand the
+    // essentials tooltip on screen — its auto-hide timer was just cleared.
+    hideMapTooltip();
+  }
+
+  /** Whether a device details popup is currently open. The ride follow-cam
+   *  reads this to hold the camera still while the popup is up. */
+  hasOpenPopup(): boolean {
+    return this.popup !== null;
   }
 
   /** Build and show the details popup for one device. Called from the map
@@ -770,7 +878,7 @@ export class Devices {
       const twoCol = privateRows.length ? " device-popup__body--two-col" : "";
 
       this.popup?.remove();
-      this.popup = new maplibregl.Popup({
+      const popup = new maplibregl.Popup({
         closeButton: true,
         offset: 10,
         maxWidth: privateRows.length ? "460px" : "270px",
@@ -783,11 +891,17 @@ export class Devices {
            </div>`,
         )
         .addTo(map);
+      this.popup = popup;
+      // Track open/closed so the ride follow-cam can hold still while it's up
+      // (hasOpenPopup). Guard against a stale handler from a replaced popup.
+      popup.on("close", () => {
+        if (this.popup === popup) this.popup = null;
+      });
 
       // Dashed orientation line user → device while the popup is open.
       if (user) {
         this.locate.showLineTo(here);
-        this.popup.on("close", () => this.locate.clearLine());
+        popup.on("close", () => this.locate.clearLine());
       }
 
       // "Show Battery Rankings" → the nerd-stats modal (analysis mode only;
@@ -1056,6 +1170,12 @@ export class Devices {
     this.apply(); // icon keys are data-driven — re-annotate + re-set data
   }
 
+  /** "Model" badge art: illustrated comic badges vs model-tinted letters. */
+  setModelIcon(v: ModelIcon): void {
+    this.modelIcon = v;
+    this.apply();
+  }
+
   /** Signal shown by the "Data" badge style. */
   setIconData(source: DataSource): void {
     this.iconData = source;
@@ -1078,6 +1198,25 @@ export class Devices {
   setHoverTooltip(on: boolean): void {
     this.tooltipOn = on;
     if (!on) hideMapTooltip();
+  }
+
+  /** Enter/leave the active-ride follow-cam. While active, device taps use
+   *  long-press-to-open so the popup doesn't interrupt the ride. */
+  setRideActive(on: boolean): void {
+    this.rideActive = on;
+    if (!on) {
+      this.cancelRidePress();
+      window.clearTimeout(this.tooltipHideTimer);
+      hideMapTooltip();
+    }
+  }
+
+  /** Ride-scoped model visibility, driven by the HUD "Show" pills. Pass null
+   *  to clear the ride filter (show everything, including unrecognized
+   *  hardware); an empty set shows none. */
+  setRideModelFilter(models: ReadonlySet<ModelKey> | null): void {
+    this.rideModelFilter = models ? new Set(models) : null;
+    this.apply();
   }
 
   /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
@@ -1197,6 +1336,21 @@ export class Devices {
         return pointInAny(lng, lat, polys);
       });
     }
+    if (this.rideModelFilter) {
+      // Ride HUD visibility. An empty set is the explicit "show none." A
+      // partial set keeps the chosen models AND unrecognized hardware —
+      // deselecting one model shouldn't silently hide mystery scooters the
+      // rider never toggled. (All-selected is passed as null upstream, so we
+      // only reach here for a genuine "none" or "some" choice.)
+      const allow = this.rideModelFilter;
+      feats =
+        allow.size === 0
+          ? []
+          : feats.filter((f) => {
+              const key = modelKeyOf(f.properties);
+              return key === null || allow.has(key);
+            });
+    }
     return feats;
   }
 
@@ -1247,9 +1401,14 @@ export class Devices {
       inner = `use-${rideTypeOf(p)}`;
     } else if (this.iconStyle === "model") {
       const mk = modelKeyOf(p);
-      // Badge art once its image has decoded; letter tag until then
-      // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
-      inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
+      if (this.modelIcon === "letter") {
+        // Model-tinted letter badge (A / C / P); unknown → gray "?".
+        inner = `ml-${mk ?? "unk"}`;
+      } else {
+        // Badge art once its image has decoded; letter tag until then
+        // (distinct keys, so the atlas upgrades cleanly when apply() reruns).
+        inner = mk && modelIconImages[mk] ? `msvg-${mk}` : `model-${mk ?? "unk"}`;
+      }
     } else if (this.iconData === "reliability") {
       inner = `dr-${tier}`;
     } else {
@@ -1727,6 +1886,39 @@ const MODEL_TAG: Record<string, string> = {
   unk: "?",
 };
 
+/** The "letter" Model icon style: a single model-tinted disc. Colors echo
+ *  each comic badge's dominant background — Astro's day sky (light blue),
+ *  Cosmo's terracotta courtyard (orange), Apollo's night city (purple). */
+const MODEL_COLOR: Record<ModelKey, string> = {
+  astro: "#5bb8e6",
+  cosmo: "#ee8836",
+  apollo: "#8368c4",
+};
+
+/** Relative luminance (WCAG) of a #rrggbb color, 0 (black) – 1 (white). */
+function relLuminance(hex: string): number {
+  const m = hex.replace("#", "");
+  const chan = (i: number): number => {
+    const c = parseInt(m.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * chan(0) + 0.7152 * chan(2) + 0.0722 * chan(4);
+}
+
+/** Pick a legible glyph color for a tinted badge: a dark ink on light tints
+ *  (Astro/Cosmo), white on dark ones (Apollo), so the letter clears WCAG
+ *  large-text contrast on every model color rather than washing out. */
+function glyphColorFor(bg: string): { fill: string; halo: string } {
+  return relLuminance(bg) >= 0.3
+    ? { fill: "#10233a", halo: "rgba(255,255,255,0.55)" }
+    : { fill: "#ffffff", halo: "rgba(0,0,0,0.45)" };
+}
+const MODEL_LETTER: Record<ModelKey, string> = {
+  astro: "As",
+  cosmo: "Co",
+  apollo: "Ap",
+};
+
 function drawInnerBadge(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -1762,6 +1954,26 @@ function drawInnerBadge(
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
+  } else if (inner.startsWith("ml-")) {
+    // Model-tinted letter badge: colored disc + a glyph whose color is chosen
+    // by the tint's luminance (dark ink on light Astro/Cosmo, white on dark
+    // Apollo) so the letter clears contrast on every model color.
+    const mk = inner.slice(3) as ModelKey;
+    const bg = MODEL_COLOR[mk] ?? BATTERY_MISSING_COLOR;
+    fillCircle(ctx, cx, r, bg, "#ffffff", 2);
+    const letter = MODEL_LETTER[mk] ?? "?";
+    const { fill, halo } = glyphColorFor(bg);
+    // Two-letter tags (As/Co/Ap) need a smaller size than a lone glyph.
+    const fontFrac = letter.length > 1 ? 0.42 : 0.58;
+    ctx.font = `800 ${Math.round(d * fontFrac)}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(2, d * 0.07);
+    ctx.strokeStyle = halo;
+    ctx.strokeText(letter, cx, cx + d * 0.04);
+    ctx.fillStyle = fill;
+    ctx.fillText(letter, cx, cx + d * 0.04);
   } else if (inner.startsWith("db-")) {
     const raw = inner.slice(3);
     if (raw === "x") {
@@ -1893,7 +2105,10 @@ let tooltipEl: HTMLDivElement | null = null;
  *    Veo Apollo
  *    🔋 62% · Quality: 👍
  */
-function showMapTooltip(ev: MouseEvent, p: PopupProps): void {
+function showMapTooltip(
+  ev: { clientX: number; clientY: number },
+  p: PopupProps,
+): void {
   if (!tooltipEl) {
     tooltipEl = document.createElement("div");
     tooltipEl.className = "map-tooltip";
@@ -1924,6 +2139,18 @@ function showMapTooltip(ev: MouseEvent, p: PopupProps): void {
 function hideMapTooltip(): void {
   tooltipEl?.remove();
   tooltipEl = null;
+}
+
+/** Client-space coordinates of a mouse or touch event, for tooltip placement. */
+function clientPointOf(
+  oe: MouseEvent | TouchEvent,
+): { clientX: number; clientY: number } {
+  if (typeof TouchEvent !== "undefined" && oe instanceof TouchEvent) {
+    const t = oe.touches[0] ?? oe.changedTouches[0];
+    return { clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 };
+  }
+  const m = oe as MouseEvent;
+  return { clientX: m.clientX, clientY: m.clientY };
 }
 
 /** Lightweight modal for the battery-ranking nerd stats. One at a time;

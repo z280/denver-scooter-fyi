@@ -11,7 +11,17 @@
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { FIRST_DEVICE_LAYER, ALL_MODELS, type ModelKey } from "./devices.ts";
+
+/** The slice of the device layer the HUD drives: ride-scoped tap behavior
+ *  and on-map visibility filtering. */
+export interface RideDeviceControl {
+  setRideActive(on: boolean): void;
+  setRideModelFilter(models: ReadonlySet<ModelKey> | null): void;
+  /** True while a device details popup is open — the follow-cam holds the
+   *  camera still so the popup doesn't drift out from under the reader. */
+  hasOpenPopup(): boolean;
+}
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
@@ -21,6 +31,8 @@ import {
   rideCostCents,
   savedRatePlan,
   saveRatePlan,
+  savedVeoPlus,
+  saveVeoPlus,
 } from "./ride-cost.ts";
 
 type HudState = "hidden" | "armed" | "countdown" | "riding" | "summary";
@@ -78,6 +90,20 @@ export class RideHud {
   private needleEl: SVGElement | null = null;
   /** Map camera state captured on ride start, restored on exit. */
   private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
+  /** Which models the follow-cam shows (HUD "Show" pills). Reset to all at
+   *  the start of each ride; all-selected means no filter (also shows
+   *  unrecognized hardware), an empty selection shows none. */
+  private rideModels = new Set<ModelKey>(ALL_MODELS);
+  /** VeoPlus Pass (free unlocks) — waives the per-ride start fee in the
+   *  estimate. Persisted so members don't re-toggle every ride. */
+  private veoPlus = savedVeoPlus();
+  /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
+   *  Analysis / Find-a-ride, but the ride state (counter) is preserved so
+   *  reopening the HUD resumes it. */
+  private paused = false;
+  /** Elapsed ms captured at BRB, so the clock resumes from where it paused
+   *  instead of counting the time spent away. */
+  private pausedElapsedMs = 0;
 
   constructor(
     container: HTMLElement,
@@ -86,6 +112,8 @@ export class RideHud {
     /** The main map — the HUD frames it and drives a follow-cam during a
      *  ride, so the rider sees themselves move instead of a blank panel. */
     private readonly map: MLMap,
+    /** Device layer control: ride-scoped tap behavior + visibility filter. */
+    private readonly deviceCtl: RideDeviceControl,
   ) {
     this.root = container;
     this.root.addEventListener("click", (e) => this.onClick(e));
@@ -108,8 +136,13 @@ export class RideHud {
     });
   }
 
-  /** Open the pre-ride start screen. */
+  /** Open the HUD. A ride backgrounded via BRB resumes where it left off;
+   *  otherwise show the pre-ride start screen. */
   open(): void {
+    if (this.paused) {
+      void this.resumeRide();
+      return;
+    }
     this.setState("armed");
   }
 
@@ -119,8 +152,13 @@ export class RideHud {
     // Only the riding state is a transparent frame over the live map; the
     // others are solid cards. `ride-active` on <body> hides the app chrome
     // (drawers, mode pill, chips, map controls) for every non-hidden state.
-    this.root.classList.toggle("is-riding", state === "riding");
+    const riding = state === "riding";
+    this.root.classList.toggle("is-riding", riding);
     document.body.classList.toggle("ride-active", state !== "hidden");
+    // Long-press-to-open device taps only while the follow-cam is live; drop
+    // the ride-scoped visibility filter whenever we leave it.
+    this.deviceCtl.setRideActive(riding);
+    if (!riding) this.deviceCtl.setRideModelFilter(null);
     if (state === "armed") this.renderArmed();
   }
 
@@ -145,6 +183,10 @@ export class RideHud {
             ${options}
           </select>
         </label>
+        <label class="hud-toggle">
+          <input type="checkbox" id="hud-veoplus" ${this.veoPlus ? "checked" : ""} />
+          <span>VeoPlus Pass? <em>(free unlocks)</em></span>
+        </label>
         <div class="hud-start-row">
           <button type="button" class="hud-btn hud-btn--primary" data-hud="start-now">Start now</button>
           <button type="button" class="hud-btn" data-hud="start-delay">Start in
@@ -159,6 +201,12 @@ export class RideHud {
     this.root
       .querySelector("#hud-delay")
       ?.addEventListener("click", (e) => e.stopPropagation());
+    this.root
+      .querySelector<HTMLInputElement>("#hud-veoplus")
+      ?.addEventListener("change", (e) => {
+        this.veoPlus = (e.target as HTMLInputElement).checked;
+        saveVeoPlus(this.veoPlus);
+      });
   }
 
   private onClick(e: Event): void {
@@ -210,15 +258,108 @@ export class RideHud {
         this.startedAt = Date.now();
         this.renderTick();
         break;
+      case "exit":
+        this.showExitPrompt();
+        break;
+      case "exit-cancel":
+        this.hideExitPrompt();
+        break;
+      case "brb":
+        this.pauseRide();
+        break;
       case "end":
         void this.endRide();
         break;
+      case "dev": {
+        const model = btn.dataset.model as ModelKey;
+        if (this.rideModels.has(model)) this.rideModels.delete(model);
+        else this.rideModels.add(model);
+        const on = this.rideModels.has(model);
+        btn.classList.toggle("is-on", on);
+        btn.setAttribute("aria-pressed", String(on));
+        this.applyRideModels();
+        break;
+      }
       case "done":
         this.exitImmersive();
         this.restoreTheme();
         this.setState("hidden");
         break;
     }
+  }
+
+  /** Chips for the adjust panel's "Show" row, reflecting the current
+   *  selection. Deselecting all hides every device from the follow-cam. */
+  private deviceChipsMarkup(): string {
+    return ALL_MODELS
+      .map((m) => {
+        const on = this.rideModels.has(m);
+        const label = m[0].toUpperCase() + m.slice(1);
+        return `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="dev" data-model="${m}" aria-pressed="${on}">${label}</button>`;
+      })
+      .join("");
+  }
+
+  /** Push the current model selection to the map. All selected → no filter
+   *  (also shows unrecognized hardware); a partial set restricts to those
+   *  models; none selected → an empty set hides every device. */
+  private applyRideModels(): void {
+    const all = this.rideModels.size === ALL_MODELS.length;
+    this.deviceCtl.setRideModelFilter(all ? null : new Set(this.rideModels));
+  }
+
+  // ---------- Leave the ride view (exit door → End Ride / BRB) ----------
+
+  /** Prominent prompt over the live HUD: End Ride (finish + summary) or BRB
+   *  (background the ride, keep the counter). Dismissible via Cancel. */
+  private showExitPrompt(): void {
+    if (this.root.querySelector(".hud-exit-prompt")) return;
+    const el = document.createElement("div");
+    el.className = "hud-exit-prompt";
+    el.innerHTML = `
+      <div class="hud-exit-card" role="dialog" aria-label="Leave ride view">
+        <p class="hud-exit-title">Leave the ride view?</p>
+        <div class="hud-exit-actions">
+          <button type="button" class="hud-btn hud-btn--end" data-hud="end">End Ride</button>
+          <button type="button" class="hud-btn hud-btn--primary" data-hud="brb">BRB</button>
+        </div>
+        <p class="hud-exit-note">BRB pauses the ride and keeps your counter —
+          hop into Analysis or Find a ride, then resume from 🧭 Ride.</p>
+        <button type="button" class="hud-btn hud-btn--ghost" data-hud="exit-cancel">Cancel</button>
+      </div>`;
+    this.root.appendChild(el);
+  }
+
+  private hideExitPrompt(): void {
+    this.root.querySelector(".hud-exit-prompt")?.remove();
+  }
+
+  /** BRB: background the ride. The counter is frozen (resumes from here, not
+   *  counting the time away), sensors/immersive/follow-cam are released, and
+   *  the HUD hides so the map chrome (Analysis / Find a ride) returns. */
+  private pauseRide(): void {
+    this.hideExitPrompt();
+    this.pausedElapsedMs = Date.now() - this.startedAt;
+    this.paused = true;
+    this.stopSensors();
+    this.exitFollowCam();
+    this.exitImmersive();
+    this.restoreTheme();
+    this.setState("hidden");
+  }
+
+  /** Come back from BRB: continue the clock from where it froze and restore
+   *  the riding view. Invoked from open() (a user gesture, so immersive
+   *  fullscreen/landscape can re-engage). */
+  private async resumeRide(): Promise<void> {
+    this.paused = false;
+    this.startedAt = Date.now() - this.pausedElapsedMs;
+    void this.enterImmersive();
+    this.setState("riding");
+    this.renderRiding();
+    this.enterFollowCam();
+    this.startSensors();
+    void this.acquireWakeLock();
   }
 
   /** Undo any ride-scoped ☀/☾ flips: re-resolve the theme from its durable
@@ -324,6 +465,9 @@ export class RideHud {
     this.startPos = null;
     this.startedInZone = false;
     this.lastBearing = 0;
+    this.paused = false;
+    this.pausedElapsedMs = 0;
+    this.rideModels = new Set(ALL_MODELS); // every ride starts showing all
     this.setState("riding");
     this.renderRiding();
     this.enterFollowCam();
@@ -439,6 +583,11 @@ export class RideHud {
         <div class="hud-corner hud-corner--bl">
           <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
           <div class="hud-cutout-btns">
+            <button type="button" class="hud-round-btn" data-hud="exit" aria-label="Leave ride view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
             <button type="button" class="hud-round-btn hud-round-btn--stop" data-hud="end" aria-label="End ride">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
             </button>
@@ -463,6 +612,14 @@ export class RideHud {
             <span>Rate</span>
             <select id="hud-rate-live" class="select">${rateOptions}</select>
           </label>
+          <label class="hud-toggle">
+            <input type="checkbox" id="hud-veoplus-live" ${this.veoPlus ? "checked" : ""} />
+            <span>VeoPlus Pass (free unlocks)</span>
+          </label>
+          <div class="hud-adjust-row hud-devrow">
+            <span class="hud-devrow__label">Show</span>
+            ${this.deviceChipsMarkup()}
+          </div>
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
             <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>
@@ -475,6 +632,13 @@ export class RideHud {
       .querySelector<HTMLSelectElement>("#hud-rate-live")
       ?.addEventListener("change", (e) => {
         saveRatePlan((e.target as HTMLSelectElement).value as RatePlanKey);
+        this.renderTick();
+      });
+    this.root
+      .querySelector<HTMLInputElement>("#hud-veoplus-live")
+      ?.addEventListener("change", (e) => {
+        this.veoPlus = (e.target as HTMLInputElement).checked;
+        saveVeoPlus(this.veoPlus);
         this.renderTick();
       });
     window.clearInterval(this.tickTimer);
@@ -490,7 +654,7 @@ export class RideHud {
     const cost = this.root.querySelector("#hud-cost");
     const rate = savedRatePlan();
     if (cost && rate) {
-      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
+      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed, this.veoPlus))}`;
     }
     const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
@@ -555,17 +719,22 @@ export class RideHud {
       this.lastBearing = fix.coords.heading;
     }
     this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
-    this.map.easeTo({
-      center: [pos.lng, pos.lat],
-      // Push the focal point down so the rider sits low on screen and sees
-      // the road ahead. Screen-space offset, so it stays "toward the bottom"
-      // regardless of which way the bearing-up map is rotated.
-      offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
-      bearing: this.lastBearing,
-      pitch: RIDE_PITCH,
-      zoom: RIDE_ZOOM,
-      duration: 700,
-    });
+    // Hold the camera still while a device popup is open, so it doesn't slide
+    // out from under the rider mid-read. The marker still tracks; recentering
+    // resumes on the next fix after the popup closes.
+    if (!this.deviceCtl.hasOpenPopup()) {
+      this.map.easeTo({
+        center: [pos.lng, pos.lat],
+        // Push the focal point down so the rider sits low on screen and sees
+        // the road ahead. Screen-space offset, so it stays "toward the bottom"
+        // regardless of which way the bearing-up map is rotated.
+        offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
+        bearing: this.lastBearing,
+        pitch: RIDE_PITCH,
+        zoom: RIDE_ZOOM,
+        duration: 700,
+      });
+    }
     this.renderTick();
   }
 
@@ -623,7 +792,7 @@ export class RideHud {
 
     const rate = savedRatePlan();
     const plan = planFor(rate ?? "resident");
-    const veoCents = rideCostCents(plan, elapsed);
+    const veoCents = rideCostCents(plan, elapsed, this.veoPlus);
     const limeCents = comparatorCostCents(elapsed);
     const deltaCents = veoCents - limeCents;
     const miles = this.distanceM / 1609.344;
@@ -632,9 +801,16 @@ export class RideHud {
     const rows: string[] = [
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
-      row(`Est. Veo cost (${plan.key})`, formatCents(veoCents)),
+      row(
+        `Est. Veo cost (${plan.key}${this.veoPlus ? ", VeoPlus" : ""})`,
+        formatCents(veoCents),
+      ),
       row(`With ${COMPARATOR.name}'s typical pricing`, formatCents(limeCents)),
     ];
+
+    const veoPlusLine = this.veoPlus
+      ? `<p class="hud-note">VeoPlus Pass applied — ${formatCents(plan.unlockCents)} unlock fee waived.</p>`
+      : "";
 
     const monopolyLine =
       deltaCents > 0
@@ -653,6 +829,7 @@ export class RideHud {
       <div class="hud-card">
         <h2 class="hud-title">Ride summary</h2>
         <dl class="hud-summary">${rows.join("")}</dl>
+        ${veoPlusLine}
         ${zoneLine}
         ${monopolyLine}
         <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.</p>

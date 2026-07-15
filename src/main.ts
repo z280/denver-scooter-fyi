@@ -27,6 +27,7 @@ import {
   type ModelKey,
   type QualityFilter,
   type IconStyle,
+  type ModelIcon,
   type DataSource,
   type GaugeDisplay,
   type GaugeThickness,
@@ -51,13 +52,17 @@ import { HexDensity, type HexSize } from "./hexdensity.ts";
 import {
   consumePendingMagicLink,
   requestMagicLink,
+  requestLoginCode,
+  verifyEmailCode,
   isProbablyEmail,
+  isProbablyCode,
+  AuthSendError,
 } from "./auth-magic-link.ts";
 import {
   renderGoogleButton,
   promptGoogleOneTap,
-  isGoogleConfigured,
 } from "./auth-google.ts";
+import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
@@ -250,10 +255,17 @@ void consumePendingMagicLink().then((ok) => {
 });
 
 // Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
-// dialog on load (when Google is configured). GIS manages its own cooldown so
-// this isn't nagging. Signed-in users are skipped.
-if (isGoogleConfigured() && !isAuthenticated()) {
-  void promptGoogleOneTap({ onSignedIn: () => location.reload() });
+// dialog on load — but only if the backend's /auth/config says Google is
+// enabled (the single source of truth) and hands back a client id. GIS
+// manages its own cooldown so this isn't nagging. Signed-in users are skipped.
+if (!isAuthenticated()) {
+  void loadAuthConfig().then((cfg) => {
+    if (cfg.googleEnabled && cfg.googleClientId && !isAuthenticated()) {
+      void promptGoogleOneTap(cfg.googleClientId, {
+        onSignedIn: () => location.reload(),
+      });
+    }
+  });
 }
 
 // ---------- Ride HUD ----------
@@ -272,7 +284,7 @@ function equityZones(): Promise<IndexedFeature[]> {
 }
 
 function wireRideHud(): void {
-  const hud = new RideHud(need("ride-hud"), equityZones, map);
+  const hud = new RideHud(need("ride-hud"), equityZones, map, devices);
   need("ride-open").addEventListener("click", () => hud.open());
 }
 
@@ -644,6 +656,58 @@ function wireBatterySlider(): void {
 // Icon style (ride type / model / data), independent icon-data and
 // gauge-data sources, the gauge toggle (default on), contextual example
 // rows rendered with the real icon renderer, and the on-map legend.
+/** Enlarge a preview icon in a dismissible modal overlay. Closes on the ✕, on
+ *  a backdrop tap (an "additional tap"), or Escape. Moves focus into the
+ *  dialog on open and restores it to the trigger on close. */
+function openIconLightbox(url: string, label: string): void {
+  document.querySelector(".icon-lightbox")?.remove();
+  const returnFocusTo =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  const overlay = document.createElement("div");
+  overlay.className = "icon-lightbox";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", `${label} — enlarged icon`);
+
+  const box = document.createElement("div");
+  box.className = "icon-lightbox__box";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "icon-lightbox__close";
+  close.setAttribute("aria-label", "Close");
+  close.textContent = "×";
+  const big = document.createElement("img");
+  big.className = "icon-lightbox__img";
+  big.src = url;
+  big.alt = label;
+  const cap = document.createElement("div");
+  cap.className = "icon-lightbox__cap";
+  cap.textContent = label;
+  box.append(close, big, cap);
+  overlay.append(box);
+
+  const dismiss = (): void => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+    returnFocusTo?.focus();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") dismiss();
+  };
+  // Explicit close button — stop its click from double-firing via the overlay.
+  close.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dismiss();
+  });
+  // The overlay covers the whole screen, so a tap anywhere — backdrop or the
+  // enlarged icon itself ("additional tap") — dismisses it.
+  overlay.addEventListener("click", dismiss);
+  document.addEventListener("keydown", onKey);
+  document.body.append(overlay);
+  close.focus(); // move keyboard focus into the dialog
+}
+
 function wireIconography(): void {
   const styleDetail = need("icono-style-detail");
   const gaugeBody = need("gauge-body");
@@ -655,10 +719,11 @@ function wireIconography(): void {
 
   // Local mirrors of the devices-side iconography state, for rendering.
   let style: IconStyle = "use";
+  let modelIcon: ModelIcon = "comic";
   let iconData: DataSource = "reliability";
   let gaugeData: DataSource = "battery";
   let thickness: GaugeThickness = "standard";
-  let placement: GaugePlacement = "surrounding";
+  let placement: GaugePlacement = "gap";
   const THICK_CHAR: Record<GaugeThickness, string> = {
     thin: "T",
     standard: "S",
@@ -690,7 +755,7 @@ function wireIconography(): void {
     title: string,
     overlay?: { text: string; color: string },
   ): HTMLImageElement => {
-    const img = el("img");
+    const img = el("img", "icono-preview");
     const preview = iconPreviewURL(key, overlay);
     img.src = preview.url;
     // Canvases vary by design (rings grow outward from a fixed badge), so
@@ -699,7 +764,9 @@ function wireIconography(): void {
     img.width = size;
     img.height = size;
     img.alt = title;
-    img.title = title;
+    img.title = `${title} — tap to enlarge`;
+    // Tap any preview to inspect it at a legible size (item: enlarge-on-tap).
+    img.addEventListener("click", () => openIconLightbox(preview.url, title));
     return img;
   };
   const item = (
@@ -712,6 +779,32 @@ function wireIconography(): void {
     return row;
   };
 
+  // Comic-vs-letter switch for the Model style, rebuilt with the detail rows.
+  const modelIconToggle = (): HTMLElement => {
+    const seg = el("div", "segmented icono-modelicon");
+    seg.setAttribute("role", "radiogroup");
+    seg.setAttribute("aria-label", "Model icon style");
+    for (const [val, label] of [
+      ["comic", "Comic"],
+      ["letter", "Letter"],
+    ] as const) {
+      const b = el("button", "seg-btn", label);
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      const on = modelIcon === val;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", String(on));
+      b.addEventListener("click", () => {
+        if (modelIcon === val) return;
+        modelIcon = val;
+        devices.setModelIcon(modelIcon);
+        renderAll();
+      });
+      seg.append(b);
+    }
+    return seg;
+  };
+
   // Only details pertinent to the selected icon style.
   const renderStyleDetail = (): void => {
     styleDetail.replaceChildren();
@@ -722,11 +815,13 @@ function wireIconography(): void {
         item(k("use-standing", "off"), "Standing"),
       );
     } else if (style === "model") {
+      const c = modelIcon === "comic";
       styleDetail.append(
         el("p", "icono-detail__title", "Device Models"),
-        item(k("msvg-astro", "off"), "Veo Astro — Standing scooter"),
-        item(k("msvg-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
-        item(k("msvg-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
+        modelIconToggle(),
+        item(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — Standing scooter"),
+        item(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
+        item(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
       );
     } else {
       styleDetail.append(
@@ -795,11 +890,12 @@ function wireIconography(): void {
         icon(k("use-standing", "off"), "Standing scooter (Astro)"),
       );
     } else if (style === "model") {
+      const c = modelIcon === "comic";
       legendEl.append(
-        icon(k("msvg-astro", "off"), "Veo Astro — standing scooter"),
-        icon(k("msvg-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
-        icon(k("msvg-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
-        icon(k("model-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
+        icon(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — standing scooter"),
+        icon(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
+        icon(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon(k(c ? "model-unk" : "ml-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
       );
     } else if (iconData === "battery") {
       legendEl.append(
@@ -852,12 +948,18 @@ function wireIconography(): void {
       renderAll();
     },
   );
+  const opposite = (s: DataSource): DataSource =>
+    s === "battery" ? "reliability" : "battery";
   const setIconSrc = wireSeg(
     "#icon-data-seg",
     (b) => b.dataset.source ?? "reliability",
     (v) => {
       iconData = v as DataSource;
       devices.setIconData(iconData);
+      // Keep the icon and ring showing different signals: flip the gauge to
+      // the opposite source (icon reliability → battery ring, and vice
+      // versa) whenever the gauge is on.
+      if (gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
   );
@@ -868,9 +970,9 @@ function wireIconography(): void {
       style = v as IconStyle;
       devices.setIconStyle(style);
       iconDataSection.hidden = style !== "data";
-      // Per design: choosing Data icons corrects the gauge back to battery
-      // so the badge (reliability by default) and ring stay complementary.
-      if (style === "data") setGaugeSrc("battery");
+      // Entering Data icons: point the gauge at whatever the badge isn't
+      // showing, so the two stay complementary.
+      if (style === "data" && gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
   );
@@ -900,6 +1002,8 @@ function wireIconography(): void {
   );
   gauge.addEventListener("change", () => {
     devices.setGauge(gauge.checked);
+    // Turning the ring on in Data mode: default it to the badge's opposite.
+    if (gauge.checked && style === "data") setGaugeSrc(opposite(iconData));
     renderAll();
   });
   // ✨ Icon size: scales the on-map badges (and their % text overlays).
@@ -924,12 +1028,16 @@ function wireIconography(): void {
   });
 
   resetIconography = () => {
+    if (modelIcon !== "comic") {
+      modelIcon = "comic";
+      devices.setModelIcon("comic");
+    }
     setStyle("use");
     setIconSrc("reliability");
     setGaugeSrc("battery");
     setDisplay("always");
     setThickness("standard");
-    setPlacement("surrounding");
+    setPlacement("gap");
     if (iconSize.value !== "100") {
       iconSize.value = "100";
       applyIconSize();
@@ -1149,6 +1257,15 @@ function wireModes(): void {
     map.resize();
   };
 
+  // The map only reserves the right strip while the wizard is actually
+  // docked (mobile). Once the interview hands off to the ranked list the
+  // wizard hides, so drop the reservation and resize — otherwise the map
+  // stays shrunk and leaves an empty white bar where the panel used to be.
+  const setWizardDocked = (on: boolean): void => {
+    document.body.classList.toggle("wizard-open", on);
+    map.resize();
+  };
+
   const wizard = new RideWizard(need("ride-wizard"), locate, {
     onConsentGranted: () => applyPreset(applyRide),
     onExit: () => exitRide(),
@@ -1161,6 +1278,7 @@ function wireModes(): void {
     // Interview finished: the Recommended Devices drawer takes over as the
     // home of the ranked list (and keeps re-ranking with the filters).
     onInterviewDone: (priority, typeChoice, from) => {
+      setWizardDocked(false);
       recommended?.setContext({ from, priority, typeChoice });
       setDrawer("recommended");
     },
@@ -1169,6 +1287,7 @@ function wireModes(): void {
   const exitRide = (): void => {
     if (!rideActive) return;
     if (wizard.isOpen()) wizard.close();
+    setWizardDocked(false);
     setRideSurface(false);
     applyPreset(applyNormal);
     // Recommendations are scoped to one Find-a-ride session: drop them so
@@ -1185,6 +1304,7 @@ function wireModes(): void {
     setRideSurface(true);
     setActive("ride");
     wizard.start();
+    setWizardDocked(true);
   };
 
   for (const btn of btns) {
@@ -1449,6 +1569,8 @@ function wireAccount(): void {
   let adminEmail: string | undefined;
   let supporterOn = false;
   let premiumOn = false;
+  // Backend sign-in capabilities (null until /auth/config resolves).
+  let authCfg: AuthConfig | null = null;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -1617,13 +1739,15 @@ function wireAccount(): void {
         "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
       body.append(intro);
 
-      // Sign in with Google — only when a client id is configured (otherwise
-      // no third-party script loads). Its callback persists a session, so we
-      // reload to refetch everything authenticated.
-      if (isGoogleConfigured()) {
+      // Sign in with Google — shown only when the backend's /auth/config says
+      // it's enabled and hands back a client id (the single source of truth;
+      // no third-party script loads otherwise). `authCfg` is null until that
+      // fetch resolves, which triggers a re-render.
+      if (authCfg?.googleEnabled && authCfg.googleClientId) {
+        const clientId = authCfg.googleClientId;
         const gWrap = el("div", "account-google");
         body.append(gWrap);
-        void renderGoogleButton(gWrap, {
+        void renderGoogleButton(gWrap, clientId, {
           onSignedIn: () => location.reload(),
           onError: (err) => {
             const msg = el("p", "account-error", err.message);
@@ -1633,50 +1757,171 @@ function wireAccount(): void {
         body.append(el("div", "account-or", "or"));
       }
 
-      // Magic link — always available (Postmark). Emails a one-time sign-in
-      // link; consumePendingMagicLink() redeems it when the user returns.
-      const form = el("form", "account-magic");
-      const input = el("input", "select");
-      input.type = "email";
-      input.required = true;
-      input.placeholder = "you@email.com";
-      input.autocomplete = "email";
-      input.setAttribute("aria-label", "Email address");
-      const submit = el("button", "login-btn", "Email me a sign-in link");
-      submit.type = "submit";
-      const status = el("p", "account-magic-status");
-      status.setAttribute("role", "status");
-      status.setAttribute("aria-live", "polite");
-      form.append(input, submit, status);
-      form.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const email = input.value.trim();
+      // Email sign-in (Postmark) — the only door for now. Two independent
+      // ways to finish, each its own email (matching the veo-audit backend):
+      //   • a typed AA000AA code (POST /auth/code → /auth/code/verify), the
+      //     in-tab default; and
+      //   • a magic link (POST /auth/magic-link), redeemed on return by
+      //     consumePendingMagicLink().
+      const emailForm = el("form", "account-magic");
+      const emailInput = el("input", "select");
+      emailInput.type = "email";
+      emailInput.required = true;
+      emailInput.placeholder = "you@email.com";
+      emailInput.autocomplete = "email";
+      emailInput.setAttribute("aria-label", "Email address");
+      const emailSubmit = el("button", "login-btn", "Email me a sign-in code");
+      emailSubmit.type = "submit";
+      // Secondary door: a magic link instead of a typed code.
+      const linkBtn = el("button", "text-btn", "Prefer a link? Email me one instead");
+      linkBtn.type = "button";
+      const emailStatus = el("p", "account-magic-status");
+      emailStatus.setAttribute("role", "status");
+      emailStatus.setAttribute("aria-live", "polite");
+      emailForm.append(emailInput, emailSubmit, linkBtn, emailStatus);
+
+      // Step 2: enter the emailed AA000AA code. Hidden until a code is sent;
+      // the link door never needs it.
+      const codeForm = el("form", "account-code");
+      codeForm.hidden = true;
+      const codeHint = el(
+        "p",
+        "account-magic-status",
+        "📧 Check your inbox and enter the code (like AB123XY, valid 10 minutes):",
+      );
+      const codeInput = el("input", "select");
+      codeInput.type = "text";
+      codeInput.autocomplete = "one-time-code";
+      codeInput.autocapitalize = "characters";
+      codeInput.spellcheck = false;
+      codeInput.maxLength = 9; // AA000AA (7) plus a stray space/hyphen or two
+      codeInput.placeholder = "AB123XY";
+      codeInput.setAttribute("aria-label", "Sign-in code");
+      const codeSubmit = el("button", "login-btn", "Verify code");
+      codeSubmit.type = "submit";
+      const codeStatus = el("p", "account-magic-status");
+      codeStatus.setAttribute("role", "status");
+      codeStatus.setAttribute("aria-live", "polite");
+      codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
+
+      let sentEmail = "";
+      const validEmail = (): string | null => {
+        const email = emailInput.value.trim();
         if (!isProbablyEmail(email)) {
-          status.textContent = "Enter a valid email address.";
-          return;
+          emailStatus.textContent = "Enter a valid email address.";
+          return null;
         }
-        submit.disabled = true;
-        status.textContent = "Sending…";
-        requestMagicLink(email)
+        return email;
+      };
+      // A code is bound to the address it was sent to; if the user edits the
+      // email after we revealed the code step, retract it so they can't verify
+      // an old code against a new address (or vice-versa).
+      emailInput.addEventListener("input", () => {
+        if (sentEmail && emailInput.value.trim() !== sentEmail) {
+          sentEmail = "";
+          codeForm.hidden = true;
+          codeStatus.textContent = "";
+          emailSubmit.textContent = "Email me a sign-in code";
+        }
+      });
+      // Distinct copy for a rate-limit vs a generic failure — don't tell the
+      // user to retry the exact thing that's being throttled.
+      const sendFailMsg = (err: unknown, noun: string): string =>
+        err instanceof AuthSendError && err.status === 429
+          ? `Too many requests — wait a minute before asking for another ${noun}.`
+          : `Couldn't send the ${noun} right now — please try again.`;
+
+      // Primary: email a typed code, then reveal the code-entry step.
+      emailForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = validEmail();
+        if (!email) return;
+        emailSubmit.disabled = true;
+        linkBtn.disabled = true;
+        emailStatus.textContent = "Sending…";
+        requestLoginCode(email)
           .then(() => {
-            form.replaceChildren(
-              el(
-                "p",
-                "account-magic-status",
-                "📧 Check your inbox for a sign-in link (valid 15 minutes).",
-              ),
-            );
+            sentEmail = email;
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            emailSubmit.textContent = "Resend code";
+            emailStatus.textContent = "";
+            codeForm.hidden = false;
+            codeInput.focus();
           })
-          .catch(() => {
-            submit.disabled = false;
-            status.textContent = "Couldn't send right now — please try again.";
+          .catch((err: unknown) => {
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            emailStatus.textContent = sendFailMsg(err, "code");
           });
       });
-      body.append(form);
+
+      // Secondary: email a magic link instead (self-contained; redeemed on
+      // return), and tuck the code step away if it was showing.
+      linkBtn.addEventListener("click", () => {
+        const email = validEmail();
+        if (!email) return;
+        emailSubmit.disabled = true;
+        linkBtn.disabled = true;
+        emailStatus.textContent = "Sending…";
+        requestMagicLink(email)
+          .then(() => {
+            // Re-enable so the user can resend or switch back to the code door.
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            sentEmail = "";
+            codeForm.hidden = true;
+            emailStatus.textContent =
+              "📧 Check your inbox for a sign-in link (valid 15 minutes).";
+          })
+          .catch((err: unknown) => {
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            emailStatus.textContent = sendFailMsg(err, "link");
+          });
+      });
+
+      codeForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        // Defensive: the form is hidden until a code is sent, but never verify
+        // against an empty address (it'd be a confusing server-side failure).
+        if (!sentEmail) {
+          codeStatus.textContent = "Request a sign-in code first.";
+          return;
+        }
+        const code = codeInput.value;
+        if (!isProbablyCode(code)) {
+          codeStatus.textContent =
+            "Enter the code from your email (like AB123XY).";
+          return;
+        }
+        codeSubmit.disabled = true;
+        codeStatus.textContent = "Verifying…";
+        // Success persists the session; reload so every fetch is authed.
+        verifyEmailCode(sentEmail, code)
+          .then(() => location.reload())
+          .catch((err: unknown) => {
+            codeSubmit.disabled = false;
+            codeStatus.textContent =
+              err instanceof AuthSendError && err.status === 429
+                ? "Too many tries — request a new code."
+                : "That code didn't work — check it or resend.";
+          });
+      });
+
+      body.append(emailForm, codeForm);
     }
   };
 
   render();
+
+  // The Google door is driven by the backend's /auth/config (single source of
+  // truth). Fetch it once and re-render when it lands so the button appears or
+  // stays hidden to match the server — no compile-time frontend flag.
+  void loadAuthConfig().then((cfg) => {
+    authCfg = cfg;
+    render();
+  });
 
   // If the session expires mid-tab (or apiFetch cleared it after a 401),
   // the visible state will drift. Re-check on focus so the UI catches up.

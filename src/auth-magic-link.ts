@@ -1,17 +1,26 @@
-// Sign in with a magic link (Postmark-delivered).
+// Email sign-in — magic link + verification code (Postmark-delivered).
 //
-// Two steps, mapped to docs/API_REQUIREMENTS.md §2.3:
-//   1. requestMagicLink(email) → POST /api/v1/auth/magic-link. The API always
-//      answers 202 (no account-existence oracle) and emails a one-time link
-//      like https://denver.scooter.fyi/auth?ml=<token>.
-//   2. The user taps that link and lands back on the site; redeemMagicLink()
-//      (via consumePendingMagicLink() at startup) exchanges ?ml=<token> at
-//      POST /api/v1/auth/redeem for the bearer session, which we persist.
+// Two independent doors on the same email, matching the veo-audit backend
+// (see its API.md / API_REQUIREMENTS.md §2.3). Each sends its OWN email:
+//   • Link door:
+//       1. requestMagicLink(email) → POST /api/v1/auth/magic-link → 202. The
+//          API emails a one-time link like
+//          https://denver.scooter.fyi/auth?ml=<token> (15-minute TTL).
+//       2. The user taps it and lands back here; consumePendingMagicLink() at
+//          startup exchanges ?ml=<token> at POST /api/v1/auth/redeem for the
+//          bearer session.
+//   • Code door:
+//       1. requestLoginCode(email) → POST /api/v1/auth/code → 202. The API
+//          emails a short AA000AA code (2 letters, 3 digits, 2 letters;
+//          10-minute TTL).
+//       2. The user types it; verifyEmailCode(email, code) exchanges it at
+//          POST /api/v1/auth/code/verify for the session.
+//   Either way we persist the returned {token, expires} session.
 //
-// No third-party script, no client id — magic links are the lighter first
-// door. This module is safe to wire at startup now: consumePendingMagicLink()
-// is inert unless a ?ml= param is actually present, so it stays dormant until
-// the endpoints exist and a real link is followed.
+// No third-party script, no client id — email sign-in is the lighter door.
+// consumePendingMagicLink() is inert unless a ?ml= param is present, and the
+// code calls only run on user action, so all of this stays dormant until the
+// user signs in.
 
 import { API_BASE } from "./api.ts";
 import { isSession, persistSession } from "./auth-session.ts";
@@ -19,10 +28,37 @@ import { isSession, persistSession } from "./auth-session.ts";
 /** Query param carrying the one-time token on the return link. */
 const MAGIC_PARAM = "ml";
 
+/** Carries the HTTP status so the UI can distinguish a rate-limit (429) from
+ *  a generic failure and say something honest about it. */
+export class AuthSendError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthSendError";
+  }
+}
+
 /** Loose email sanity check — the API is the real validator; this just keeps
  *  obviously-bad input from generating a request. */
 export function isProbablyEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+/** Uppercase and drop spaces/hyphens the user may have typed, matching the
+ *  backend's normalization before it validates/hashes the code. */
+export function normalizeCode(value: string): string {
+  return (value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+/** Lenient shape check for the emailed code. The server is the authority on
+ *  the exact format (AA000AA today); we deliberately don't hardcode it here so
+ *  a future format change can't make the client silently reject a valid code.
+ *  We only block obviously-incomplete input (anything 6–10 alphanumerics, once
+ *  spaces/hyphens are stripped, earns a real verify attempt). */
+export function isProbablyCode(value: string): boolean {
+  return /^[A-Z0-9]{6,10}$/.test(normalizeCode(value));
 }
 
 /**
@@ -40,7 +76,31 @@ export async function requestMagicLink(email: string): Promise<void> {
   });
   // 202 Accepted is the documented success; tolerate 200 too.
   if (res.status !== 202 && res.status !== 200) {
-    throw new Error(`Could not send sign-in link (HTTP ${res.status})`);
+    throw new AuthSendError(
+      res.status,
+      `Could not send sign-in link (HTTP ${res.status})`,
+    );
+  }
+}
+
+/**
+ * Ask the API to email a short AA000AA sign-in code (POST /api/v1/auth/code).
+ * Separate email from the magic link. Resolves on success (202/200); the
+ * caller then shows the code-entry step.
+ */
+export async function requestLoginCode(email: string): Promise<void> {
+  const trimmed = email.trim();
+  if (!isProbablyEmail(trimmed)) throw new Error("Enter a valid email address");
+  const res = await fetch(`${API_BASE}/api/v1/auth/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email: trimmed }),
+  });
+  if (res.status !== 202 && res.status !== 200) {
+    throw new AuthSendError(
+      res.status,
+      `Could not send sign-in code (HTTP ${res.status})`,
+    );
   }
 }
 
@@ -56,6 +116,31 @@ export async function redeemMagicLink(token: string): Promise<void> {
   }
   const data: unknown = await res.json();
   if (!isSession(data)) throw new Error("Sign-in link returned no session");
+  persistSession(data);
+}
+
+/**
+ * Exchange an emailed AA000AA verification code (with the email it was sent
+ * to) for a session and persist it (POST /api/v1/auth/code/verify). Mirrors
+ * redeemMagicLink for the code door — the API burns the code on success, and
+ * caps wrong tries. Throws on a wrong/expired code.
+ */
+export async function verifyEmailCode(email: string, code: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/code/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    // Backend normalizes too, but send it clean (uppercased, separators
+    // stripped) so what we validate is what we submit.
+    body: JSON.stringify({ email: email.trim(), code: normalizeCode(code) }),
+  });
+  if (!res.ok) {
+    throw new AuthSendError(
+      res.status,
+      `Code invalid or expired (HTTP ${res.status})`,
+    );
+  }
+  const data: unknown = await res.json();
+  if (!isSession(data)) throw new Error("Verification returned no session");
   persistSession(data);
 }
 

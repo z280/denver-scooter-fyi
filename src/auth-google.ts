@@ -14,11 +14,12 @@
 //
 // DORMANT until configured: loads a third-party script from Google
 // (accounts.google.com/gsi/client) — the app's first external runtime
-// dependency — so it does nothing, and loads nothing, unless a client id is
-// provided (VITE_GOOGLE_CLIENT_ID → config.GOOGLE_OAUTH_CLIENT_ID).
+// dependency — so it does nothing, and loads nothing, unless the backend's
+// GET /api/v1/auth/config reports google_enabled and hands back a client id
+// (see auth-config.ts). Callers pass that id into promptGoogleOneTap /
+// renderGoogleButton; this module never reads a compile-time flag.
 
 import { API_BASE } from "./api.ts";
-import { GOOGLE_OAUTH_CLIENT_ID } from "./config.ts";
 import { isSession, persistSession } from "./auth-session.ts";
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
@@ -49,11 +50,6 @@ export interface GoogleAuthHandlers {
 let scriptPromise: Promise<GsiIdApi> | null = null;
 let initialized = false;
 let handlers: GoogleAuthHandlers | null = null;
-
-/** Whether Google sign-in can be offered (a client id is configured). */
-export function isGoogleConfigured(): boolean {
-  return GOOGLE_OAUTH_CLIENT_ID.length > 0;
-}
 
 /** Load the GIS client script once and resolve its id API. */
 function loadGis(): Promise<GsiIdApi> {
@@ -90,15 +86,20 @@ async function exchangeCredential(credential: string): Promise<void> {
   persistSession(data);
 }
 
-/** Load + initialize GIS once with the shared credential callback. Returns
- *  null when no client id is configured. */
-async function ensureInit(h: GoogleAuthHandlers): Promise<GsiIdApi | null> {
-  if (!GOOGLE_OAUTH_CLIENT_ID) return null;
+/** Load + initialize GIS once with the shared credential callback. The
+ *  client id comes from the backend's /auth/config (the single source of
+ *  truth) — callers only invoke this when config says Google is enabled and
+ *  hands back a non-empty id. Returns null if the id is missing. */
+async function ensureInit(
+  clientId: string,
+  h: GoogleAuthHandlers,
+): Promise<GsiIdApi | null> {
+  if (!clientId) return null;
   handlers = h; // latest caller's handlers win; both just reload on success
   const id = await loadGis();
   if (!initialized) {
     id.initialize({
-      client_id: GOOGLE_OAUTH_CLIENT_ID,
+      client_id: clientId,
       cancel_on_tap_outside: true,
       // Chrome is moving One Tap to FedCM; opt in so the prompt keeps working
       // as third-party-cookie One Tap is deprecated.
@@ -116,19 +117,23 @@ async function ensureInit(h: GoogleAuthHandlers): Promise<GsiIdApi | null> {
 
 /** Fire the automatic One Tap prompt (top-right). Call on load for
  *  signed-out visitors; GIS handles its own cooldown/backoff. */
-export async function promptGoogleOneTap(h: GoogleAuthHandlers): Promise<void> {
-  const id = await ensureInit(h).catch(() => null);
+export async function promptGoogleOneTap(
+  clientId: string,
+  h: GoogleAuthHandlers,
+): Promise<void> {
+  const id = await ensureInit(clientId, h).catch(() => null);
   id?.prompt();
 }
 
 /** Render the official personalized "Continue with Google" button into
- *  `container`. Gate callers on isGoogleConfigured() first. */
+ *  `container`. Callers gate on the /auth/config google_enabled flag first. */
 export async function renderGoogleButton(
   container: HTMLElement,
+  clientId: string,
   h: GoogleAuthHandlers,
 ): Promise<void> {
   try {
-    const id = await ensureInit(h);
+    const id = await ensureInit(clientId, h);
     id?.renderButton(container, {
       type: "standard",
       theme: "outline",
