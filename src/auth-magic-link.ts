@@ -28,6 +28,18 @@ import { isSession, persistSession } from "./auth-session.ts";
 /** Query param carrying the one-time token on the return link. */
 const MAGIC_PARAM = "ml";
 
+/** Carries the HTTP status so the UI can distinguish a rate-limit (429) from
+ *  a generic failure and say something honest about it. */
+export class AuthSendError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthSendError";
+  }
+}
+
 /** Loose email sanity check — the API is the real validator; this just keeps
  *  obviously-bad input from generating a request. */
 export function isProbablyEmail(value: string): boolean {
@@ -40,11 +52,13 @@ export function normalizeCode(value: string): string {
   return (value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
-/** The emailed code is AA000AA — 2 letters, 3 digits, 2 letters (letters
- *  exclude I/O server-side, but we don't enforce that client-side). Shape
- *  check only; the API decides validity/expiry. */
+/** Lenient shape check for the emailed code. The server is the authority on
+ *  the exact format (AA000AA today); we deliberately don't hardcode it here so
+ *  a future format change can't make the client silently reject a valid code.
+ *  We only block obviously-incomplete input (anything 6–10 alphanumerics, once
+ *  spaces/hyphens are stripped, earns a real verify attempt). */
 export function isProbablyCode(value: string): boolean {
-  return /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/.test(normalizeCode(value));
+  return /^[A-Z0-9]{6,10}$/.test(normalizeCode(value));
 }
 
 /**
@@ -62,7 +76,10 @@ export async function requestMagicLink(email: string): Promise<void> {
   });
   // 202 Accepted is the documented success; tolerate 200 too.
   if (res.status !== 202 && res.status !== 200) {
-    throw new Error(`Could not send sign-in link (HTTP ${res.status})`);
+    throw new AuthSendError(
+      res.status,
+      `Could not send sign-in link (HTTP ${res.status})`,
+    );
   }
 }
 
@@ -80,7 +97,10 @@ export async function requestLoginCode(email: string): Promise<void> {
     body: JSON.stringify({ email: trimmed }),
   });
   if (res.status !== 202 && res.status !== 200) {
-    throw new Error(`Could not send sign-in code (HTTP ${res.status})`);
+    throw new AuthSendError(
+      res.status,
+      `Could not send sign-in code (HTTP ${res.status})`,
+    );
   }
 }
 
@@ -114,7 +134,10 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
     body: JSON.stringify({ email: email.trim(), code: normalizeCode(code) }),
   });
   if (!res.ok) {
-    throw new Error(`Code invalid or expired (HTTP ${res.status})`);
+    throw new AuthSendError(
+      res.status,
+      `Code invalid or expired (HTTP ${res.status})`,
+    );
   }
   const data: unknown = await res.json();
   if (!isSession(data)) throw new Error("Verification returned no session");

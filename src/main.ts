@@ -56,12 +56,13 @@ import {
   verifyEmailCode,
   isProbablyEmail,
   isProbablyCode,
+  AuthSendError,
 } from "./auth-magic-link.ts";
 import {
   renderGoogleButton,
   promptGoogleOneTap,
-  isGoogleConfigured,
 } from "./auth-google.ts";
+import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
@@ -254,10 +255,17 @@ void consumePendingMagicLink().then((ok) => {
 });
 
 // Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
-// dialog on load (when Google is configured). GIS manages its own cooldown so
-// this isn't nagging. Signed-in users are skipped.
-if (isGoogleConfigured() && !isAuthenticated()) {
-  void promptGoogleOneTap({ onSignedIn: () => location.reload() });
+// dialog on load — but only if the backend's /auth/config says Google is
+// enabled (the single source of truth) and hands back a client id. GIS
+// manages its own cooldown so this isn't nagging. Signed-in users are skipped.
+if (!isAuthenticated()) {
+  void loadAuthConfig().then((cfg) => {
+    if (cfg.googleEnabled && cfg.googleClientId && !isAuthenticated()) {
+      void promptGoogleOneTap(cfg.googleClientId, {
+        onSignedIn: () => location.reload(),
+      });
+    }
+  });
 }
 
 // ---------- Ride HUD ----------
@@ -648,13 +656,18 @@ function wireBatterySlider(): void {
 // Icon style (ride type / model / data), independent icon-data and
 // gauge-data sources, the gauge toggle (default on), contextual example
 // rows rendered with the real icon renderer, and the on-map legend.
-/** Enlarge a preview icon in a dismissible overlay. Closes on the ✕, on any
- *  tap (an "additional tap"), or Escape. */
+/** Enlarge a preview icon in a dismissible modal overlay. Closes on the ✕, on
+ *  a backdrop tap (an "additional tap"), or Escape. Moves focus into the
+ *  dialog on open and restores it to the trigger on close. */
 function openIconLightbox(url: string, label: string): void {
   document.querySelector(".icon-lightbox")?.remove();
+  const returnFocusTo =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
   const overlay = document.createElement("div");
   overlay.className = "icon-lightbox";
   overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", `${label} — enlarged icon`);
 
   const box = document.createElement("div");
@@ -677,15 +690,22 @@ function openIconLightbox(url: string, label: string): void {
   const dismiss = (): void => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    returnFocusTo?.focus();
   };
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") dismiss();
   };
-  // The overlay covers the whole screen, so a tap anywhere (including on the
-  // enlarged icon) dismisses it — alongside the explicit ✕.
+  // Explicit close button — stop its click from double-firing via the overlay.
+  close.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dismiss();
+  });
+  // The overlay covers the whole screen, so a tap anywhere — backdrop or the
+  // enlarged icon itself ("additional tap") — dismisses it.
   overlay.addEventListener("click", dismiss);
   document.addEventListener("keydown", onKey);
   document.body.append(overlay);
+  close.focus(); // move keyboard focus into the dialog
 }
 
 function wireIconography(): void {
@@ -1549,6 +1569,8 @@ function wireAccount(): void {
   let adminEmail: string | undefined;
   let supporterOn = false;
   let premiumOn = false;
+  // Backend sign-in capabilities (null until /auth/config resolves).
+  let authCfg: AuthConfig | null = null;
 
   const formatRemaining = (expiresIso: string): string => {
     const ms = new Date(expiresIso).getTime() - Date.now();
@@ -1717,13 +1739,15 @@ function wireAccount(): void {
         "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
       body.append(intro);
 
-      // Sign in with Google — only when a client id is configured (otherwise
-      // no third-party script loads). Its callback persists a session, so we
-      // reload to refetch everything authenticated.
-      if (isGoogleConfigured()) {
+      // Sign in with Google — shown only when the backend's /auth/config says
+      // it's enabled and hands back a client id (the single source of truth;
+      // no third-party script loads otherwise). `authCfg` is null until that
+      // fetch resolves, which triggers a re-render.
+      if (authCfg?.googleEnabled && authCfg.googleClientId) {
+        const clientId = authCfg.googleClientId;
         const gWrap = el("div", "account-google");
         body.append(gWrap);
-        void renderGoogleButton(gWrap, {
+        void renderGoogleButton(gWrap, clientId, {
           onSignedIn: () => location.reload(),
           onError: (err) => {
             const msg = el("p", "account-error", err.message);
@@ -1789,6 +1813,23 @@ function wireAccount(): void {
         }
         return email;
       };
+      // A code is bound to the address it was sent to; if the user edits the
+      // email after we revealed the code step, retract it so they can't verify
+      // an old code against a new address (or vice-versa).
+      emailInput.addEventListener("input", () => {
+        if (sentEmail && emailInput.value.trim() !== sentEmail) {
+          sentEmail = "";
+          codeForm.hidden = true;
+          codeStatus.textContent = "";
+          emailSubmit.textContent = "Email me a sign-in code";
+        }
+      });
+      // Distinct copy for a rate-limit vs a generic failure — don't tell the
+      // user to retry the exact thing that's being throttled.
+      const sendFailMsg = (err: unknown, noun: string): string =>
+        err instanceof AuthSendError && err.status === 429
+          ? `Too many requests — wait a minute before asking for another ${noun}.`
+          : `Couldn't send the ${noun} right now — please try again.`;
 
       // Primary: email a typed code, then reveal the code-entry step.
       emailForm.addEventListener("submit", (e) => {
@@ -1808,11 +1849,10 @@ function wireAccount(): void {
             codeForm.hidden = false;
             codeInput.focus();
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             emailSubmit.disabled = false;
             linkBtn.disabled = false;
-            emailStatus.textContent =
-              "Couldn't send the code right now — please try again.";
+            emailStatus.textContent = sendFailMsg(err, "code");
           });
       });
 
@@ -1826,20 +1866,29 @@ function wireAccount(): void {
         emailStatus.textContent = "Sending…";
         requestMagicLink(email)
           .then(() => {
+            // Re-enable so the user can resend or switch back to the code door.
+            emailSubmit.disabled = false;
+            linkBtn.disabled = false;
+            sentEmail = "";
             codeForm.hidden = true;
             emailStatus.textContent =
               "📧 Check your inbox for a sign-in link (valid 15 minutes).";
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             emailSubmit.disabled = false;
             linkBtn.disabled = false;
-            emailStatus.textContent =
-              "Couldn't send the link right now — please try again.";
+            emailStatus.textContent = sendFailMsg(err, "link");
           });
       });
 
       codeForm.addEventListener("submit", (e) => {
         e.preventDefault();
+        // Defensive: the form is hidden until a code is sent, but never verify
+        // against an empty address (it'd be a confusing server-side failure).
+        if (!sentEmail) {
+          codeStatus.textContent = "Request a sign-in code first.";
+          return;
+        }
         const code = codeInput.value;
         if (!isProbablyCode(code)) {
           codeStatus.textContent =
@@ -1851,10 +1900,12 @@ function wireAccount(): void {
         // Success persists the session; reload so every fetch is authed.
         verifyEmailCode(sentEmail, code)
           .then(() => location.reload())
-          .catch(() => {
+          .catch((err: unknown) => {
             codeSubmit.disabled = false;
             codeStatus.textContent =
-              "That code didn't work — check it or resend.";
+              err instanceof AuthSendError && err.status === 429
+                ? "Too many tries — request a new code."
+                : "That code didn't work — check it or resend.";
           });
       });
 
@@ -1863,6 +1914,14 @@ function wireAccount(): void {
   };
 
   render();
+
+  // The Google door is driven by the backend's /auth/config (single source of
+  // truth). Fetch it once and re-render when it lands so the button appears or
+  // stays hidden to match the server — no compile-time frontend flag.
+  void loadAuthConfig().then((cfg) => {
+    authCfg = cfg;
+    render();
+  });
 
   // If the session expires mid-tab (or apiFetch cleared it after a 401),
   // the visible state will drift. Re-check on focus so the UI catches up.

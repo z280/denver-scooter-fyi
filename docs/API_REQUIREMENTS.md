@@ -255,12 +255,14 @@ its `API.md`). The frontend offers both from the Account drawer.
 - Rate limits (each door): 3 sends/hour per email, 10/hour per IP. Postmark
   send failures surface as 502 with a friendly detail.
 
-> **Frontend status:** Google sign-in is disabled for now
-> (`GOOGLE_AUTH_ENABLED = false` in `src/config.ts`); email sign-in (typed
-> code as the default, magic link as the alternate) is the only offered
-> path. Flip that flag back on to restore the Google door. The frontend
-> currently hardcodes Google config rather than reading `GET
-> /api/v1/auth/config`; adopting that endpoint is a sensible follow-up.
+> **Frontend status:** The Google door is driven entirely by `GET
+> /api/v1/auth/config` (`auth-config.ts`) — the single source of truth. It
+> renders only when the backend reports `google_enabled: true` with a client
+> id, and initializes GIS from that id; there is no frontend Google flag to
+> drift from the server. Today the backend keeps Google off
+> (`GOOGLE_AUTH_ENABLED=false` on veo-audit), so email sign-in (typed code by
+> default, magic link as the alternate) is the only offered path. Re-enabling
+> Google is a backend-only change.
 
 ### 2.4 Profile
 

@@ -18,6 +18,9 @@ import { FIRST_DEVICE_LAYER, ALL_MODELS, type ModelKey } from "./devices.ts";
 export interface RideDeviceControl {
   setRideActive(on: boolean): void;
   setRideModelFilter(models: ReadonlySet<ModelKey> | null): void;
+  /** True while a device details popup is open — the follow-cam holds the
+   *  camera still so the popup doesn't drift out from under the reader. */
+  hasOpenPopup(): boolean;
 }
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
@@ -252,7 +255,7 @@ export class RideHud {
   /** Chips for the adjust panel's "Show" row, reflecting the current
    *  selection. Deselecting all hides every device from the follow-cam. */
   private deviceChipsMarkup(): string {
-    return (["astro", "cosmo", "apollo"] as ModelKey[])
+    return ALL_MODELS
       .map((m) => {
         const on = this.rideModels.has(m);
         const label = m[0].toUpperCase() + m.slice(1);
@@ -608,17 +611,22 @@ export class RideHud {
       this.lastBearing = fix.coords.heading;
     }
     this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
-    this.map.easeTo({
-      center: [pos.lng, pos.lat],
-      // Push the focal point down so the rider sits low on screen and sees
-      // the road ahead. Screen-space offset, so it stays "toward the bottom"
-      // regardless of which way the bearing-up map is rotated.
-      offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
-      bearing: this.lastBearing,
-      pitch: RIDE_PITCH,
-      zoom: RIDE_ZOOM,
-      duration: 700,
-    });
+    // Hold the camera still while a device popup is open, so it doesn't slide
+    // out from under the rider mid-read. The marker still tracks; recentering
+    // resumes on the next fix after the popup closes.
+    if (!this.deviceCtl.hasOpenPopup()) {
+      this.map.easeTo({
+        center: [pos.lng, pos.lat],
+        // Push the focal point down so the rider sits low on screen and sees
+        // the road ahead. Screen-space offset, so it stays "toward the bottom"
+        // regardless of which way the bearing-up map is rotated.
+        offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
+        bearing: this.lastBearing,
+        pitch: RIDE_PITCH,
+        zoom: RIDE_ZOOM,
+        duration: 700,
+      });
+    }
     this.renderTick();
   }
 
