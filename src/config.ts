@@ -95,6 +95,16 @@ export function isAdminEmail(email: string | null | undefined): boolean {
  *  any scooter's QR code. */
 export const VEO_ADJUST_TOKEN = "622qh4";
 
+/** Veo's PUBLIC GBFS free_bike_status feed for Denver. The browser fetches
+ *  this directly (see gbfs.ts) to recover a vehicle's plate — the number
+ *  painted on the deck / in the QR code — from each entry's rental_uris
+ *  `&number=` param. This keeps the plate out of OUR API: we source it
+ *  straight from Veo, client-side. Verified CORS-open (Access-Control-
+ *  Allow-Origin present) 2026-07; if Veo ever closes it, this needs a
+ *  same-origin passthrough instead. */
+export const VEO_GBFS_FREE_BIKE_STATUS_URL =
+  "https://cluster-prod.veoride.com/api/shares/name/den/gbfs/free_bike_status";
+
 /** The exact deep-link format printed on every scooter: opens the Veo app
  *  to this vehicle when installed, else Adjust bounces to the app store. */
 export function veoDeepLink(vehicleNumber: string): string {

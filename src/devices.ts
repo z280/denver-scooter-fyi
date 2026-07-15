@@ -11,6 +11,7 @@ import type {
   PropulsionType,
 } from "./api.ts";
 import { DEVICE_COLORS, veoDeepLink, veoParkingReportUrl } from "./config.ts";
+import { GbfsPlates } from "./gbfs.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
@@ -214,11 +215,23 @@ export class Devices {
   /** ✨ Icon size preference — multiplies the zoom→size ramps for the
    *  device badges and their text overlays (1 = default). */
   private iconScale = 1;
+  /** Plate resolver backed by Veo's public GBFS feed — lets the popup fill
+   *  the "Unlock in Veo" link and the parking-report prefill with the real
+   *  vehicle number without our own API ever exposing plates. */
+  private readonly plates = new GbfsPlates();
 
   constructor(
     private readonly map: Map,
     private readonly locate: Locate,
-  ) {}
+  ) {
+    // A plate is only ever needed at the scooter (unlock / parking report),
+    // which already requires a location fix — so prime the GBFS index on the
+    // first fix. By the time the user opens a nearby popup it's warm, and
+    // cachedPlateFor() stays a synchronous lookup.
+    this.locate.onFix(() => {
+      void this.plates.prime();
+    });
+  }
 
   addLayers(): void {
     // Kick off the model-badge decode; when it lands, re-annotate so
@@ -587,7 +600,11 @@ export class Devices {
    *  click handler (flattened feature properties) and from the
    *  worth-the-walk "Show me" jump (raw GeoJSON properties) — the readers
    *  are defensive about both. */
-  private openDevicePopup(props: PopupProps, coords: [number, number]): void {
+  private openDevicePopup(
+    props: PopupProps,
+    coords: [number, number],
+    retry = false,
+  ): void {
     const { map } = this;
     {
       const here: LngLat = { lng: coords[0], lat: coords[1] };
@@ -640,6 +657,16 @@ export class Devices {
 
       const user = this.locate.current();
 
+      // Effective plate: the admin-only field when present, else resolved
+      // client-side from Veo's public GBFS feed (keyed by device_id == the
+      // feed's bike_id). Only resolved when the user has a fix — a plate is
+      // only actionable at the scooter, and this avoids scanning the index
+      // for far-away or no-location views. Powers the unlock link and the
+      // parking-report prefill without our API exposing plates.
+      const effectivePlate: string | null =
+        (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
+        (user ? this.plates.cachedPlateFor(props.device_id) : null);
+
       // Unlock deep link — same URL as the QR sticker on the scooter's deck.
       // Deliberately gated three ways: it needs the plate (authenticated
       // fetch only — we never expose plates to anonymous users, so Veo can't
@@ -648,11 +675,11 @@ export class Devices {
       // action; a link that works from your couch is a plate leak with extra
       // steps. When authed but not in range, we say why instead of hiding it.
       let unlockBlock = "";
-      if (props.vehicle_plate && isAuthenticated()) {
+      if (effectivePlate && isAuthenticated()) {
         const nearEnough =
           user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
         if (nearEnough) {
-          const link = veoDeepLink(String(props.vehicle_plate));
+          const link = veoDeepLink(effectivePlate);
           unlockBlock = `
             <div class="device-popup__unlock-row">
               <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
@@ -874,7 +901,7 @@ export class Devices {
         const parkingReportUrl = veoParkingReportUrl({
           lat: coords[1],
           lng: coords[0],
-          plate: props.vehicle_plate ?? null,
+          plate: effectivePlate,
           modelName: props.vehicle_model_name
             ? String(props.vehicle_model_name)
             : model
@@ -949,6 +976,21 @@ export class Devices {
       popup.on("close", () => {
         if (this.popup === popup) this.popup = null;
       });
+
+      // Progressive plate hydration: the plate powers the unlock link and the
+      // parking-report prefill, but the GBFS index may not be warm on the very
+      // first popup after a fix. If we rendered without a plate but the user
+      // has a fix (so proximity features apply), prime the index and re-render
+      // once when a plate lands. Guarded so it runs at most one extra time and
+      // only while THIS popup is still the open one.
+      if (!retry && user && !effectivePlate) {
+        void this.plates.prime().then(() => {
+          if (this.popup !== popup) return; // closed or replaced
+          if (this.plates.cachedPlateFor(props.device_id)) {
+            this.openDevicePopup(props, coords, true);
+          }
+        });
+      }
 
       // Dashed orientation line user → device while the popup is open.
       if (user) {
