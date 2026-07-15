@@ -31,6 +31,8 @@ import {
   rideCostCents,
   savedRatePlan,
   saveRatePlan,
+  savedVeoPlus,
+  saveVeoPlus,
 } from "./ride-cost.ts";
 
 type HudState = "hidden" | "armed" | "countdown" | "riding" | "summary";
@@ -92,6 +94,16 @@ export class RideHud {
    *  the start of each ride; all-selected means no filter (also shows
    *  unrecognized hardware), an empty selection shows none. */
   private rideModels = new Set<ModelKey>(ALL_MODELS);
+  /** VeoPlus Pass (free unlocks) — waives the per-ride start fee in the
+   *  estimate. Persisted so members don't re-toggle every ride. */
+  private veoPlus = savedVeoPlus();
+  /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
+   *  Analysis / Find-a-ride, but the ride state (counter) is preserved so
+   *  reopening the HUD resumes it. */
+  private paused = false;
+  /** Elapsed ms captured at BRB, so the clock resumes from where it paused
+   *  instead of counting the time spent away. */
+  private pausedElapsedMs = 0;
 
   constructor(
     container: HTMLElement,
@@ -124,8 +136,13 @@ export class RideHud {
     });
   }
 
-  /** Open the pre-ride start screen. */
+  /** Open the HUD. A ride backgrounded via BRB resumes where it left off;
+   *  otherwise show the pre-ride start screen. */
   open(): void {
+    if (this.paused) {
+      void this.resumeRide();
+      return;
+    }
     this.setState("armed");
   }
 
@@ -166,6 +183,10 @@ export class RideHud {
             ${options}
           </select>
         </label>
+        <label class="hud-toggle">
+          <input type="checkbox" id="hud-veoplus" ${this.veoPlus ? "checked" : ""} />
+          <span>VeoPlus Pass? <em>(free unlocks)</em></span>
+        </label>
         <div class="hud-start-row">
           <button type="button" class="hud-btn hud-btn--primary" data-hud="start-now">Start now</button>
           <button type="button" class="hud-btn" data-hud="start-delay">Start in
@@ -180,6 +201,12 @@ export class RideHud {
     this.root
       .querySelector("#hud-delay")
       ?.addEventListener("click", (e) => e.stopPropagation());
+    this.root
+      .querySelector<HTMLInputElement>("#hud-veoplus")
+      ?.addEventListener("change", (e) => {
+        this.veoPlus = (e.target as HTMLInputElement).checked;
+        saveVeoPlus(this.veoPlus);
+      });
   }
 
   private onClick(e: Event): void {
@@ -231,6 +258,15 @@ export class RideHud {
         this.startedAt = Date.now();
         this.renderTick();
         break;
+      case "exit":
+        this.showExitPrompt();
+        break;
+      case "exit-cancel":
+        this.hideExitPrompt();
+        break;
+      case "brb":
+        this.pauseRide();
+        break;
       case "end":
         void this.endRide();
         break;
@@ -270,6 +306,60 @@ export class RideHud {
   private applyRideModels(): void {
     const all = this.rideModels.size === ALL_MODELS.length;
     this.deviceCtl.setRideModelFilter(all ? null : new Set(this.rideModels));
+  }
+
+  // ---------- Leave the ride view (exit door → End Ride / BRB) ----------
+
+  /** Prominent prompt over the live HUD: End Ride (finish + summary) or BRB
+   *  (background the ride, keep the counter). Dismissible via Cancel. */
+  private showExitPrompt(): void {
+    if (this.root.querySelector(".hud-exit-prompt")) return;
+    const el = document.createElement("div");
+    el.className = "hud-exit-prompt";
+    el.innerHTML = `
+      <div class="hud-exit-card" role="dialog" aria-label="Leave ride view">
+        <p class="hud-exit-title">Leave the ride view?</p>
+        <div class="hud-exit-actions">
+          <button type="button" class="hud-btn hud-btn--end" data-hud="end">End Ride</button>
+          <button type="button" class="hud-btn hud-btn--primary" data-hud="brb">BRB</button>
+        </div>
+        <p class="hud-exit-note">BRB pauses the ride and keeps your counter —
+          hop into Analysis or Find a ride, then resume from 🧭 Ride.</p>
+        <button type="button" class="hud-btn hud-btn--ghost" data-hud="exit-cancel">Cancel</button>
+      </div>`;
+    this.root.appendChild(el);
+  }
+
+  private hideExitPrompt(): void {
+    this.root.querySelector(".hud-exit-prompt")?.remove();
+  }
+
+  /** BRB: background the ride. The counter is frozen (resumes from here, not
+   *  counting the time away), sensors/immersive/follow-cam are released, and
+   *  the HUD hides so the map chrome (Analysis / Find a ride) returns. */
+  private pauseRide(): void {
+    this.hideExitPrompt();
+    this.pausedElapsedMs = Date.now() - this.startedAt;
+    this.paused = true;
+    this.stopSensors();
+    this.exitFollowCam();
+    this.exitImmersive();
+    this.restoreTheme();
+    this.setState("hidden");
+  }
+
+  /** Come back from BRB: continue the clock from where it froze and restore
+   *  the riding view. Invoked from open() (a user gesture, so immersive
+   *  fullscreen/landscape can re-engage). */
+  private async resumeRide(): Promise<void> {
+    this.paused = false;
+    this.startedAt = Date.now() - this.pausedElapsedMs;
+    void this.enterImmersive();
+    this.setState("riding");
+    this.renderRiding();
+    this.enterFollowCam();
+    this.startSensors();
+    void this.acquireWakeLock();
   }
 
   /** Undo any ride-scoped ☀/☾ flips: re-resolve the theme from its durable
@@ -375,6 +465,8 @@ export class RideHud {
     this.startPos = null;
     this.startedInZone = false;
     this.lastBearing = 0;
+    this.paused = false;
+    this.pausedElapsedMs = 0;
     this.rideModels = new Set(ALL_MODELS); // every ride starts showing all
     this.setState("riding");
     this.renderRiding();
@@ -491,6 +583,11 @@ export class RideHud {
         <div class="hud-corner hud-corner--bl">
           <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
           <div class="hud-cutout-btns">
+            <button type="button" class="hud-round-btn" data-hud="exit" aria-label="Leave ride view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
             <button type="button" class="hud-round-btn hud-round-btn--stop" data-hud="end" aria-label="End ride">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
             </button>
@@ -515,6 +612,10 @@ export class RideHud {
             <span>Rate</span>
             <select id="hud-rate-live" class="select">${rateOptions}</select>
           </label>
+          <label class="hud-toggle">
+            <input type="checkbox" id="hud-veoplus-live" ${this.veoPlus ? "checked" : ""} />
+            <span>VeoPlus Pass (free unlocks)</span>
+          </label>
           <div class="hud-adjust-row hud-devrow">
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
@@ -533,6 +634,13 @@ export class RideHud {
         saveRatePlan((e.target as HTMLSelectElement).value as RatePlanKey);
         this.renderTick();
       });
+    this.root
+      .querySelector<HTMLInputElement>("#hud-veoplus-live")
+      ?.addEventListener("change", (e) => {
+        this.veoPlus = (e.target as HTMLInputElement).checked;
+        saveVeoPlus(this.veoPlus);
+        this.renderTick();
+      });
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -546,7 +654,7 @@ export class RideHud {
     const cost = this.root.querySelector("#hud-cost");
     const rate = savedRatePlan();
     if (cost && rate) {
-      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
+      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed, this.veoPlus))}`;
     }
     const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
@@ -684,7 +792,7 @@ export class RideHud {
 
     const rate = savedRatePlan();
     const plan = planFor(rate ?? "resident");
-    const veoCents = rideCostCents(plan, elapsed);
+    const veoCents = rideCostCents(plan, elapsed, this.veoPlus);
     const limeCents = comparatorCostCents(elapsed);
     const deltaCents = veoCents - limeCents;
     const miles = this.distanceM / 1609.344;
@@ -693,9 +801,16 @@ export class RideHud {
     const rows: string[] = [
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
-      row(`Est. Veo cost (${plan.key})`, formatCents(veoCents)),
+      row(
+        `Est. Veo cost (${plan.key}${this.veoPlus ? ", VeoPlus" : ""})`,
+        formatCents(veoCents),
+      ),
       row(`With ${COMPARATOR.name}'s typical pricing`, formatCents(limeCents)),
     ];
+
+    const veoPlusLine = this.veoPlus
+      ? `<p class="hud-note">VeoPlus Pass applied — ${formatCents(plan.unlockCents)} unlock fee waived.</p>`
+      : "";
 
     const monopolyLine =
       deltaCents > 0
@@ -714,6 +829,7 @@ export class RideHud {
       <div class="hud-card">
         <h2 class="hud-title">Ride summary</h2>
         <dl class="hud-summary">${rows.join("")}</dl>
+        ${veoPlusLine}
         ${zoneLine}
         ${monopolyLine}
         <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.</p>

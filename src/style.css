@@ -1941,6 +1941,75 @@ body {
   opacity: 1;
 }
 
+/* Checkbox row (VeoPlus Pass) in the pre-ride card + live adjust panel. */
+.hud-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.hud-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.hud-toggle em {
+  font-style: normal;
+  opacity: 0.7;
+}
+
+/* Exit-door prompt: a prominent modal over the live ride view. */
+.hud-exit-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+.hud-exit-card {
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  text-align: center;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.hud-exit-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+.hud-exit-actions {
+  display: flex;
+  gap: 10px;
+}
+.hud-exit-actions .hud-btn {
+  flex: 1 1 0;
+  padding: 13px 14px;
+  font-size: 16px;
+}
+.hud-exit-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
 /* Analog speedometer, bottom-right. */
 .speedo {
   width: clamp(140px, 26vh, 200px);

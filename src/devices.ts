@@ -1914,9 +1914,9 @@ function glyphColorFor(bg: string): { fill: string; halo: string } {
     : { fill: "#ffffff", halo: "rgba(0,0,0,0.45)" };
 }
 const MODEL_LETTER: Record<ModelKey, string> = {
-  astro: "A",
-  cosmo: "C",
-  apollo: "P",
+  astro: "As",
+  cosmo: "Co",
+  apollo: "Ap",
 };
 
 function drawInnerBadge(
@@ -1963,7 +1963,9 @@ function drawInnerBadge(
     fillCircle(ctx, cx, r, bg, "#ffffff", 2);
     const letter = MODEL_LETTER[mk] ?? "?";
     const { fill, halo } = glyphColorFor(bg);
-    ctx.font = `800 ${Math.round(d * 0.58)}px system-ui, -apple-system, sans-serif`;
+    // Two-letter tags (As/Co/Ap) need a smaller size than a lone glyph.
+    const fontFrac = letter.length > 1 ? 0.42 : 0.58;
+    ctx.font = `800 ${Math.round(d * fontFrac)}px system-ui, -apple-system, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";

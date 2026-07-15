@@ -5,6 +5,7 @@
 import { COMPARATOR, RATE_PLANS, type RatePlan, type RatePlanKey } from "./config.ts";
 
 const RATE_STORAGE_KEY = "scooter_fyi.rate_plan";
+const VEOPLUS_STORAGE_KEY = "scooter_fyi.veoplus";
 
 export function planFor(key: RatePlanKey): RatePlan {
   return RATE_PLANS.find((p) => p.key === key) ?? RATE_PLANS[0];
@@ -15,14 +16,20 @@ export function billableMinutes(elapsedMs: number): number {
   return Math.max(1, Math.ceil(elapsedMs / 60_000));
 }
 
-export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
+export function rideCostCents(
+  plan: RatePlan,
+  elapsedMs: number,
+  /** VeoPlus Pass waives the per-ride unlock (start) fee. */
+  waiveUnlock = false,
+): number {
   let minutes = billableMinutes(elapsedMs);
   if (plan.key === "equity") {
     // 60 free minutes/day; the ticker can't know how much of today's hour
     // is already spent, so it optimistically prices only the overflow.
     minutes = Math.max(0, minutes - 60);
   }
-  return plan.unlockCents + minutes * plan.perMinCents;
+  const unlock = waiveUnlock ? 0 : plan.unlockCents;
+  return unlock + minutes * plan.perMinCents;
 }
 
 export function comparatorCostCents(elapsedMs: number): number {
@@ -50,5 +57,24 @@ export function saveRatePlan(key: RatePlanKey): void {
     localStorage.setItem(RATE_STORAGE_KEY, key);
   } catch {
     /* private mode — the picker will just show again next ride */
+  }
+}
+
+/** VeoPlus Pass membership (free unlocks). Stored locally alongside the rate;
+ *  moves to the account profile when auth ships. */
+export function savedVeoPlus(): boolean {
+  try {
+    return localStorage.getItem(VEOPLUS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveVeoPlus(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(VEOPLUS_STORAGE_KEY, "1");
+    else localStorage.removeItem(VEOPLUS_STORAGE_KEY);
+  } catch {
+    /* private mode — the toggle just defaults off next ride */
   }
 }
