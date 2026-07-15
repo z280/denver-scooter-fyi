@@ -1601,6 +1601,35 @@ body {
   color: var(--fail);
 }
 
+/* "Report bad parking to Veo" — deep link into Veo's Zendesk form. */
+.device-popup__veo-report {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.device-popup__veo-report-link {
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  padding: 5px 9px;
+  border-radius: 999px;
+}
+.device-popup__veo-report-link:hover {
+  border-color: var(--warn-fg);
+  color: var(--warn-fg);
+}
+.device-popup__veo-report-hint {
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
 /* ---------- Popup two-column layout (when authenticated data is present) ---------- */
 .device-popup__body--two-col {
   display: flex;

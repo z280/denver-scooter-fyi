@@ -101,6 +101,105 @@ export function veoDeepLink(vehicleNumber: string): string {
   return `https://gmjc.adj.st/?adj_t=${VEO_ADJUST_TOKEN}&number=${encodeURIComponent(vehicleNumber)}`;
 }
 
+// ---------- Report improperly-parked vehicle to Veo ----------
+// A rider who spots a badly-parked Veo (blocking a sidewalk, ADA ramp,
+// transit stop…) can file it with Veo directly. Veo takes those reports
+// through a public Zendesk help-center form, which supports pre-filling
+// fields straight from the URL via Zendesk's `tf_` ("ticket field")
+// convention. We assemble that URL from what the map already knows, so the
+// rider only reviews and submits — we never auto-submit (it's their report,
+// under their identity, and Zendesk gates submit with its own anti-spam).
+
+/** Everything we can pre-fill about a badly-parked vehicle. All optional
+ *  except the coordinates — the report is meaningless without a location. */
+export interface ParkingReportInput {
+  lat: number;
+  lng: number;
+  /** Painted vehicle number / QR plate, when we have it. */
+  plate?: string | null;
+  /** Friendly model name (e.g. "Astro"). */
+  modelName?: string | null;
+  /** Stable vehicle identifier from the feed. */
+  vehicleId?: string | null;
+  /** Human dwell string (e.g. "3d 4h") for "parked here for at least…". */
+  dwellText?: string | null;
+}
+
+interface ZendeskCustomField {
+  /** Numeric Zendesk custom-field id — the `NNN` in `tf_NNN`. */
+  fieldId: string;
+  /** Our report → the string Zendesk expects for this field. For a
+   *  dropdown/checkbox the string must be the option's *tag*, not its label. */
+  map: (r: ParkingReportInput) => string;
+}
+
+/** Veo's public "improperly parked vehicle" Zendesk form.
+ *
+ *  `tf_subject` and `tf_description` are Zendesk's stable built-in prefill
+ *  params and carry the full report on their own, so this is useful as-is.
+ *
+ *  `customFields` targets Veo's *custom* fields (location dropdown, vehicle
+ *  number, etc.). Those ids are instance-specific and only readable off the
+ *  live form's HTML (the page blocks automated fetches), so the list is left
+ *  empty as a deliberate TODO — fill a `fieldId` in and its value rides along
+ *  automatically, no other code change needed. */
+export const VEO_ZENDESK_PARKING: {
+  baseUrl: string;
+  ticketFormId: string;
+  customFields: ZendeskCustomField[];
+} = {
+  baseUrl: "https://veoride.zendesk.com/hc/en-us/requests/new",
+  ticketFormId: "24858990499988",
+  // TODO(maintainer): read the custom-field ids off the live form (browser
+  // devtools, or GET …/requests/new.json) and add entries here, e.g.:
+  //   { fieldId: "24800000000000", map: (r) => r.plate ?? "" },        // Vehicle number
+  //   { fieldId: "24800000000001", map: (r) => `${r.lat},${r.lng}` },  // Location
+  // Dropdowns prefill by option TAG, not label.
+  customFields: [],
+};
+
+/** Google Maps "search this point" link — a universal, keyless location
+ *  reference to drop in the report body. */
+function mapsPointUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+/** Build the Veo Zendesk deep-link with the report pre-filled. The rider
+ *  reviews, adds the specific problem (blocking sidewalk, ramp, …), and
+ *  submits. */
+export function veoParkingReportUrl(r: ParkingReportInput): string {
+  const idBits = [
+    r.plate ? `vehicle #${r.plate}` : null,
+    r.modelName ?? null,
+  ].filter((b): b is string => !!b);
+  const subject = `Improperly parked Veo${idBits.length ? " — " + idBits.join(", ") : ""}`;
+
+  const body = [
+    "Reporting a Veo vehicle that appears to be improperly parked.",
+    "",
+    r.plate ? `Vehicle number: ${r.plate}` : null,
+    r.modelName ? `Model: ${r.modelName}` : null,
+    r.vehicleId ? `Vehicle ID: ${r.vehicleId}` : null,
+    `Location: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`,
+    `Map: ${mapsPointUrl(r.lat, r.lng)}`,
+    r.dwellText ? `Parked here for at least: ${r.dwellText}` : null,
+    "",
+    "Reported via denver.scooter.fyi. Please describe the specific problem " +
+      "(blocking sidewalk, ADA ramp, transit stop, driveway, etc.) before sending.",
+  ].filter((l): l is string => l !== null);
+
+  const params = new URLSearchParams();
+  params.set("ticket_form_id", VEO_ZENDESK_PARKING.ticketFormId);
+  params.set("tf_subject", subject);
+  params.set("tf_description", body.join("\n"));
+  for (const cf of VEO_ZENDESK_PARKING.customFields) {
+    if (!cf.fieldId) continue;
+    const value = cf.map(r);
+    if (value) params.set(`tf_${cf.fieldId}`, value);
+  }
+  return `${VEO_ZENDESK_PARKING.baseUrl}?${params.toString()}`;
+}
+
 // ---------- Ride pricing ----------
 // Veo's Denver rates are locked in the city licensing agreement for the
 // contract's duration, so constants are safe. All amounts in cents.

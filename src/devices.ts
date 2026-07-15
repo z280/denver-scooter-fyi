@@ -10,7 +10,7 @@ import type {
   FormFactor,
   PropulsionType,
 } from "./api.ts";
-import { DEVICE_COLORS, veoDeepLink } from "./config.ts";
+import { DEVICE_COLORS, veoDeepLink, veoParkingReportUrl } from "./config.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
@@ -851,6 +851,34 @@ export class Devices {
              </div>`
           : "";
 
+      // "Report bad parking to Veo" — a deep link into Veo's public Zendesk
+      // form with this vehicle + location pre-filled (see veoParkingReportUrl).
+      // Unlike the crowdsource chips above (which POST to our own API), this
+      // routes the complaint to the operator who's actually responsible for
+      // repositioning it. Always offered — anyone can report a scooter they
+      // can see, no plate or auth required; we prefill whatever we know.
+      const parkingReportUrl = veoParkingReportUrl({
+        lat: coords[1],
+        lng: coords[0],
+        plate: props.vehicle_plate ?? null,
+        modelName: props.vehicle_model_name
+          ? String(props.vehicle_model_name)
+          : model
+            ? model.name
+            : null,
+        vehicleId: props.vehicle_identifier
+          ? String(props.vehicle_identifier)
+          : null,
+        dwellText: props.first_observed_at_location
+          ? formatDwell(props.first_observed_at_location)
+          : null,
+      });
+      const veoParkReportBlock = `
+        <div class="device-popup__veo-report">
+          <a class="device-popup__veo-report-link" href="${escapeHtml(parkingReportUrl)}" target="_blank" rel="noopener">🚧 Report bad parking to Veo</a>
+          <span class="device-popup__veo-report-hint">Opens Veo's form with this vehicle &amp; location pre-filled — you review &amp; send.</span>
+        </div>`;
+
       // Primary (always-present) column. The authenticated data, when
       // available, rides in a SECOND column beside this one so the popup
       // grows sideways instead of getting even taller.
@@ -868,6 +896,7 @@ export class Devices {
           ${qualityBlock}
           ${ranksLink}
           ${reportProblemBlock}
+          ${veoParkReportBlock}
         </div>`;
       const authColumn = privateRows.length
         ? `<div class="device-popup__col device-popup__col--auth">
