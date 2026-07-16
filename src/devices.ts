@@ -668,12 +668,14 @@ export class Devices {
         (user ? this.plates.cachedPlateFor(props.device_id) : null);
 
       // Unlock deep link — same URL as the QR sticker on the scooter's deck.
-      // Deliberately gated three ways: it needs the plate (authenticated
-      // fetch only — we never expose plates to anonymous users, so Veo can't
-      // scrape our map back into their GBFS feed), an active location fix,
-      // AND physical proximity. Unlocking is a standing-at-the-scooter
-      // action; a link that works from your couch is a plate leak with extra
-      // steps. When authed but not in range, we say why instead of hiding it.
+      // Deliberately gated: it needs a plate (`effectivePlate` — the admin
+      // field, or one resolved client-side from Veo's own public GBFS feed),
+      // a signed-in session, an active location fix, AND physical proximity.
+      // Our own API still never exposes plates to anonymous users; the plate
+      // used here is either admin data or Veo's already-public feed, never a
+      // new exposure. Unlocking is a standing-at-the-scooter action; a link
+      // that works from your couch is pointless. When authed but not in
+      // range, we say why instead of hiding it.
       let unlockBlock = "";
       if (effectivePlate && isAuthenticated()) {
         const nearEnough =

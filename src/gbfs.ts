@@ -23,6 +23,12 @@ import { VEO_GBFS_FREE_BIKE_STATUS_URL } from "./config.ts";
  *  positions we join against. */
 const TTL_MS = 90_000;
 
+/** Minimum spacing between fetch ATTEMPTS. prime() is called on every GPS
+ *  fix, so without this a down / CORS-closed feed (which never refreshes the
+ *  index, so the TTL check can't throttle it) would be re-hit on every fix.
+ *  On success the TTL takes over; this only paces the failure path. */
+const ATTEMPT_COOLDOWN_MS = 30_000;
+
 /** Pulls the plate out of a rental_uris deep link (`…?adj_t=…&number=1025543`).
  *  The `number` param is the only persistent per-vehicle id the GBFS spec
  *  permits for dockless fleets (bike_id itself may rotate per trip). */
@@ -41,6 +47,7 @@ export class GbfsPlates {
    *  ever wanted for). */
   private byBikeId = new Map<string, string>();
   private fetchedAt = 0;
+  private lastAttemptAt = 0;
   private inflight: Promise<void> | null = null;
 
   private fresh(): boolean {
@@ -53,6 +60,14 @@ export class GbfsPlates {
   prime(): Promise<void> {
     if (this.fresh()) return Promise.resolve();
     if (this.inflight) return this.inflight;
+    // Throttle the failure path: a fetch that doesn't refresh the index
+    // leaves fresh() false, so without this every subsequent GPS fix would
+    // re-hit a down feed. (A success sets fetchedAt, so fresh() short-circuits
+    // above long before this gate matters.)
+    if (Date.now() - this.lastAttemptAt < ATTEMPT_COOLDOWN_MS) {
+      return Promise.resolve();
+    }
+    this.lastAttemptAt = Date.now();
     this.inflight = this.load().finally(() => {
       this.inflight = null;
     });
@@ -75,7 +90,15 @@ export class GbfsPlates {
         const uri = b.rental_uris?.android || b.rental_uris?.ios || "";
         const m = NUMBER_RE.exec(uri);
         if (!id || !m) continue;
-        idx.set(id, decodeURIComponent(m[1]));
+        let plate: string;
+        try {
+          plate = decodeURIComponent(m[1]);
+        } catch {
+          // One malformed %-sequence must not abort the whole index build —
+          // skip just this vehicle (missing beats wrong).
+          continue;
+        }
+        idx.set(id, plate);
       }
       if (idx.size > 0) {
         this.byBikeId = idx;
