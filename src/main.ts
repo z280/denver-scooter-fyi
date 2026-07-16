@@ -1727,6 +1727,9 @@ function wireAccount(): void {
           adminEmail = info?.email;
           supporterOn = info?.supporter === true;
           premiumOn = info?.premium_user === true;
+          // Popups need the perks too: admins skip the Start proximity
+          // gate (issue #18), premium unlocks the History affordance.
+          devices.setSessionPerks(adminIsOn, premiumOn);
           render();
         });
       }

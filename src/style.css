@@ -2928,3 +2928,76 @@ body.mode-ride .device-popup__ranks-link {
   font-size: 12.5px;
   color: var(--fg-muted);
 }
+
+/* ---------- Popup revamp (issue #18): action row + compact stats ---------- */
+/* Hard height cap: whatever opens inside (report tools, long rating notes),
+   the popup never outgrows the screen — the body scrolls internally and the
+   header + action row stay reachable. */
+.device-popup__body {
+  max-height: min(300px, 45vh);
+  overflow-y: auto;
+}
+.device-popup__actionrow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin: 2px 0 6px;
+}
+.device-popup__actbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.15;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.device-popup__actbtn:hover {
+  background: var(--hover-neutral);
+}
+.device-popup__actbtn--start {
+  border-color: var(--pass);
+  background: var(--pass);
+  color: var(--on-status);
+  font-weight: 700;
+}
+.device-popup__actbtn--start:hover {
+  background: var(--pass);
+  filter: brightness(1.08);
+}
+.device-popup__actbtn--start.is-blocked {
+  border-color: var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-weight: 600;
+  cursor: not-allowed;
+}
+.device-popup__sparkle {
+  font-size: 9px;
+  transform: translateY(-4px);
+}
+.device-popup__actionhint {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.device-popup__stats dd strong {
+  font-weight: 700;
+}
+.device-popup__vid {
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.device-popup__report-section {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+}

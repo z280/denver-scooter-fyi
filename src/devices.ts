@@ -219,6 +219,18 @@ export class Devices {
    *  the "Unlock in Veo" link and the parking-report prefill with the real
    *  vehicle number without our own API ever exposing plates. */
   private readonly plates = new GbfsPlates();
+  /** Session perks, pushed in by wireAccount() once /auth/session resolves.
+   *  admin lifts the Start button's proximity gate (issue #18); premium
+   *  unlocks the ⌛ History affordance when that feature lands. */
+  private adminSession = false;
+  private premiumSession = false;
+
+  /** Update the popup-affecting session perks (admin proximity bypass,
+   *  premium history). Safe to call any time; affects popups opened after. */
+  setSessionPerks(admin: boolean, premium: boolean): void {
+    this.adminSession = admin;
+    this.premiumSession = premium;
+  }
 
   constructor(
     private readonly map: Map,
@@ -639,7 +651,7 @@ export class Devices {
           ${reportUi}
         </div>`;
 
-      // Reliability verdict — the headline answer to "worth the walk?".
+      // Rating verdict — the headline answer to "worth the walk?".
       // setData() pre-annotated tier + reasons; fall back to a fresh
       // assessment for props that didn't ride through it. normalizeTier
       // guards against a raw server "high_risk" reaching the color lookup.
@@ -648,12 +660,30 @@ export class Devices {
       const relReasons =
         props.reliability_reasons ??
         assessReliability(props).reasons.join(" · ");
-      const relBlock = `
-        <div class="device-popup__reliability">
-          <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
-          <span class="device-popup__rel-label">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
-          ${relReasons ? `<div class="device-popup__rel-reasons">${escapeHtml(relReasons)}</div>` : ""}
-        </div>`;
+
+      // Quality reconciliation: the API's quality_designation grades
+      // battery-range comfort minus idle/failure demerits, while the rating
+      // grades only "will it start?" — so they can legitimately disagree.
+      // Instead of showing two clashing grades (the old Quality row), fold
+      // quality's story into the rating's explanation ONLY when the two
+      // point in different directions; when they agree it adds nothing.
+      const quality = props.quality_designation
+        ? String(props.quality_designation).trim().toLowerCase()
+        : null;
+      let qualityNote = "";
+      if (quality && quality !== "n/a") {
+        if (relTier === "ok" && (quality === "poor" || quality === "acceptable")) {
+          qualityNote = `quality "${quality}" — a battery/idle-time knock, not a start risk`;
+        } else if (
+          relTier !== "ok" &&
+          (quality === "good" || quality === "great")
+        ) {
+          qualityNote = `battery is healthy (quality "${quality}") — the doubt is whether it starts`;
+        }
+      }
+      const ratingNotes = [relReasons, qualityNote]
+        .filter(Boolean)
+        .join(" · ");
 
       const user = this.locate.current();
 
@@ -665,34 +695,35 @@ export class Devices {
       // parking-report prefill without our API exposing plates.
       const effectivePlate: string | null =
         (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
-        (user ? this.plates.cachedPlateFor(props.device_id) : null);
+        (user || this.adminSession
+          ? this.plates.cachedPlateFor(props.device_id)
+          : null);
 
-      // Unlock deep link — same URL as the QR sticker on the scooter's deck.
-      // Deliberately gated: it needs a plate (`effectivePlate` — the admin
-      // field, or one resolved client-side from Veo's own public GBFS feed),
-      // a signed-in session, an active location fix, AND physical proximity.
-      // Our own API still never exposes plates to anonymous users; the plate
-      // used here is either admin data or Veo's already-public feed, never a
-      // new exposure. Unlocking is a standing-at-the-scooter action; a link
-      // that works from your couch is pointless. When authed but not in
-      // range, we say why instead of hiding it.
-      let unlockBlock = "";
-      if (effectivePlate && isAuthenticated()) {
-        const nearEnough =
-          user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
-        if (nearEnough) {
-          const link = veoDeepLink(effectivePlate);
-          unlockBlock = `
-            <div class="device-popup__unlock-row">
-              <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
-            </div>`;
-        } else {
-          const why = user
-            ? "Walk up to this scooter to unlock it here."
-            : "Turn on your location to unlock at the scooter.";
-          unlockBlock = `<div class="device-popup__unlock-hint">🔒 ${escapeHtml(why)}</div>`;
-        }
+      // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
+      // deep link as the QR sticker on the scooter's deck, same gates: it
+      // needs a plate (`effectivePlate` — the admin field, or one resolved
+      // client-side from Veo's own public GBFS feed), a signed-in session,
+      // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
+      // skip the proximity requirement entirely. The button is ALWAYS
+      // visible; when disabled, tapping it explains why in the hint line.
+      const signedIn = isAuthenticated();
+      const nearEnough =
+        user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
+      const startAllowed = signedIn && (this.adminSession || nearEnough);
+      let startHint = "";
+      if (!signedIn) {
+        startHint = "Sign in (Account tab) to start rides here.";
+      } else if (!startAllowed) {
+        startHint = user
+          ? "You're too far away, sorry!"
+          : "Turn on your location to start at the scooter.";
+      } else if (!effectivePlate) {
+        startHint = "Looking up this scooter's plate — try again in a moment.";
       }
+      const startEnabled = startAllowed && !!effectivePlate;
+      const startBtn = startEnabled
+        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(veoDeepLink(effectivePlate))}">▶️ Start</a>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start</button>`;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
@@ -736,23 +767,66 @@ export class Devices {
         );
       }
 
-      // Public detail rows.
-      const publicRows: string[] = [];
-      if (props.vehicle_model_name) {
-        // Model name (aligned to Veo's app), with the corrected rider posture
-        // when known — key posture off vehicle_use_type, not form_factor.
+      // ---- The five compact stats the popup shows (issue #18: 3-5 key
+      // stats): Rating, Battery, Type, Vehicle ID, Parked for. Everything
+      // else moves to the "Full details" modal so the popup stays short.
+      const batteryPct = asNumber(props.battery_percent);
+      const statRows: string[] = [];
+      statRows.push(
+        `<dt>Rating</dt>
+         <dd>
+           <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+           <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
+           ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
+         </dd>`,
+      );
+      if (batteryPct !== null) {
+        statRows.push(
+          `<dt>Battery</dt><dd>${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</dd>`,
+        );
+      }
+      {
+        // Vehicle type: the friendly model + description when recognized,
+        // otherwise whatever the feed called it, with rider posture.
         const use = props.vehicle_use_type
           ? ` <span class="device-popup__hint">${escapeHtml(usePosture(props.vehicle_use_type))}</span>`
           : "";
-        publicRows.push(
-          `<dt>Model</dt><dd>${escapeHtml(String(props.vehicle_model_name))}${use}</dd>`,
+        const typeDd = model
+          ? `${escapeHtml(model.name)} <span class="device-popup__hint">${escapeHtml(model.desc)}</span>`
+          : props.vehicle_model_name
+            ? `${escapeHtml(String(props.vehicle_model_name))}${use}`
+            : `${escapeHtml(props.form_factor === "bicycle" ? "E-bike" : "Scooter")}${use}`;
+        statRows.push(`<dt>Type</dt><dd>${typeDd}</dd>`);
+      }
+      if (props.vehicle_identifier) {
+        statRows.push(
+          `<dt>Vehicle ID</dt><dd><code class="device-popup__vid">${escapeHtml(String(props.vehicle_identifier))}</code></dd>`,
         );
       }
+      if (props.first_observed_at_location) {
+        // Peer context (public since the §1.4 recalibration): how this
+        // dwell compares to scooters in the same H3 neighborhood.
+        const peerMedian = asNumber(props.dwell_peer_median_hours);
+        const peerHint =
+          peerMedian !== null && peerMedian > 0
+            ? ` <span class="device-popup__hint">block median ${escapeHtml(formatDwellHours(peerMedian))}</span>`
+            : "";
+        statRows.push(
+          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
+        );
+      }
+
+      // ---- Everything else: rows for the "Full details" modal, in rough
+      // priority order. Range-rank rows only exist when the fetch carried
+      // ?include=ranks; the admin extras only on ADMIN_EMAILS sessions.
+      const detailRows: string[] = [];
+      detailRows.push(
+        `<dt>Device ID</dt><dd><code>${escapeHtml(props.device_id)}</code></dd>`,
+      );
       const rangeMeters = asNumber(props.current_range_meters);
       if (rangeMeters !== null) {
         const showing = this.rangeCircleDeviceId === props.device_id;
-        const linkText = showing ? "Hide on map" : "Show on map";
-        publicRows.push(
+        detailRows.push(
           `<dt>Range</dt>
            <dd>
              ${escapeHtml(formatRange(rangeMeters))}
@@ -764,89 +838,52 @@ export class Devices {
                data-lng="${coords[0]}"
                data-lat="${coords[1]}"
                data-radius="${rangeMeters}"
-             >${linkText}</button>
+             >${showing ? "Hide on map" : "Show on map"}</button>
            </dd>`,
         );
       }
       if (props.propulsion_type) {
         const prop = String(props.propulsion_type) as PropulsionType;
         const lbl = PROPULSION_LABEL[prop] ?? prop;
-        publicRows.push(`<dt>Drivetrain</dt><dd>${escapeHtml(lbl)}</dd>`);
+        detailRows.push(`<dt>Drivetrain</dt><dd>${escapeHtml(lbl)}</dd>`);
       }
-      if (props.vehicle_identifier) {
-        publicRows.push(
-          `<dt>Vehicle ID</dt><dd><code>${escapeHtml(String(props.vehicle_identifier))}</code></dd>`,
+      if (props.quality_designation) {
+        detailRows.push(
+          `<dt>Quality</dt><dd><code>${escapeHtml(String(props.quality_designation))}</code> <span class="device-popup__hint">battery-range grade minus idle/failure demerits</span></dd>`,
         );
       }
-
-      // Range-rank rows are API-computed but too wonky for the popup
-      // proper — they live in a modal behind a "Show Battery Rankings"
-      // link, and the link itself is analysis-mode-only (hidden via CSS in
-      // ride mode).
-      const rankRows: string[] = [];
+      if (asBool(props.has_negative_report)) {
+        detailRows.push(
+          `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">Negative report on file</span></dd>`,
+        );
+      }
+      const failedStarts = asNumber(props.number_failed_starts);
+      if (failedStarts !== null) {
+        detailRows.push(
+          `<dt>Failed starts</dt><dd>${failedStarts.toLocaleString()}</dd>`,
+        );
+      }
       const percentile = asNumber(props.range_percentile_by_type);
       if (percentile !== null) {
-        rankRows.push(
+        detailRows.push(
           `<dt>Range percentile</dt><dd>${formatPercentile(percentile)} <span class="device-popup__hint">vs same drivetrain</span></dd>`,
         );
       }
       const rankAllDevices = formatRank(props.range_rank_all_devices);
       if (rankAllDevices !== null) {
-        rankRows.push(`<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`);
+        detailRows.push(`<dt>Rank (citywide)</dt><dd>${rankAllDevices}</dd>`);
       }
       const rankByType = formatRank(props.range_rank_all_by_type);
       if (rankByType !== null) {
-        rankRows.push(`<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`);
+        detailRows.push(`<dt>Rank (by drivetrain)</dt><dd>${rankByType}</dd>`);
       }
-      const ranksLink = rankRows.length
-        ? `<button type="button" class="device-popup__ranks-link text-btn" data-action="show-ranks">Show Battery Rankings</button>`
-        : "";
-
-      // Quality + reliability rows — all now public. quality_designation,
-      // negative-report flag, dwell time, and failed starts ship on the
-      // public endpoint, so they belong here (not behind the auth tag).
-      const qualityRows: string[] = [];
-      if (props.quality_designation) {
-        qualityRows.push(
-          `<dt>Quality</dt><dd><code>${escapeHtml(String(props.quality_designation))}</code></dd>`,
-        );
-      }
-      if (asBool(props.has_negative_report)) {
-        qualityRows.push(
-          `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">Negative report on file</span></dd>`,
-        );
-      }
-      if (props.first_observed_at_location) {
-        // Peer context (public since the §1.4 recalibration): how this
-        // dwell compares to scooters in the same H3 neighborhood.
-        const peerMedian = asNumber(props.dwell_peer_median_hours);
-        const peerHint =
-          peerMedian !== null && peerMedian > 0
-            ? ` <span class="device-popup__hint">block median ${escapeHtml(formatDwellHours(peerMedian))}</span>`
-            : "";
-        qualityRows.push(
-          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
-        );
-      }
-      const failedStarts = asNumber(props.number_failed_starts);
-      if (failedStarts !== null) {
-        qualityRows.push(
-          `<dt>Failed starts</dt><dd>${failedStarts.toLocaleString()}</dd>`,
-        );
-      }
-
-      // Admin detail rows — only present when the authenticated fetch ran
-      // AND the session's email is in ADMIN_EMAILS (/user/devices/current
-      // adds these on top of the public field set): plate, all-time
-      // first-seen stamp, and the best range ever observed.
-      const privateRows: string[] = [];
       if (props.vehicle_plate) {
-        privateRows.push(
+        detailRows.push(
           `<dt>Plate</dt><dd><code>${escapeHtml(props.vehicle_plate)}</code></dd>`,
         );
       }
       if (props.first_ever_observed_at) {
-        privateRows.push(
+        detailRows.push(
           `<dt>First seen ever</dt><dd>${escapeHtml(formatDate(props.first_ever_observed_at))}</dd>`,
         );
       }
@@ -855,17 +892,13 @@ export class Devices {
         const maxRangeAt = props.max_observed_range_at
           ? ` <span class="device-popup__hint">${escapeHtml(formatDate(props.max_observed_range_at))}</span>`
           : "";
-        privateRows.push(
+        detailRows.push(
           `<dt>Max observed range</dt><dd>${escapeHtml(formatRange(maxRange))}${maxRangeAt}</dd>`,
         );
       }
 
       const statusBlock = statusBadges.length
         ? `<div class="device-popup__statuses">${statusBadges.join("")}</div>`
-        : "";
-
-      const qualityBlock = qualityRows.length
-        ? `<dl class="device-popup__meta">${qualityRows.join("")}</dl>`
         : "";
 
       // One-tap device-failure report (POST /api/v1/reports/device). Needs
@@ -931,44 +964,44 @@ export class Devices {
           </div>`;
       }
 
-      // Primary (always-present) column. The authenticated data, when
-      // available, rides in a SECOND column beside this one so the popup
-      // grows sideways instead of getting even taller.
-      const primaryColumn = `
-        <div class="device-popup__col">
-          ${statusBlock}
-          ${relBlock}
-          ${unlockBlock}
-          ${walkBlock}
-          <dl class="device-popup__meta">
-            <dt>Device ID</dt>
-            <dd><code>${escapeHtml(props.device_id)}</code></dd>
-            ${publicRows.join("")}
-          </dl>
-          ${qualityBlock}
-          ${ranksLink}
+      // Compact layout (issue #18): a 4-button action row, then the five
+      // key stats. The report tools hide behind ⚠️ Report; everything else
+      // lives in the ℹ️ Details modal — the popup itself stays short. The
+      // admin two-column variant is gone; admin extras ride in the modal.
+      const actionRow = `
+        <div class="device-popup__actionrow">
+          ${startBtn}
+          <button type="button" class="device-popup__actbtn" data-action="toggle-report">⚠️ Report</button>
+          <button type="button" class="device-popup__actbtn" data-action="full-details">ℹ️ Details</button>
+          <button type="button" class="device-popup__actbtn" data-action="history">⌛ History<span class="device-popup__sparkle">✨</span></button>
+        </div>
+        <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
+
+      const reportSection = `
+        <div class="device-popup__report-section" hidden>
           ${reportProblemBlock}
           ${veoParkReportBlock}
         </div>`;
-      const authColumn = privateRows.length
-        ? `<div class="device-popup__col device-popup__col--auth">
-             <span class="device-popup__authed-tag">Authenticated</span>
-             <dl class="device-popup__meta">${privateRows.join("")}</dl>
-           </div>`
-        : "";
-      const twoCol = privateRows.length ? " device-popup__body--two-col" : "";
 
       this.popup?.remove();
       const popup = new maplibregl.Popup({
         closeButton: true,
         offset: 10,
-        maxWidth: privateRows.length ? "460px" : "270px",
+        maxWidth: "300px",
       })
         .setLngLat(coords)
         .setHTML(
           `<div class="device-popup">
              ${headerBlock}
-             <div class="device-popup__body${twoCol}">${primaryColumn}${authColumn}</div>
+             <div class="device-popup__body">
+               <div class="device-popup__col">
+                 ${actionRow}
+                 ${statusBlock}
+                 <dl class="device-popup__meta device-popup__stats">${statRows.join("")}</dl>
+                 ${walkBlock}
+                 ${reportSection}
+               </div>
+             </div>
            </div>`,
         )
         .addTo(map);
@@ -985,7 +1018,7 @@ export class Devices {
       // has a fix (so proximity features apply), prime the index and re-render
       // once when a plate lands. Guarded so it runs at most one extra time and
       // only while THIS popup is still the open one.
-      if (!retry && user && !effectivePlate) {
+      if (!retry && (user || this.adminSession) && !effectivePlate) {
         void this.plates.prime().then(() => {
           if (this.popup !== popup) return; // closed or replaced
           if (this.plates.cachedPlateFor(props.device_id)) {
@@ -1000,36 +1033,47 @@ export class Devices {
         popup.on("close", () => this.locate.clearLine());
       }
 
-      // "Show Battery Rankings" → the nerd-stats modal (analysis mode only;
-      // the link is display:none'd in ride mode).
-      const ranksBtn = this.popup
-        .getElement()
-        ?.querySelector<HTMLButtonElement>('[data-action="show-ranks"]');
-      ranksBtn?.addEventListener("click", () => {
-        openRanksModal(rankRows);
-      });
-
-      // Wire the "Show/Hide on map" range-circle toggle, if rendered.
-      const toggleBtn = this.popup
-        .getElement()
-        ?.querySelector<HTMLButtonElement>(
-          '[data-action="toggle-range"]',
-        );
-      toggleBtn?.addEventListener("click", () => {
-        const deviceId = toggleBtn.dataset.device || "";
-        const lng = Number(toggleBtn.dataset.lng);
-        const lat = Number(toggleBtn.dataset.lat);
-        const radius = Number(toggleBtn.dataset.radius);
-        if (this.rangeCircleDeviceId === deviceId) {
-          this.clearRangeCircle();
-          toggleBtn.textContent = "Show on map";
-        } else {
-          this.showRangeCircle(deviceId, lng, lat, radius);
-          toggleBtn.textContent = "Hide on map";
-        }
-      });
-
       const popupEl = this.popup.getElement();
+
+      // ---- Action-row wiring. A blocked Start explains itself in the hint
+      // line (mobile has no hover for the title tooltip); ⚠️ toggles the
+      // report tools open; ℹ️ opens the full-details modal; ⌛ History is
+      // the premium teaser until ride history ships.
+      const hintLine = popupEl?.querySelector<HTMLElement>(
+        ".device-popup__actionhint",
+      );
+      const showHint = (text: string): void => {
+        if (!hintLine) return;
+        hintLine.textContent = text;
+        hintLine.hidden = false;
+      };
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="start-blocked"]')
+        ?.addEventListener("click", () => showHint(startHint));
+      const reportSectionEl = popupEl?.querySelector<HTMLElement>(
+        ".device-popup__report-section",
+      );
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="toggle-report"]')
+        ?.addEventListener("click", () => {
+          if (reportSectionEl) reportSectionEl.hidden = !reportSectionEl.hidden;
+        });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="full-details"]')
+        ?.addEventListener("click", () => {
+          openDetailsModal(headerName, detailRows, (root) =>
+            this.wireRangeToggles(root),
+          );
+        });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="history"]')
+        ?.addEventListener("click", () => {
+          showHint(
+            this.premiumSession
+              ? "⌛ Ride history is coming soon — it'll live right here."
+              : "✨ Ride history is a Premium perk — start the free trial in the Account tab.",
+          );
+        });
 
       // One-tap device-failure report chips → POST /api/v1/reports/device.
       const reportChips = popupEl?.querySelectorAll<HTMLButtonElement>(
@@ -1189,6 +1233,28 @@ export class Devices {
       });
 
     }
+  }
+
+  /** Wire any "Show/Hide on map" range-circle toggles inside `root`. Used
+   *  by the full-details modal (the compact popup no longer renders one). */
+  private wireRangeToggles(root: HTMLElement | null): void {
+    root
+      ?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-range"]')
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const deviceId = btn.dataset.device || "";
+          const lng = Number(btn.dataset.lng);
+          const lat = Number(btn.dataset.lat);
+          const radius = Number(btn.dataset.radius);
+          if (this.rangeCircleDeviceId === deviceId) {
+            this.clearRangeCircle();
+            btn.textContent = "Show on map";
+          } else {
+            this.showRangeCircle(deviceId, lng, lat, radius);
+            btn.textContent = "Hide on map";
+          }
+        });
+      });
   }
 
   /** Center the map on a device and open its popup — used by the
@@ -2271,20 +2337,26 @@ function clientPointOf(
   return { clientX: m.clientX, clientY: m.clientY };
 }
 
-/** Lightweight modal for the battery-ranking nerd stats. One at a time;
- *  closes on ✕, backdrop click, or Escape. */
-function openRanksModal(rankRows: string[]): void {
+/** ℹ️ Full-details modal (issue #18): every stat that used to bloat the
+ *  popup — range/drivetrain/quality/ranks/admin extras — in the same modal
+ *  shell the Battery Rankings used (it absorbed those rows too). One at a
+ *  time; closes on ✕, backdrop click, or Escape. `onOpen` lets the caller
+ *  wire interactive rows (the range-circle toggle) after insertion. */
+function openDetailsModal(
+  title: string,
+  rows: string[],
+  onOpen?: (root: HTMLElement | null) => void,
+): void {
   document.querySelector(".ranks-modal")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "ranks-modal";
   backdrop.innerHTML = `
     <div class="ranks-modal__card" role="dialog" aria-modal="true" aria-labelledby="ranks-modal-title">
       <div class="ranks-modal__head">
-        <h3 id="ranks-modal-title">Battery Rankings</h3>
+        <h3 id="ranks-modal-title">${escapeHtml(title)} — full details</h3>
         <button type="button" class="ranks-modal__close" aria-label="Close">×</button>
       </div>
-      <p class="ranks-modal__hint">How this device's remaining range compares to the rest of the fleet right now.</p>
-      <dl class="device-popup__meta">${rankRows.join("")}</dl>
+      <dl class="device-popup__meta">${rows.join("")}</dl>
     </div>`;
   const close = (): void => {
     backdrop.remove();
@@ -2301,6 +2373,7 @@ function openRanksModal(rankRows: string[]): void {
     ?.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.appendChild(backdrop);
+  onOpen?.(backdrop.querySelector<HTMLElement>(".ranks-modal__card"));
 }
 
 /** Format an upstream rank value into a friendly string, or null when absent
