@@ -10,7 +10,8 @@ import type {
   FormFactor,
   PropulsionType,
 } from "./api.ts";
-import { DEVICE_COLORS, veoDeepLink } from "./config.ts";
+import { DEVICE_COLORS, veoDeepLink, veoParkingReportUrl } from "./config.ts";
+import { GbfsPlates } from "./gbfs.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
@@ -89,6 +90,13 @@ const UNLOCK_PROXIMITY_M = 75;
  *  tap only flashes the essentials tooltip (auto-hidden after that). */
 const RIDE_LONGPRESS_MS = 450;
 const RIDE_TOOLTIP_MS = 2200;
+
+/** How close (metres) the user must be to report a scooter's parking. A
+ *  parking complaint is only credible from someone who can actually see the
+ *  vehicle, so we gate on a live GPS fix AND sight distance. Looser than the
+ *  unlock radius (you can see a badly-parked scooter from across the street)
+ *  but still local — you can't report parking for a scooter across town. */
+const PARKING_REPORT_PROXIMITY_M = 100;
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -207,11 +215,23 @@ export class Devices {
   /** ✨ Icon size preference — multiplies the zoom→size ramps for the
    *  device badges and their text overlays (1 = default). */
   private iconScale = 1;
+  /** Plate resolver backed by Veo's public GBFS feed — lets the popup fill
+   *  the "Unlock in Veo" link and the parking-report prefill with the real
+   *  vehicle number without our own API ever exposing plates. */
+  private readonly plates = new GbfsPlates();
 
   constructor(
     private readonly map: Map,
     private readonly locate: Locate,
-  ) {}
+  ) {
+    // A plate is only ever needed at the scooter (unlock / parking report),
+    // which already requires a location fix — so prime the GBFS index on the
+    // first fix. By the time the user opens a nearby popup it's warm, and
+    // cachedPlateFor() stays a synchronous lookup.
+    this.locate.onFix(() => {
+      void this.plates.prime();
+    });
+  }
 
   addLayers(): void {
     // Kick off the model-badge decode; when it lands, re-annotate so
@@ -580,7 +600,11 @@ export class Devices {
    *  click handler (flattened feature properties) and from the
    *  worth-the-walk "Show me" jump (raw GeoJSON properties) — the readers
    *  are defensive about both. */
-  private openDevicePopup(props: PopupProps, coords: [number, number]): void {
+  private openDevicePopup(
+    props: PopupProps,
+    coords: [number, number],
+    retry = false,
+  ): void {
     const { map } = this;
     {
       const here: LngLat = { lng: coords[0], lat: coords[1] };
@@ -633,19 +657,31 @@ export class Devices {
 
       const user = this.locate.current();
 
+      // Effective plate: the admin-only field when present, else resolved
+      // client-side from Veo's public GBFS feed (keyed by device_id == the
+      // feed's bike_id). Only resolved when the user has a fix — a plate is
+      // only actionable at the scooter, and this avoids scanning the index
+      // for far-away or no-location views. Powers the unlock link and the
+      // parking-report prefill without our API exposing plates.
+      const effectivePlate: string | null =
+        (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
+        (user ? this.plates.cachedPlateFor(props.device_id) : null);
+
       // Unlock deep link — same URL as the QR sticker on the scooter's deck.
-      // Deliberately gated three ways: it needs the plate (authenticated
-      // fetch only — we never expose plates to anonymous users, so Veo can't
-      // scrape our map back into their GBFS feed), an active location fix,
-      // AND physical proximity. Unlocking is a standing-at-the-scooter
-      // action; a link that works from your couch is a plate leak with extra
-      // steps. When authed but not in range, we say why instead of hiding it.
+      // Deliberately gated: it needs a plate (`effectivePlate` — the admin
+      // field, or one resolved client-side from Veo's own public GBFS feed),
+      // a signed-in session, an active location fix, AND physical proximity.
+      // Our own API still never exposes plates to anonymous users; the plate
+      // used here is either admin data or Veo's already-public feed, never a
+      // new exposure. Unlocking is a standing-at-the-scooter action; a link
+      // that works from your couch is pointless. When authed but not in
+      // range, we say why instead of hiding it.
       let unlockBlock = "";
-      if (props.vehicle_plate && isAuthenticated()) {
+      if (effectivePlate && isAuthenticated()) {
         const nearEnough =
           user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
         if (nearEnough) {
-          const link = veoDeepLink(String(props.vehicle_plate));
+          const link = veoDeepLink(effectivePlate);
           unlockBlock = `
             <div class="device-popup__unlock-row">
               <a class="device-popup__unlock" href="${escapeHtml(link)}">Unlock in Veo →</a>
@@ -851,6 +887,50 @@ export class Devices {
              </div>`
           : "";
 
+      // "Report bad parking to Veo" — routes the complaint to the operator
+      // responsible for repositioning it (Veo's public Zendesk form, deep-
+      // linked with this vehicle + location pre-filled) AND records it as an
+      // improperly_parked report on our own API (the compliance signal).
+      //
+      // Gated: a parking complaint is only credible from someone who can see
+      // the vehicle, so it needs (1) a live GPS fix and (2) sight distance.
+      // When those aren't met we say why instead of offering the action —
+      // same pattern as the unlock block above.
+      const parkNearEnough =
+        user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M;
+      let veoParkReportBlock: string;
+      if (user && parkNearEnough) {
+        const parkingReportUrl = veoParkingReportUrl({
+          lat: coords[1],
+          lng: coords[0],
+          plate: effectivePlate,
+          modelName: props.vehicle_model_name
+            ? String(props.vehicle_model_name)
+            : model
+              ? model.name
+              : null,
+          vehicleId: props.vehicle_identifier
+            ? String(props.vehicle_identifier)
+            : null,
+          dwellText: props.first_observed_at_location
+            ? formatDwell(props.first_observed_at_location)
+            : null,
+        });
+        veoParkReportBlock = `
+          <div class="device-popup__veo-report">
+            <a class="device-popup__veo-report-link" data-action="report-parking" href="${escapeHtml(parkingReportUrl)}" target="_blank" rel="noopener">🚧 Report bad parking to Veo</a>
+            <span class="device-popup__veo-report-hint">Opens Veo's form with this vehicle &amp; location pre-filled — you review &amp; send.</span>
+          </div>`;
+      } else {
+        const why = user
+          ? "Walk within sight of this scooter to report its parking."
+          : "Turn on your location to report bad parking.";
+        veoParkReportBlock = `
+          <div class="device-popup__veo-report">
+            <span class="device-popup__veo-report-gate">🔒 ${escapeHtml(why)}</span>
+          </div>`;
+      }
+
       // Primary (always-present) column. The authenticated data, when
       // available, rides in a SECOND column beside this one so the popup
       // grows sideways instead of getting even taller.
@@ -868,6 +948,7 @@ export class Devices {
           ${qualityBlock}
           ${ranksLink}
           ${reportProblemBlock}
+          ${veoParkReportBlock}
         </div>`;
       const authColumn = privateRows.length
         ? `<div class="device-popup__col device-popup__col--auth">
@@ -897,6 +978,21 @@ export class Devices {
       popup.on("close", () => {
         if (this.popup === popup) this.popup = null;
       });
+
+      // Progressive plate hydration: the plate powers the unlock link and the
+      // parking-report prefill, but the GBFS index may not be warm on the very
+      // first popup after a fix. If we rendered without a plate but the user
+      // has a fix (so proximity features apply), prime the index and re-render
+      // once when a plate lands. Guarded so it runs at most one extra time and
+      // only while THIS popup is still the open one.
+      if (!retry && user && !effectivePlate) {
+        void this.plates.prime().then(() => {
+          if (this.popup !== popup) return; // closed or replaced
+          if (this.plates.cachedPlateFor(props.device_id)) {
+            this.openDevicePopup(props, coords, true);
+          }
+        });
+      }
 
       // Dashed orientation line user → device while the popup is open.
       if (user) {
@@ -980,6 +1076,28 @@ export class Devices {
                 reportChips.forEach((c) => (c.disabled = false));
                 setDeviceStatus("Couldn't send — please try again.", "error");
               });
+          });
+        });
+      }
+
+      // "Report bad parking to Veo" — the anchor opens Veo's Zendesk form
+      // (default nav, new tab). Alongside that, fire an improperly_parked
+      // report to our own API so the parking signal lands in the compliance
+      // aggregate. Fire-and-forget: never preventDefault (the Zendesk hand-off
+      // must not depend on our POST), and only when we have a valid 16-hex
+      // vehicle_identifier for the API to accept.
+      const parkLink = popupEl?.querySelector<HTMLAnchorElement>(
+        '[data-action="report-parking"]',
+      );
+      if (parkLink && /^[0-9a-f]{16}$/.test(vid)) {
+        parkLink.addEventListener("click", () => {
+          submitDeviceReport({
+            vehicle_identifier: vid,
+            report_type: "improperly_parked",
+            lat: coords[1],
+            lng: coords[0],
+          }).catch(() => {
+            /* best-effort; the rider's Veo report is what matters here */
           });
         });
       }

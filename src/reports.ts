@@ -8,9 +8,15 @@
 import { API_BASE } from "./api.ts";
 import { getAuth } from "./map-auth.js";
 
-/** The device-failure report types the API accepts
- *  (POST /api/v1/reports/device — pattern ^(failed_unlock|dead_battery|damaged)$). */
-export type DeviceReportType = "failed_unlock" | "dead_battery" | "damaged";
+/** The device-failure report types the API accepts (POST
+ *  /api/v1/reports/device). `improperly_parked` is a parking-compliance
+ *  report — it feeds the reports summary/export but, unlike the others, does
+ *  NOT flip has_negative_report / reliability_tier server-side. */
+export type DeviceReportType =
+  | "failed_unlock"
+  | "dead_battery"
+  | "damaged"
+  | "improperly_parked";
 
 export interface DeviceReport {
   /** Stable per-vehicle HMAC (public). The API requires ≥16 chars. */
@@ -30,9 +36,12 @@ export async function submitDeviceReport(
     vehicle_identifier: report.vehicle_identifier,
     report_type: report.report_type,
   };
+  // Field names must match the API's DeviceReportIn model (lat/lng). Sending
+  // coords is what lets a report be regionalized in /reports/summary (which
+  // skips rows with NULL lat/lng), so getting these keys right matters.
   if (report.lat !== undefined && report.lng !== undefined) {
-    body.report_lat = report.lat;
-    body.report_lon = report.lng;
+    body.lat = report.lat;
+    body.lng = report.lng;
   }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
