@@ -1426,17 +1426,6 @@ body {
   padding-top: 10px;
   border-top: 1px dashed var(--border);
 }
-.device-popup__authed-tag {
-  display: inline-block;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  padding: 1px 6px;
-  border-radius: 999px;
-}
 .device-popup__authed .device-popup__meta {
   margin-top: 6px;
 }
@@ -1634,24 +1623,9 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- Popup two-column layout (when authenticated data is present) ---------- */
-.device-popup__body--two-col {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
 .device-popup__col {
   flex: 1 1 190px;
   min-width: 0;
-}
-/* The authenticated column gets a subtle tint (rather than a directional
-   border) so it reads as distinct whether it sits beside or wraps below. */
-.device-popup__col--auth {
-  flex: 1 1 150px;
-  background: var(--accent-soft);
-  border-radius: 8px;
-  padding: 8px 10px;
-  align-self: flex-start;
 }
 
 /* ---------- Popup: reliability verdict ---------- */
@@ -1675,36 +1649,6 @@ body {
   color: var(--fg-muted);
 }
 
-/* ---------- Popup: unlock deep link + QR ---------- */
-.device-popup__unlock-row {
-  margin-top: 9px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.device-popup__unlock {
-  flex: 1 1 auto;
-  display: inline-block;
-  text-align: center;
-  padding: 7px 10px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 8px;
-  text-decoration: none;
-}
-.device-popup__unlock:hover {
-  filter: brightness(1.05);
-}
-.device-popup__unlock-hint {
-  margin-top: 9px;
-  font-size: 12px;
-  color: var(--fg-muted);
-  background: var(--hover-neutral);
-  border-radius: 8px;
-  padding: 7px 9px;
-}
 
 /* ---------- Popup: walk economics ---------- */
 .device-popup__walk {
@@ -2786,16 +2730,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   font-style: italic;
 }
 
-/* ---------- Battery Rankings modal (analysis-mode nerd stats) ---------- */
-.device-popup__ranks-link {
-  display: inline-block;
-  margin-top: 6px;
-  font-size: 12px;
-}
-/* The rankings are an analysis tool — riders never see the link. */
-body.mode-ride .device-popup__ranks-link {
-  display: none;
-}
+/* ---------- Full-details modal (shared shell with the old rankings) ---------- */
 .ranks-modal {
   position: fixed;
   inset: 0;

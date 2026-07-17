@@ -710,8 +710,17 @@ export class Devices {
       const nearEnough =
         user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
       const startAllowed = signedIn && (this.adminSession || nearEnough);
+      // Vehicle-status gates come first: no proximity or session fixes a
+      // scooter that Veo itself won't rent out. (The old unlock link never
+      // checked these; promoted to the primary CTA, it has to.)
+      const outOfService = asBool(props.is_disabled);
+      const reserved = asBool(props.is_reserved);
       let startHint = "";
-      if (!signedIn) {
+      if (outOfService) {
+        startHint = "This scooter is marked out of service.";
+      } else if (reserved) {
+        startHint = "Reserved by another rider right now.";
+      } else if (!signedIn) {
         startHint = "Sign in (Account tab) to start rides here.";
       } else if (!startAllowed) {
         startHint = user
@@ -720,7 +729,8 @@ export class Devices {
       } else if (!effectivePlate) {
         startHint = "Looking up this scooter's plate — try again in a moment.";
       }
-      const startEnabled = startAllowed && !!effectivePlate;
+      const startEnabled =
+        startAllowed && !!effectivePlate && !outOfService && !reserved;
       const startBtn = startEnabled
         ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(veoDeepLink(effectivePlate))}">▶️ Start</a>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start</button>`;
@@ -1071,7 +1081,9 @@ export class Devices {
           showHint(
             this.premiumSession
               ? "⌛ Ride history is coming soon — it'll live right here."
-              : "✨ Ride history is a Premium perk — start the free trial in the Account tab.",
+              : signedIn
+                ? "✨ Ride history is a Premium perk — start the free trial in the Account tab."
+                : "✨ Ride history is a Premium perk — sign in via the Account tab to start the free trial.",
           );
         });
 
@@ -1236,7 +1248,9 @@ export class Devices {
   }
 
   /** Wire any "Show/Hide on map" range-circle toggles inside `root`. Used
-   *  by the full-details modal (the compact popup no longer renders one). */
+   *  by the full-details modal (the compact popup no longer renders one).
+   *  Turning a circle ON also closes the modal — the whole point is to see
+   *  the halo, and the backdrop would otherwise cover it. */
   private wireRangeToggles(root: HTMLElement | null): void {
     root
       ?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-range"]')
@@ -1252,6 +1266,10 @@ export class Devices {
           } else {
             this.showRangeCircle(deviceId, lng, lat, radius);
             btn.textContent = "Hide on map";
+            // Close via the ✕ so the modal's Escape listener detaches too.
+            document
+              .querySelector<HTMLButtonElement>(".ranks-modal__close")
+              ?.click();
           }
         });
       });
