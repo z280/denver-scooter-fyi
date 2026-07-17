@@ -729,10 +729,14 @@ export class Devices {
       } else if (!effectivePlate) {
         startHint = "Looking up this scooter's plate — try again in a moment.";
       }
-      const startEnabled =
-        startAllowed && !!effectivePlate && !outOfService && !reserved;
-      const startBtn = startEnabled
-        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(veoDeepLink(effectivePlate))}">▶️ Start</a>`
+      // Resolve the deep link inline so the plate's non-null narrowing is
+      // explicit rather than riding on TS aliased-condition narrowing.
+      const startHref =
+        startAllowed && effectivePlate && !outOfService && !reserved
+          ? veoDeepLink(effectivePlate)
+          : null;
+      const startBtn = startHref
+        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start</a>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start</button>`;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
@@ -981,14 +985,14 @@ export class Devices {
       const actionRow = `
         <div class="device-popup__actionrow">
           ${startBtn}
-          <button type="button" class="device-popup__actbtn" data-action="toggle-report">⚠️ Report</button>
+          <button type="button" class="device-popup__actbtn" data-action="toggle-report" aria-expanded="false" aria-controls="device-report-tools">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details">ℹ️ Details</button>
           <button type="button" class="device-popup__actbtn" data-action="history">⌛ History<span class="device-popup__sparkle">✨</span></button>
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
 
       const reportSection = `
-        <div class="device-popup__report-section" hidden>
+        <div class="device-popup__report-section" id="device-report-tools" hidden>
           ${reportProblemBlock}
           ${veoParkReportBlock}
         </div>`;
@@ -1063,11 +1067,18 @@ export class Devices {
       const reportSectionEl = popupEl?.querySelector<HTMLElement>(
         ".device-popup__report-section",
       );
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="toggle-report"]')
-        ?.addEventListener("click", () => {
-          if (reportSectionEl) reportSectionEl.hidden = !reportSectionEl.hidden;
-        });
+      const reportToggleBtn = popupEl?.querySelector<HTMLButtonElement>(
+        '[data-action="toggle-report"]',
+      );
+      reportToggleBtn?.addEventListener("click", () => {
+        if (!reportSectionEl) return;
+        reportSectionEl.hidden = !reportSectionEl.hidden;
+        // Mirror the state for assistive tech (aria-controls points here).
+        reportToggleBtn.setAttribute(
+          "aria-expanded",
+          String(!reportSectionEl.hidden),
+        );
+      });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="full-details"]')
         ?.addEventListener("click", () => {

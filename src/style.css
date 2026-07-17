@@ -2864,6 +2864,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   color: var(--fg-muted);
 }
 
+/* The geolocate control's blue dot + accuracy circle are DOM markers that
+   swallow clicks by default — so a rider standing AT a scooter (dot covering
+   its icon) couldn't tap that scooter. Nothing on them is interactive; let
+   every click fall through to the map. */
+.maplibregl-user-location-dot,
+.maplibregl-user-location-accuracy-circle {
+  pointer-events: none;
+}
+
 /* ---------- Popup revamp (issue #18): action row + compact stats ---------- */
 /* Hard height cap: whatever opens inside (report tools, long rating notes),
    the popup never outgrows the screen — the body scrolls internally and the
