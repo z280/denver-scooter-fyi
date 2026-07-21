@@ -2370,6 +2370,12 @@ function openFloatingModal(
   bodyHtml: string,
   onOpen?: (root: HTMLElement | null) => void,
 ): void {
+  // Close any open modal through its ✕ so its close() runs and detaches
+  // the document-level Escape listener (a bare .remove() would orphan it —
+  // reachable via keyboard, since focus stays on the launching button).
+  document
+    .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
+    ?.click();
   document.querySelector(".ranks-modal")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "ranks-modal";
