@@ -309,20 +309,20 @@ function wireSunSync(): void {
   btn.addEventListener("click", () => {
     const on = !isSunSyncEnabled();
     setSunSync(on);
-    if (on) showPremiumPopup();
+    if (on) showSupporterBonusPopup();
   });
   startSunSync();
 }
 
-function showPremiumPopup(): void {
-  document.querySelector(".premium-popup")?.remove();
+function showSupporterBonusPopup(): void {
+  document.querySelector(".supporter-bonus-popup")?.remove();
   const popup = document.createElement("div");
-  popup.className = "premium-popup";
+  popup.className = "supporter-bonus-popup";
   popup.setAttribute("role", "status");
   popup.setAttribute("aria-live", "polite");
 
   const text = document.createElement("p");
-  text.className = "premium-popup__text";
+  text.className = "supporter-bonus-popup__text";
   text.append(
     "✨ This is a supporter bonus feature, brought to you for free in Summer 2026 by ",
   );
@@ -335,7 +335,7 @@ function showPremiumPopup(): void {
 
   const close = document.createElement("button");
   close.type = "button";
-  close.className = "premium-popup__close";
+  close.className = "supporter-bonus-popup__close";
   close.setAttribute("aria-label", "Dismiss");
   close.textContent = "×";
 

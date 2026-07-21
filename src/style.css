@@ -1246,7 +1246,7 @@ body {
 }
 
 /* ---------- Premium-feature popup (sun-sync sponsor note) ---------- */
-.premium-popup {
+.supporter-bonus-popup {
   position: fixed;
   bottom: 68px;
   left: 50%;
@@ -1266,14 +1266,14 @@ body {
   font-size: 13px;
   line-height: 1.45;
 }
-.premium-popup__text {
+.supporter-bonus-popup__text {
   margin: 0;
 }
-.premium-popup a {
+.supporter-bonus-popup a {
   color: var(--accent);
   font-weight: 600;
 }
-.premium-popup__close {
+.supporter-bonus-popup__close {
   appearance: none;
   border: 0;
   background: transparent;
@@ -1285,7 +1285,7 @@ body {
   cursor: pointer;
   flex: none;
 }
-.premium-popup__close:hover {
+.supporter-bonus-popup__close:hover {
   background: var(--hover-neutral);
   color: var(--fg);
 }
@@ -2138,7 +2138,7 @@ body.ride-active .maplibregl-ctrl {
     font-size: 12.5px;
   }
   /* Track the lifted mode pill so the sponsor note doesn't cover it. */
-  .premium-popup {
+  .supporter-bonus-popup {
     bottom: 112px;
   }
 }
