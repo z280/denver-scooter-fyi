@@ -985,17 +985,11 @@ export class Devices {
       const actionRow = `
         <div class="device-popup__actionrow">
           ${startBtn}
-          <button type="button" class="device-popup__actbtn" data-action="toggle-report" aria-expanded="false" aria-controls="device-report-tools">⚠️ Report</button>
-          <button type="button" class="device-popup__actbtn" data-action="full-details">ℹ️ Details</button>
-          <button type="button" class="device-popup__actbtn" data-action="history">⌛ History<span class="device-popup__sparkle">✨</span></button>
+          <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
+          <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
+          <button type="button" class="device-popup__actbtn" data-action="history" aria-haspopup="dialog">⌛ History<span class="device-popup__sparkle">✨</span></button>
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
-
-      const reportSection = `
-        <div class="device-popup__report-section" id="device-report-tools" hidden>
-          ${reportProblemBlock}
-          ${veoParkReportBlock}
-        </div>`;
 
       this.popup?.remove();
       const popup = new maplibregl.Popup({
@@ -1013,7 +1007,6 @@ export class Devices {
                  ${statusBlock}
                  <dl class="device-popup__meta device-popup__stats">${statRows.join("")}</dl>
                  ${walkBlock}
-                 ${reportSection}
                </div>
              </div>
            </div>`,
@@ -1050,9 +1043,9 @@ export class Devices {
       const popupEl = this.popup.getElement();
 
       // ---- Action-row wiring. A blocked Start explains itself in the hint
-      // line (mobile has no hover for the title tooltip); ⚠️ toggles the
-      // report tools open; ℹ️ opens the full-details modal; ⌛ History is
-      // the premium teaser until ride history ships.
+      // line (mobile has no hover for the title tooltip). Report, Details,
+      // and History each open their own floating modal — the popup itself
+      // never grows or morphs.
       const hintLine = popupEl?.querySelector<HTMLElement>(
         ".device-popup__actionhint",
       );
@@ -1064,110 +1057,37 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="start-blocked"]')
         ?.addEventListener("click", () => showHint(startHint));
-      const reportSectionEl = popupEl?.querySelector<HTMLElement>(
-        ".device-popup__report-section",
-      );
-      const reportToggleBtn = popupEl?.querySelector<HTMLButtonElement>(
-        '[data-action="toggle-report"]',
-      );
-      reportToggleBtn?.addEventListener("click", () => {
-        if (!reportSectionEl) return;
-        reportSectionEl.hidden = !reportSectionEl.hidden;
-        // Mirror the state for assistive tech (aria-controls points here).
-        reportToggleBtn.setAttribute(
-          "aria-expanded",
-          String(!reportSectionEl.hidden),
-        );
-      });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
+        ?.addEventListener("click", () => {
+          openFloatingModal(
+            `⚠️ Report — ${headerName}`,
+            `${reportProblemBlock}${veoParkReportBlock}`,
+            (root) => this.wireReportTools(root, vid, coords),
+          );
+        });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="full-details"]')
         ?.addEventListener("click", () => {
-          openDetailsModal(headerName, detailRows, (root) =>
-            this.wireRangeToggles(root),
+          openFloatingModal(
+            `${headerName} — full details`,
+            `<dl class="device-popup__meta">${detailRows.join("")}</dl>`,
+            (root) => this.wireRangeToggles(root),
           );
         });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="history"]')
         ?.addEventListener("click", () => {
-          showHint(
-            this.premiumSession
-              ? "⌛ Ride history is coming soon — it'll live right here."
-              : signedIn
-                ? "✨ Ride history is a Premium perk — start the free trial in the Account tab."
-                : "✨ Ride history is a Premium perk — sign in via the Account tab to start the free trial.",
-          );
+          const historyBody = this.premiumSession
+            ? `<p class="ranks-modal__hint">⌛ Ride history is coming soon — your past rides will live right here.</p>`
+            : `<p class="ranks-modal__hint">✨ Ride history is a <strong>Premium</strong> perk.</p>
+               <p class="ranks-modal__hint">${
+                 signedIn
+                   ? "Start the free trial from the Account tab and your rides will show up here."
+                   : "Sign in via the Account tab and start the free trial — your rides will show up here."
+               }</p>`;
+          openFloatingModal("⌛ Ride history", historyBody);
         });
-
-      // One-tap device-failure report chips → POST /api/v1/reports/device.
-      const reportChips = popupEl?.querySelectorAll<HTMLButtonElement>(
-        '[data-action="report-device"]',
-      );
-      if (reportChips?.length) {
-        const dStatus = popupEl?.querySelector<HTMLElement>(
-          ".device-popup__report-device-status",
-        );
-        const setDeviceStatus = (
-          text: string,
-          state?: "ok" | "error",
-        ): void => {
-          if (!dStatus) return;
-          dStatus.textContent = text;
-          dStatus.classList.toggle(
-            "device-popup__report-device-status--ok",
-            state === "ok",
-          );
-          dStatus.classList.toggle(
-            "device-popup__report-device-status--error",
-            state === "error",
-          );
-        };
-        reportChips.forEach((chip) => {
-          chip.addEventListener("click", () => {
-            reportChips.forEach((c) => (c.disabled = true));
-            setDeviceStatus("Sending…");
-            submitDeviceReport({
-              vehicle_identifier: vid,
-              report_type: chip.dataset.type as DeviceReportType,
-              lat: coords[1],
-              lng: coords[0],
-            })
-              .then((res) => {
-                setDeviceStatus(
-                  res.deduped
-                    ? "✓ Already flagged recently — thanks."
-                    : "✓ Reported. Thanks for the heads-up!",
-                  "ok",
-                );
-              })
-              .catch(() => {
-                reportChips.forEach((c) => (c.disabled = false));
-                setDeviceStatus("Couldn't send — please try again.", "error");
-              });
-          });
-        });
-      }
-
-      // "Report bad parking to Veo" — the anchor opens Veo's Zendesk form
-      // (default nav, new tab). Alongside that, fire an improperly_parked
-      // report to our own API so the parking signal lands in the compliance
-      // aggregate. Fire-and-forget: never preventDefault (the Zendesk hand-off
-      // must not depend on our POST), and only when we have a valid 16-hex
-      // vehicle_identifier for the API to accept.
-      const parkLink = popupEl?.querySelector<HTMLAnchorElement>(
-        '[data-action="report-parking"]',
-      );
-      if (parkLink && /^[0-9a-f]{16}$/.test(vid)) {
-        parkLink.addEventListener("click", () => {
-          submitDeviceReport({
-            vehicle_identifier: vid,
-            report_type: "improperly_parked",
-            lat: coords[1],
-            lng: coords[0],
-          }).catch(() => {
-            /* best-effort; the rider's Veo report is what matters here */
-          });
-        });
-      }
 
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
@@ -1255,6 +1175,80 @@ export class Devices {
         );
       });
 
+    }
+  }
+
+  /** Wire the ⚠️ Report modal's contents inside `root`: the one-tap
+   *  device-failure chips (POST /api/v1/reports/device) and the
+   *  "Report bad parking to Veo" anchor. The parking anchor opens Veo's
+   *  Zendesk form (default nav, new tab) and ALSO fires an
+   *  improperly_parked report to our own API, fire-and-forget — never
+   *  preventDefault (the Zendesk hand-off must not depend on our POST),
+   *  and only with a valid 16-hex vehicle_identifier the API accepts. */
+  private wireReportTools(
+    root: HTMLElement | null,
+    vid: string,
+    coords: [number, number],
+  ): void {
+    const reportChips = root?.querySelectorAll<HTMLButtonElement>(
+      '[data-action="report-device"]',
+    );
+    if (reportChips?.length) {
+      const dStatus = root?.querySelector<HTMLElement>(
+        ".device-popup__report-device-status",
+      );
+      const setDeviceStatus = (text: string, state?: "ok" | "error"): void => {
+        if (!dStatus) return;
+        dStatus.textContent = text;
+        dStatus.classList.toggle(
+          "device-popup__report-device-status--ok",
+          state === "ok",
+        );
+        dStatus.classList.toggle(
+          "device-popup__report-device-status--error",
+          state === "error",
+        );
+      };
+      reportChips.forEach((chip) => {
+        chip.addEventListener("click", () => {
+          reportChips.forEach((c) => (c.disabled = true));
+          setDeviceStatus("Sending…");
+          submitDeviceReport({
+            vehicle_identifier: vid,
+            report_type: chip.dataset.type as DeviceReportType,
+            lat: coords[1],
+            lng: coords[0],
+          })
+            .then((res) => {
+              setDeviceStatus(
+                res.deduped
+                  ? "✓ Already flagged recently — thanks."
+                  : "✓ Reported. Thanks for the heads-up!",
+                "ok",
+              );
+            })
+            .catch(() => {
+              reportChips.forEach((c) => (c.disabled = false));
+              setDeviceStatus("Couldn't send — please try again.", "error");
+            });
+        });
+      });
+    }
+
+    const parkLink = root?.querySelector<HTMLAnchorElement>(
+      '[data-action="report-parking"]',
+    );
+    if (parkLink && /^[0-9a-f]{16}$/.test(vid)) {
+      parkLink.addEventListener("click", () => {
+        submitDeviceReport({
+          vehicle_identifier: vid,
+          report_type: "improperly_parked",
+          lat: coords[1],
+          lng: coords[0],
+        }).catch(() => {
+          /* best-effort; the rider's Veo report is what matters here */
+        });
+      });
     }
   }
 
@@ -2366,26 +2360,32 @@ function clientPointOf(
   return { clientX: m.clientX, clientY: m.clientY };
 }
 
-/** ℹ️ Full-details modal (issue #18): every stat that used to bloat the
- *  popup — range/drivetrain/quality/ranks/admin extras — in the same modal
- *  shell the Battery Rankings used (it absorbed those rows too). One at a
- *  time; closes on ✕, backdrop click, or Escape. `onOpen` lets the caller
- *  wire interactive rows (the range-circle toggle) after insertion. */
-function openDetailsModal(
+/** Floating modal shell shared by the popup's ⚠️ Report / ℹ️ Details /
+ *  ⌛ History actions (and, historically, the Battery Rankings). One at a
+ *  time; closes on ✕, backdrop click, or Escape. `bodyHtml` must already
+ *  be escaped by the caller; `onOpen` lets the caller wire interactive
+ *  content (report chips, the range-circle toggle) after insertion. */
+function openFloatingModal(
   title: string,
-  rows: string[],
+  bodyHtml: string,
   onOpen?: (root: HTMLElement | null) => void,
 ): void {
+  // Close any open modal through its ✕ so its close() runs and detaches
+  // the document-level Escape listener (a bare .remove() would orphan it —
+  // reachable via keyboard, since focus stays on the launching button).
+  document
+    .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
+    ?.click();
   document.querySelector(".ranks-modal")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "ranks-modal";
   backdrop.innerHTML = `
     <div class="ranks-modal__card" role="dialog" aria-modal="true" aria-labelledby="ranks-modal-title">
       <div class="ranks-modal__head">
-        <h3 id="ranks-modal-title">${escapeHtml(title)} — full details</h3>
+        <h3 id="ranks-modal-title">${escapeHtml(title)}</h3>
         <button type="button" class="ranks-modal__close" aria-label="Close">×</button>
       </div>
-      <dl class="device-popup__meta">${rows.join("")}</dl>
+      ${bodyHtml}
     </div>`;
   const close = (): void => {
     backdrop.remove();
