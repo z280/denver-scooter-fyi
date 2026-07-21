@@ -219,17 +219,19 @@ export class Devices {
    *  the "Unlock in Veo" link and the parking-report prefill with the real
    *  vehicle number without our own API ever exposing plates. */
   private readonly plates = new GbfsPlates();
-  /** Session perks, pushed in by wireAccount() once /auth/session resolves.
-   *  admin lifts the Start button's proximity gate (issue #18); premium
-   *  unlocks the ⌛ History affordance when that feature lands. */
+  /** Session status, pushed in by wireAccount() once /auth/session
+   *  resolves. admin lifts the Start button's proximity gate (issue #18);
+   *  supporter-of-record unlocks the ⌛ History affordance (a supporter
+   *  bonus feature) when it lands. */
   private adminSession = false;
-  private premiumSession = false;
+  private supporterSession = false;
 
-  /** Update the popup-affecting session perks (admin proximity bypass,
-   *  premium history). Safe to call any time; affects popups opened after. */
-  setSessionPerks(admin: boolean, premium: boolean): void {
+  /** Update the popup-affecting session status (admin proximity bypass,
+   *  supporter history). Safe to call any time; affects popups opened
+   *  after. */
+  setSessionPerks(admin: boolean, supporter: boolean): void {
     this.adminSession = admin;
-    this.premiumSession = premium;
+    this.supporterSession = supporter;
   }
 
   constructor(
@@ -425,7 +427,7 @@ export class Devices {
           ]);
         }
       }
-      // ✨ Essentials tooltip (premium): model + battery + quality.
+      // ✨ Essentials tooltip (supporter bonus): model + battery + quality.
       if (this.tooltipOn) showMapTooltip(e.originalEvent, props);
     });
     this.map.on("mouseleave", POINT_LAYER, () => {
@@ -1078,13 +1080,13 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="history"]')
         ?.addEventListener("click", () => {
-          const historyBody = this.premiumSession
+          const historyBody = this.supporterSession
             ? `<p class="ranks-modal__hint">⌛ Ride history is coming soon — your past rides will live right here.</p>`
-            : `<p class="ranks-modal__hint">✨ Ride history is a <strong>Premium</strong> perk.</p>
+            : `<p class="ranks-modal__hint">✨ Ride history is a <strong>supporter bonus feature</strong>.</p>
                <p class="ranks-modal__hint">${
                  signedIn
-                   ? "Start the free trial from the Account tab and your rides will show up here."
-                   : "Sign in via the Account tab and start the free trial — your rides will show up here."
+                   ? "A donation — one-time or monthly (Account tab) — makes you a supporter of record for 90 days, and your rides will be waiting here."
+                   : "Sign in via the Account tab and chip in a donation — supporters of record get their ride history here."
                }</p>`;
           openFloatingModal("⌛ Ride history", historyBody);
         });

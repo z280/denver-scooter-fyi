@@ -64,13 +64,25 @@ export function clearSession(): void {
 export interface SessionInfo {
   email?: string;
   scopes?: string[];
-  /** One-time donor (⭐). Sticky: set by a completed donation checkout. */
+  /** Supporter of record (⭐): true within 90 days of the last received
+   *  donation — one-time or a recurring donation's payment, either counts
+   *  (API_REQUIREMENTS §4.1). */
   supporter?: boolean;
-  /** Active subscriber (✨). True while the Stripe subscription is
-   *  trialing/active; drops back to false when it lapses. */
+  /** When the current supporter window lapses (last donation + 90d). */
+  supporter_until?: string;
+  /** DEPRECATED legacy flag from the retired subscription tier. Treated
+   *  as supporter-of-record until the backend drops it. */
   premium_user?: boolean;
   admin?: boolean;
   expires?: string;
+}
+
+/** Supporter of record: the canonical read. Accepts the legacy
+ *  premium_user flag so nobody loses their bonus features while the
+ *  backend migrates to the 90-day donation window. */
+export function isSupporterOfRecord(info: SessionInfo | null): boolean {
+  if (!info) return false;
+  return info.supporter === true || info.premium_user === true;
 }
 
 /** Fetch the current session's identity, or null if not signed in / the
