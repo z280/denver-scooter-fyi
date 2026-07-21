@@ -8,13 +8,7 @@ import {
   type DeviceInclude,
 } from "./api.ts";
 import { createMap } from "./map.ts";
-import {
-  initialTheme,
-  isSunSyncEnabled,
-  setSunSync,
-  startSunSync,
-  ThemeControl,
-} from "./theme.ts";
+import { initialTheme, startSunSync, ThemeControl } from "./theme.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -63,7 +57,11 @@ import {
   promptGoogleOneTap,
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
-import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
+import {
+  fetchSessionInfo,
+  isAdminSession,
+  isSupporterOfRecord,
+} from "./auth-session.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -244,7 +242,7 @@ void renderCompliance(need("compliance")).catch((e) => {
 });
 wireAccount();
 wireRideHud();
-wireSunSync();
+startSunSync();
 wireFreshnessCollapse();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
@@ -290,67 +288,8 @@ function wireRideHud(): void {
 
 // ---------- Sun-synced theme ----------
 
-// The 🌗 toggle in the mode bar: theme follows actual sunrise/sunset in
-// Denver (light by day, dark by night). Enabling shows the sponsor popup.
-function wireSunSync(): void {
-  const btn = need<HTMLButtonElement>("sun-sync-toggle");
-  const render = (on: boolean): void => {
-    btn.classList.toggle("is-active", on);
-    btn.setAttribute("aria-pressed", String(on));
-  };
-  render(isSunSyncEnabled());
-  window.addEventListener("scooter:sunsync", (e) => {
-    render((e as CustomEvent<boolean>).detail);
-  });
-  btn.addEventListener("click", () => {
-    const on = !isSunSyncEnabled();
-    setSunSync(on);
-    if (on) showPremiumPopup();
-  });
-  startSunSync();
-}
-
-function showPremiumPopup(): void {
-  document.querySelector(".premium-popup")?.remove();
-  const popup = document.createElement("div");
-  popup.className = "premium-popup";
-  popup.setAttribute("role", "status");
-  popup.setAttribute("aria-live", "polite");
-
-  const text = document.createElement("p");
-  text.className = "premium-popup__text";
-  text.append(
-    "✨ This is a premium feature, brought to you for free in Summer 2026 by ",
-  );
-  const link = document.createElement("a");
-  link.href = "https://weseeyouveo.com";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = "WeSeeYouVeo.com";
-  text.append(link);
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "premium-popup__close";
-  close.setAttribute("aria-label", "Dismiss");
-  close.textContent = "×";
-
-  const remove = (): void => {
-    window.clearTimeout(timer);
-    popup.remove();
-  };
-  const timer = window.setTimeout(remove, 8000);
-  close.addEventListener("click", remove);
-  // Engagement cancels the auto-dismiss (WCAG 2.2.1 Timing Adjustable):
-  // once the user hovers or focuses the popup — e.g. tabbing toward the
-  // sponsor link — it stays until explicitly closed.
-  const cancelAutoDismiss = (): void => window.clearTimeout(timer);
-  popup.addEventListener("pointerenter", cancelAutoDismiss);
-  popup.addEventListener("focusin", cancelAutoDismiss);
-
-  popup.append(text, close);
-  document.body.appendChild(popup);
-}
+// Auto mode (theme follows sunrise/sunset in Denver) lives in the map's
+// three-state ☀/☾ ThemeControl now; here we only resume it on boot.
 
 // ---------- Recommended Devices ----------
 
@@ -1504,11 +1443,12 @@ function wireFreshnessCollapse(): void {
 // ---------- Supporter checkout ----------
 
 /** Ask the API for a Stripe Checkout URL and open it. Two doors share
- *  this (API_REQUIREMENTS §4.1): POST /api/v1/billing/donate (one-time
- *  donation → sticky ⭐ supporter) and POST /api/v1/billing/checkout
- *  (subscription + trial → ✨ premium_user while active). Feature-detected:
- *  until an endpoint ships, its button degrades to a friendly "not live
- *  yet" note.
+ *  this (API_REQUIREMENTS §4.1) and both are DONATIONS: POST
+ *  /api/v1/billing/donate (one-time) and POST /api/v1/billing/checkout
+ *  (monthly recurring). Either makes the donor a ⭐ supporter of record
+ *  for 90 days from their last received donation. Feature-detected: until
+ *  an endpoint ships, its button degrades to a friendly "not live yet"
+ *  note.
  *
  *  Must be called directly from the click handler: the placeholder tab is
  *  opened BEFORE the first await, while we're still in the user-gesture
@@ -1568,7 +1508,7 @@ function wireAccount(): void {
   let adminIsOn = false;
   let adminEmail: string | undefined;
   let supporterOn = false;
-  let premiumOn = false;
+  let supporterUntil: string | undefined;
   // Backend sign-in capabilities (null until /auth/config resolves).
   let authCfg: AuthConfig | null = null;
 
@@ -1627,73 +1567,61 @@ function wireAccount(): void {
         body.append(badge);
       }
 
-      // Two support tiers, independently held (API_REQUIREMENTS §4.1):
-      // ⭐ Supporter = one-time donation, sticky; ✨ Premium = subscription
-      // (trialing/active). Perks are personalization only — the audit
-      // itself is never paywalled.
+      // One status, no tiers (API_REQUIREMENTS §4.1): a donation — one-time
+      // or monthly — makes you a ⭐ supporter of record for 90 days from
+      // your last received donation. Supporter bonus features are a
+      // thank-you; the audit itself is never paywalled. Donation doors stay
+      // visible even for current supporters (another donation extends the
+      // window).
       if (adminCheckedToken === auth.token) {
         if (supporterOn) {
           const badge = el("div", "account-supporter");
           const srow = el("div", "account-admin__row");
           srow.append(
             el("span", "account-admin__icon", "⭐"),
-            el("strong", undefined, "Supporter"),
+            el("strong", undefined, "Supporter of record"),
           );
+          const untilMs = supporterUntil ? Date.parse(supporterUntil) : NaN;
           badge.append(
             srow,
-            el("p", "account-supporter__note", "Thanks for keeping the data flowing."),
-          );
-          body.append(badge);
-        }
-        if (premiumOn) {
-          const badge = el("div", "account-supporter account-supporter--premium");
-          const prow = el("div", "account-admin__row");
-          prow.append(
-            el("span", "account-admin__icon", "✨"),
-            el("strong", undefined, "Premium"),
-          );
-          badge.append(
-            prow,
             el(
               "p",
               "account-supporter__note",
-              "Subscription active — the ✨ personalization perks are yours for keeps.",
+              Number.isFinite(untilMs)
+                ? `Thanks for keeping the data flowing — supporter through ${new Date(untilMs).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
+                : "Thanks for keeping the data flowing.",
             ),
           );
           body.append(badge);
         }
-        if (!supporterOn || !premiumOn) {
+        {
           const up = el("div", "account-support");
           up.append(
             el(
               "p",
               "account-support__pitch",
-              "Keep the data flowing: a one-time donation makes you a ⭐ Supporter; a ✨ Premium subscription (free trial) funds the audit and owns the personalization perks — the audit itself stays free for everyone.",
+              supporterOn
+                ? "Every donation — one-time or monthly — extends your supporter window another 90 days."
+                : "This map is free for everyone, no paywalls. If it's useful, a donation (one-time or monthly) keeps the data flowing and makes you a supporter of record for 90 days — with the supporter bonus features as a thank-you.",
             ),
           );
           const supNote = el("p", "account-magic-status");
           supNote.setAttribute("role", "status");
-          if (!supporterOn) {
-            const donateBtn = el("button", "login-btn", "⭐ Donate once");
-            donateBtn.type = "button";
-            donateBtn.addEventListener("click", () => {
-              void openBillingCheckout("/api/v1/billing/donate", donateBtn, supNote);
-            });
-            up.append(donateBtn);
-          }
-          if (!premiumOn) {
-            const premBtn = el(
-              "button",
-              "login-btn login-btn--secondary",
-              "✨ Go Premium (free trial)",
-            );
-            premBtn.type = "button";
-            premBtn.addEventListener("click", () => {
-              void openBillingCheckout("/api/v1/billing/checkout", premBtn, supNote);
-            });
-            up.append(premBtn);
-          }
-          up.append(supNote);
+          const donateBtn = el("button", "login-btn", "💛 Donate once");
+          donateBtn.type = "button";
+          donateBtn.addEventListener("click", () => {
+            void openBillingCheckout("/api/v1/billing/donate", donateBtn, supNote);
+          });
+          const monthlyBtn = el(
+            "button",
+            "login-btn login-btn--secondary",
+            "🔁 Donate monthly",
+          );
+          monthlyBtn.type = "button";
+          monthlyBtn.addEventListener("click", () => {
+            void openBillingCheckout("/api/v1/billing/checkout", monthlyBtn, supNote);
+          });
+          up.append(donateBtn, monthlyBtn, supNote);
           body.append(up);
         }
       }
@@ -1725,11 +1653,12 @@ function wireAccount(): void {
         void fetchSessionInfo().then((info) => {
           adminIsOn = isAdminSession(info);
           adminEmail = info?.email;
-          supporterOn = info?.supporter === true;
-          premiumOn = info?.premium_user === true;
-          // Popups need the perks too: admins skip the Start proximity
-          // gate (issue #18), premium unlocks the History affordance.
-          devices.setSessionPerks(adminIsOn, premiumOn);
+          supporterOn = isSupporterOfRecord(info);
+          supporterUntil = info?.supporter_until;
+          // Popups need the status too: admins skip the Start proximity
+          // gate (issue #18); supporters of record unlock the History
+          // affordance (a supporter bonus feature).
+          devices.setSessionPerks(adminIsOn, supporterOn);
           render();
         });
       }

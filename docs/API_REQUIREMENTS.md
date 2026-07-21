@@ -330,46 +330,59 @@ its `API.md`). The frontend offers both from the Account drawer.
 
 ## 4. Supporter tier (unblocks frontend Phase 5)
 
-### 4.1 Stripe (UPDATED 2026-07-08: two tiers — donate + subscribe)
+### 4.1 Stripe (UPDATED 2026-07-21: decommercialized — donations only, 90-day supporter of record)
 
-Two independent, stackable tiers (supersedes the single-supporter
-subscription sketch):
+The tiered premium/subscription framing is retired. There is ONE status:
 
-- **⭐ `supporter`** — a one-time donation. Sticky: once earned, never
-  revoked.
-- **✨ `premium_user`** — a subscription with a trial. True while the
-  subscription is `trialing`/`active`; lapses back to false.
+- **⭐ `supporter`** — "supporter of record": true for **90 days from the
+  last received donation**, whether that donation was one-time or a
+  recurring donation's payment. Another donation of either kind extends
+  the window (last_donation_at + 90d). Bonus features are a thank-you;
+  nothing in the app is paywalled.
 
-Endpoints (auth: any signed-in session; both → `{ url }`):
+Endpoints (auth: any signed-in session; both → `{ url }`; both are
+framed to the user as DONATIONS):
 
 - `POST /api/v1/billing/donate` — Checkout Session `mode=payment` against
-  a one-time price (dashboard: enable "customer chooses amount" for
-  pay-what-you-want), `client_reference_id` = account id, success/cancel
-  URLs back to `https://denver.scooter.fyi/`.
+  the one-time price (dashboard: enable "customer chooses amount"),
+  `client_reference_id` = account id, success/cancel URLs back to
+  `https://denver.scooter.fyi/`.
 - `POST /api/v1/billing/checkout` — Checkout Session `mode=subscription`
-  against the premium price (trial comes from the price's settings), same
-  reference + return URLs.
-- **The frontend Account drawer already calls both** ("⭐ Donate once" /
-  "✨ Go Premium (free trial)") and degrades each to a friendly "not live
-  yet" note until it ships.
+  against the recurring monthly-donation price, same reference + return
+  URLs. Drop any trial framing — a trial period would delay the first
+  *received* donation and therefore supporter status.
+- **The frontend Account drawer already calls both** ("💛 Donate once" /
+  "🔁 Donate monthly") and degrades each to a friendly "not live yet"
+  note until it ships. Both doors stay visible to current supporters —
+  donating again extends the window.
 
-Webhook `POST /webhooks/stripe` — verify the signature:
+Webhook `POST /webhooks/stripe` — verify the signature. A "received
+donation" is:
 
-- `checkout.session.completed` with `mode=payment` → `supporter: true`
-  (permanent). Store the payment intent id.
-- `checkout.session.completed` / `customer.subscription.updated` with a
-  subscription in `trialing`/`active` → `premium_user: true`; `false`
-  when it reaches `canceled`/`unpaid` at period end. Store the Stripe
-  customer + subscription ids on the account.
+- `checkout.session.completed` with `mode=payment` (one-time), or
+- `invoice.paid` for the recurring donation (each billing cycle's payment
+  counts as a fresh donation).
 
-`GET /api/v1/auth/session` exposes **both** `supporter` and
-`premium_user` (the frontend renders ⭐/✨ badges from them).
+On either event set `last_donation_at = now`; `supporter` is derived as
+`now < last_donation_at + 90d`. No revocation handling needed beyond the
+window lapsing — cancel/unpaid on the recurring donation simply stops new
+donations from arriving.
+
+`GET /api/v1/auth/session` exposes:
+
+- `supporter: boolean` (derived from the 90-day window), and
+- `supporter_until: string` (ISO, last_donation_at + 90d) — the frontend
+  shows "supporter through <date>" on the badge.
+- `premium_user` is DEPRECATED: serve it as an alias of `supporter` for a
+  release or two (the frontend already treats either flag as
+  supporter-of-record), then drop it.
 
 - Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`
-  (premium subscription price) and `STRIPE_DONATION_PRICE_ID` (one-time
-  price); register the webhook endpoint in the Stripe dashboard.
-- No customer portal in v1 (add `POST /api/v1/billing/portal` later for
-  self-serve cancel).
+  (recurring monthly-donation price) and `STRIPE_DONATION_PRICE_ID`
+  (one-time price); register the webhook endpoint in the Stripe
+  dashboard.
+- No customer portal in v1 (add `POST /api/v1/billing/portal` later so
+  recurring donors can self-serve cancel).
 
 ### 4.2 Ride history
 
