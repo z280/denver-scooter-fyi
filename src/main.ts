@@ -8,13 +8,7 @@ import {
   type DeviceInclude,
 } from "./api.ts";
 import { createMap } from "./map.ts";
-import {
-  initialTheme,
-  isSunSyncEnabled,
-  setSunSync,
-  startSunSync,
-  ThemeControl,
-} from "./theme.ts";
+import { initialTheme, startSunSync, ThemeControl } from "./theme.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -248,7 +242,7 @@ void renderCompliance(need("compliance")).catch((e) => {
 });
 wireAccount();
 wireRideHud();
-wireSunSync();
+startSunSync();
 wireFreshnessCollapse();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
@@ -294,67 +288,8 @@ function wireRideHud(): void {
 
 // ---------- Sun-synced theme ----------
 
-// The 🌗 toggle in the mode bar: theme follows actual sunrise/sunset in
-// Denver (light by day, dark by night). Enabling shows the sponsor popup.
-function wireSunSync(): void {
-  const btn = need<HTMLButtonElement>("sun-sync-toggle");
-  const render = (on: boolean): void => {
-    btn.classList.toggle("is-active", on);
-    btn.setAttribute("aria-pressed", String(on));
-  };
-  render(isSunSyncEnabled());
-  window.addEventListener("scooter:sunsync", (e) => {
-    render((e as CustomEvent<boolean>).detail);
-  });
-  btn.addEventListener("click", () => {
-    const on = !isSunSyncEnabled();
-    setSunSync(on);
-    if (on) showSupporterBonusPopup();
-  });
-  startSunSync();
-}
-
-function showSupporterBonusPopup(): void {
-  document.querySelector(".supporter-bonus-popup")?.remove();
-  const popup = document.createElement("div");
-  popup.className = "supporter-bonus-popup";
-  popup.setAttribute("role", "status");
-  popup.setAttribute("aria-live", "polite");
-
-  const text = document.createElement("p");
-  text.className = "supporter-bonus-popup__text";
-  text.append(
-    "✨ This is a supporter bonus feature, brought to you for free in Summer 2026 by ",
-  );
-  const link = document.createElement("a");
-  link.href = "https://weseeyouveo.com";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = "WeSeeYouVeo.com";
-  text.append(link);
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "supporter-bonus-popup__close";
-  close.setAttribute("aria-label", "Dismiss");
-  close.textContent = "×";
-
-  const remove = (): void => {
-    window.clearTimeout(timer);
-    popup.remove();
-  };
-  const timer = window.setTimeout(remove, 8000);
-  close.addEventListener("click", remove);
-  // Engagement cancels the auto-dismiss (WCAG 2.2.1 Timing Adjustable):
-  // once the user hovers or focuses the popup — e.g. tabbing toward the
-  // sponsor link — it stays until explicitly closed.
-  const cancelAutoDismiss = (): void => window.clearTimeout(timer);
-  popup.addEventListener("pointerenter", cancelAutoDismiss);
-  popup.addEventListener("focusin", cancelAutoDismiss);
-
-  popup.append(text, close);
-  document.body.appendChild(popup);
-}
+// Auto mode (theme follows sunrise/sunset in Denver) lives in the map's
+// three-state ☀/☾ ThemeControl now; here we only resume it on boot.
 
 // ---------- Recommended Devices ----------
 

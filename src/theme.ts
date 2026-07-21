@@ -259,9 +259,12 @@ function scheduleSunFlip(times: SunTimes): void {
 
 // ---------- The map toggle control ----------
 
-/** Sun/moon button in the map's control stack. Shows the CURRENT mode
- *  (sun in light, moon in dark — CSS swaps the icon off data-theme);
- *  clicking makes a manual pick for the other theme. */
+/** The three-state theme toggle: ☀ Day → ☾ Night → ☀/☾ Auto → ☀ Day.
+ *  Day/Night are manual picks (persisted, sun-sync off); Auto follows
+ *  actual sunrise/sunset in Denver (the old "Sun sync" toggle, absorbed
+ *  here). The icon shows the CURRENT state — CSS keys off data-mode. */
+export type ThemeMode = Theme | "auto";
+
 export class ThemeControl implements maplibregl.IControl {
   private theme: Theme;
   private map: maplibregl.Map | null = null;
@@ -275,15 +278,24 @@ export class ThemeControl implements maplibregl.IControl {
     applyTheme(e.matches ? "dark" : "light");
   };
 
-  // Theme changed from anywhere (this control, sun-sync, ride HUD) — track
-  // and re-render, so every path stays in sync through one event.
+  // Theme or sync state changed from anywhere (this control, sun-sync's
+  // day/night flips, the ride HUD) — track and re-render, so every path
+  // stays in sync through the events.
   private readonly onTheme = (e: Event): void => {
     this.theme = (e as CustomEvent<Theme>).detail;
+    this.render();
+  };
+  private readonly onSunSync = (): void => {
     this.render();
   };
 
   constructor(initial: Theme) {
     this.theme = initial;
+  }
+
+  /** Auto when sun-sync drives the theme, else the live theme itself. */
+  private mode(): ThemeMode {
+    return isSunSyncEnabled() ? "auto" : this.theme;
   }
 
   onAdd(map: maplibregl.Map): HTMLElement {
@@ -295,7 +307,11 @@ export class ThemeControl implements maplibregl.IControl {
     btn.type = "button";
     btn.className = "theme-ctrl__btn";
     btn.addEventListener("click", () => {
-      setManualTheme(this.theme === "dark" ? "light" : "dark");
+      // Cycle Day → Night → Auto → Day.
+      const mode = this.mode();
+      if (mode === "light") setManualTheme("dark");
+      else if (mode === "dark") setSunSync(true);
+      else setManualTheme("light");
     });
     container.appendChild(btn);
     this.container = container;
@@ -303,6 +319,7 @@ export class ThemeControl implements maplibregl.IControl {
     document.documentElement.dataset.theme = this.theme;
     this.media.addEventListener("change", this.onMedia);
     window.addEventListener("scooter:theme", this.onTheme);
+    window.addEventListener("scooter:sunsync", this.onSunSync);
     this.render();
     return container;
   }
@@ -310,6 +327,7 @@ export class ThemeControl implements maplibregl.IControl {
   onRemove(): void {
     this.media.removeEventListener("change", this.onMedia);
     window.removeEventListener("scooter:theme", this.onTheme);
+    window.removeEventListener("scooter:sunsync", this.onSunSync);
     if (this.map) unbindMap(this.map);
     this.map = null;
     this.container?.remove();
@@ -319,11 +337,17 @@ export class ThemeControl implements maplibregl.IControl {
 
   private render(): void {
     if (!this.btn) return;
+    const mode = this.mode();
+    this.btn.dataset.mode = mode;
     this.btn.dataset.theme = this.theme;
-    const dark = this.theme === "dark";
-    const label = dark ? "Switch to light theme" : "Switch to dark theme";
-    this.btn.setAttribute("aria-pressed", String(dark));
+    const label =
+      mode === "light"
+        ? "Theme: Day — switch to Night"
+        : mode === "dark"
+          ? "Theme: Night — switch to Auto (sunrise/sunset)"
+          : "Theme: Auto (sunrise/sunset) — switch to Day";
     this.btn.setAttribute("aria-label", label);
     this.btn.title = label;
+    this.btn.removeAttribute("aria-pressed");
   }
 }

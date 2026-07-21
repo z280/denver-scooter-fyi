@@ -1192,6 +1192,12 @@ body {
 .theme-ctrl__btn[data-theme="dark"] {
   --theme-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M21 12.8A8.5 8.5 0 0 1 11.2 3a7 7 0 1 0 9.8 9.8z'/></svg>");
 }
+/* Auto (sunrise/sunset) shows a half-sun/half-moon glyph regardless of
+   which theme is currently applied — placed after the per-theme rules so
+   equal specificity resolves in Auto's favor. */
+.theme-ctrl__btn[data-mode="auto"] {
+  --theme-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><g fill='none' stroke='black' stroke-width='2' stroke-linecap='round'><path d='M12 4a8 8 0 0 0 0 16' fill='black' stroke='none'/><path d='M12 4a8 8 0 0 1 0 16'/><path d='M12 4V2M4 12H2M6.3 6.3 4.9 4.9M6.3 17.7l-1.4 1.4M12 20v2'/></g></svg>");
+}
 
 /* ---------- MapLibre chrome (popups, controls, attribution) ----------
    Single-class selectors; maplibre-gl.css is imported before this file
@@ -1243,51 +1249,6 @@ body {
 }
 :root[data-theme="dark"] .maplibregl-ctrl-attrib-button {
   filter: invert(1);
-}
-
-/* ---------- Premium-feature popup (sun-sync sponsor note) ---------- */
-.supporter-bonus-popup {
-  position: fixed;
-  bottom: 68px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 45;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  max-width: min(460px, calc(100vw - 24px));
-  padding: 10px 10px 10px 14px;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.supporter-bonus-popup__text {
-  margin: 0;
-}
-.supporter-bonus-popup a {
-  color: var(--accent);
-  font-weight: 600;
-}
-.supporter-bonus-popup__close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 17px;
-  line-height: 1;
-  padding: 2px 7px;
-  border-radius: 6px;
-  cursor: pointer;
-  flex: none;
-}
-.supporter-bonus-popup__close:hover {
-  background: var(--hover-neutral);
-  color: var(--fg);
 }
 
 /* ---------- Freshness footer ---------- */
@@ -2137,16 +2098,12 @@ body.ride-active .maplibregl-ctrl {
     padding: 7px 10px;
     font-size: 12.5px;
   }
-  /* Track the lifted mode pill so the sponsor note doesn't cover it. */
-  .supporter-bonus-popup {
-    bottom: 112px;
-  }
 }
 
-/* Four full-text mode buttons total ~379px of pills — too wide below
-   ~400px, clipping off both edges. Wrap into centered rows. The width must
-   be explicit: a wrapped flex row inside a shrink-to-fit fixed box would
-   otherwise collapse to its widest button and stack all four vertically. */
+/* Full-text mode buttons can overflow the pill below ~400px, clipping off
+   both edges. Wrap into centered rows. The width must be explicit: a
+   wrapped flex row inside a shrink-to-fit fixed box would otherwise
+   collapse to its widest button and stack the buttons vertically. */
 @media (max-width: 480px) {
   .mode-switch {
     width: calc(100vw - 16px);
