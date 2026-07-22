@@ -133,6 +133,26 @@ export interface ParkingReportInput {
   vehicleId?: string | null;
   /** Human dwell string (e.g. "3d 4h") for "parked here for at least…". */
   dwellText?: string | null;
+  /** Reverse-geocoded street address for the coordinates, when resolved
+   *  (see geocode.ts). Populated asynchronously; null falls back to coords. */
+  address?: string | null;
+}
+
+/** Vehicle Type dropdown OPTION TAGS (not the visible labels) for Veo's form.
+ *  Zendesk dropdowns prefill by tag. Astro is a standing scooter → the
+ *  "Scooter" option; Cosmo and Apollo are their own options. Our type-5 is a
+ *  Cosmo too, so it maps there. **TODO(maintainer):** fill these from the live
+ *  form (the extraction snippet reports each option's tag). Empty = unset, so
+ *  the rider picks manually. */
+const VEO_VEHICLE_TYPE_TAGS = { scooter: "", cosmo: "", apollo: "" };
+
+/** Map our friendly model name → the Vehicle Type dropdown's option tag. */
+function vehicleTypeTag(modelName: string | null | undefined): string {
+  const m = (modelName ?? "").toLowerCase();
+  if (m.includes("astro")) return VEO_VEHICLE_TYPE_TAGS.scooter;
+  if (m.includes("apollo")) return VEO_VEHICLE_TYPE_TAGS.apollo;
+  if (m.includes("cosmo")) return VEO_VEHICLE_TYPE_TAGS.cosmo;
+  return ""; // unknown model → leave the dropdown for the rider
 }
 
 interface ZendeskCustomField {
@@ -160,12 +180,28 @@ export const VEO_ZENDESK_PARKING: {
 } = {
   baseUrl: "https://veoride.zendesk.com/hc/en-us/requests/new",
   ticketFormId: "24858990499988",
-  // TODO(maintainer): read the custom-field ids off the live form (browser
-  // devtools, or GET …/requests/new.json) and add entries here, e.g.:
-  //   { fieldId: "24800000000000", map: (r) => r.plate ?? "" },        // Vehicle number
-  //   { fieldId: "24800000000001", map: (r) => `${r.lat},${r.lng}` },  // Location
-  // Dropdowns prefill by option TAG, not label.
-  customFields: [],
+  // Custom fields. **TODO(maintainer):** fill each `fieldId` (the numeric
+  // Zendesk custom-field id, the NNN in tf_NNN) from the live form — the
+  // extraction snippet in the PR reports them. An empty fieldId is skipped at
+  // build time, so the field is simply left for the rider to fill. Likewise
+  // fill VEO_VEHICLE_TYPE_TAGS above with each dropdown option's tag.
+  customFields: [
+    // Vehicle number (text) — the plate under the QR code. Resolved from
+    // Veo's own GBFS client-side (see gbfs.ts / effectivePlate).
+    { fieldId: "360038000552", map: (r) => r.plate ?? "" },
+    // Vehicle type (dropdown) — Astro→Scooter, Cosmo→Cosmo, Apollo→Apollo.
+    // Field id confirmed off the live form; the option TAGS still need filling
+    // in VEO_VEHICLE_TYPE_TAGS (the field is a JS dropdown, so its tags aren't
+    // in the page HTML). Until then vehicleTypeTag() returns "" and the empty
+    // value is skipped at build time — the rider just picks it manually.
+    { fieldId: "360029446151", map: (r) => vehicleTypeTag(r.modelName) },
+    // Location (text: "address or cross streets") — reverse-geocoded address,
+    // else the raw coords.
+    {
+      fieldId: "24861449413652",
+      map: (r) => r.address ?? `${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`,
+    },
+  ],
 };
 
 /** Google Maps "search this point" link — a universal, keyless location
@@ -190,7 +226,9 @@ export function veoParkingReportUrl(r: ParkingReportInput): string {
     r.plate ? `Vehicle number: ${r.plate}` : null,
     r.modelName ? `Model: ${r.modelName}` : null,
     r.vehicleId ? `Vehicle ID: ${r.vehicleId}` : null,
-    `Location: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`,
+    r.address
+      ? `Location: ${r.address} (${r.lat.toFixed(6)}, ${r.lng.toFixed(6)})`
+      : `Location: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`,
     `Map: ${mapsPointUrl(r.lat, r.lng)}`,
     r.dwellText ? `Parked here for at least: ${r.dwellText}` : null,
     "",

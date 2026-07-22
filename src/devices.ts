@@ -10,8 +10,14 @@ import type {
   FormFactor,
   PropulsionType,
 } from "./api.ts";
-import { DEVICE_COLORS, veoDeepLink, veoParkingReportUrl } from "./config.ts";
+import {
+  DEVICE_COLORS,
+  veoDeepLink,
+  veoParkingReportUrl,
+  type ParkingReportInput,
+} from "./config.ts";
 import { GbfsPlates } from "./gbfs.ts";
+import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
@@ -947,9 +953,12 @@ export class Devices {
       // same pattern as the unlock block above.
       const parkNearEnough =
         user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M;
+      // Hoisted so the async reverse-geocode below can rebuild the URL with a
+      // street address once it resolves.
+      let parkingInput: ParkingReportInput | null = null;
       let veoParkReportBlock: string;
       if (user && parkNearEnough) {
-        const parkingReportUrl = veoParkingReportUrl({
+        parkingInput = {
           lat: coords[1],
           lng: coords[0],
           plate: effectivePlate,
@@ -964,7 +973,9 @@ export class Devices {
           dwellText: props.first_observed_at_location
             ? formatDwell(props.first_observed_at_location)
             : null,
-        });
+          address: null, // upgraded async after render (reverseGeocode)
+        };
+        const parkingReportUrl = veoParkingReportUrl(parkingInput);
         veoParkReportBlock = `
           <div class="device-popup__veo-report">
             <a class="device-popup__veo-report-link" data-action="report-parking" href="${escapeHtml(parkingReportUrl)}" target="_blank" rel="noopener">🚧 Report bad parking to Veo</a>
@@ -1065,7 +1076,7 @@ export class Devices {
           openFloatingModal(
             `⚠️ Report — ${headerName}`,
             `${reportProblemBlock}${veoParkReportBlock}`,
-            (root) => this.wireReportTools(root, vid, coords),
+            (root) => this.wireReportTools(root, vid, coords, parkingInput),
           );
         });
       popupEl
@@ -1191,6 +1202,7 @@ export class Devices {
     root: HTMLElement | null,
     vid: string,
     coords: [number, number],
+    parkingInput: ParkingReportInput | null,
   ): void {
     const reportChips = root?.querySelectorAll<HTMLButtonElement>(
       '[data-action="report-device"]',
@@ -1240,17 +1252,33 @@ export class Devices {
     const parkLink = root?.querySelector<HTMLAnchorElement>(
       '[data-action="report-parking"]',
     );
-    if (parkLink && /^[0-9a-f]{16}$/.test(vid)) {
-      parkLink.addEventListener("click", () => {
-        submitDeviceReport({
-          vehicle_identifier: vid,
-          report_type: "improperly_parked",
-          lat: coords[1],
-          lng: coords[0],
-        }).catch(() => {
-          /* best-effort; the rider's Veo report is what matters here */
+    if (parkLink) {
+      // Fire the improperly_parked report to our own API on click (only with a
+      // valid 16-hex vehicle_identifier the API accepts).
+      if (/^[0-9a-f]{16}$/.test(vid)) {
+        parkLink.addEventListener("click", () => {
+          submitDeviceReport({
+            vehicle_identifier: vid,
+            report_type: "improperly_parked",
+            lat: coords[1],
+            lng: coords[0],
+          }).catch(() => {
+            /* best-effort; the rider's Veo report is what matters here */
+          });
         });
-      });
+      }
+      // Upgrade the Location from raw coords to a reverse-geocoded street
+      // address once it resolves, so Veo's form (and the report body) reads
+      // "1234 Larimer St, …" instead of a lat/lng. Best-effort: on failure the
+      // URL keeps its coordinate fallback; guarded on the anchor still being
+      // in the DOM (the Report modal may have closed).
+      if (parkingInput) {
+        const input = parkingInput;
+        void reverseGeocode(coords[1], coords[0]).then((addr) => {
+          if (!addr || !parkLink.isConnected) return;
+          parkLink.href = veoParkingReportUrl({ ...input, address: addr });
+        });
+      }
     }
   }
 
