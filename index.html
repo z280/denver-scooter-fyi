@@ -445,10 +445,14 @@
           </div>
           <div id="hexbin-metric-row" class="hexbin-metric-row" hidden>
             <p id="hexbin-metric-label" class="control-hint">Shade by</p>
-            <div id="hexbin-metric-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="hexbin-metric-label">
-              <button class="seg-btn is-active" role="radio" aria-checked="true" data-metric="density">Density</button>
-              <button class="seg-btn" role="radio" aria-checked="false" data-metric="starts_per_hour">Starts/hr</button>
-            </div>
+            <select id="hexbin-metric-select" class="select" aria-labelledby="hexbin-metric-label">
+              <option value="device_count">Device density</option>
+              <option value="trips_started_24h">Trips started (24h)</option>
+              <option value="starts_per_hour_peak">Starts per hour (peak)</option>
+              <option value="avg_battery_percent">Avg. battery</option>
+              <option value="risk_share">High-risk share</option>
+              <option value="avg_dwell_hours">Avg. dwell time</option>
+            </select>
           </div>
           <div id="hexbin-legend" class="legend" hidden></div>
         </section>

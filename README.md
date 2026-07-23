@@ -62,11 +62,12 @@ self-hosted vector basemap.
   - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
     v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
     coloring by live device density, an **H3 hexagon** tool
-    (Off/Large/Medium/Small, shaded by device density or the server's
-    starts/hour-peak aggregate; mutually exclusive with the choropleth),
-    and an "Only show devices in…" area filter. With an area type chosen,
-    clicking a region directly on the map adds or removes it from the
-    filter.
+    (Off/Large/Medium/Small, shaded by any of six server-computed per-cell
+    metrics — device density, trips started, starts/hour peak, avg
+    battery, high-risk share, avg dwell — via a "Shade by" dropdown;
+    mutually exclusive with the choropleth), and an "Only show devices
+    in…" area filter. With an area type chosen, clicking a region directly
+    on the map adds or removes it from the filter.
   - **Tools** — dense-cluster finder.
   - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
     the 30% threshold), or PENDING before the daily window is computed. Also

@@ -346,7 +346,6 @@ map.on("load", async () => {
   if (resp) {
     devices.setData(resp);
     equity.update(resp.features);
-    hexDensity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -1024,10 +1023,8 @@ function wireHexDensity(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#hexbin-seg .seg-btn"),
   );
-  const metricBtns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#hexbin-metric-seg .seg-btn"),
-  );
   const metricRow = need("hexbin-metric-row");
+  const metricSelect = need<HTMLSelectElement>("hexbin-metric-select");
 
   const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
@@ -1062,29 +1059,8 @@ function wireHexDensity(): void {
     });
   });
 
-  const selectMetric = (btn: HTMLButtonElement): void => {
-    for (const b of metricBtns) {
-      const on = b === btn;
-      b.classList.toggle("is-active", on);
-      b.setAttribute("aria-checked", String(on));
-    }
-    void hexDensity.setMetric((btn.dataset.metric || "density") as HexMetric);
-  };
-  metricBtns.forEach((btn, i) => {
-    btn.addEventListener("click", () => selectMetric(btn));
-    btn.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = metricBtns[(i + 1) % metricBtns.length];
-        next.focus();
-        selectMetric(next);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = metricBtns[(i - 1 + metricBtns.length) % metricBtns.length];
-        prev.focus();
-        selectMetric(prev);
-      }
-    });
+  metricSelect.addEventListener("change", () => {
+    hexDensity.setMetric(metricSelect.value as HexMetric);
   });
 }
 
@@ -1904,7 +1880,6 @@ function startRefreshLoop(): void {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
       equity.update(resp.features);
-      hexDensity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(

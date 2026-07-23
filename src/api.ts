@@ -366,15 +366,24 @@ export type H3Resolution = 8 | 9 | 10;
 /** Per-cell metrics from the H3 aggregates endpoint, computed once per
  *  10-minute cycle and CDN-cached (~10 min). */
 export interface H3CellMetrics {
+  /** Devices (denver_core) currently parked in the cell. */
   device_count: number;
-  /** Trailing-24h count; a "start" is the state tracker seeing a device leave its spot. */
+  /** Trailing-24h count of trip_events whose FROM-position falls in the
+   *  cell (window ends at snapshot_time). A "start" is the state tracker
+   *  observing a device leave its spot (the same MOVED transition that
+   *  resets dwell); failed starts are tracked separately. */
   trips_started_24h: number;
-  /** Max hourly start rate seen in the trailing-24h window. */
+  /** Max trips started in any single UTC clock hour within that window
+   *  (usage heat). */
   starts_per_hour_peak: number;
-  avg_battery_percent: number;
-  /** Fraction (0–1) of the cell's devices with reliability_tier "high_risk". */
-  risk_share: number;
-  avg_dwell_hours: number;
+  /** Mean battery_percent of devices in the cell that have one; null when none do. */
+  avg_battery_percent: number | null;
+  /** Fraction of the cell's devices with reliability_tier == "high_risk"
+   *  (same formula as /api/v1/devices/current, dwell outliers included);
+   *  null for trip-only cells with no parked devices. */
+  risk_share: number | null;
+  /** Mean dwell of the cell's state-tracked devices; null when none are tracked. */
+  avg_dwell_hours: number | null;
 }
 
 export interface H3AggregatesResponse {
