@@ -143,7 +143,31 @@ export class RideHud {
       void this.resumeRide();
       return;
     }
+    // Fresh attempt at the ride companion — give the landscape tip another
+    // chance even if it was dismissed last time around.
+    this.setLandscapeHintDismissed(false);
     this.setState("armed");
+  }
+
+  /** We're encouraging landscape, not enforcing it — the tip (pre-ride note
+   *  + in-ride badge) is dismissible, and dismissing either one silences
+   *  both for the rest of this ride attempt. Orientation reactivity itself
+   *  stays pure CSS (see .hud-rotate-badge / .hud-note--landscape); this
+   *  just gates it off entirely once dismissed. No backing field — the
+   *  body class alone is the source of truth, since nothing ever reads
+   *  the state back in JS. */
+  private setLandscapeHintDismissed(v: boolean): void {
+    document.body.classList.toggle("landscape-hint-dismissed", v);
+  }
+
+  /** Shared pre-ride landscape tip markup (armed + countdown cards). */
+  private landscapeHintMarkup(): string {
+    return `
+      <p class="hud-note hud-note--landscape">
+        ${rotateIconMarkup("hud-hint-icon")}
+        <span>Tip: the ride view works best in landscape.</span>
+        <button type="button" class="hud-hint-x" data-hud="dismiss-landscape-hint" aria-label="Dismiss tip">&times;</button>
+      </p>`;
   }
 
   private setState(state: HudState): void {
@@ -175,7 +199,7 @@ export class RideHud {
         <h2 class="hud-title">Ride companion</h2>
         <p class="hud-note">Speed, ride clock, and a cost estimate while you ride.
           The clock is unofficial — nudge it anytime to match the Veo app.</p>
-        <p class="hud-note hud-note--landscape">📱 Mount your phone sideways — the ride view is built for landscape.</p>
+        ${this.landscapeHintMarkup()}
         <label class="hud-field">
           <span>My Veo rate</span>
           <select id="hud-rate" class="select">
@@ -257,6 +281,9 @@ export class RideHud {
       case "reset-clock":
         this.startedAt = Date.now();
         this.renderTick();
+        break;
+      case "dismiss-landscape-hint":
+        this.setLandscapeHintDismissed(true);
         break;
       case "exit":
         this.showExitPrompt();
@@ -440,7 +467,7 @@ export class RideHud {
           <div class="hud-countdown">${remaining}</div>
           <p class="hud-note">Scan the QR and start the scooter — the clock
             starts when this hits zero.</p>
-          <p class="hud-note hud-note--landscape">📱 Mount your phone sideways — the ride view is built for landscape.</p>
+          ${this.landscapeHintMarkup()}
           <button type="button" class="hud-btn hud-btn--ghost" data-hud="cancel-countdown">Cancel</button>
         </div>`;
     };
@@ -581,7 +608,11 @@ export class RideHud {
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
         </div>
         <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity zone</div>
-        <div class="hud-rotate-badge">📱 Rotate to landscape</div>
+        <div class="hud-rotate-badge">
+          <button type="button" class="hud-rotate-badge__close" data-hud="dismiss-landscape-hint" aria-label="Dismiss">&times;</button>
+          ${rotateIconMarkup("hud-rotate-badge__icon")}
+          <span class="hud-rotate-badge__text">Landscape works best</span>
+        </div>
         <div class="hud-corner hud-corner--bl">
           <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
           <div class="hud-cutout-btns">
@@ -842,6 +873,20 @@ export class RideHud {
 
 function row(label: string, value: string): string {
   return `<dt>${label}</dt><dd>${value}</dd>`;
+}
+
+/** Rotate-hint glyph: a phone that visibly rotates portrait↔landscape (CSS
+ *  keyframes, see .rotate-icon__phone), ringed by a static rotate arrow so
+ *  the cue still reads correctly with the animation frozen
+ *  (prefers-reduced-motion — a bare paused phone rectangle wouldn't say
+ *  "rotate" on its own). Shared between the compact pre-ride note and the
+ *  larger in-ride card; `sizeClass` picks the rendered footprint. */
+function rotateIconMarkup(sizeClass: string): string {
+  return `<svg class="${sizeClass}" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+    <circle cx="24" cy="24" r="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="86 119.4" transform="rotate(-40 24 24)" opacity="0.55"/>
+    <polygon points="40.5,10.5 44.5,15 38.5,16.5" fill="currentColor" opacity="0.55"/>
+    <rect class="rotate-icon__phone" x="17" y="11" width="14" height="26" rx="3.5" stroke="currentColor" stroke-width="2.5"/>
+  </svg>`;
 }
 
 function formatClock(ms: number): string {

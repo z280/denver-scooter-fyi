@@ -1833,31 +1833,108 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
-/* Rotate-to-landscape badge: dead-centered — the only spot all four corner
+/* ---------- Rotate-hint icon (shared: pre-ride note + in-ride card) ----------
+   A phone that visibly rotates portrait<->landscape, ringed by a static
+   arrow so the cue still reads as "rotate" with the animation frozen
+   (prefers-reduced-motion zeroes the duration globally — see the reduced-
+   motion block below — leaving the phone parked at its 0% pose, which the
+   arrow alone still explains). */
+@keyframes rotate-icon-spin {
+  0%,
+  12% {
+    transform: rotate(0deg);
+  }
+  45%,
+  65% {
+    transform: rotate(-90deg);
+  }
+  95%,
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.rotate-icon__phone {
+  transform-origin: 24px 24px; /* viewBox center (0 0 48 48) */
+  animation: rotate-icon-spin 2.4s ease-in-out infinite;
+}
+.hud-hint-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+/* Rotate-to-landscape card: dead-centered — the only spot all four corner
    clusters (cost/mph/clock+buttons/speedometer) leave clear on a narrow
    phone; the bottom-left clock+button row alone is wide enough to reach
-   past bottom-center. Shown only while actually portrait —
-   @media(orientation) alone drives it, so it appears/disappears live as
-   the rider rotates, no JS orientation tracking needed. */
+   past bottom-center. Shown only while actually portrait AND not dismissed
+   — @media(orientation) drives the live rotate reactivity, the
+   body class gates it off entirely once waved away (we're encouraging
+   landscape, not enforcing it, so once dismissed it stays quiet for the
+   rest of this ride — see RideHud.setLandscapeHintDismissed). */
 .hud-rotate-badge {
   display: none;
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
   pointer-events: none;
-  font-size: 12.5px;
-  font-weight: 700;
+  text-align: center;
   color: #ffffff;
-  background: rgba(0, 114, 178, 0.92);
-  border-radius: 999px;
-  padding: 5px 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  background: rgba(0, 60, 110, 0.92);
+  border-radius: 18px;
+  padding: 28px 14px 16px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  animation: hud-rotate-badge-in 0.25s ease;
+}
+/* Own keyframe rather than reusing .install-banner's entrance — that one's
+   `transform` end-state is horizontal-only (translateX(-50%)), which would
+   clobber this card's true dead-center translate(-50%, -50%) mid-animation. */
+@keyframes hud-rotate-badge-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 @media (orientation: portrait) {
-  .hud-rotate-badge {
-    display: block;
+  body:not(.landscape-hint-dismissed) .hud-rotate-badge {
+    display: flex;
   }
+}
+.hud-rotate-badge__icon {
+  width: 44px;
+  height: 44px;
+}
+.hud-rotate-badge__text {
+  font-size: 13px;
+  font-weight: 700;
+}
+.hud-rotate-badge__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto; /* the card stays click-through; just this button isn't */
+}
+.hud-rotate-badge__close:hover {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 /* Adjust popover (wrench): time nudges + rate + theme. */
@@ -2059,8 +2136,32 @@ body.ride-active .maplibregl-ctrl {
 }
 
 .hud-note--landscape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   font-weight: 600;
   opacity: 0.9;
+}
+.hud-hint-x {
+  appearance: none;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.hud-hint-x:hover {
+  opacity: 1;
+}
+/* Encouraging landscape, not enforcing it — once waved off, stay quiet for
+   the rest of this ride attempt (RideHud.setLandscapeHintDismissed). */
+body.landscape-hint-dismissed .hud-note--landscape {
+  display: none;
 }
 
 /* ---------- Ride HUD card states in landscape ----------
