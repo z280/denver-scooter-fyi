@@ -440,6 +440,7 @@ export class RideHud {
           <div class="hud-countdown">${remaining}</div>
           <p class="hud-note">Scan the QR and start the scooter — the clock
             starts when this hits zero.</p>
+          <p class="hud-note hud-note--landscape">📱 Mount your phone sideways — the ride view is built for landscape.</p>
           <button type="button" class="hud-btn hud-btn--ghost" data-hud="cancel-countdown">Cancel</button>
         </div>`;
     };
@@ -580,6 +581,7 @@ export class RideHud {
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
         </div>
         <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity zone</div>
+        <div class="hud-rotate-badge">📱 Rotate to landscape</div>
         <div class="hud-corner hud-corner--bl">
           <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
           <div class="hud-cutout-btns">

@@ -1833,6 +1833,33 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
+/* Rotate-to-landscape badge: dead-centered — the only spot all four corner
+   clusters (cost/mph/clock+buttons/speedometer) leave clear on a narrow
+   phone; the bottom-left clock+button row alone is wide enough to reach
+   past bottom-center. Shown only while actually portrait —
+   @media(orientation) alone drives it, so it appears/disappears live as
+   the rider rotates, no JS orientation tracking needed. */
+.hud-rotate-badge {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(0, 114, 178, 0.92);
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+@media (orientation: portrait) {
+  .hud-rotate-badge {
+    display: block;
+  }
+}
+
 /* Adjust popover (wrench): time nudges + rate + theme. */
 .hud-adjust-panel {
   position: absolute;
@@ -2047,6 +2074,10 @@ body.ride-active .maplibregl-ctrl {
   }
   .hud-card--countdown .hud-countdown {
     font-size: min(60vh, 200px);
+  }
+  /* Already sideways — the "mount it sideways" tip would be redundant. */
+  .hud-note--landscape {
+    display: none;
   }
 }
 .hud-summary {
@@ -3054,4 +3085,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .install-modal__steps li + li {
   margin-top: 6px;
+}
+.install-modal__glyph {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  vertical-align: -3px;
+  margin: 0 1px;
+}
+.install-modal__glyph svg {
+  width: 100%;
+  height: 100%;
 }

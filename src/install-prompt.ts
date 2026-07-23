@@ -45,13 +45,19 @@ function isStandalone(): boolean {
   );
 }
 
+// Inline glyphs rather than worded descriptions ("square with an arrow") —
+// same stroke-icon style as every other icon in the app (24x24, currentColor)
+// so they sit in the sentence instead of reading like a foreign import.
+const SHARE_GLYPH = `<span class="install-modal__glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>`;
+const MENU_GLYPH = `<span class="install-modal__glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.75" fill="currentColor"/><circle cx="12" cy="12" r="1.75" fill="currentColor"/><circle cx="12" cy="19" r="1.75" fill="currentColor"/></svg></span>`;
+
 const IOS_STEPS = [
-  "Tap the Share button (square with an arrow) in the toolbar.",
+  `Tap the ${SHARE_GLYPH} Share button in the toolbar.`,
   "Scroll down and tap “Add to Home Screen.”",
   "Tap “Add” in the top-right corner.",
 ];
 const ANDROID_STEPS = [
-  "Tap the ⋮ menu button in your browser's toolbar.",
+  `Tap the ${MENU_GLYPH} menu button in your browser's toolbar.`,
   "Tap “Add to Home screen” or “Install app.”",
   "Confirm by tapping “Add” or “Install.”",
 ];
