@@ -138,14 +138,17 @@ export class HexDensity {
     const controller = new AbortController();
     this.aggController = controller;
     try {
-      this.aggregates = await fetchH3Aggregates(
+      const data = await fetchH3Aggregates(
         RES_BY_SIZE[this.size],
         controller.signal,
       );
+      // Only the most recent request may commit — abort() doesn't guarantee
+      // an older in-flight fetch can't still resolve after a newer one.
+      if (this.aggController === controller) this.aggregates = data;
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
       console.error("h3 aggregates fetch failed", e);
-      this.aggregates = null;
+      if (this.aggController === controller) this.aggregates = null;
     }
   }
 
@@ -199,7 +202,11 @@ export class HexDensity {
         properties: { value },
       });
     }
-    max = Math.max(1, max);
+    // Only guard the degenerate all-zero/empty case (MapLibre's interpolate
+    // stops must be strictly increasing) — don't force a floor of 1, or a
+    // fractional metric like risk_share gets its legend/ramp inflated to
+    // "100%" whenever the real max is under 1.
+    if (max <= 0) max = 1;
 
     const src = this.map.getSource(SRC) as GeoJSONSource;
     src.setData({ type: "FeatureCollection", features: feats });
