@@ -141,12 +141,18 @@ server already knows. Requests:
    (`GET /api/v1/equity-estimate?ranks=1,2` → % + counts) so low-end
    clients can skip the 8k-point point-in-polygon pass.
 
-### 1.6 H3 aggregate layers (SHIPPED — frontend UI pending)
+### 1.6 H3 aggregate layers (SHIPPED — frontend: density + starts/hour live)
 
 > **Status 2026-07-08:** `GET /api/v1/h3/aggregates?res=8|9|10` is live
 > with the exact cell metrics below (string-keyed cells, 10-min CDN
 > cache). The Areas-menu choropleth UI that consumes it is the next
 > frontend work item.
+
+> **Status 2026-07-23:** The hex tool (`src/hexdensity.ts`) now has a
+> "Shade by" switch between device density (client-side, unchanged) and
+> this endpoint's `starts_per_hour_peak`. Battery and reliability shading
+> — the remaining metrics this endpoint carries — are still frontend work
+> items.
 
 `GET /api/v1/h3/aggregates?res=8|9|10` → per-occupied-cell metrics,
 computed once per 10-minute cycle and CDN-cached (~10 min):

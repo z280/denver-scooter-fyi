@@ -361,6 +361,41 @@ export function fetchSpatialSnapshot(
   );
 }
 
+export type H3Resolution = 8 | 9 | 10;
+
+/** Per-cell metrics from the H3 aggregates endpoint, computed once per
+ *  10-minute cycle and CDN-cached (~10 min). */
+export interface H3CellMetrics {
+  device_count: number;
+  /** Trailing-24h count; a "start" is the state tracker seeing a device leave its spot. */
+  trips_started_24h: number;
+  /** Max hourly start rate seen in the trailing-24h window. */
+  starts_per_hour_peak: number;
+  avg_battery_percent: number;
+  /** Fraction (0–1) of the cell's devices with reliability_tier "high_risk". */
+  risk_share: number;
+  avg_dwell_hours: number;
+}
+
+export interface H3AggregatesResponse {
+  res: H3Resolution;
+  cycle_id: string;
+  snapshot_time: string;
+  /** Keyed by H3 cell id, as a decimal-integer string (same convention as
+   *  DeviceProperties.h3_8_index etc.). Occupied cells only. */
+  cells: Record<string, H3CellMetrics>;
+}
+
+/** Citywide per-cell metrics (device count, trip starts, battery, risk,
+ *  dwell) at one H3 resolution — the hex tool's "shade by" data source
+ *  beyond raw device density. */
+export function fetchH3Aggregates(
+  res: H3Resolution,
+  signal?: AbortSignal,
+): Promise<H3AggregatesResponse> {
+  return getJSON<H3AggregatesResponse>(`/api/v1/h3/aggregates?res=${res}`, signal);
+}
+
 /** Yesterday's 6–9am Denver SLA window. Throws NoDataError when pending. */
 export function fetchCompliance(
   signal?: AbortSignal,

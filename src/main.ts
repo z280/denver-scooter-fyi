@@ -42,7 +42,7 @@ import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
-import { HexDensity, type HexSize } from "./hexdensity.ts";
+import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
 import {
   consumePendingMagicLink,
   requestMagicLink,
@@ -1024,6 +1024,11 @@ function wireHexDensity(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#hexbin-seg .seg-btn"),
   );
+  const metricBtns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#hexbin-metric-seg .seg-btn"),
+  );
+  const metricRow = need("hexbin-metric-row");
+
   const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
       const on = b === btn;
@@ -1032,7 +1037,8 @@ function wireHexDensity(): void {
     }
     const size = (btn.dataset.hex || "") as HexSize | "";
     if (size) clearChoropleth(); // mutually exclusive with the choropleth
-    hexDensity.setSize(size || null);
+    metricRow.hidden = !size;
+    void hexDensity.setSize(size || null);
   };
   // Reset to Off (used when the choropleth takes over).
   clearHexDensity = () => {
@@ -1052,6 +1058,31 @@ function wireHexDensity(): void {
         const prev = btns[(i - 1 + btns.length) % btns.length];
         prev.focus();
         select(prev);
+      }
+    });
+  });
+
+  const selectMetric = (btn: HTMLButtonElement): void => {
+    for (const b of metricBtns) {
+      const on = b === btn;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", String(on));
+    }
+    void hexDensity.setMetric((btn.dataset.metric || "density") as HexMetric);
+  };
+  metricBtns.forEach((btn, i) => {
+    btn.addEventListener("click", () => selectMetric(btn));
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = metricBtns[(i + 1) % metricBtns.length];
+        next.focus();
+        selectMetric(next);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = metricBtns[(i - 1 + metricBtns.length) % metricBtns.length];
+        prev.focus();
+        selectMetric(prev);
       }
     });
   });
@@ -1882,6 +1913,7 @@ function startRefreshLoop(): void {
         resp.metadata.device_count,
       );
       void overlays.refreshChoropleth();
+      void hexDensity.refresh();
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         console.error("refresh failed", e);

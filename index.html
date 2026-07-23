@@ -435,13 +435,20 @@
         </section>
 
         <section class="control-group" aria-labelledby="hexbin-label">
-          <h3 id="hexbin-label" class="control-label">Density by hexagon (H3)</h3>
-          <p class="control-hint">Grid the map into hexagons and shade by device count.</p>
+          <h3 id="hexbin-label" class="control-label">Hexagons (H3)</h3>
+          <p class="control-hint">Grid the map into hexagons and shade by device density or trip activity.</p>
           <div id="hexbin-seg" class="segmented" role="radiogroup" aria-labelledby="hexbin-label">
             <button class="seg-btn is-active" role="radio" aria-checked="true" data-hex="">Off</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-hex="large">Large</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-hex="medium">Medium</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-hex="small">Small</button>
+          </div>
+          <div id="hexbin-metric-row" class="hexbin-metric-row" hidden>
+            <p id="hexbin-metric-label" class="control-hint">Shade by</p>
+            <div id="hexbin-metric-seg" class="segmented segmented--tight" role="radiogroup" aria-labelledby="hexbin-metric-label">
+              <button class="seg-btn is-active" role="radio" aria-checked="true" data-metric="density">Density</button>
+              <button class="seg-btn" role="radio" aria-checked="false" data-metric="starts_per_hour">Starts/hr</button>
+            </div>
           </div>
           <div id="hexbin-legend" class="legend" hidden></div>
         </section>
