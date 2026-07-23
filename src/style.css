@@ -2896,3 +2896,150 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   font-size: 10.5px;
   word-break: break-all;
 }
+
+/* ---------- Install-app banner (mobile Home Screen nudge) ---------- */
+/* `bottom` is set from JS (install-prompt.ts) to clear the mode-switch
+   pill's live position — it moves for several independent responsive
+   reasons, so tracking its real rect beats duplicating each breakpoint. */
+.install-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40; /* above the tab strip (32) and drawers (30); below modals (70) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(360px, calc(100vw - 24px));
+  padding: 10px 10px 10px 12px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  animation: install-banner-in 0.25s ease;
+}
+@keyframes install-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.install-banner__icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.install-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.install-banner__text strong {
+  display: block;
+  font-size: 13px;
+}
+.install-banner__text span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.install-banner__install {
+  flex: none;
+  appearance: none;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.install-banner__install:hover {
+  filter: brightness(1.05);
+}
+.install-banner__close {
+  flex: none;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.install-banner__close:hover {
+  background: var(--hover-neutral);
+  color: var(--fg);
+}
+
+/* ---------- Install instructions modal (shared shell with ranks-modal) ---------- */
+.install-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.install-modal__card {
+  width: min(320px, 92vw);
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.install-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.install-modal__icon {
+  flex: none;
+  border-radius: 8px;
+}
+.install-modal__head h3 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+}
+.install-modal__close {
+  flex: none;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.install-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.install-modal__steps {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.install-modal__steps li + li {
+  margin-top: 6px;
+}

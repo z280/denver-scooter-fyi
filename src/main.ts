@@ -66,6 +66,7 @@ import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
+import { initInstallPrompt } from "./install-prompt.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -244,6 +245,7 @@ wireAccount();
 wireRideHud();
 startSunSync();
 wireFreshnessCollapse();
+initInstallPrompt();
 
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
