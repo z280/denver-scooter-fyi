@@ -93,14 +93,16 @@ function openInstructions(steps: string[]): void {
 /** Stack the banner directly above the bottom mode-switch pill, reading its
  *  live position rather than duplicating that pill's own responsive/
  *  orientation breakpoints here — it moves for several independent reasons
- *  (narrow-width wrap, short-landscape lift) and this tracks all of them. */
+ *  (narrow-width wrap, short-landscape lift) and this tracks all of them.
+ *  If the pill is currently hidden (`display: none`, e.g. mid-ride) its rect
+ *  collapses to all-zero — skip the update rather than shove the banner
+ *  off-screen; the CSS fallback `bottom` (or the last good value) holds. */
 function repositionAboveModeSwitch(banner: HTMLElement): void {
   const modeSwitch = document.getElementById("mode-switch");
+  const rect = modeSwitch?.getBoundingClientRect();
+  if (!rect || rect.height === 0) return;
   const gap = 10;
-  const bottom = modeSwitch
-    ? Math.round(window.innerHeight - modeSwitch.getBoundingClientRect().top + gap)
-    : 12;
-  banner.style.bottom = `${bottom}px`;
+  banner.style.bottom = `${Math.round(window.innerHeight - rect.top + gap)}px`;
 }
 
 function showBanner(): void {
@@ -142,9 +144,25 @@ function showBanner(): void {
     });
 }
 
+/** Chrome/Edge auto-show their own install mini-infobar based on their own
+ *  engagement heuristics; left alone, a rider could get nagged twice — once
+ *  by that, once by ours. `preventDefault()` suppresses only the automatic
+ *  popup, not the browser's installability (its own menu entry still works,
+ *  and it's what our own "no native prompt" instructions already point at).
+ *  Scoped to the same mobile + non-standalone gate as our banner, and left
+ *  suppressed even once dismissed — dismissing our nudge should mean no
+ *  install nagging at all, not just no more of *ours*. */
+function suppressNativePrompt(): void {
+  if (!isMobileDevice() || isStandalone()) return;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+  });
+}
+
 /** Mobile-only on-load nudge to add the app to the Home Screen. No-ops on
  *  desktop, inside an already-installed shell, or once dismissed. */
 export function initInstallPrompt(): void {
+  suppressNativePrompt();
   if (dismissed() || isStandalone() || !isMobileDevice()) return;
   // A beat after load so the banner doesn't compete with the map's first
   // paint — it's a suggestion, not a blocker.

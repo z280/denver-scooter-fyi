@@ -2905,6 +2905,9 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
+  /* JS (install-prompt.ts) overrides this with the live gap above the
+     mode-switch pill; this is only the pre-JS/no-rect fallback. */
+  bottom: 76px;
   z-index: 40; /* above the tab strip (32) and drawers (30); below modals (70) */
   display: flex;
   align-items: center;
@@ -2917,6 +2920,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   border-radius: 14px;
   box-shadow: var(--shadow);
   animation: install-banner-in 0.25s ease;
+}
+/* An open drawer or the ride-wizard panel already claims this part of the
+   screen (the wizard docks full-height on mobile) — don't float the banner
+   on top of either. Both elements are earlier DOM siblings of the
+   JS-appended banner, so the general sibling combinator tracks their live
+   open/closed state with no JS coupling. */
+.drawer.is-open ~ .install-banner,
+#ride-wizard:not([hidden]) ~ .install-banner {
+  display: none;
 }
 @keyframes install-banner-in {
   from {
