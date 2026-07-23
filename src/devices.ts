@@ -2481,7 +2481,7 @@ function formatDwell(iso: string): string {
 
 /** Hour count → the same "3d 4h" shape as formatDwell, for the peer-median
  *  hint so the two dwell figures in the popup read alike. */
-function formatDwellHours(hours: number): string {
+export function formatDwellHours(hours: number): string {
   const minutes = Math.max(0, Math.round(hours * 60));
   if (minutes < 60) return `${minutes}m`;
   const wholeHours = Math.floor(minutes / 60);

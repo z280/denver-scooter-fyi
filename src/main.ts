@@ -42,7 +42,7 @@ import { Locate } from "./locate.ts";
 import { RideHud } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
-import { HexDensity, type HexSize } from "./hexdensity.ts";
+import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
 import {
   consumePendingMagicLink,
   requestMagicLink,
@@ -346,7 +346,6 @@ map.on("load", async () => {
   if (resp) {
     devices.setData(resp);
     equity.update(resp.features);
-    hexDensity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -1024,6 +1023,9 @@ function wireHexDensity(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#hexbin-seg .seg-btn"),
   );
+  const metricRow = need("hexbin-metric-row");
+  const metricSelect = need<HTMLSelectElement>("hexbin-metric-select");
+
   const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
       const on = b === btn;
@@ -1032,7 +1034,8 @@ function wireHexDensity(): void {
     }
     const size = (btn.dataset.hex || "") as HexSize | "";
     if (size) clearChoropleth(); // mutually exclusive with the choropleth
-    hexDensity.setSize(size || null);
+    metricRow.hidden = !size;
+    void hexDensity.setSize(size || null);
   };
   // Reset to Off (used when the choropleth takes over).
   clearHexDensity = () => {
@@ -1054,6 +1057,10 @@ function wireHexDensity(): void {
         select(prev);
       }
     });
+  });
+
+  metricSelect.addEventListener("change", () => {
+    hexDensity.setMetric(metricSelect.value as HexMetric);
   });
 }
 
@@ -1873,7 +1880,6 @@ function startRefreshLoop(): void {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
       equity.update(resp.features);
-      hexDensity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(
@@ -1882,6 +1888,7 @@ function startRefreshLoop(): void {
         resp.metadata.device_count,
       );
       void overlays.refreshChoropleth();
+      void hexDensity.refresh();
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         console.error("refresh failed", e);

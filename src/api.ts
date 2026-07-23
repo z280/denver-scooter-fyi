@@ -361,6 +361,50 @@ export function fetchSpatialSnapshot(
   );
 }
 
+export type H3Resolution = 8 | 9 | 10;
+
+/** Per-cell metrics from the H3 aggregates endpoint, computed once per
+ *  10-minute cycle and CDN-cached (~10 min). */
+export interface H3CellMetrics {
+  /** Devices (denver_core) currently parked in the cell. */
+  device_count: number;
+  /** Trailing-24h count of trip_events whose FROM-position falls in the
+   *  cell (window ends at snapshot_time). A "start" is the state tracker
+   *  observing a device leave its spot (the same MOVED transition that
+   *  resets dwell); failed starts are tracked separately. */
+  trips_started_24h: number;
+  /** Max trips started in any single UTC clock hour within that window
+   *  (usage heat). */
+  starts_per_hour_peak: number;
+  /** Mean battery_percent of devices in the cell that have one; null when none do. */
+  avg_battery_percent: number | null;
+  /** Fraction of the cell's devices with reliability_tier == "high_risk"
+   *  (same formula as /api/v1/devices/current, dwell outliers included);
+   *  null for trip-only cells with no parked devices. */
+  risk_share: number | null;
+  /** Mean dwell of the cell's state-tracked devices; null when none are tracked. */
+  avg_dwell_hours: number | null;
+}
+
+export interface H3AggregatesResponse {
+  res: H3Resolution;
+  cycle_id: string;
+  snapshot_time: string;
+  /** Keyed by H3 cell id, as a decimal-integer string (same convention as
+   *  DeviceProperties.h3_8_index etc.). Occupied cells only. */
+  cells: Record<string, H3CellMetrics>;
+}
+
+/** Citywide per-cell metrics (device count, trip starts, battery, risk,
+ *  dwell) at one H3 resolution — the hex tool's "shade by" data source
+ *  beyond raw device density. */
+export function fetchH3Aggregates(
+  res: H3Resolution,
+  signal?: AbortSignal,
+): Promise<H3AggregatesResponse> {
+  return getJSON<H3AggregatesResponse>(`/api/v1/h3/aggregates?res=${res}`, signal);
+}
+
 /** Yesterday's 6–9am Denver SLA window. Throws NoDataError when pending. */
 export function fetchCompliance(
   signal?: AbortSignal,
