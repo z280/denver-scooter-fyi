@@ -41,6 +41,14 @@
     />
     <title>Denver Veo Scooter &amp; E-Bike Map</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛴%3C/text%3E%3C/svg%3E" />
+    <!-- PWA install metadata. manifest.webmanifest + icon-*.png drive the
+         Android/desktop install UI; the apple-* tags are iOS Safari's own
+         (pre-manifest) equivalents — it ignores the manifest's icons/name. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Scooter.fyi" />
   </head>
   <body>
     <a class="skip-link" href="#drawer-tabs">Skip to map controls</a>

@@ -1833,6 +1833,110 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
+/* ---------- Rotate-hint icon (shared: pre-ride note + in-ride card) ----------
+   A phone that visibly rotates portrait<->landscape, ringed by a static
+   arrow so the cue still reads as "rotate" with the animation frozen
+   (prefers-reduced-motion zeroes the duration globally — see the reduced-
+   motion block below — leaving the phone parked at its 0% pose, which the
+   arrow alone still explains). */
+@keyframes rotate-icon-spin {
+  0%,
+  12% {
+    transform: rotate(0deg);
+  }
+  45%,
+  65% {
+    transform: rotate(-90deg);
+  }
+  95%,
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.rotate-icon__phone {
+  transform-origin: 24px 24px; /* viewBox center (0 0 48 48) */
+  animation: rotate-icon-spin 2.4s ease-in-out infinite;
+}
+.hud-hint-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+/* Rotate-to-landscape card: dead-centered — the only spot all four corner
+   clusters (cost/mph/clock+buttons/speedometer) leave clear on a narrow
+   phone; the bottom-left clock+button row alone is wide enough to reach
+   past bottom-center. Shown only while actually portrait AND not dismissed
+   — @media(orientation) drives the live rotate reactivity, the
+   body class gates it off entirely once waved away (we're encouraging
+   landscape, not enforcing it, so once dismissed it stays quiet for the
+   rest of this ride — see RideHud.setLandscapeHintDismissed). */
+.hud-rotate-badge {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
+  pointer-events: none;
+  text-align: center;
+  color: #ffffff;
+  background: rgba(0, 60, 110, 0.92);
+  border-radius: 18px;
+  padding: 28px 14px 16px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  animation: hud-rotate-badge-in 0.25s ease;
+}
+/* Own keyframe rather than reusing .install-banner's entrance — that one's
+   `transform` end-state is horizontal-only (translateX(-50%)), which would
+   clobber this card's true dead-center translate(-50%, -50%) mid-animation. */
+@keyframes hud-rotate-badge-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@media (orientation: portrait) {
+  body:not(.landscape-hint-dismissed) .hud-rotate-badge {
+    display: flex;
+  }
+}
+.hud-rotate-badge__icon {
+  width: 44px;
+  height: 44px;
+}
+.hud-rotate-badge__text {
+  font-size: 13px;
+  font-weight: 700;
+}
+.hud-rotate-badge__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto; /* the card stays click-through; just this button isn't */
+}
+.hud-rotate-badge__close:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
 /* Adjust popover (wrench): time nudges + rate + theme. */
 .hud-adjust-panel {
   position: absolute;
@@ -2032,8 +2136,32 @@ body.ride-active .maplibregl-ctrl {
 }
 
 .hud-note--landscape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   font-weight: 600;
   opacity: 0.9;
+}
+.hud-hint-x {
+  appearance: none;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.hud-hint-x:hover {
+  opacity: 1;
+}
+/* Encouraging landscape, not enforcing it — once waved off, stay quiet for
+   the rest of this ride attempt (RideHud.setLandscapeHintDismissed). */
+body.landscape-hint-dismissed .hud-note--landscape {
+  display: none;
 }
 
 /* ---------- Ride HUD card states in landscape ----------
@@ -2047,6 +2175,10 @@ body.ride-active .maplibregl-ctrl {
   }
   .hud-card--countdown .hud-countdown {
     font-size: min(60vh, 200px);
+  }
+  /* Already sideways — the "mount it sideways" tip would be redundant. */
+  .hud-note--landscape {
+    display: none;
   }
 }
 .hud-summary {
@@ -2895,4 +3027,174 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 .device-popup__vid {
   font-size: 10.5px;
   word-break: break-all;
+}
+
+/* ---------- Install-app banner (mobile Home Screen nudge) ---------- */
+/* `bottom` is set from JS (install-prompt.ts) to clear the mode-switch
+   pill's live position — it moves for several independent responsive
+   reasons, so tracking its real rect beats duplicating each breakpoint. */
+.install-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  /* JS (install-prompt.ts) overrides this with the live gap above the
+     mode-switch pill; this is only the pre-JS/no-rect fallback. */
+  bottom: 76px;
+  z-index: 40; /* above the tab strip (32) and drawers (30); below modals (70) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(360px, calc(100vw - 24px));
+  padding: 10px 10px 10px 12px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  animation: install-banner-in 0.25s ease;
+}
+/* An open drawer or the ride-wizard panel already claims this part of the
+   screen (the wizard docks full-height on mobile) — don't float the banner
+   on top of either. Both elements are earlier DOM siblings of the
+   JS-appended banner, so the general sibling combinator tracks their live
+   open/closed state with no JS coupling. */
+.drawer.is-open ~ .install-banner,
+#ride-wizard:not([hidden]) ~ .install-banner {
+  display: none;
+}
+@keyframes install-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.install-banner__icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.install-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.install-banner__text strong {
+  display: block;
+  font-size: 13px;
+}
+.install-banner__text span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.install-banner__install {
+  flex: none;
+  appearance: none;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.install-banner__install:hover {
+  filter: brightness(1.05);
+}
+.install-banner__close {
+  flex: none;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.install-banner__close:hover {
+  background: var(--hover-neutral);
+  color: var(--fg);
+}
+
+/* ---------- Install instructions modal (shared shell with ranks-modal) ---------- */
+.install-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.install-modal__card {
+  width: min(320px, 92vw);
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.install-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.install-modal__icon {
+  flex: none;
+  border-radius: 8px;
+}
+.install-modal__head h3 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+}
+.install-modal__close {
+  flex: none;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.install-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.install-modal__steps {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.install-modal__steps li + li {
+  margin-top: 6px;
+}
+.install-modal__glyph {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  vertical-align: -3px;
+  margin: 0 1px;
+}
+.install-modal__glyph svg {
+  width: 100%;
+  height: 100%;
 }

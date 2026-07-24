@@ -79,6 +79,10 @@ self-hosted vector basemap.
   with a ✕ to clear it — so closed drawers never hide the map's state.
 - Bottom-right freshness footer: `as of HH:MM · Displaying x out of y`.
 - Responsive: drawers fill the remaining width on mobile.
+- **Install prompt**: mobile visitors get an on-load Home Screen suggestion
+  (app icon + one-tap Install); tapping it shows Add-to-Home-Screen steps
+  tailored to iOS Safari's Share sheet or Android's browser menu. Skipped
+  entirely once already installed (standalone display mode) or dismissed.
 
 ## Tech stack
 
