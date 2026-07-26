@@ -204,6 +204,8 @@ function hoursSince(iso: string | null | undefined, now: number): number | null 
 }
 
 function formatIdle(hours: number): string {
+  const minutes = Math.round(hours * 60);
+  if (minutes < 60) return `${minutes}m`;
   if (hours < 48) return `${Math.round(hours)}h`;
   return `${Math.floor(hours / 24)}d`;
 }
