@@ -2,7 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- viewport-fit=cover: lets the page draw under the notch/Dynamic Island
+         and the home-indicator curve instead of iOS reserving that strip as
+         opaque (white) native chrome — most visible rotating a Home Screen-
+         installed (standalone) PWA to landscape, where that strip becomes
+         the left/right edges. It's also what makes env(safe-area-inset-*)
+         resolve to real values instead of silently 0 (see style.css, the
+         safe-area mask right after the html/body rule, and the ride-hud
+         corner padding that already assumed this). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <!-- Single theme-color kept in step with the APP theme (which can diverge
          from the OS scheme): set below for first paint, then by applyTheme()
          in src/theme.ts on every change. -->
@@ -49,6 +57,9 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Scooter.fyi" />
+    <!-- Translucent status bar: our own content (dynamically themed) shows
+         through instead of iOS painting a separate opaque bar over it. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
     <a class="skip-link" href="#drawer-tabs">Skip to map controls</a>

@@ -92,9 +92,19 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
     hash: false,
     maxZoom: 18,
     minZoom: 9,
+    // Keeps panning scoped to the metro area (no wandering off to an empty
+    // map with no device data) without it being mistaken for a broken drag.
+    // The margin beyond DENVER_BOUNDS matters more than it looks: fitBounds
+    // picks whichever axis the viewport's aspect ratio constrains harder, so
+    // on a wide-but-short window (a maximized-but-not-tall desktop browser,
+    // or a phone in landscape) the initial fit already sits close to a thin
+    // margin's edge — a single ordinary drag hits it, and since only the
+    // pinned axis stops while the other keeps panning, it reads as "grabbing
+    // the map doesn't move it right" rather than "reached the edge." Sized
+    // to comfortably clear that on realistic desktop window shapes.
     maxBounds: [
-      [-105.35, 39.45],
-      [-104.35, 40.05],
+      [-105.6, 39.25],
+      [-104.1, 40.25],
     ],
   });
 
