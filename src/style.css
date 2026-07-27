@@ -136,7 +136,7 @@ body::before {
 .skip-link {
   position: fixed;
   top: -60px;
-  left: 12px;
+  left: max(12px, env(safe-area-inset-left));
   z-index: 60;
   background: var(--accent);
   color: var(--accent-ink);
@@ -146,7 +146,7 @@ body::before {
   transition: top 0.15s ease;
 }
 .skip-link:focus {
-  top: 12px;
+  top: max(12px, env(safe-area-inset-top));
 }
 
 /* ---------- Screen-reader-only utility ---------- */
@@ -165,8 +165,8 @@ body::before {
 /* ---------- Drawer tab strip (always visible activity bar) ---------- */
 .drawer-tabs {
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
   z-index: 32;
   display: flex;
   flex-direction: column;
@@ -203,12 +203,13 @@ body::before {
 /* ---------- Drawers (slide in from behind the tab strip) ---------- */
 .drawer {
   position: fixed;
-  top: 12px;
-  /* sits just past the tab strip (12px gap + ~52px wide strip) */
-  left: 72px;
+  top: max(12px, env(safe-area-inset-top));
+  /* sits just past the tab strip (12px gap + ~52px wide strip), shifted the
+     same amount the tab strip itself shifts to clear a safe-area inset */
+  left: calc(72px + env(safe-area-inset-left));
   z-index: 30;
   width: 300px;
-  max-height: calc(100dvh - 24px);
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - 12px);
   overflow-y: auto;
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
@@ -491,7 +492,7 @@ body::before {
 /* ---------- Intent-mode presets (bottom center) ---------- */
 .mode-switch {
   position: fixed;
-  bottom: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   /* Above drawers (30) and the tab strip (32) — unlike filter-chips/
@@ -503,6 +504,10 @@ body::before {
      underneath it and swallowed taps. */
   z-index: 33;
   display: flex;
+  /* Explicit shrink-to-fit: this is a fixed-position flex row with no
+     intrinsic width constraint from a parent, which some engines size more
+     generously than "just what the three buttons need" without this. */
+  width: max-content;
   gap: 4px;
   padding: 5px;
   background: var(--bg-panel);
@@ -542,7 +547,7 @@ body::before {
 /* ---------- Active-filter chips (float over the map, top center) ---------- */
 .filter-chips {
   position: fixed;
-  top: 12px;
+  top: max(12px, env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 25; /* under the tab strip (32) and drawers (30) */
@@ -862,10 +867,12 @@ body::before {
 /* ---------- Brand link (bottom-left, beside zoom controls) ---------- */
 .brand-link {
   position: fixed;
-  bottom: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
   /* MapLibre's bottom-left controls are ~10px from the edge and ~30px wide;
-     leave room for both the nav (+/-) and the compact attribution. */
-  left: 56px;
+     leave room for both the nav (+/-) and the compact attribution — shifted
+     by the same safe-area inset those controls themselves now respect
+     (see .maplibregl-ctrl-bottom-left). */
+  left: calc(56px + env(safe-area-inset-left));
   z-index: 5;
   display: inline-flex;
   align-items: center;
@@ -1130,8 +1137,20 @@ body::before {
 
 /* ---------- Geolocate button (top-right) ---------- */
 .maplibregl-ctrl-top-right {
-  top: 12px;
-  right: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+}
+
+/* ---------- Zoom +/- and attribution (bottom-left) ----------
+   MapLibre's own default (bottom:0; left:0, plus ~10px margin on the
+   control itself) assumes the container's edge is reachable — with
+   viewport-fit=cover (index.html) that edge can be under a notch/Dynamic
+   Island or the home-indicator curve in landscape, making the zoom buttons
+   unreachable. Shift the container itself out to the safe area; the
+   library's own ~10px control margin still applies on top of this. */
+.maplibregl-ctrl-bottom-left {
+  bottom: env(safe-area-inset-bottom);
+  left: env(safe-area-inset-left);
 }
 .maplibregl-ctrl-top-right .maplibregl-ctrl {
   margin: 0;
@@ -1298,8 +1317,8 @@ body::before {
 /* ---------- Freshness footer ---------- */
 .freshness {
   position: fixed;
-  bottom: 12px;
-  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  right: max(12px, env(safe-area-inset-right));
   z-index: 30;
   display: flex;
   flex-direction: column;
@@ -2254,13 +2273,13 @@ body.landscape-hint-dismissed .hud-note--landscape {
     max-width: 360px;
   }
   .freshness {
-    bottom: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
   }
   /* Chips hug the tab strip instead of centering — centering would tuck
      them behind an open drawer on narrow screens. */
   .filter-chips {
-    left: 72px;
-    right: 64px;
+    left: calc(72px + env(safe-area-inset-left));
+    right: calc(64px + env(safe-area-inset-right));
     transform: none;
     justify-content: flex-start;
     max-width: none;
@@ -2268,7 +2287,7 @@ body.landscape-hint-dismissed .hud-note--landscape {
   /* Lift the mode pill clear of the bottom-right freshness pill, which
      would otherwise overlap it and swallow taps on narrow screens. */
   .mode-switch {
-    bottom: 58px;
+    bottom: max(58px, env(safe-area-inset-bottom));
   }
   .mode-btn {
     padding: 7px 10px;
@@ -2282,7 +2301,9 @@ body.landscape-hint-dismissed .hud-note--landscape {
    collapse to its widest button and stack the buttons vertically. */
 @media (max-width: 480px) {
   .mode-switch {
-    width: calc(100vw - 16px);
+    width: calc(
+      100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
+    );
     flex-wrap: wrap;
     justify-content: center;
     border-radius: 22px;
@@ -2294,7 +2315,7 @@ body.landscape-hint-dismissed .hud-note--landscape {
    Lift it clear regardless of width. */
 @media (max-height: 480px) {
   .mode-switch {
-    bottom: 52px;
+    bottom: max(52px, env(safe-area-inset-bottom));
   }
 }
 
@@ -2536,9 +2557,9 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 @media (max-width: 720px) {
   .ride-wizard {
     left: auto;
-    right: 0;
-    top: 0;
-    bottom: 0;
+    right: env(safe-area-inset-right);
+    top: env(safe-area-inset-top);
+    bottom: env(safe-area-inset-bottom);
     transform: none;
     width: min(320px, 78vw);
     max-width: none;
@@ -2554,7 +2575,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   }
   /* Keep the mode pill reachable beside the docked panel. */
   body.mode-ride.wizard-open .mode-switch {
-    left: 12px;
+    left: max(12px, env(safe-area-inset-left));
     transform: none;
   }
 }
@@ -2812,7 +2833,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 /* On-map legend: docked below the left tab-strip menu (top set by JS). */
 .icon-legend {
   position: fixed;
-  left: 12px;
+  left: max(12px, env(safe-area-inset-left));
   z-index: 26; /* under the tab strip (32) and drawers (30) */
   display: grid;
   grid-template-columns: repeat(2, auto);
@@ -3080,12 +3101,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   transform: translateX(-50%);
   /* JS (install-prompt.ts) overrides this with the live gap above the
      mode-switch pill; this is only the pre-JS/no-rect fallback. */
-  bottom: 76px;
+  bottom: max(76px, env(safe-area-inset-bottom));
   z-index: 40; /* above the tab strip (32) and drawers (30); below modals (70) */
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(360px, calc(100vw - 24px));
+  width: min(
+    360px,
+    calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))
+  );
   padding: 10px 10px 10px 12px;
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
