@@ -460,7 +460,14 @@ body {
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 25;
+  /* Above drawers (30) and the tab strip (32) — unlike filter-chips/
+     icon-legend (25/26), which are fine hiding under an open drawer since
+     they're redundant with it, this is primary navigation (Find a ride /
+     Analysis / Ride) that must stay reachable while a drawer is open. A
+     drawer's max-height reaches nearly full viewport height, so on a short
+     (landscape-phone) viewport its centered x-range overlapped this pill
+     underneath it and swallowed taps. */
+  z-index: 33;
   display: flex;
   gap: 4px;
   padding: 5px;
@@ -2290,7 +2297,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   max-width: 560px;
   max-height: 86dvh;
   overflow-y: auto;
-  z-index: 28; /* over the map + mode pill (25), under drawers (30) */
+  z-index: 28; /* over the map (0), under drawers (30) and the mode pill (33) */
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
