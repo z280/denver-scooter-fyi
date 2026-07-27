@@ -70,7 +70,10 @@ const OUTLIER_MEDIAN_RATIO = 3;
 const OUTLIER_RISK_HOURS = 48;
 /** Softer, earlier-warning version of the outlier check above: no
  *  percentile or absolute-hour floor, just the raw peer-median ratio —
- *  demotes to "unknown" rather than "risk". */
+ *  demotes to "unknown" rather than "risk". The missing floor is
+ *  deliberate: with plenty of scooters around, an over-eager "unknown"
+ *  costs a rider one extra glance, while a false "ok" costs a walk to a
+ *  scooter that doesn't start — asymmetric costs, asymmetric leniency. */
 const UNKNOWN_DWELL_RATIO = 2;
 
 /** Mirror of the API's recalibrated reliability formula (veo-audit
