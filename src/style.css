@@ -2296,12 +2296,21 @@ body.landscape-hint-dismissed .hud-note--landscape {
 }
 
 /* Full-text mode buttons can overflow the pill below ~400px, clipping off
-   both edges. Wrap into centered rows. The width must be explicit: a
-   wrapped flex row inside a shrink-to-fit fixed box would otherwise
-   collapse to its widest button and stack the buttons vertically. */
+   both edges. Wrap into centered rows if they truly don't fit. max-width
+   is the cap that makes wrapping kick in when needed — width itself stays
+   max-content (from the base rule), so the pill only grows to that cap
+   when the buttons actually require it. An unconditional 100vw-based
+   width (the previous approach) forced the pill to that width even when
+   the three buttons comfortably fit on one row well short of it — on a
+   portrait phone that's most of the screen, with the pill's own rounded
+   background stretching far past its buttons. (min(max-content, ...) on
+   its own width looks equivalent but isn't: a flex-wrap container's
+   max-content contribution is measured pre-wrap, and combining it with
+   min() collapsed to a narrower, incorrectly-wrapped result — max-width
+   as a separate clamp on top of width:max-content avoids that.) */
 @media (max-width: 480px) {
   .mode-switch {
-    width: calc(
+    max-width: calc(
       100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
     );
     flex-wrap: wrap;
