@@ -118,6 +118,7 @@ body::before {
   box-sizing: border-box;
   border-style: solid;
   border-color: #000;
+  border-width: 0;
   border-width: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
