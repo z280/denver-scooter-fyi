@@ -87,6 +87,39 @@ body {
   padding: 0;
   height: 100%;
   overflow: hidden;
+  /* Fixed, not themed: the base layer under the safe-area mask below (and
+     the fallback before any theme/JS applies). */
+  background: #000;
+}
+
+/* Safe-area mask: with viewport-fit=cover (index.html), the page draws
+   under the notch/Dynamic Island and the home-indicator curve — good for
+   the map bleeding edge to edge, but on a Home Screen-installed (standalone)
+   PWA in landscape those strips become the screen's left/right edges, and
+   without this they'd show whatever's under them (map tiles, light-flavor
+   included, or the ride HUD's day palette — see .ride-hud's white
+   not-riding background) rather than a clean edge. A border painted in
+   exactly the safe-area-inset widths masks just those strips, in solid
+   black regardless of app theme — pointer-events:none keeps it from
+   blocking the map or any control beneath, and env() resolves to 0 with no
+   effect on devices with no safe-area inset (i.e. everywhere but a
+   notched/Dynamic-Island phone in standalone mode). z-index above the ride
+   HUD (50) so it still masks there; below the true modals (70/80) — those
+   are short, centered interactions this hasn't been seen to matter for,
+   and their content never approaches the edge anyway. Every other app
+   surface (drawers, chips, the mode pill) already sits well clear of the
+   safe-area-inset width, so nothing here shadows real content. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-style: solid;
+  border-color: #000;
+  border-width: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 #map {
