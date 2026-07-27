@@ -1420,12 +1420,25 @@ function wireDrawers(): void {
 // can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
+  const modeSwitch = need("mode-switch");
   const mq = window.matchMedia("(max-width: 640px)");
   let expanded = false;
   let idleTimer: number | undefined;
 
   const sync = (): void => {
     root.classList.toggle("freshness--collapsed", mq.matches && !expanded);
+    // While the pill is tap-expanded, its three lines of text can reach
+    // well past the mode pill's own footprint — lift the pill clear rather
+    // than let it sit on top of (and hide) that text. Read the freshness
+    // pill's live rendered height instead of hardcoding one: the class
+    // toggle above already applied, so this reflects the current expanded
+    // or collapsed size exactly, including whatever the actual device
+    // counts/timestamp text needs.
+    const lifted = mq.matches && expanded;
+    modeSwitch.style.setProperty(
+      "--freshness-lift",
+      lifted ? `${Math.ceil(root.getBoundingClientRect().height) + 10}px` : "0px",
+    );
   };
   const scheduleCollapse = (): void => {
     window.clearTimeout(idleTimer);

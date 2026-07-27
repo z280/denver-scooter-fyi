@@ -494,7 +494,14 @@ body::before {
   position: fixed;
   bottom: max(12px, env(safe-area-inset-bottom));
   left: 50%;
-  transform: translateX(-50%);
+  /* --freshness-lift (set from main.ts's wireFreshnessCollapse, measured
+     against the freshness pill's own live rect) pushes the pill up while
+     the freshness status pill is tap-expanded on a narrow screen — at rest
+     it's unset, and the var() fallback keeps this identical to a plain
+     translateX(-50%). Higher z-index than the freshness pill (30) means
+     it would otherwise sit on top of — not beside — the expanded text. */
+  transform: translate(-50%, calc(-1 * var(--freshness-lift, 0px)));
+  transition: transform 0.15s ease;
   /* Above drawers (30) and the tab strip (32) — unlike filter-chips/
      icon-legend (25/26), which are fine hiding under an open drawer since
      they're redundant with it, this is primary navigation (Find a ride /
