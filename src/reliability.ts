@@ -68,6 +68,13 @@ const CORROBORATION_HOURS = 24;
 const OUTLIER_PERCENTILE = 90;
 const OUTLIER_MEDIAN_RATIO = 3;
 const OUTLIER_RISK_HOURS = 48;
+/** Softer, earlier-warning version of the outlier check above: no
+ *  percentile or absolute-hour floor, just the raw peer-median ratio —
+ *  demotes to "unknown" rather than "risk". The missing floor is
+ *  deliberate: with plenty of scooters around, an over-eager "unknown"
+ *  costs a rider one extra glance, while a false "ok" costs a walk to a
+ *  scooter that doesn't start — asymmetric costs, asymmetric leniency. */
+const UNKNOWN_DWELL_RATIO = 2;
 
 /** Mirror of the API's recalibrated reliability formula (veo-audit
  *  src/quality.py, compute_reliability_tier) — first-match-wins:
@@ -76,9 +83,12 @@ const OUTLIER_RISK_HOURS = 48;
  *  combined with ≥24h dwell; ≥72h dwell with no failures (ghost); or a
  *  peer-relative dwell outlier (≥48h dwell, ≥p90 among H3 r9-kRing(1)
  *  neighbors, ≥3× the peer median).
- *  unknown: never state-tracked (no failed-start/dwell inputs), or
- *  quality is undefined (disabled / reserved / no range data).
- *  ok: everything else — including a single fresh failed start.
+ *  unknown: never state-tracked (no failed-start/dwell inputs); quality
+ *  is undefined (disabled / reserved / no range data); exactly 1 failed
+ *  start without enough dwell to corroborate it as risk; or dwell ≥2×
+ *  the peer median (a softer, earlier-warning version of the risk-tier
+ *  outlier check above — just the ratio, no percentile or floor).
+ *  ok: everything else.
  *
  *  Reliability collapses only the FAILURE signals ("will it unlock?");
  *  battery lives in quality_designation and deliberately doesn't feed
@@ -139,7 +149,8 @@ export function assessReliability(
     };
   }
 
-  // ---- unknown: no state tracking, or quality is undefined.
+  // ---- unknown: no state tracking, quality undefined, a single
+  // uncorroborated failed start, or a milder peer-relative dwell outlier.
   if (failed === null && idleHours === null) {
     return { tier: "unknown", reasons: ["not state-tracked yet"] };
   }
@@ -149,15 +160,32 @@ export function assessReliability(
   if (p.quality_designation === "N/A" || p.quality_designation === "n/a") {
     return { tier: "unknown", reasons: ["no quality data"] };
   }
-
-  // ---- ok. A single fresh failed start is deliberate leniency; still
-  // worth a footnote under the verdict.
-  const reasons: string[] = [];
   if (failed === 1) {
-    reasons.push("1 failed start (unconfirmed — could be a rebalancer scan)");
-  } else if (idleHours !== null && idleHours >= CORROBORATION_HOURS) {
-    reasons.push(`idle ${formatIdle(idleHours)}`);
+    return {
+      tier: "unknown",
+      reasons: ["1 failed start (unconfirmed — could be a rebalancer scan)"],
+    };
   }
+  if (
+    idleHours !== null &&
+    peerMedian !== null &&
+    peerMedian > 0 &&
+    idleHours >= UNKNOWN_DWELL_RATIO * peerMedian
+  ) {
+    const ratio = Math.round(idleHours / peerMedian);
+    return {
+      tier: "unknown",
+      reasons: [
+        `idle ${formatIdle(idleHours)} — ${ratio}× its block's typical ${formatIdle(peerMedian)}`,
+      ],
+    };
+  }
+
+  // ---- ok: everything else.
+  const reasons: string[] =
+    idleHours !== null && idleHours >= CORROBORATION_HOURS
+      ? [`idle ${formatIdle(idleHours)}`]
+      : [];
   return { tier: "ok", reasons };
 }
 
@@ -179,6 +207,8 @@ function hoursSince(iso: string | null | undefined, now: number): number | null 
 }
 
 function formatIdle(hours: number): string {
+  const minutes = Math.round(hours * 60);
+  if (minutes < 60) return `${minutes}m`;
   if (hours < 48) return `${Math.round(hours)}h`;
   return `${Math.floor(hours / 24)}d`;
 }
