@@ -2701,6 +2701,10 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+.ride-wizard__save {
+  margin: 10px 2px 0;
+  font-size: 12.5px;
+}
 .ride-wizard__choice-desc {
   display: block;
   margin-top: 2px;

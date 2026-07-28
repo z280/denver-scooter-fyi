@@ -1329,6 +1329,17 @@ function wireModes(): void {
     map.resize();
   };
 
+  // Filters as they stood when ride mode was entered. Snapshotted BEFORE
+  // wizard.start() — onConsentGranted fires applyRide() (a resetAllFilters)
+  // at step one, so by interview time the live state is already gone. The
+  // summary string is captured alongside for the same reason.
+  let rideEntrySnapshot: FilterSnapshot | null = null;
+  let rideEntrySummary = "";
+  // The rider carried filters in via option 4 — restore them on exit
+  // instead of wiping, or Find-a-ride silently destroys the analysis setup
+  // they deliberately built.
+  let rideCarriedFilters = false;
+
   const wizard = new RideWizard(need("ride-wizard"), locate, {
     onConsentGranted: () => applyPreset(applyRide),
     onExit: () => exitRide(),
@@ -1338,12 +1349,25 @@ function wireModes(): void {
       );
       if (tab && !tab.classList.contains("is-active")) tab.click();
     },
+    filterSummary: () => rideEntrySummary,
     // Interview finished: the Recommended Devices drawer takes over as the
     // home of the ranked list (and keeps re-ranking with the filters).
-    onInterviewDone: (priority, typeChoice, from) => {
+    onInterviewDone: (priority, typeChoice, from, carryOverFilters) => {
       setWizardDocked(false);
-      recommended?.setContext({ from, priority, typeChoice });
-      setDrawer("recommended");
+      const finish = (): void => {
+        recommended?.setContext({ from, priority, typeChoice });
+        setDrawer("recommended");
+      };
+      if (carryOverFilters && rideEntrySnapshot) {
+        // Option 4: re-apply the mode-entry snapshot BEFORE the ranking
+        // runs — rankDevices() already ranks over visibleFeatures(), so
+        // restoring the filters is the whole feature.
+        rideCarriedFilters = true;
+        const snap = rideEntrySnapshot;
+        void withPresetGuard(() => applyFilterSnapshot(snap)).then(finish);
+      } else {
+        finish();
+      }
     },
   });
 
@@ -1353,6 +1377,12 @@ function wireModes(): void {
     setWizardDocked(false);
     setRideSurface(false);
     applyPreset(applyNormal);
+    if (rideCarriedFilters && rideEntrySnapshot) {
+      const snap = rideEntrySnapshot;
+      void withPresetGuard(() => applyFilterSnapshot(snap));
+    }
+    rideCarriedFilters = false;
+    rideEntrySnapshot = null;
     // Recommendations are scoped to one Find-a-ride session: drop them so
     // re-entering never shows a stale list from the prior location/answers.
     recommended?.clear();
@@ -1363,6 +1393,9 @@ function wireModes(): void {
   };
 
   const enterRide = (): void => {
+    rideEntrySnapshot = snapshotFilters();
+    rideEntrySummary = filterSummary();
+    rideCarriedFilters = false;
     setDrawer(null);
     setRideSurface(true);
     setActive("ride");
