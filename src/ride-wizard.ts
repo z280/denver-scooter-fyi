@@ -57,6 +57,13 @@ function loadRidePrefs(): RidePrefs | null {
     if (p.priority !== "type" && p.priority !== "quality" && p.priority !== "distance") {
       return null;
     }
+    if (
+      p.typeChoice !== "astro" &&
+      p.typeChoice !== "cosmo" &&
+      p.typeChoice !== "apollo"
+    ) {
+      return null;
+    }
     return p;
   } catch {
     return null;
@@ -107,6 +114,10 @@ export class RideWizard {
    *  fresh fix skips straight to the interview, and an already-granted
    *  browser permission skips to "Awaiting…" (no prompt will fire). */
   start(): void {
+    // Per-visit opt-in: the save-as-default box starts unchecked every
+    // time, or a one-time save would silently overwrite the stored prefs
+    // on every later interview.
+    this.saveAsDefault = false;
     this.root.hidden = false;
     if (this.locate.current()) {
       this.hooks.onConsentGranted();

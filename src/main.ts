@@ -1257,11 +1257,18 @@ function wireModes(): void {
       "#mode-switch .mode-btn[data-mode]",
     ),
   );
-  let applying = false;
+  // Depth counter, not a boolean: the async preset guard can overlap the
+  // sync one (or a second async apply), and a boolean would drop the guard
+  // when the first finishes while the second is still mid-flight.
+  let applyDepth = 0;
   let rideActive = false;
 
   const setActive = (mode: string | null): void => {
-    for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
+    for (const b of btns) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
   };
   const setChecked = (id: string, on: boolean): void => {
     const cb = need<HTMLInputElement>(id);
@@ -1291,24 +1298,24 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
-  /** Run a preset with the `applying` guard up so its synthetic events
-   *  don't count as manual "custom" changes. */
+  /** Run a preset with the guard up so its synthetic events don't count
+   *  as manual "custom" changes. */
   const applyPreset = (fn: () => void): void => {
-    applying = true;
+    applyDepth++;
     try {
       fn();
     } finally {
-      applying = false;
+      applyDepth--;
     }
   };
   // Async flavor of the same guard for saved-filter loads (their area
   // restore awaits a boundary fetch; the guard must span the whole chain).
   withPresetGuard = async (fn) => {
-    applying = true;
+    applyDepth++;
     try {
       await fn();
     } finally {
-      applying = false;
+      applyDepth--;
     }
   };
 
@@ -1434,9 +1441,15 @@ function wireModes(): void {
 
   const enterRide = (): void => {
     closeAllPopups();
-    rideEntrySnapshot = snapshotFilters();
-    rideEntrySummary = filterSummary();
-    rideCarriedFilters = false;
+    // Re-tapping the active Find-wheels button restarts the wizard, but
+    // must NOT re-snapshot: applyRide() already wiped the live state on
+    // first entry, so a second capture would replace the rider's analysis
+    // setup with the wipe — the exact loss the snapshot exists to prevent.
+    if (!rideActive) {
+      rideEntrySnapshot = snapshotFilters();
+      rideEntrySummary = filterSummary();
+      rideCarriedFilters = false;
+    }
     setDrawer(null);
     setRideSurface(true);
     setActive("ride");
@@ -1486,8 +1499,13 @@ function wireModes(): void {
   // `applying`) never count. Ride mode is exempt: its surface has no
   // analysis controls to customize.
   const toCustom = (e: Event): void => {
-    if (applying || rideActive) return;
+    if (applyDepth > 0 || rideActive) return;
     const t = e.target as HTMLElement | null;
+    // The saved-filter controls apply through withPresetGuard, but this
+    // capture-phase listener sees the triggering click before that guard
+    // can engage — exempt them here or loading a preset always nulls the
+    // mode (the exact symptom the guard exists to prevent).
+    if (t?.closest?.(".preset-actions, #preset-panel")) return;
     if (t?.closest?.(".drawer")) setActive(null);
   };
   document.addEventListener("change", toCustom, true);

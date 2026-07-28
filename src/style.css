@@ -49,13 +49,18 @@
      and chips derive their offsets from one place instead of the old
      52/72/84px literals. */
   --topbar-h: calc(48px + env(safe-area-inset-top));
-  --ribbon-w: 52px;
+  /* 40px buttons + 6px padding + 1px border per side (border-box). */
+  --ribbon-w: 54px;
   --ribbon-gutter: 0px;
   /* Mode bar: stainless-silver gradient (gunmetal in dark), the notch tab
      matching the gradient's top stop, and a selected-item border kept at
-     >=3:1 against the gradient in both themes. */
+     >=3:1 against the gradient in both themes. Label/notch inks are their
+     own tokens because --fg-muted fails AA against the gradient's darkest
+     stop (3.86:1 light / 3.33:1 dark); these hold >=4.5:1 at every stop. */
   --modebar-bg: linear-gradient(180deg, #f6f8fa 0%, #e0e5eb 45%, #ccd3dc 55%, #e4e8ee 100%);
+  --modebar-fg: #3d4754;
   --modebar-notch-bg: #f6f8fa;
+  --modebar-notch-fg: #5b6675;
   --modebar-active-border: #24303f;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--fg);
@@ -91,7 +96,9 @@
   --sos: #cdd6e0;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   --modebar-bg: linear-gradient(180deg, #47505c 0%, #353d48 45%, #29303a 55%, #343b45 100%);
+  --modebar-fg: #c3cdd6;
   --modebar-notch-bg: #47505c;
+  --modebar-notch-fg: #cdd6e0;
   --modebar-active-border: #e6edf3;
 }
 
@@ -389,18 +396,25 @@ body:not(.ribbon-open) .drawer-tabs {
   box-shadow: var(--shadow);
   /* Hide off-screen by default; slide via transform so it animates. The
      extra distance past -100% clears the left offset plus shadow at any
-     ribbon width. */
+     ribbon width. visibility drops closed drawers out of the tab order —
+     they stay aria-hidden but were still keyboard-focusable off-screen. */
   transform: translateX(calc(-100% - var(--ribbon-gutter) - 48px - env(safe-area-inset-left)));
-  transition: transform 0.22s ease;
+  visibility: hidden;
+  transition: transform 0.22s ease, visibility 0.22s;
 }
 .drawer.is-open {
   transform: translateX(0);
+  visibility: visible;
 }
 /* Right-side variant (profile drawer): anchored under the top bar's right
    button, sliding in from the right edge instead. */
 .drawer--right {
   left: auto;
   right: max(12px, env(safe-area-inset-right));
+  /* One over the left drawers (30): the bottom-right freshness pill is
+     also 30 and later in the DOM, so a tie let it paint over (and swallow
+     taps on) this drawer's bottom corner. */
+  z-index: 31;
   transform: translateX(calc(100% + 48px + env(safe-area-inset-right)));
 }
 .drawer--right.is-open {
@@ -764,7 +778,7 @@ body:not(.ribbon-open) .drawer-tabs {
   font-variant-caps: small-caps;
   letter-spacing: 0.09em;
   line-height: 1;
-  color: var(--fg-muted);
+  color: var(--modebar-notch-fg);
   background: var(--modebar-notch-bg);
   border: 1px solid var(--border);
   border-bottom: 0;
@@ -777,7 +791,7 @@ body:not(.ribbon-open) .drawer-tabs {
   padding: 7px 14px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--fg-muted);
+  color: var(--modebar-fg);
   border-radius: 11px;
   cursor: pointer;
   white-space: nowrap;
@@ -2543,7 +2557,9 @@ body.landscape-hint-dismissed .hud-note--landscape {
      them behind an open drawer on narrow screens. */
   .filter-chips {
     left: calc(max(12px, env(safe-area-inset-left)) + var(--ribbon-gutter));
-    right: calc(64px + env(safe-area-inset-right));
+    /* The 64px this used to reserve was for the top-right geolocate
+       control, which now lives in the top bar. */
+    right: max(12px, env(safe-area-inset-right));
     transform: none;
     justify-content: flex-start;
     max-width: none;

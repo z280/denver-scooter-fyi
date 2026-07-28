@@ -30,13 +30,39 @@ interface StoredPresets {
 
 const KEY = "scooter-fyi-filter-presets";
 
+const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
+const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo"];
+const QUALITIES: readonly string[] = ["any", "no-risk", "ok-only"];
+
+/** Structural validation — a hand-edited or corrupted blob must not apply
+ *  as e.g. "hide every device". Unknown members are dropped, not thrown. */
+function isValidPreset(p: FilterPreset): boolean {
+  return (
+    typeof p?.name === "string" &&
+    Array.isArray(p.rideTypes) &&
+    p.rideTypes.every((t) => RIDE_TYPES.includes(t)) &&
+    Array.isArray(p.models) &&
+    p.models.every((m) => MODEL_KEYS.includes(m)) &&
+    typeof p.hideUnavailable === "boolean" &&
+    typeof p.minBattery === "number" &&
+    p.minBattery >= 0 &&
+    p.minBattery <= 100 &&
+    QUALITIES.includes(p.quality) &&
+    (p.area === null ||
+      (typeof p.area?.layer === "string" &&
+        (p.area.subset === null ||
+          (Array.isArray(p.area.subset) &&
+            p.area.subset.every((s) => typeof s === "string")))))
+  );
+}
+
 export function loadPresets(): FilterPreset[] {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const blob = JSON.parse(raw) as StoredPresets;
     if (blob?.v !== 1 || !Array.isArray(blob.presets)) return [];
-    return blob.presets.filter((p) => typeof p?.name === "string");
+    return blob.presets.filter(isValidPreset);
   } catch {
     return [];
   }
@@ -82,8 +108,17 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
     return node;
   };
 
-  const note = (text: string): void => {
-    panel.replaceChildren(el("p", "preset-note", text));
+  // One apply at a time: a second load while an area restore is still in
+  // flight would interleave on the AreaFilter's category state.
+  let busy = false;
+
+  const note = (text: string, focus?: HTMLButtonElement): void => {
+    const p = el("p", "preset-note", text);
+    // Announce the outcome — the buttons the user was on get destroyed by
+    // this re-render, so a silent swap reads as nothing happening.
+    p.setAttribute("role", "status");
+    panel.replaceChildren(p);
+    focus?.focus();
   };
 
   // ---- Save: inline name row, prefilled with the suggestion ----
@@ -107,7 +142,10 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
       // Same name replaces — saving twice shouldn't pile up duplicates.
       const rest = loadPresets().filter((p) => p.name !== name);
       const ok = persistPresets([...rest, { name, ...deps.snapshot() }]);
-      note(ok ? `Saved “${name}”.` : "Couldn't save — storage is unavailable (private mode?).");
+      note(
+        ok ? `Saved “${name}”.` : "Couldn't save — storage is unavailable (private mode?).",
+        saveBtn,
+      );
     });
     panel.replaceChildren(form);
     input.focus();
@@ -128,22 +166,29 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
       applyBtn.type = "button";
       applyBtn.addEventListener("click", async () => {
         // Area restore is async — hold the whole list disabled until it
-        // settles, or the area lands last and reads as a bug.
+        // settles (the busy flag also blocks a fresh list rendered from a
+        // re-tap of Load while this apply is in flight).
+        if (busy) return;
+        busy = true;
         for (const b of list.querySelectorAll("button")) b.disabled = true;
         try {
           await deps.guard(() => deps.apply(preset));
-          note(`Loaded “${preset.name}”.`);
+          note(`Loaded “${preset.name}”.`, loadBtn);
         } catch (e) {
           console.error("preset load failed", e);
-          note("Couldn't load that preset — try again.");
+          note("Couldn't load that preset — try again.", loadBtn);
+        } finally {
+          busy = false;
         }
       });
       const del = el("button", "preset-item__delete", "×");
       del.type = "button";
       del.setAttribute("aria-label", `Delete preset ${preset.name}`);
       del.addEventListener("click", () => {
+        if (busy) return;
         persistPresets(loadPresets().filter((p) => p.name !== preset.name));
         renderLoad();
+        loadBtn.focus(); // the ✕ that had focus is gone with the re-render
       });
       li.append(applyBtn, del);
       list.append(li);
@@ -151,6 +196,10 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
     panel.replaceChildren(list);
   };
 
-  saveBtn.addEventListener("click", renderSave);
-  loadBtn.addEventListener("click", renderLoad);
+  saveBtn.addEventListener("click", () => {
+    if (!busy) renderSave();
+  });
+  loadBtn.addEventListener("click", () => {
+    if (!busy) renderLoad();
+  });
 }

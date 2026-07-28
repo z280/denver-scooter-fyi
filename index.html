@@ -619,7 +619,7 @@
       </header>
       <div class="drawer-body">
         <nav class="account-nav" aria-label="Account sections">
-          <button class="account-tab is-active" type="button" data-pane="profile" aria-pressed="true" title="Profile">
+          <button class="account-tab is-active" type="button" data-pane="profile" aria-pressed="true">
             <!-- Person -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -627,7 +627,7 @@
             </svg>
             <span class="account-tab__label">Profile</span>
           </button>
-          <button class="account-tab" type="button" data-pane="rides" aria-pressed="false" title="Rides">
+          <button class="account-tab" type="button" data-pane="rides" aria-pressed="false">
             <!-- Route pin-to-pin -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="6" cy="19" r="3" />
@@ -636,7 +636,7 @@
             </svg>
             <span class="account-tab__label">Rides</span>
           </button>
-          <button class="account-tab" type="button" data-pane="rankings" aria-pressed="false" title="Rankings">
+          <button class="account-tab" type="button" data-pane="rankings" aria-pressed="false">
             <!-- Award ribbon -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="8" r="6" />
@@ -644,7 +644,7 @@
             </svg>
             <span class="account-tab__label">Rankings</span>
           </button>
-          <button class="account-tab" type="button" data-pane="contributions" aria-pressed="false" title="Contributions">
+          <button class="account-tab" type="button" data-pane="contributions" aria-pressed="false" aria-label="Contributions">
             <!-- Camera -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -652,7 +652,7 @@
             </svg>
             <span class="account-tab__label">Contrib.</span>
           </button>
-          <button class="account-tab" type="button" data-pane="favorites" aria-pressed="false" title="Favorites">
+          <button class="account-tab" type="button" data-pane="favorites" aria-pressed="false">
             <!-- Heart -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -729,9 +729,9 @@
          with the drawer tabs; "Ride" opens the full-screen in-ride HUD.
          All three are wired by wireModes() in main.ts. -->
     <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
-      <button class="mode-btn" type="button" data-mode="ride">🛴 Find wheels</button>
-      <button class="mode-btn is-active" type="button" data-mode="analysis">📊 Analysis</button>
-      <button class="mode-btn" type="button" id="ride-open" data-mode="riding">🧭 Ride</button>
+      <button class="mode-btn" type="button" data-mode="ride" aria-pressed="false">🛴 Find wheels</button>
+      <button class="mode-btn is-active" type="button" data-mode="analysis" aria-pressed="true">📊 Analysis</button>
+      <button class="mode-btn" type="button" id="ride-open" data-mode="riding" aria-pressed="false">🧭 Ride</button>
     </div>
 
     <!-- Find-a-ride wizard (consent → interview → ranked options). Content
