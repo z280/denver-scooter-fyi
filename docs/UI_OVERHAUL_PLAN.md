@@ -6,8 +6,13 @@ Find-a-ride preferences (including a "use my map filters" survey option),
 touch-aware hover options, popup cleanup on mode switch, and a restyled
 mode bar.
 
-Written against `main` @ `050ca80`. No test runner exists; `npm run build`
-(`tsc --noEmit && vite build`) is the only gate.
+**Base: `chore/rename-to-scooter-fyi-api`, not `main`.** The
+decommercialization and backend-rename work merges first (§0.1), so every
+line reference below is against the post-merge tree. They differ — e.g.
+`hasOpenPopup()` is `devices.ts:610` post-merge and `:615` on `main`.
+
+No test runner exists; `npm run build` (`tsc --noEmit && vite build`) is the
+only gate.
 
 ---
 
@@ -41,6 +46,49 @@ Facts that shape the work:
 | Mode context-sensitivity | pure CSS: `body.mode-ride` hides `areas`/`tools`/`compliance` tabs, shows `recommended` |
 | Persistence precedent | `localStorage` with `try/catch` guards (`theme.ts`, `equity.ts`, `ride-cost.ts`) |
 | Open surfaces | `Devices.popup`, `Clusters.popup`, `.ranks-modal`, `.icon-lightbox`, `.map-tooltip` |
+
+### 0.1 What the decomm + rename merge changes underneath this
+
+Two local branches, stacked and not yet pushed:
+`feat/decommercialize-and-not-rideable` (2b413d6), then
+`chore/rename-to-scooter-fyi-api` (561606b) on top. The second is the
+combined tip that lands. Five consequences for this plan:
+
+**1. `index.html` is untouched by either branch — so the supporter *copy*
+outlives the supporter *concept*.** The merge strips every mechanism:
+`isSupporterOfRecord()`, `SessionInfo.supporter` / `supporter_until` /
+`premium_user`, `Devices.supporterSession`, the ⭐ badge, both donate
+buttons, `openBillingCheckout()`, and the popup's `⌛ History✨` action.
+What survives, orphaned:
+
+- `index.html:374` — "✨ Supporter bonus features — free for everyone right now."
+- `index.html:343, 352, 360, 386` — ✨ on Gauge thickness, Gauge placement,
+  Icon size, Hover tooltip
+- `src/style.css:2903` — the `.design-upsell` rule
+
+All six live in the Iconography drawer and its stylesheet — the exact
+surface §1 relabels and §6 rewires. **Fold the cleanup into this work**
+rather than leaving a dangling upsell for a tier that no longer exists.
+
+**2. `wireAccount()` loses ~120 lines.** Post-merge the Account body is just
+status + expiry countdown + admin badge + sign-out, or the signed-out
+Google/email/code forms. That is what §3 promotes to the Profile pane —
+smaller and cleaner than it looks on `main`.
+
+**3. `setSessionPerks(admin, supporter)` → `setSessionPerks(admin)`.**
+Anything §3 touches in `wireAccount()`'s session-resolution path uses the
+one-argument form.
+
+**4. `.ranks-modal` survives but is now misnamed.** The Battery Rankings
+entry point is gone; the class is now the backing element for the popup's
+`ℹ️ Details` modal (`devices.ts:1005, 1085, 1274`). §7's popup-close list
+stays correct as written — just don't read the name as "rankings".
+
+**5. Report types renamed** — `failed_unlock` → `not_rideable`, surfacing as
+"🚫 Not Rideable". The Contributions pane in §3 should use the new labels.
+The backend is now `scooter-fyi-api`, and `docs/API_REQUIREMENTS.md` is
+retired in favour of `docs/API_INTEGRATION_PLAN.md` — which this plan cites
+and which only exists post-merge.
 
 ---
 
