@@ -6,10 +6,14 @@ Find-a-ride preferences (including a "use my map filters" survey option),
 touch-aware hover options, popup cleanup on mode switch, and a restyled
 mode bar.
 
-**Base: `chore/rename-to-scooter-fyi-api`, not `main`.** The
-decommercialization and backend-rename work merges first (§0.1), so every
-line reference below is against the post-merge tree. They differ — e.g.
-`hasOpenPopup()` is `devices.ts:610` post-merge and `:615` on `main`.
+**Base: `main` @ `e771783`**, which already includes the decommercialization
+work (PR #32) and the README / map-auth follow-up (PR #34). Every line
+reference below is against that tree.
+
+Still open and *not* assumed by this plan: PR #33
+(`chore/rename-to-scooter-fyi-api`), which is gated on renaming the GitHub
+repo. It only rewrites backend URL strings and doc references — nothing here
+depends on it, so this plan can land before or after it.
 
 No test runner exists; `npm run build` (`tsc --noEmit && vite build`) is the
 only gate.
@@ -47,56 +51,44 @@ Facts that shape the work:
 | Persistence precedent | `localStorage` with `try/catch` guards (`theme.ts`, `equity.ts`, `ride-cost.ts`) |
 | Open surfaces | `Devices.popup`, `Clusters.popup`, `.ranks-modal`, `.icon-lightbox`, `.map-tooltip` |
 
-### 0.1 What the decomm + rename merge changes underneath this
+### 0.1 Recent changes on `main` this plan already assumes
 
-Two local branches, stacked and not yet pushed:
-`feat/decommercialize-and-not-rideable` (2b413d6), then
-`chore/rename-to-scooter-fyi-api` (561606b) on top. The second is the
-combined tip that lands. Five consequences for this plan:
+The decommercialization work (PR #32) landed before this plan. Three of its
+effects matter here — the supporter UI is **already fully removed**
+(`3449c37` took the last of it out of `index.html`), so there is no cleanup
+left to fold in:
 
-**1. `index.html` is untouched by either branch — so the supporter *copy*
-outlives the supporter *concept*.** The merge strips every mechanism:
-`isSupporterOfRecord()`, `SessionInfo.supporter` / `supporter_until` /
-`premium_user`, `Devices.supporterSession`, the ⭐ badge, both donate
-buttons, `openBillingCheckout()`, and the popup's `⌛ History✨` action.
-What survives, orphaned:
+- **`wireAccount()` is ~120 lines lighter.** The Account body is now just
+  status + expiry countdown + admin badge + sign-out, or the signed-out
+  Google/email/code forms. That is what §3 promotes to the Profile pane.
+- **`setSessionPerks(admin)` takes one argument**, not two.
+- **`.ranks-modal` is misnamed.** The Battery Rankings entry point is gone;
+  the class now backs the popup's `ℹ️ Details` modal. §7's popup-close list
+  is still correct — just don't read the name as "rankings". This is also
+  why §9 treats "Rankings" as the points leaderboard.
 
-- `index.html:374` — "✨ Supporter bonus features — free for everyone right now."
-- `index.html:343, 352, 360, 386` — ✨ on Gauge thickness, Gauge placement,
-  Icon size, Hover tooltip
-- `src/style.css:2903` — the `.design-upsell` rule
-
-All six live in the Iconography drawer and its stylesheet — the exact
-surface §1 relabels and §6 rewires. **Fold the cleanup into this work**
-rather than leaving a dangling upsell for a tier that no longer exists.
-
-**2. `wireAccount()` loses ~120 lines.** Post-merge the Account body is just
-status + expiry countdown + admin badge + sign-out, or the signed-out
-Google/email/code forms. That is what §3 promotes to the Profile pane —
-smaller and cleaner than it looks on `main`.
-
-**3. `setSessionPerks(admin, supporter)` → `setSessionPerks(admin)`.**
-Anything §3 touches in `wireAccount()`'s session-resolution path uses the
-one-argument form.
-
-**4. `.ranks-modal` survives but is now misnamed.** The Battery Rankings
-entry point is gone; the class is now the backing element for the popup's
-`ℹ️ Details` modal (`devices.ts:1005, 1085, 1274`). §7's popup-close list
-stays correct as written — just don't read the name as "rankings".
-
-**5. Report types renamed** — `failed_unlock` → `not_rideable`, surfacing as
-"🚫 Not Rideable". The Contributions pane in §3 should use the new labels.
-The backend is now `scooter-fyi-api`, and `docs/API_REQUIREMENTS.md` is
-retired in favour of `docs/API_INTEGRATION_PLAN.md` — which this plan cites
-and which only exists post-merge.
+Report types were renamed `failed_unlock` → `not_rideable` ("🚫 Not
+Rideable"); §3's Contributions pane should use the new labels.
 
 ---
 
 ## 1. Top bar + collapsible left ribbon
 
 **Goal.** A fixed top bar: hamburger left, Scooter.fyi logo centered,
-profile avatar right. The hamburger opens/closes the existing left menu as
-a ribbon. Desktop shows icon + word; mobile shows icon only.
+profile avatar right.
+
+**The left menu keeps its current style.** This is not a new nav bar
+replacing the icon strip — it is the *existing* `#drawer-tabs` strip given a
+formal place to roll into and out of, on the hamburger. Today that strip is
+permanently parked over the map; after this it can leave. **The net effect
+is more horizontal map space, not less**: with both the ribbon and the right
+profile drawer closed, the map runs edge to edge. The top bar is the only
+chrome this plan adds permanently — everything else should be space-neutral
+or better.
+
+At large widths the icons gain word labels (§1.2). That widens the ribbon
+while it is *open*; closing still reclaims all of it. Below that breakpoint
+the strip stays icon-only, exactly as it looks today.
 
 **Build.**
 
@@ -115,6 +107,22 @@ a ribbon. Desktop shows icon + word; mobile shows icon only.
 4. New `src/chrome.ts` for the top bar, ribbon toggle, and right drawer.
    `main.ts` and `devices.ts` are already flagged as oversized in
    `docs/API_INTEGRATION_PLAN.md` — do not grow them.
+5. **The top bar auto-hides on short viewports (decided).** A fixed top bar
+   plus the enlarged mode bar would sandwich the map to roughly 300px on a
+   landscape phone. Below the existing `@media (max-height: 480px)`
+   threshold — the same one the mode bar already uses — hide the bar and
+   float just the hamburger and profile buttons over the map.
+
+   The logo goes with it, so the brand only appears where there is room for
+   it. Three things this must not break:
+
+   - `--topbar-h` becomes `0` in that state. Everything offsetting from it
+     (`#drawer-tabs`, `.drawer`, `.filter-chips`) has to resolve correctly
+     at zero rather than assuming a positive bar height.
+   - The floating buttons need the same `env(safe-area-inset-*)` clearance
+     the bar had — landscape is exactly where the notch becomes a *side*
+     inset, which is why `viewport-fit=cover` is set in the first place.
+   - The skip-link target (below) must still resolve to something visible.
 
 **Gotchas — these break silently:**
 
@@ -131,6 +139,28 @@ a ribbon. Desktop shows icon + word; mobile shows icon only.
   below the top bar (it already has a `≤640px` branch that left-aligns it).
 - The hamburger needs `aria-expanded` + `aria-controls="drawer-tabs"`, and
   collapsing the ribbon while a drawer is open should close the drawer.
+- **Four rules hardcode the strip's width and all four break.** The current
+  `~52px` strip is baked in as literals:
+
+  | Line | Rule | Encodes |
+  |---|---|---|
+  | `style.css:209` | `.drawer { left: calc(72px + …) }` | 12px gap + 52px strip |
+  | `style.css:220` | `.drawer { transform: translateX(calc(-100% - 84px)) }` | off-screen park distance |
+  | `style.css:2286` | `.drawer { width: calc(100vw - 84px) }` (≤640px) | leftover width |
+  | `style.css:2295` | `.filter-chips { left: calc(72px + …) }` (≤640px) | same offset |
+
+  A ribbon that both collapses to zero *and* widens for labels has three
+  widths, not one. Replace the literals with a `--ribbon-w` custom property
+  set per state, and derive all four from it. Miss this and a closed ribbon
+  still leaves a 72px gutter — the exact horizontal space this is meant to
+  reclaim.
+- **`setDrawer()` (`main.ts:1138`) drives drawers by synthesising
+  `tab.click()` on `.drawer-tab` elements**, and `applyAnalysis()` calls it.
+  `HTMLElement.click()` fires happily on a hidden element, so with the
+  ribbon collapsed (the mobile default in §1.3) tapping **Analysis** opens
+  the Compliance drawer while its tab strip is invisible — a panel with no
+  visible origin. Either auto-open the ribbon whenever `setDrawer()` opens
+  something, or make it a no-op while collapsed.
 
 ---
 
@@ -142,10 +172,17 @@ corner. Do **not** reparent their DOM by hand (that desyncs
 CSS-position `.maplibregl-ctrl-top-left` into the top bar's left cluster,
 directly right of the hamburger.
 
-`src/style.css:1146–1300` targets `.maplibregl-ctrl-top-right` extensively
-(geolocate icon recolouring, the `::after` state dot, the theme button
-chrome). Every one of those selectors has to move with the controls or the
+**Move `src/style.css:1146–1222`, but skip `1151–1161`.** That range holds
+20 `.maplibregl-ctrl-top-right` selectors (geolocate icon recolouring, the
+`::after` state dot, the theme button chrome) — about 66 lines once the
+exclusion is taken out. All of them must move with the controls or the
 controls arrive unstyled.
+
+The exclusion matters: `style.css:1158` is
+`.maplibregl-ctrl-bottom-left { bottom: env(safe-area-inset-bottom); … }`,
+which governs the zoom buttons and attribution, **not** the controls being
+moved. Carrying it along breaks the safe-area fix under a notch — the exact
+regression the comment above it exists to prevent.
 
 **Profile → top right.** The `person` tab leaves the left ribbon and
 becomes the top bar's right-hand button. Keep `#drawer-person`'s existing
@@ -178,11 +215,21 @@ have not shipped:
 | Contributions | reports + photo uploads (`/reports/model` is live) | partial |
 | Favorites | no endpoint exists | undefined |
 
-**Recommendation:** build the shell and all 5 panes now, wire Profile
-fully, and give the other four honest empty states that name what unlocks
-them ("Ride history arrives when tracked rides ship"). That gets the
-navigation right without faking data. See §8 — Favorites in particular
-needs a product decision.
+**Decided:** build the shell and all five panes now, wire Profile fully,
+and give the other four honest empty states that name what unlocks them
+("Ride history arrives when tracked rides ship"). Navigation gets its final
+shape without faking data.
+
+**All five stay visible when signed out (decided)** — the menu never
+changes shape. Each gated pane states what an account unlocks, which is
+also the only honest argument for signing in that this app has. Two
+consequences:
+
+- A gated pane needs *two* empty states, not one: "sign in to see this"
+  and "signed in, but this feature hasn't shipped". Collapsing them into
+  one message will read as broken to a signed-in user.
+- Whatever copy Rides uses must not re-promise what the wizard already
+  over-promises (see §9's last bullet). Say what exists.
 
 ---
 
@@ -245,17 +292,41 @@ option on question 1: *"4. Use existing map filters."*
 
 **Build.**
 
-1. `RidePriority` in `recommend.ts` gains `"filters"`. Add the 4th
-   `ride-wizard.ts` option; when selected, hide the model sub-picker
-   (`typeRow`) — it is meaningless in that branch.
+1. **Add the 4th option to the question, but do *not* add it to
+   `RidePriority`.** Two reasons, both load-bearing:
+
+   - `RidePriority` (`recommend.ts:24`) feeds an exhaustive
+     `Record<RidePriority, number>` at `:72` whose weights are then summed
+     by name (`weights.type + weights.quality + weights.distance`). A
+     `"filters"` member is a compile error plus a hand-edit of that sum.
+   - It would not *do* anything. `RecommendedDevices` already ranks over
+     `this.devices.visibleFeatures()` (`recommend.ts:183`), which is
+     already filter-constrained. Map filters therefore bound *every*
+     priority, so "use existing map filters" as a priority is
+     behaviourally identical to "least walking distance".
+
+   Model it instead as a separate `carryOverFilters: boolean` on the wizard,
+   with the priority defaulting to `"distance"` when it is set. The rider
+   still sees the 4th option they were promised; it just selects a filter
+   *source*, not a ranking weight. Hide the model sub-picker (`typeRow`)
+   when it is chosen.
+
+   **Source: the live map filters, not a saved-set picker (decided).**
+   Option 4 carries whatever was active when the rider entered the mode —
+   so it works for someone who has never saved a set, and §5 does not
+   depend on §4 shipping first. Render a read-only one-line summary of what
+   is being carried beneath the option, built from **the same chip-label
+   helper §4 extracts** ("Astro · ≥50% · Reliable only"). Three consumers,
+   one label source. When nothing is filtered, say so plainly rather than
+   showing an empty line.
 2. Checkbox below the choices; on "Find my ride", persist
    `{ priority, typeChoice }` to `scooter-fyi-ride-prefs` when checked.
    `RideWizard.start()` seeds `this.priority` / `this.typeChoice` from it.
    Ordering note: `start()` can skip straight to `renderInterview()` when a
    fix already exists, so load prefs in the constructor, not in a step.
-3. Wire the new priority through `rankDevices()` in `recommend.ts` — with
-   `"filters"` the map's own filter set *is* the constraint, so rank by
-   distance among whatever survives `devices.visibleFeatures()`.
+3. `rankDevices()` needs no change at all — it already ranks over the
+   filtered set. All the 4th option has to do is restore the snapshot from
+   §4's serializer before the ranking runs (see the ordering bug below).
 
 **The ordering bug this feature walks into.** The wizard's steps are
 consent (1) → awaiting (2) → interview (3). `onConsentGranted` fires at
@@ -352,20 +423,43 @@ uniformly.**
 1. **Watch for a double listener.** `wireRideHud()` (top-level, main.ts:286)
    already binds a click handler to `#ride-open`, while `wireModes()`
    (inside `map.on("load")`) binds to `#mode-switch .mode-btn[data-mode]`.
-   Adding the attribute makes the second query match it, so one tap would
-   open the HUD *and* fall into the click handler's `else` branch —
-   `applyPreset(applyAnalysis)` — resetting the map behind the HUD. Move
-   the HUD's binding into `wireModes()` as an explicit third branch, and
-   pass the `RideHud` handle in.
+   Adding the attribute makes the second query match it, so one tap runs
+   both handlers. Which branch it falls into depends on state, and **both
+   are wrong**:
+
+   - From Analysis, the `else` branch (`main.ts:1262`) runs
+     `applyPreset(applyAnalysis)` — resetting the map behind the HUD.
+   - From ride mode, `else if (rideActive)` (`main.ts:1260`) runs
+     `exitRide()` — so opening the HUD *while riding* simultaneously tears
+     ride mode down, resets every filter via `applyNormal()`, and drops the
+     recommendations.
+
+   Move the HUD's binding into `wireModes()` as an explicit third branch
+   and pass the `RideHud` handle in. Do not just add the attribute.
 2. **Restore the prior mode on exit.** The HUD hides the bar while it's up,
    so a "selected" HUD button is never actually seen; what matters is that
    closing the HUD returns the bar to whichever mode was active before.
    `RideHud` exposes no close hook today — add one.
-3. **Relabel.** "Find a ride" and "Ride" are tolerable as a mode and a
-   button; as two sibling entries under `MODE:` they are actively
-   confusing. "Riding" or "Live ride" for the third, and consider ordering
-   the bar as the progression it is — Analysis → Find a ride → Riding —
-   rather than the current arbitrary order.
+3. **Relabel — "Find a ride" becomes "Find wheels" (decided).** The
+   collision is resolved from the first mode's end, not the third's, so
+   🧭 Ride keeps its name. The bar reads **Find wheels / Analysis / Ride**.
+
+   This is a wider copy change than it looks — 13 occurrences, 8 of them
+   user-visible:
+
+   | File | Lines | Visible? |
+   |---|---|---|
+   | `index.html` | 581 (button), 577 (comment) | button only |
+   | `ride-wizard.ts` | 109 (aria-label), 131 (consent copy), 151/172/195/315 (`shell()` titles), 304 ("Find my ride") | all |
+   | `recommend.ts` | 176 (empty state) | yes |
+   | `ride-hud.ts` | 354 (BRB copy), 366 (comment) | 354 only |
+   | `main.ts` | 1105 (comment) | no |
+
+   `ride-wizard.ts:304`'s button is "Find my ride" — decide whether that
+   becomes "Find my wheels" or stays; it reads as a sentence, not a label.
+   Leave `data-mode="ride"`, `body.mode-ride`, and the `RideWizard` class
+   name alone: renaming internals alongside copy turns a one-line change
+   into a refactor with no user-visible benefit.
 
 This also settles the stale comment at main.ts:1108, which claims the Ride
 button "appears" in ride mode; no CSS implements that. Under a three-mode
@@ -384,19 +478,32 @@ Each phase builds and ships on its own.
 4. **Ride prefs** (§5) — depends on §4's serializer for option 4.
 5. **Polish** (§6, §7) — hover gating, popup cleanup, mode bar.
 
-## 9. Open questions
+## 9. Decisions and open questions
 
-- **Favorites has no backend and no defined meaning.** Favorite *devices*
-  (they churn — a device id is not stable enough to favorite), favorite
-  *places* (`docs/UX_PLAN.md:37,348` describes localStorage saved places,
-  which fits), or favorite *filter sets* (overlapping §4)? Saved places is
-  the reading the existing docs support. Confirm before building.
-- **Rankings** — user points leaderboard (Phase B), or the existing Battery
-  Rankings device modal in `devices.ts`? The profile-menu context implies
-  the former.
+### 9.1 Decided
+
+| Question | Decision | Lands in |
+|---|---|---|
+| Option 4's filter source | The live map filters, with a read-only summary line — not a saved-set picker | §5 |
+| Right menu when signed out | All five panes visible and gated; menu never changes shape | §3 |
+| "Find a ride" vs "Ride" collision | Rename the **first** mode to **"Find wheels"**; 🧭 Ride keeps its name | §7.1 |
+| Top bar on short viewports | Auto-hide below `max-height: 480px`; float hamburger + profile | §1.5 |
+
+### 9.2 Still open
+
+- **Favorites is defined in entity but not in shape.**
+  `docs/UX_PLAN.md:495-501` (§5.2) specifies favouriting vehicle
+  **models/plates**, with a "favorites first" sort and a map highlight —
+  and models/plates being stable identifiers answers the obvious objection
+  that device ids churn. But that same passage calls itself "a placeholder
+  pending the fuller spec", and `:559-560` leaves `favorites: []` as "shape
+  TBD". So the pane has a subject but no schema; it stays a placeholder
+  until that spec exists.
+- **Rankings is the points leaderboard**, not device rankings. The Battery
+  Rankings entry point was removed by PR #32 (see §0.1) and its `.ranks-modal`
+  class was repurposed for the details modal, so there is no device-ranking
+  surface left to mean. Backed by the points ledger in Phase B, unbuilt.
 - **Ribbon default state on desktop** — assumed open. Persisted either way.
 - **Saved filters are device-local** until a preferences endpoint exists.
   The wizard's existing "Log in to save your preferences" hint will still
   overpromise; either soften the copy or gate saving behind sign-in.
-</content>
-</invoke>
