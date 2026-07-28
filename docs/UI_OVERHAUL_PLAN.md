@@ -504,10 +504,16 @@ model, always-visible is correct and the comment is what is wrong.
 
 ## 8. Sequencing
 
-**One phase per PR. This is a rule, not a suggestion.** Phase 1 alone
-rewrites the highest-traffic CSS in the app and will regress something; the
-value of separate PRs is the revert boundary, and that value disappears if
-two phases share one. Do not batch them because they feel small.
+**All phases ship in one PR (#37), one commit per phase — per Zeke.** An
+earlier revision of this section demanded one phase per PR; that was wrong
+for how this work actually landed and is corrected here. The thing the rule
+was protecting — a revert boundary per phase — is preserved by the commit
+structure instead: each numbered phase below is its own commit on the
+branch, so any phase can still be reverted individually. What one PR buys
+in exchange is that the phases are reviewed, screenshotted, and verified
+against each other as a whole, which is where cross-phase regressions
+(chrome offsets vs. drawers, snapshot lifecycle vs. mode model) actually
+live.
 
 1. **Chrome** (§1, §2) — top bar, ribbon, control relocation. Largest CSS
    blast radius; land it first and alone so regressions are attributable.
@@ -533,7 +539,7 @@ two phases share one. Do not batch them because they feel small.
 | "Find a ride" vs "Ride" collision | Rename the **first** mode to **"Find wheels"**; 🧭 Ride keeps its name | §7.1 |
 | Top bar on short viewports | Auto-hide below `max-height: 480px`; float hamburger + profile | §1.5 |
 | `MODE:` folder-tab notch | **Cut.** Labels the UI, not the content; bar keeps its pill shape | §7 |
-| PR granularity | One phase per PR, enforced | §8 |
+| PR granularity | **All phases in one PR (#37), one commit per phase** — per Zeke; supersedes the short-lived one-phase-per-PR rule | §8 |
 
 ### 9.2 Still open
 
