@@ -1562,7 +1562,7 @@ function wireAccount(): void {
           adminEmail = info?.email;
           // Popups need the status too: admins skip the Start proximity
           // gate (issue #18).
-          devices.setSessionPerks(adminIsOn);
+          devices.setAdminSession(adminIsOn);
           render();
         });
       }

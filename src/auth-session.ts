@@ -69,7 +69,6 @@ export interface SessionInfo {
   expires?: string;
 }
 
-
 /** Fetch the current session's identity, or null if not signed in / the
  *  endpoint is unreachable (so the UI degrades to "just signed in"). */
 export async function fetchSessionInfo(): Promise<SessionInfo | null> {

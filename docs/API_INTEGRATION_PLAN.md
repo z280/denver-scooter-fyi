@@ -11,21 +11,56 @@ Last reconciled against the backend on 2026-07-28.
 
 ---
 
+## ⚠️ Cross-repo deploy dependency — read before merging
+
+**This frontend branch depends on veo-audit changes that are NOT on
+`main`.** They live in the open, unmerged PR
+[z280/veo-audit#27](https://github.com/z280/veo-audit/pull/27)
+(`feat/decommercialize-and-off-feed-rides`). Shipping this frontend against
+today's deployed backend breaks rider reporting in two places:
+
+| Frontend feature | Backend requirement | State on veo-audit `main` |
+| --- | --- | --- |
+| "Veo Unknown → Tell us!" model report | `POST /api/v1/reports/model` (`sql/038_model_reports.sql`) | **Missing** — the endpoint does not exist; every submit 404s |
+| "🚫 Not rideable" report chip | `not_rideable` report type (`sql/037_not_rideable_report_type.sql`) | **Missing** — `main` still only accepts `failed_unlock`; the chip is rejected |
+
+**Deploy order: merge and deploy veo-audit#27 first, then this.** Verify
+against the running API (not the branch diff) before deploying the
+frontend — a merged PR is not a deployed one.
+
 ## Where things stand
 
-Both repos are in sync as of 2026-07-28. Everything the frontend calls
-exists on the backend, and everything below is verified live, not assumed:
+Verified against veo-audit `origin/main` and its open PRs on 2026-07-28.
 
-- **`/api/v1/reports/model` now exists.** The "Veo Unknown → Tell us!"
-  form in the device popup is live rather than posting into the void.
-- **The app is fully decommercialized.** No supporter status, no Stripe,
-  no donate buttons, no paid tier. Signed-in and admin are the only gates.
-- **`failed_unlock` → `not_rideable`.** The report chip reads
-  "🚫 Not Rideable", matching the "Likely rideable" tier language.
+**Already merged and live on the backend:**
+
 - **Routing is deployed** (`/api/v1/route`, `graph_bbox`
   `[-105.06, 39.65, -104.88, 39.79]`), but `battery_percent_estimate` is
   `null` on every request until the regression model has enough
   observations to fit. Treat the battery number as optional garnish.
+- Auth, profiles, and the existing report surfaces
+  (`POST /api/v1/reports/device` with the pre-rename type list,
+  `/reports/summary`).
+
+**Pending on the backend (veo-audit#27, unmerged):**
+
+- **`POST /api/v1/reports/model`.** Until this merges *and* deploys, the
+  "Veo Unknown → Tell us!" form in the device popup posts into the void.
+- **`failed_unlock` → `not_rideable`.** The frontend chip already sends
+  `not_rideable` (reading "🚫 Not rideable", matching the "Likely
+  rideable" tier language). `main` still only accepts `failed_unlock`.
+
+**Frontend-only, no backend dependency:**
+
+- **The app is fully decommercialized.** No supporter status, no Stripe,
+  no donate buttons, no paid tier. Signed-in and admin are the only gates.
+  (veo-audit#27 also drops the backend's supporter columns —
+  `sql/036_decommercialize.sql` — but nothing here reads them, so this
+  half ships safely on its own.)
+
+**Also pending, and *after* the above:** the repo rename to
+`scooter-fyi-api` ([z280/veo-audit#28](https://github.com/z280/veo-audit/pull/28)),
+which must not merge before the rename actually happens.
 
 ## Constraints that actually shape the UI
 

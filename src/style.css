@@ -2943,12 +2943,6 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--accent-soft);
   color: var(--fg);
 }
-.ranks-modal__hint {
-  margin: 6px 0 10px;
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
 /* ---------- ✨ Essentials hover tooltip ---------- */
 .map-tooltip {
   position: fixed;
@@ -3001,7 +2995,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   }
 }
 
-/* ---------- Supporter badge / upsell (Account drawer) ---------- */
+/* ---------- Geolocate marker click-through ---------- */
 /* The geolocate control's blue dot + accuracy circle are DOM markers that
    swallow clicks by default — so a rider standing AT a scooter (dot covering
    its icon) couldn't tap that scooter. Nothing on them is interactive; let

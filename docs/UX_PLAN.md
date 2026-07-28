@@ -4,8 +4,21 @@ Distilled from an external UX review (Gemini, June 2026) and grounded in the
 current codebase. Five phases, ordered so each is independently shippable.
 Phases 1–2 are pure frontend plus read-only API field promotions; Phase 3
 introduces rider accounts (the first new API surface) alongside the ride
-HUD; Phase 4 adds the report write endpoints; Phase 5 adds the supporter
-tier on top of both. An appendix consolidates all API-repo work.
+HUD; Phase 4 adds the report write endpoints; Phase 5 adds personalization
+(history, favorites, theming, badges) on top of both. An appendix
+consolidates all API-repo work.
+
+> **Retired, 2026-07-28: the supporter tier.** This plan originally put a
+> paid supporter tier in Phase 5 (Stripe Payment Links,
+> `POST /webhooks/stripe`, a `supporter: true` profile flag, and
+> supporter-gated history/favorites/theming). **The app has since been
+> decommercialized** — that code and UI is deleted from this repo, and the
+> backend drops the supporter columns in `sql/036_decommercialize.sql`. No
+> payments, no tiers, no donate buttons. Signed-in and admin are the only
+> gates that exist. Phase 5 below has been rewritten accordingly: the
+> personalization features survive as **free, account-gated** features; the
+> payment machinery is gone. Anything in this document that still reads
+> like a paid tier is a documentation bug — report it.
 
 The review's core diagnosis, confirmed against the code:
 
@@ -47,9 +60,12 @@ Decisions that keep running costs at (or near) zero, applied throughout:
 - **Auth is two free doors.** Google Identity Services costs nothing at any
   scale, and magic links ride the already-paid-for Postmark transactional
   account. No hosted auth vendor, no MAU quota.
-- **Payments have no fixed cost.** The supporter tier (Phase 5) uses Stripe
-  Payment Links + one webhook — no monthly fee, pure per-transaction. And
-  nothing safety- or audit-related ever sits behind the paywall.
+- **No payments at all.** *(Rule revised 2026-07-28; this used to describe
+  a Stripe-backed supporter tier.)* The app takes no money: no Stripe, no
+  payment links, no webhooks, no subscription, no donate button. Every
+  feature is either free-for-everyone or free-and-account-gated. The
+  running cost stays near zero the same way it always did — by not buying
+  anything — so there is nothing to fund.
 - **Deep links reuse Veo's own QR format.** No partnership or API needed —
   the QR sticker on every scooter encodes
   `https://gmjc.adj.st/?adj_t=622qh4&number=<vehicle number>`, an Adjust
@@ -445,30 +461,25 @@ Phase 2 reliability tier, closing the loop.
 
 ---
 
-## Phase 5 — Supporter tier: cheap, donation-friendly, never pay-to-audit
+## Phase 5 — Personalization: history, favorites, theming, badges (free)
 
-**Goal:** let the people who love the app fund it, and give them personal
-features in return. Hard rule: everything that makes riding safer or holds
-Veo accountable stays free — supporters buy *personalization and history*,
-not access.
+**Goal:** make the app feel like *yours* once you have an account. Every
+item below is free; the only gate is being signed in, and that gate exists
+because these features are per-account data, not because they're a
+privilege.
 
-### 5.1 Payment: Stripe Payment Links, pay-what-you-want
+> **Removed:** the original 5.1 was "Payment: Stripe Payment Links,
+> pay-what-you-want" — a supporter tier funded by a Stripe Payment Link
+> with a `POST /webhooks/stripe` handler flipping `supporter: true` on the
+> profile. **The app has been decommercialized**; there is no payment
+> integration, no supporter flag, and nothing to buy. The sections below
+> are what remains, ungated.
 
-- A **Stripe Payment Link** (no code, no monthly fee) with pay-what-you-want
-  pricing, suggested tiers around **$10/yr or a one-time amount** — Stripe's
-  ~$0.30 + 2.9% per transaction eats a third of a $1 charge, so annual or
-  one-time framing beats a $1/month subscription at this price point.
-- The link carries the account id (`client_reference_id`); one webhook
-  handler on the API (`POST /webhooks/stripe`) flips `supporter: true` on
-  the profile. That's the entire payment integration.
-- Framed as a donation to the audit project first, perks second — the
-  Account drawer shows *"Support the audit → keep the data flowing"*.
+### 5.1 Ride history (opt-in, yours, deletable)
 
-### 5.2 Ride history (opt-in, yours, deletable)
-
-- The Phase 3 ride summary gains a `[ Save this ride ]` action for
-  supporters: duration, cost estimate, start/end zone flags, and the route
-  polyline POSTed to `POST /api/v1/rides`.
+- The Phase 3 ride summary gains a `[ Save this ride ]` action for any
+  signed-in rider: duration, cost estimate, start/end zone flags, and the
+  route polyline POSTed to `POST /api/v1/rides`.
 - A **History** section in the Account drawer: list + a personal map layer
   of past rides, running totals ("$142 spent · $38 more than under Lime
   pricing" — the counterfactual compounds beautifully over time), and
@@ -477,23 +488,27 @@ not access.
   history is visible only to the account, exportable as GeoJSON/CSV, and
   deletable one ride at a time or wholesale. Location traces are the most
   sensitive thing this app will ever hold; say so in the UI.
+- *Status:* not built. The earlier ⌛ Ride history modal was a stub with no
+  backend behind it and was removed; the real thing lands with the ride
+  endpoints (see `API_INTEGRATION_PLAN.md` Phase C).
 
-### 5.3 Favorites, theming, badges
+### 5.2 Favorites, theming, badges
 
 - **Favorite device types:** a placeholder pending the fuller spec — at
-  minimum, supporters can mark vehicle models/plates as favorites and get
-  a "favorites first" sort + a map highlight. (Design note: the fleet has
-  distinguishable generations/models worth preferring; wire the profile
-  schema so `favorites: []` can hold whatever shape that discussion
+  minimum, any signed-in rider can mark vehicle models/plates as favorites
+  and get a "favorites first" sort + a map highlight. (Design note: the
+  fleet has distinguishable generations/models worth preferring; wire the
+  profile schema so `favorites: []` can hold whatever shape that discussion
   lands on.)
-- **Theming:** supporter-only UI themes (accent colors, dot styles, a
-  high-vis HUD palette pack). Pure CSS-variable swaps keyed off the
-  profile — zero backend beyond the flag.
+- **Theming:** additional UI themes (accent colors, dot styles, a high-vis
+  HUD palette pack), available to everyone. Pure CSS-variable swaps keyed
+  off the profile — no backend beyond storing the choice. (Light/dark
+  already ships in `src/theme.ts` and needs no account at all; only
+  cross-device persistence does.)
 - **Badges:** computed server-side from existing data — reports filed
   (Phase 4), ghost scooters confirmed, equity reports that led to refunds,
-  ride streaks, miles logged. Shown in the Account drawer; a supporter
-  badge appears too, but *earned* badges are available to everyone —
-  contribution is never paywalled.
+  ride streaks, miles logged. Shown in the Account drawer. All of them are
+  *earned*; there is no purchased badge, and contribution is never gated.
 
 **Files touched:** `src/account.ts` (drawer sections), `src/ride-hud.ts`
 (save action), `src/api.ts`, `src/style.css` (themes), `index.html`.
@@ -535,13 +550,15 @@ the two repos can be sequenced together.
 - `GET /api/v1/reports/summary?layer=` aggregates for the violations
   choropleth and ticker; monthly CSV export endpoint.
 
-**Unblocks Phase 5 (supporter tier):**
-- `POST /webhooks/stripe` — verify signature, set `supporter: true` on the
-  profile matched by `client_reference_id`.
+**Unblocks Phase 5 (personalization):**
+- ~~`POST /webhooks/stripe`~~ — **retired.** The supporter tier is gone; the
+  backend has no payment surface and `sql/036_decommercialize.sql` drops
+  the supporter columns. Do not build this.
 - `POST/GET/DELETE /api/v1/rides` — opt-in ride history (summary +
   polyline), owner-only, with export (GeoJSON/CSV) and hard delete.
-- Profile schema: `supporter`, `theme`, `favorites: []` (shape TBD with the
+- Profile schema: `theme`, `favorites: []` (shape TBD with the
   favorite-device-types spec), computed `badges` on the profile response.
+  No `supporter` field.
 
 **On renaming the repo:** `veo-audit` described the scraper; the repo is
 becoming the platform behind scooter.fyi — auth, profiles, reports, *and*
@@ -585,7 +602,8 @@ where the adversarial framing is the point.
   more credible displayed inside the reliability UI that Phase 2
   establishes. Its sign-in moment ("sign in so your report counts") reuses
   Phase 3 auth verbatim.
-- Phase 5 is last because it monetizes what the earlier phases make
+- Phase 5 is last because it personalizes what the earlier phases make
   valuable: history needs the ride HUD, badges need the report loop, and
-  the supporter pitch ("keep the audit running") needs the audit to be
-  visibly running.
+  favorites need enough of the fleet UI to be worth sorting. (It used to be
+  last because it *monetized* those things — that rationale retired with
+  the supporter tier.)

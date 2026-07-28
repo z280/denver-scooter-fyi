@@ -64,11 +64,26 @@ export async function submitDeviceReport(
   return { deduped: data.deduped === true };
 }
 
+/** A non-2xx response from a report POST. Carries the status so callers can
+ *  distinguish "your session expired" (401 — the photo needs a bearer token,
+ *  the description doesn't) from a generic failure. */
+export class ReportHttpError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Report failed (HTTP ${status})`);
+    this.name = "ReportHttpError";
+    this.status = status;
+  }
+}
+
 export interface ModelReport {
   device_id: string;
   /** Stable per-vehicle HMAC when present — lets the API tie reports to a
    *  specific vehicle across trips. */
   vehicle_identifier?: string | null;
+  /** Required by the API: an empty description is a hard 422 ("description
+   *  is required") whether or not a photo is attached. The photo is the
+   *  optional half, not an alternative. */
   description: string;
   photo?: File | null;
   lng?: number;
@@ -99,5 +114,5 @@ export async function submitModelReport(report: ModelReport): Promise<void> {
     headers, // no Content-Type: the browser sets the multipart boundary
     body: form,
   });
-  if (!res.ok) throw new Error(`Report failed (HTTP ${res.status})`);
+  if (!res.ok) throw new ReportHttpError(res.status);
 }

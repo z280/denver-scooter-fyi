@@ -47,6 +47,7 @@ import {
 import {
   submitModelReport,
   submitDeviceReport,
+  ReportHttpError,
   type DeviceReportType,
 } from "./reports.ts";
 
@@ -231,7 +232,7 @@ export class Devices {
 
   /** Update the popup-affecting session status (admin proximity bypass).
    *  Safe to call any time; affects popups opened after. */
-  setSessionPerks(admin: boolean): void {
+  setAdminSession(admin: boolean): void {
     this.adminSession = admin;
   }
 
@@ -937,7 +938,7 @@ export class Devices {
           ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
                <span class="device-popup__report-device-label">Report a problem</span>
                <div class="device-popup__report-chips">
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="not_rideable">🚫 Not Rideable</button>
+                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="not_rideable">🚫 Not rideable</button>
                  <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="dead_battery">🪫 Dead battery</button>
                  <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="damaged">🛴 Damaged</button>
                </div>
@@ -1058,9 +1059,9 @@ export class Devices {
       const popupEl = this.popup.getElement();
 
       // ---- Action-row wiring. A blocked Start explains itself in the hint
-      // line (mobile has no hover for the title tooltip). Report, Details,
-      // and History each open their own floating modal — the popup itself
-      // never grows or morphs.
+      // line (mobile has no hover for the title tooltip). Report and Details
+      // each open their own floating modal — the popup itself never grows
+      // or morphs.
       const hintLine = popupEl?.querySelector<HTMLElement>(
         ".device-popup__actionhint",
       );
@@ -1135,29 +1136,67 @@ export class Devices {
           const sendBtn = reportForm.querySelector<HTMLButtonElement>(
             '[data-action="report-submit"]',
           );
-          if (!desc.trim() && !photoInput?.files?.length) {
-            if (status) status.textContent = "Add a description or a photo first.";
+          // The API requires `description` and treats `photo` as the
+          // optional half — a photo-only report is a hard 422 there. Enforce
+          // the same rule here (and only mention the photo when the picker
+          // is actually on screen: signed-out riders don't get one).
+          if (!desc.trim()) {
+            if (status) {
+              status.textContent = photoInput
+                ? "Add a description first — the photo is optional."
+                : "Add a description first.";
+            }
             return;
           }
           if (sendBtn) sendBtn.disabled = true;
           if (status) status.textContent = "Sending…";
-          submitModelReport({
-            device_id: props.device_id,
-            vehicle_identifier: props.vehicle_identifier ?? null,
-            description: desc,
-            photo: photoInput?.files?.[0] ?? null,
-            lng: coords[0],
-            lat: coords[1],
-          })
-            .then(() => {
-              reportForm.innerHTML =
-                `<p class="device-popup__report-status">🎉 Thanks! Your report helps us name the fleet.</p>`;
+          const photo = photoInput?.files?.[0] ?? null;
+          const post = (withPhoto: File | null): Promise<void> =>
+            submitModelReport({
+              device_id: props.device_id,
+              vehicle_identifier: props.vehicle_identifier ?? null,
+              description: desc,
+              photo: withPhoto,
+              lng: coords[0],
+              lat: coords[1],
+            });
+          // The photo picker was rendered from isAuthenticated() at popup-
+          // build time; the session can expire while the rider types. The
+          // photo needs a bearer token, the description never did — so a 401
+          // drops the photo and retries text-only rather than throwing away
+          // what they wrote. That's the promise the sign-in note makes:
+          // "your description sends either way."
+          let photoDropped = false;
+          post(photo)
+            .catch((err: unknown) => {
+              if (
+                photo &&
+                err instanceof ReportHttpError &&
+                err.status === 401
+              ) {
+                photoDropped = true;
+                if (status) {
+                  status.textContent =
+                    "Session expired — sending your description without the photo…";
+                }
+                return post(null);
+              }
+              throw err;
             })
-            .catch(() => {
+            .then(() => {
+              reportForm.innerHTML = photoDropped
+                ? `<p class="device-popup__report-status">🎉 Thanks! Your description was sent. Your session had expired, so the photo wasn't uploaded — sign in and you can send it again.</p>`
+                : `<p class="device-popup__report-status">🎉 Thanks! Your report helps us name the fleet.</p>`;
+            })
+            .catch((err: unknown) => {
+              // Never clear the textarea on failure — the retry is one tap
+              // away and re-typing is not.
               if (sendBtn) sendBtn.disabled = false;
               if (status) {
                 status.textContent =
-                  "Couldn't send right now — please try again later.";
+                  err instanceof ReportHttpError && err.status === 401
+                    ? "Your session expired — sign in again, then press Send. Your description is still here."
+                    : "Couldn't send right now — please try again later.";
               }
             });
         });
@@ -2378,11 +2417,11 @@ function clientPointOf(
   return { clientX: m.clientX, clientY: m.clientY };
 }
 
-/** Floating modal shell shared by the popup's ⚠️ Report / ℹ️ Details /
- *  ⌛ History actions (and, historically, the Battery Rankings). One at a
- *  time; closes on ✕, backdrop click, or Escape. `bodyHtml` must already
- *  be escaped by the caller; `onOpen` lets the caller wire interactive
- *  content (report chips, the range-circle toggle) after insertion. */
+/** Floating modal shell shared by the popup's ⚠️ Report / ℹ️ Details
+ *  actions (and, historically, the Battery Rankings and Ride history).
+ *  One at a time; closes on ✕, backdrop click, or Escape. `bodyHtml` must
+ *  already be escaped by the caller; `onOpen` lets the caller wire
+ *  interactive content (report chips, the range toggle) after insertion. */
 function openFloatingModal(
   title: string,
   bodyHtml: string,
