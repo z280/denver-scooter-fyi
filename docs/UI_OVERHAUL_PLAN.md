@@ -1,7 +1,7 @@
 # UI overhaul — implementation plan
 
 Scope: top bar + collapsible left ribbon, relocated GPS / theme / profile
-controls, a right-side profile menu, saved map-filter sets, saved
+controls, a right-side account drawer, saved map-filter sets, saved
 Find-a-ride preferences (including a "use my map filters" survey option),
 touch-aware hover options, popup cleanup on mode switch, and a restyled
 mode bar.
@@ -123,6 +123,11 @@ the strip stays icon-only, exactly as it looks today.
      the bar had — landscape is exactly where the notch becomes a *side*
      inset, which is why `viewport-fit=cover` is set in the first place.
    - The skip-link target (below) must still resolve to something visible.
+   - **No `map.resize()` is needed here** — `#map` is
+     `position: fixed; inset: 0; height: 100dvh`, so every piece of chrome
+     floats over a full-bleed map and hiding the bar never changes the map's
+     box. (An earlier draft of this plan claimed a resize was required. It
+     isn't; noted here so it doesn't get re-added.)
 
 **Gotchas — these break silently:**
 
@@ -186,50 +191,69 @@ regression the comment above it exists to prevent.
 
 **Profile → top right.** The `person` tab leaves the left ribbon and
 becomes the top bar's right-hand button. Keep `#drawer-person`'s existing
-markup and `wireAccount()` intact — it becomes the *Profile* pane inside
-the new right drawer (§3), not a separate surface.
+markup and `wireAccount()` intact — the drawer moves to the right side (§3)
+and its contents do not change at all.
 
 ---
 
-## 3. Right-side profile menu
+## 3. Right-side account drawer
 
-**Goal.** Tapping the profile button opens a right-side drawer mirroring
-the left one: Profile, Rides, Rankings, Contributions, Favorites — each
-with an icon in the existing 24×24 / `stroke-width: 2` feather style.
+**Goal.** Tapping the profile button opens a right-side drawer. **It ships
+with the account panel only — no nav list.** The five-item menu from the
+original brief is deferred; see §3.1 for why and for what re-opens it.
 
-**Build.** New `<aside id="drawer-account" class="drawer drawer--right">`
-with a nav list of 5 entries and a pane per entry. Reuse `.drawer` styling
-with a `--right` modifier flipping the transform
-(`translateX(calc(100% + 84px))`). Mirror `wireDrawers()`'s Escape handling
-and focus-return-to-trigger behaviour — do not invent a second pattern.
+**Build.** New `<aside id="drawer-account" class="drawer drawer--right">`,
+reusing `.drawer` styling with a `--right` modifier that flips the
+transform (`translateX(calc(100% + 84px))`, and see §1's `--ribbon-w` note
+— the right side needs its own width variable, not the left's). Move
+`#drawer-person`'s existing markup in wholesale and leave `wireAccount()`
+untouched: this is a relocation, not a rewrite. Mirror `wireDrawers()`'s
+Escape handling and focus-return-to-trigger behaviour rather than inventing
+a second pattern.
 
-**Backend reality (from `docs/API_INTEGRATION_PLAN.md`, reconciled
-2026-07-28).** Only *Profile* has data today. The rest map onto phases that
-have not shipped:
+Signed-out state is whatever `wireAccount()` already renders (the Google
+button and email/code forms). No new empty states to write.
 
-| Pane | Backing | Status |
+### 3.1 Why the five-pane menu is deferred
+
+> **Verify backend claims against the backend.** The rows below were
+> checked against the API repo at `scooter-fyi-api` (route table, endpoint
+> docstrings), **not** against `docs/API_INTEGRATION_PLAN.md` — that file is
+> a frontend work plan and describes what *this* repo has yet to consume,
+> which is not the same as what the API serves. An earlier draft of this
+> table got three rows wrong by conflating the two.
+
+| Pane | What the API actually serves | Verdict |
 |---|---|---|
-| Profile | `wireAccount()` — sign-in, session, admin badge | ships now |
-| Rides | ride history + `path_geojson` replay | Phase C, not built |
-| Rankings | points ledger / badges | Phase B, not built |
-| Contributions | reports + photo uploads (`/reports/model` is live) | partial |
-| Favorites | no endpoint exists | undefined |
+| **Profile** | `GET/PUT /api/v1/profile` (incl. server-computed badges from `src/badges.py`), `/profile/username`, `/username/regenerate`, `/adjectives`, `/emoji-nouns`, `GET /api/v1/points`. **All live and unconsumed** | Ships — and can be far richer than today's sign-in panel |
+| **Rides** | `GET /api/v1/rides` (paginated, caller-scoped), `/rides/active`, `/rides/export`, full write lifecycle, plus the `/tracked-rides/*` family. Read path is live | Defer — the list will be **empty** until the HUD writes rides (Phase C) |
+| **Rankings** | `GET /api/v1/points` is the **caller's own** ledger; badges likewise. No cross-rider leaderboard route exists — though the account model already carries a `leaderboards` visibility toggle anticipating one (`src/api_meta.py:79`) | **Dropped** — see below |
+| **Contributions** | `GET /api/v1/photos/mine` — purpose-built, "Review all photos I have uploaded (requirement #17)", device photos + ride screenshots, caller-scoped. Plus `/reports/summary` | **Reconsider** — buildable today |
+| **Favorites** | `favorites` is a stored profile field, but nothing implements a favourites sort or highlight, and `UX_PLAN` §5.2 leaves the shape TBD | Defer — needs a spec, not an endpoint |
 
-**Decided:** build the shell and all five panes now, wire Profile fully,
-and give the other four honest empty states that name what unlocks them
-("Ride history arrives when tracked rides ship"). Navigation gets its final
-shape without faking data.
+**The backend is well ahead of the frontend.** The blocker for most of these
+is frontend consumption, not missing API surface.
 
-**All five stay visible when signed out (decided)** — the menu never
-changes shape. Each gated pane states what an account unlocks, which is
-also the only honest argument for signing in that this app has. Two
-consequences:
+Reasons the deferral still holds where it does:
 
-- A gated pane needs *two* empty states, not one: "sign in to see this"
-  and "signed in, but this feature hasn't shipped". Collapsing them into
-  one message will read as broken to a signed-in user.
-- Whatever copy Rides uses must not re-promise what the wizard already
-  over-promises (see §9's last bullet). Say what exists.
+1. **Phase B's content lands in Profile, not in new panes.** Username,
+   privacy toggles, home/work coords, badges, theming — `UX_PLAN` §5.2 puts
+   all of it "in the Account drawer". So the next wave makes Profile
+   *richer*; it does not populate the other four.
+2. **A nav list is itself chrome.** With one destination there is nothing to
+   navigate between.
+
+**Rankings is dropped because its content is Profile's, not because nothing
+backs it.** Points and badges are live — but both are self-scoped, and
+`UX_PLAN` §5.2 already places badges in the Account drawer. What does *not*
+exist is a cross-rider leaderboard, which is the only thing "Rankings" would
+mean as a distinct pane. If a leaderboard is ever specified, the account
+model's `leaderboards` consent toggle is already there for it.
+
+**What re-opens the nav:** a second destination with real content. On the
+evidence above that is **Contributions** (live endpoint, data already
+accumulating from the popup's report flow) sooner than Rides (live endpoint,
+no data until Phase C writes).
 
 ---
 
@@ -378,26 +402,37 @@ It must cover five surfaces:
 - `.map-tooltip` — the hover tooltip element.
 
 **Mode bar.** Bigger and more prominent on large screens, near current size
-on small; stainless silver gradient; clear border on the selected item; a
-file-folder notch at the top-left reading `MODE:` in small caps.
+on small; stainless silver gradient; clear border on the selected item.
 
-- Notch: a `::before` on `#mode-switch` (or a real `<span>` for the text),
-  positioned above the bar with only the top corners rounded.
-- **`border-radius: 999px` fights a folder tab.** Drop the bar to ~14–16px
-  so the notch reads as a tab rather than a bump on a pill.
+**The `MODE:` folder-tab notch is cut (decided).** It labelled the UI rather
+than the content — three buttons reading "Find wheels / Analysis / Ride"
+already say what they are. It also cost vertical space above a bar that has
+to stay compact on phones, and it could not survive the ≤480px `flex-wrap`,
+so it would have shipped as a desktop-only ornament with a suppression rule.
+Dropping it also removes the reason to fight `border-radius: 999px`, so the
+bar keeps its pill shape.
+
+- **The gradient is the one surface that can't theme by variable.** Every
+  other panel derives from `[data-theme]` tokens; a metal gradient needs
+  hand-tuned stops, and a second hand-tuned set for dark (gunmetal). Define
+  both inside the existing token blocks so the exception is visible in one
+  place rather than scattered. Keep the selected border at ≥3:1 against the
+  gradient in both themes.
 - **`#ride-open` carries `.mode-btn` but has no `data-mode`.** Do not paper
   over that with a `[data-mode]`-scoped selector — fix the model instead.
   See §7.1.
-- **`@media (max-width: 480px)` sets `flex-wrap: wrap`.** A notch anchored
-  to the top-left of a two-row bar looks broken. Either suppress the notch
-  at that breakpoint or stop the bar wrapping.
+- **`@media (max-width: 480px)` sets `flex-wrap: wrap`.** With the notch
+  cut this is no longer a conflict, but the gradient still has to survive
+  wrapping — a linear gradient on a two-row flex container paints across
+  the whole box, so the seam lands mid-bar. Check it at that breakpoint.
 - **`--freshness-lift`** is computed in `wireFreshnessCollapse()` from the
   freshness pill's live rect and applied as a `translate` on `#mode-switch`.
-  A notch adds height *above* the bar; verify the lift still clears the
-  expanded pill on a narrow screen.
-- Silver gradient needs a **dark-theme variant** (gunmetal) — define both
-  under the existing `[data-theme]` token blocks, and keep the selected
-  border at ≥3:1 contrast against the gradient in both themes.
+  The bar is getting taller on large screens; re-verify the lift still
+  clears the expanded pill.
+- **"Find wheels" is wider than "Find a ride" is narrow.** The rename (§7.1)
+  changes the bar's `max-content` width, which is what the ≤480px wrap rule
+  is tuned against. Re-check the wrap threshold after the copy change, not
+  before.
 
 ### 7.1 There are three modes, not two
 
@@ -469,14 +504,23 @@ model, always-visible is correct and the comment is what is wrong.
 
 ## 8. Sequencing
 
-Each phase builds and ships on its own.
+**One phase per PR. This is a rule, not a suggestion.** Phase 1 alone
+rewrites the highest-traffic CSS in the app and will regress something; the
+value of separate PRs is the revert boundary, and that value disappears if
+two phases share one. Do not batch them because they feel small.
 
 1. **Chrome** (§1, §2) — top bar, ribbon, control relocation. Largest CSS
    blast radius; land it first and alone so regressions are attributable.
-2. **Right drawer** (§3) — shell + Profile pane + honest empty states.
+2. **Right drawer** (§3) — relocate the account panel. Small, once §1's
+   drawer variables exist.
 3. **Filter presets** (§4) — includes extracting the chip-label builder.
-4. **Ride prefs** (§5) — depends on §4's serializer for option 4.
-5. **Polish** (§6, §7) — hover gating, popup cleanup, mode bar.
+4. **Ride prefs** (§5) — needs §4's serializer and its chip-label helper.
+5. **Mode model + rename** (§7.1) — `data-mode` on `#ride-open`, the
+   consolidated click handler, and the "Find wheels" copy change. Behaviour,
+   not looks; keep it away from the restyle so a regression is unambiguous.
+6. **Polish** (§6, §7) — hover gating, popup cleanup, mode bar restyle.
+
+§5 is the only hard dependency (on §4). Everything else can reorder.
 
 ## 9. Decisions and open questions
 
@@ -485,24 +529,26 @@ Each phase builds and ships on its own.
 | Question | Decision | Lands in |
 |---|---|---|
 | Option 4's filter source | The live map filters, with a read-only summary line — not a saved-set picker | §5 |
-| Right menu when signed out | All five panes visible and gated; menu never changes shape | §3 |
+| Right drawer scope | **Account panel only, no nav.** Rides/Contributions/Favorites deferred; **Rankings dropped** | §3, §3.1 |
 | "Find a ride" vs "Ride" collision | Rename the **first** mode to **"Find wheels"**; 🧭 Ride keeps its name | §7.1 |
 | Top bar on short viewports | Auto-hide below `max-height: 480px`; float hamburger + profile | §1.5 |
+| `MODE:` folder-tab notch | **Cut.** Labels the UI, not the content; bar keeps its pill shape | §7 |
+| PR granularity | One phase per PR, enforced | §8 |
 
 ### 9.2 Still open
 
-- **Favorites is defined in entity but not in shape.**
-  `docs/UX_PLAN.md:495-501` (§5.2) specifies favouriting vehicle
-  **models/plates**, with a "favorites first" sort and a map highlight —
-  and models/plates being stable identifiers answers the obvious objection
-  that device ids churn. But that same passage calls itself "a placeholder
-  pending the fuller spec", and `:559-560` leaves `favorites: []` as "shape
-  TBD". So the pane has a subject but no schema; it stays a placeholder
-  until that spec exists.
-- **Rankings is the points leaderboard**, not device rankings. The Battery
-  Rankings entry point was removed by PR #32 (see §0.1) and its `.ranks-modal`
-  class was repurposed for the details modal, so there is no device-ranking
-  surface left to mean. Backed by the points ledger in Phase B, unbuilt.
+- **Favorites needs a schema before it needs UI.** `docs/UX_PLAN.md:495-501`
+  (§5.2) names the subject — favouriting vehicle **models/plates**, with a
+  "favorites first" sort and a map highlight, and models/plates being stable
+  identifiers answers the obvious objection that device ids churn. But that
+  passage calls itself "a placeholder pending the fuller spec" and
+  `:559-560` leaves `favorites: []` as "shape TBD".
+- **Contributions: ship now or hold?** `GET /api/v1/photos/mine` is live and
+  purpose-built for this pane, and the data is already accumulating from the
+  popup's report flow. It is the one deferred pane with no technical blocker
+  — so the deferral is a scope choice, not a dependency. Shipping it also
+  gives the nav its second destination, which is what justifies having a nav
+  at all.
 - **Ribbon default state on desktop** — assumed open. Persisted either way.
 - **Saved filters are device-local** until a preferences endpoint exists.
   The wizard's existing "Log in to save your preferences" hint will still
