@@ -65,6 +65,7 @@ import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
+import { initChrome, setRibbonOpen } from "./chrome.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -75,9 +76,11 @@ function need<T extends HTMLElement>(id: string): T {
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
 const { map, geolocate } = createMap("map", theme0);
-// Added AFTER createMap (which registers geolocate in top-right) so the
-// theme toggle stacks directly below the location control.
-map.addControl(new ThemeControl(theme0), "top-right");
+// Added AFTER createMap (which registers geolocate in top-left) so the
+// theme toggle sits directly right of the location control once chrome.ts
+// adopts the corner into the top bar.
+map.addControl(new ThemeControl(theme0), "top-left");
+initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
@@ -807,11 +810,16 @@ function wireIconography(): void {
   };
 
   // On-map legend: every icon + gauge-ring permutation for the current
-  // settings, docked below the tab-strip menu; hover for descriptions.
+  // settings, docked below the ribbon; hover for descriptions. A collapsed
+  // ribbon's rect is parked off-screen, so the legend hangs from the top
+  // bar instead.
   const positionLegend = (): void => {
     const tabs = document.getElementById("drawer-tabs");
-    if (!tabs) return;
-    const rect = tabs.getBoundingClientRect();
+    const topbar = document.getElementById("topbar");
+    const anchor =
+      document.body.classList.contains("ribbon-open") && tabs ? tabs : topbar;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
     legendEl.style.top = `${Math.round(rect.bottom + 10)}px`;
   };
   const renderLegend = (): void => {
@@ -962,6 +970,10 @@ function wireIconography(): void {
   );
   legendToggle.addEventListener("change", renderLegend);
   window.addEventListener("resize", () => {
+    if (legendToggle.checked) positionLegend();
+  });
+  // Ribbon toggling moves the legend's anchor between strip and top bar.
+  window.addEventListener("scooter:ribbon", () => {
     if (legendToggle.checked) positionLegend();
   });
 
@@ -1139,6 +1151,10 @@ function wireModes(): void {
     const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
     if (open && open.dataset.drawer !== id) open.click();
     if (id) {
+      // Synthetic clicks land on hidden tabs too — with the ribbon
+      // collapsed that would open a drawer with no visible origin, so
+      // reveal the strip first.
+      setRibbonOpen(true);
       const tab = document.querySelector<HTMLButtonElement>(
         `.drawer-tab[data-drawer="${id}"]`,
       );

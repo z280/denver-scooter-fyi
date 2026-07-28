@@ -122,7 +122,9 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
     showUserLocation: true,
     showAccuracyCircle: true,
   });
-  map.addControl(geolocate, "top-right");
+  // Registered top-left: chrome.ts adopts this corner's container into the
+  // top bar's left cluster, beside the hamburger.
+  map.addControl(geolocate, "top-left");
 
   // Hosts that lay the page out only after scripts run (embedded webviews,
   // headless previews) hand MapLibre a 0×0 container, so it falls back to a

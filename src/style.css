@@ -36,6 +36,21 @@
   --sos: #11203a;
   --shadow: 0 6px 24px rgba(20, 30, 50, 0.18);
   --radius: 12px;
+  /* ---- Chrome layout ----
+     --topbar-h: total height the fixed top bar occupies, INCLUDING its
+     safe-area padding — every element that used to pin to
+     max(12px, env(safe-area-inset-top)) now offsets from this instead.
+     On short viewports the bar's band hides but its floating buttons still
+     occupy the strip, so the value shrinks rather than zeroing (see the
+     max-height media block near the responsive rules).
+     --ribbon-w: the left tab strip's current width (icon-only vs labeled).
+     --ribbon-gutter: horizontal space the strip consumes from the left
+     edge — strip width + 8px gap when open, 0 when collapsed — so drawers
+     and chips derive their offsets from one place instead of the old
+     52/72/84px literals. */
+  --topbar-h: calc(48px + env(safe-area-inset-top));
+  --ribbon-w: 52px;
+  --ribbon-gutter: 0px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--fg);
 }
@@ -162,12 +177,115 @@ body::before {
   border: 0;
 }
 
-/* ---------- Drawer tab strip (always visible activity bar) ---------- */
+/* ---------- Top bar ---------- */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--topbar-h);
+  padding-top: env(safe-area-inset-top);
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
+  z-index: 34; /* over the ribbon (32) and drawers (30), under the safe-area mask (55) */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar__left,
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.topbar__btn {
+  appearance: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--fg-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.topbar__btn:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* The profile button doubles as a .drawer-tab (wireDrawers() drives it);
+   is-active state comes from that shared rule set. */
+.drawer-tab--topbar {
+  width: 40px;
+  padding: 0;
+}
+/* Absolutely centered so unequal left/right clusters can't skew it. */
+.topbar__brand {
+  position: absolute;
+  left: 50%;
+  top: env(safe-area-inset-top);
+  height: calc(var(--topbar-h) - env(safe-area-inset-top));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: none;
+  user-select: none;
+}
+.topbar__brand-glyph {
+  font-size: 18px;
+}
+.topbar__brand-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+/* Hide the wordmark before it can collide with the side clusters. */
+@media (max-width: 430px) {
+  .topbar__brand-name {
+    display: none;
+  }
+}
+
+/* GPS + theme cluster: chrome.ts adopts .maplibregl-ctrl-top-left into
+   .topbar__left, where it lays out as a horizontal row of flat bar
+   buttons (the bar supplies the panel chrome). */
+.topbar__left .maplibregl-ctrl-top-left {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+.topbar .maplibregl-ctrl {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  overflow: hidden;
+  float: none;
+}
+
+/* ---------- Drawer tab strip (the collapsible left ribbon) ---------- */
+/* Open state widens the gutter that drawers/chips offset from; collapsed
+   reclaims all of it (the strip parks off-screen). */
+body.ribbon-open {
+  --ribbon-gutter: calc(var(--ribbon-w) + 8px);
+}
 .drawer-tabs {
   position: fixed;
-  top: max(12px, env(safe-area-inset-top));
+  top: calc(var(--topbar-h) + 12px);
   left: max(12px, env(safe-area-inset-left));
   z-index: 32;
+  width: var(--ribbon-w);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -177,6 +295,13 @@ body::before {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  transition: transform 0.22s ease, visibility 0.22s;
+}
+/* Collapsed: park fully off-screen (past the left offset + shadow) and drop
+   out of the focus/a11y tree. */
+body:not(.ribbon-open) .drawer-tabs {
+  transform: translateX(calc(-100% - 48px - env(safe-area-inset-left)));
+  visibility: hidden;
 }
 .drawer-tab {
   width: 40px;
@@ -199,28 +324,77 @@ body::before {
   background: var(--accent);
   color: var(--accent-ink);
 }
+/* Ribbon word labels: sr-only below the wide breakpoint, visible above it.
+   (Same technique as .sr-only — kept separate so promoting them can't leak
+   into other sr-only users.) */
+.drawer-tab__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (min-width: 900px) {
+  :root {
+    --ribbon-w: 148px;
+  }
+  .drawer-tabs .drawer-tab {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 0 9px;
+  }
+  .drawer-tabs .drawer-tab svg {
+    flex: none;
+  }
+  .drawer-tabs .drawer-tab__label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
 
 /* ---------- Drawers (slide in from behind the tab strip) ---------- */
 .drawer {
   position: fixed;
-  top: max(12px, env(safe-area-inset-top));
-  /* sits just past the tab strip (12px gap + ~52px wide strip), shifted the
-     same amount the tab strip itself shifts to clear a safe-area inset */
-  left: calc(72px + env(safe-area-inset-left));
+  top: calc(var(--topbar-h) + 12px);
+  /* sits just past the ribbon; --ribbon-gutter collapses to 0 with it */
+  left: calc(max(12px, env(safe-area-inset-left)) + var(--ribbon-gutter));
   z-index: 30;
   width: 300px;
-  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - 12px);
+  max-height: calc(100dvh - var(--topbar-h) - 24px);
   overflow-y: auto;
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  /* Hide off-screen by default; slide via transform so it animates. */
-  transform: translateX(calc(-100% - 84px));
+  /* Hide off-screen by default; slide via transform so it animates. The
+     extra distance past -100% clears the left offset plus shadow at any
+     ribbon width. */
+  transform: translateX(calc(-100% - var(--ribbon-gutter) - 48px - env(safe-area-inset-left)));
   transition: transform 0.22s ease;
 }
 .drawer.is-open {
+  transform: translateX(0);
+}
+/* Right-side variant (profile drawer): anchored under the top bar's right
+   button, sliding in from the right edge instead. */
+.drawer--right {
+  left: auto;
+  right: max(12px, env(safe-area-inset-right));
+  transform: translateX(calc(100% + 48px + env(safe-area-inset-right)));
+}
+.drawer--right.is-open {
   transform: translateX(0);
 }
 .drawer-header {
@@ -551,10 +725,10 @@ body::before {
   color: var(--fg-muted);
 }
 
-/* ---------- Active-filter chips (float over the map, top center) ---------- */
+/* ---------- Active-filter chips (float over the map, below the top bar) ---------- */
 .filter-chips {
   position: fixed;
-  top: max(12px, env(safe-area-inset-top));
+  top: calc(var(--topbar-h) + 12px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 25; /* under the tab strip (32) and drawers (30) */
@@ -1142,12 +1316,6 @@ body::before {
   letter-spacing: -0.01em;
 }
 
-/* ---------- Geolocate button (top-right) ---------- */
-.maplibregl-ctrl-top-right {
-  top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
-}
-
 /* ---------- Zoom +/- and attribution (bottom-left) ----------
    MapLibre's own default (bottom:0; left:0, plus ~10px margin on the
    control itself) assumes the container's edge is reachable — with
@@ -1159,18 +1327,10 @@ body::before {
   bottom: env(safe-area-inset-bottom);
   left: env(safe-area-inset-left);
 }
-.maplibregl-ctrl-top-right .maplibregl-ctrl {
-  margin: 0;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate {
-  width: 48px;
-  height: 56px;
+/* ---------- Geolocate button (top bar, right of the hamburger) ---------- */
+.topbar button.maplibregl-ctrl-geolocate {
+  width: 44px;
+  height: 40px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1182,54 +1342,51 @@ body::before {
    tint it muted (off) vs. accent blue (active) via CSS. The selector matches
    every geolocate state to outweigh MapLibre's per-state background-image
    rules, which would otherwise paint their own icon through our mask. */
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate .maplibregl-ctrl-icon,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error .maplibregl-ctrl-icon,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error .maplibregl-ctrl-icon {
-  width: 24px;
-  height: 24px;
+.topbar button.maplibregl-ctrl-geolocate .maplibregl-ctrl-icon,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error .maplibregl-ctrl-icon,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error .maplibregl-ctrl-icon {
+  width: 20px;
+  height: 20px;
   background-image: none;
   background-color: currentColor;
-  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 22px 22px;
-  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 22px 22px;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 18px 18px;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M3 11 L21 3 L13 21 L11 13 Z'/></svg>") no-repeat center / 18px 18px;
 }
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate::after {
+.topbar button.maplibregl-ctrl-geolocate::after {
   content: "OFF";
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.08em;
   line-height: 1;
   color: currentColor;
 }
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active::after,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error::after,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background::after,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error::after,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting::after {
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active::after,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error::after,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background::after,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error::after,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting::after {
   content: "ON";
 }
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate:hover {
+.topbar button.maplibregl-ctrl-geolocate:hover {
   background: var(--accent-soft);
   color: var(--fg);
 }
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error,
-.maplibregl-ctrl-top-right button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting {
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active-error,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background-error,
+.topbar button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting {
   color: var(--accent);
 }
 
-/* ---------- Theme toggle (top-right, below geolocate) ---------- */
-.theme-ctrl {
-  margin-top: 10px; /* extra breathing room below the geolocate control */
-}
+/* ---------- Theme toggle (top bar, beside geolocate) ---------- */
 /* Element+extra-class beats maplibre-gl.css's `.maplibregl-ctrl-group
    button` sizing (0-1-1), which would otherwise pin this to 29×29. */
 .theme-ctrl button.theme-ctrl__btn {
-  width: 48px; /* match the geolocate button so the stack reads as one column */
-  height: 44px;
+  width: 44px; /* match the geolocate button so the row reads as one cluster */
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2199,6 +2356,7 @@ body::before {
 
 /* While a ride is active the app chrome gets out of the way so the frame +
    map own the screen. */
+body.ride-active .topbar,
 body.ride-active .drawer-tabs,
 body.ride-active .drawer,
 body.ride-active .mode-switch,
@@ -2281,18 +2439,23 @@ body.landscape-hint-dismissed .hud-note--landscape {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 640px) {
-  /* Drawer widens to fill what's left after the tab strip. */
+  /* Drawer widens to fill what's left after the ribbon (all of it when the
+     ribbon is collapsed). */
   .drawer {
-    width: calc(100vw - 84px);
+    width: calc(100vw - max(12px, env(safe-area-inset-left)) - var(--ribbon-gutter) - 12px);
+    max-width: 360px;
+  }
+  .drawer--right {
+    width: calc(100vw - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right)));
     max-width: 360px;
   }
   .freshness {
     bottom: max(12px, env(safe-area-inset-bottom));
   }
-  /* Chips hug the tab strip instead of centering — centering would tuck
+  /* Chips hug the ribbon instead of centering — centering would tuck
      them behind an open drawer on narrow screens. */
   .filter-chips {
-    left: calc(72px + env(safe-area-inset-left));
+    left: calc(max(12px, env(safe-area-inset-left)) + var(--ribbon-gutter));
     right: calc(64px + env(safe-area-inset-right));
     transform: none;
     justify-content: flex-start;
@@ -2339,6 +2502,35 @@ body.landscape-hint-dismissed .hud-note--landscape {
 @media (max-height: 480px) {
   .mode-switch {
     bottom: max(52px, env(safe-area-inset-bottom));
+  }
+  /* The top bar auto-hides: its band (background, border, brand) goes away
+     so the map runs to the top edge, while the hamburger, GPS/theme cluster,
+     and profile button float over the map as individual chips. --topbar-h
+     shrinks to the floating buttons' strip so ribbon/drawers/chips still
+     clear them; the bar's own safe-area padding keeps the floats out of a
+     notch (landscape is exactly where the inset becomes a *side* inset). */
+  :root {
+    --topbar-h: calc(44px + env(safe-area-inset-top));
+  }
+  .topbar {
+    background: transparent;
+    backdrop-filter: none;
+    border-bottom: 0;
+    pointer-events: none;
+  }
+  .topbar__brand {
+    display: none;
+  }
+  .topbar__left,
+  .topbar__right {
+    pointer-events: auto;
+  }
+  .topbar__btn,
+  .topbar .maplibregl-ctrl {
+    background: var(--bg-panel);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
   }
 }
 
@@ -2581,7 +2773,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   .ride-wizard {
     left: auto;
     right: env(safe-area-inset-right);
-    top: env(safe-area-inset-top);
+    top: var(--topbar-h); /* docks under the fixed top bar */
     bottom: env(safe-area-inset-bottom);
     transform: none;
     width: min(320px, 78vw);
