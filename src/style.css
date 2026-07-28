@@ -51,6 +51,12 @@
   --topbar-h: calc(48px + env(safe-area-inset-top));
   --ribbon-w: 52px;
   --ribbon-gutter: 0px;
+  /* Mode bar: stainless-silver gradient (gunmetal in dark), the notch tab
+     matching the gradient's top stop, and a selected-item border kept at
+     >=3:1 against the gradient in both themes. */
+  --modebar-bg: linear-gradient(180deg, #f6f8fa 0%, #e0e5eb 45%, #ccd3dc 55%, #e4e8ee 100%);
+  --modebar-notch-bg: #f6f8fa;
+  --modebar-active-border: #24303f;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--fg);
 }
@@ -84,6 +90,9 @@
   --danger-soft: rgba(248, 81, 73, 0.16);
   --sos: #cdd6e0;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  --modebar-bg: linear-gradient(180deg, #47505c 0%, #353d48 45%, #29303a 55%, #343b45 100%);
+  --modebar-notch-bg: #47505c;
+  --modebar-active-border: #e6edf3;
 }
 
 * {
@@ -722,7 +731,7 @@ body:not(.ribbon-open) .drawer-tabs {
   transition: transform 0.15s ease;
   /* Above drawers (30) and the tab strip (32) — unlike filter-chips/
      icon-legend (25/26), which are fine hiding under an open drawer since
-     they're redundant with it, this is primary navigation (Find a ride /
+     they're redundant with it, this is primary navigation (Find wheels /
      Analysis / Ride) that must stay reachable while a drawer is open. A
      drawer's max-height reaches nearly full viewport height, so on a short
      (landscape-phone) viewport its centered x-range overlapped this pill
@@ -735,11 +744,31 @@ body:not(.ribbon-open) .drawer-tabs {
   width: max-content;
   gap: 4px;
   padding: 5px;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
+  background: var(--modebar-bg);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  /* ~16px, not a pill: the MODE: notch has to read as a file-folder tab,
+     and a tab on a 999px pill just looks like a bump. */
+  border-radius: 16px;
   box-shadow: var(--shadow);
+}
+/* File-folder notch: a small MODE: tab hanging off the bar's top-left,
+   only its top corners rounded, colored to continue the bar's gradient. */
+.mode-switch::before {
+  content: "mode:";
+  position: absolute;
+  top: -17px;
+  left: 14px;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.09em;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: var(--modebar-notch-bg);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
 }
 .mode-btn {
   appearance: none;
@@ -749,7 +778,7 @@ body:not(.ribbon-open) .drawer-tabs {
   font-size: 13px;
   font-weight: 600;
   color: var(--fg-muted);
-  border-radius: 999px;
+  border-radius: 11px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -760,6 +789,20 @@ body:not(.ribbon-open) .drawer-tabs {
 .mode-btn.is-active {
   background: var(--accent);
   color: var(--accent-ink);
+  /* The "clear border" on the selected item — drawn as an outer ring so
+     selection doesn't shift layout. Token kept >=3:1 vs the gradient. */
+  box-shadow: 0 0 0 2px var(--modebar-active-border);
+}
+/* Bigger and more prominent where there's room; near current size below. */
+@media (min-width: 900px) {
+  .mode-switch {
+    padding: 7px;
+    gap: 6px;
+  }
+  .mode-btn {
+    padding: 10px 20px;
+    font-size: 14.5px;
+  }
 }
 
 /* ---------- Inline hint text under control labels ---------- */
@@ -2536,7 +2579,12 @@ body.landscape-hint-dismissed .hud-note--landscape {
     );
     flex-wrap: wrap;
     justify-content: center;
-    border-radius: 22px;
+    border-radius: 16px;
+  }
+  /* The bar can wrap to two rows here, and a notch anchored to the
+     top-left of a two-row bar looks broken — suppress it. */
+  .mode-switch::before {
+    display: none;
   }
 }
 

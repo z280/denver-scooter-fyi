@@ -98,9 +98,13 @@ export class RideHud {
    *  estimate. Persisted so members don't re-toggle every ride. */
   private veoPlus = savedVeoPlus();
   /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
-   *  Analysis / Find-a-ride, but the ride state (counter) is preserved so
+   *  Analysis / Find wheels, but the ride state (counter) is preserved so
    *  reopening the HUD resumes it. */
   private paused = false;
+  /** Fired whenever the HUD leaves the screen (End Ride, summary Done, or
+   *  BRB) — wireModes uses it to hand the mode bar back to whichever mode
+   *  was active before the HUD covered it. */
+  private onHidden: (() => void) | null = null;
   /** Elapsed ms captured at BRB, so the clock resumes from where it paused
    *  instead of counting the time spent away. */
   private pausedElapsedMs = 0;
@@ -170,7 +174,13 @@ export class RideHud {
       </p>`;
   }
 
+  /** Register the close hook (see onHidden). Last registration wins. */
+  setOnHidden(fn: () => void): void {
+    this.onHidden = fn;
+  }
+
   private setState(state: HudState): void {
+    const wasHidden = this.state === "hidden";
     this.state = state;
     this.root.hidden = state === "hidden";
     // Only the riding state is a transparent frame over the live map; the
@@ -184,6 +194,7 @@ export class RideHud {
     this.deviceCtl.setRideActive(riding);
     if (!riding) this.deviceCtl.setRideModelFilter(null);
     if (state === "armed") this.renderArmed();
+    if (state === "hidden" && !wasHidden) this.onHidden?.();
   }
 
   // ---------- Pre-ride ----------
@@ -351,7 +362,7 @@ export class RideHud {
           <button type="button" class="hud-btn hud-btn--primary" data-hud="brb">BRB</button>
         </div>
         <p class="hud-exit-note">BRB pauses the ride and keeps your counter —
-          hop into Analysis or Find a ride, then resume from 🧭 Ride.</p>
+          hop into Analysis or Find wheels, then resume from 🧭 Ride.</p>
         <button type="button" class="hud-btn hud-btn--ghost" data-hud="exit-cancel">Cancel</button>
       </div>`;
     this.root.appendChild(el);
@@ -363,7 +374,7 @@ export class RideHud {
 
   /** BRB: background the ride. The counter is frozen (resumes from here, not
    *  counting the time away), sensors/immersive/follow-cam are released, and
-   *  the HUD hides so the map chrome (Analysis / Find a ride) returns. */
+   *  the HUD hides so the map chrome (Analysis / Find wheels) returns. */
   private pauseRide(): void {
     this.hideExitPrompt();
     this.pausedElapsedMs = Date.now() - this.startedAt;

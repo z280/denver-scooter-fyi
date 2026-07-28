@@ -168,6 +168,13 @@ export class Clusters {
     this.renderIdle();
   }
 
+  /** Close the cluster popup if one is open (mode switches sweep every
+   *  floating surface). */
+  closePopup(): void {
+    this.popup?.remove();
+    this.popup = null;
+  }
+
   /** Load (and cache) the active region layer's index, then re-render labels. */
   private async applyRegionLayer(): Promise<void> {
     this.regionSelect.disabled = true;

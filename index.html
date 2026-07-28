@@ -429,7 +429,9 @@
           </div>
         </section>
 
-        <section class="control-group" aria-labelledby="tooltip-label">
+        <!-- Hidden wholesale on touch devices (no hover to explain) — see
+             the canHover gate in wireIconography(). -->
+        <section class="control-group" id="tooltip-section" aria-labelledby="tooltip-label">
           <h3 id="tooltip-label" class="control-label">Hover tooltip</h3>
           <label class="switch">
             <input type="checkbox" id="tooltip-toggle" checked />
@@ -722,13 +724,14 @@
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
-    <!-- Use-case switch (bottom center): "Find a ride" runs the guided
-         wizard surface; "Analysis" is the full civic/data surface with the
-         drawer tabs. The Account (login) tab is shared by both. -->
+    <!-- Mode bar (bottom center), three modes: "Find wheels" runs the
+         guided wizard surface; "Analysis" is the full civic/data surface
+         with the drawer tabs; "Ride" opens the full-screen in-ride HUD.
+         All three are wired by wireModes() in main.ts. -->
     <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
-      <button class="mode-btn" type="button" data-mode="ride">🛴 Find a ride</button>
+      <button class="mode-btn" type="button" data-mode="ride">🛴 Find wheels</button>
       <button class="mode-btn is-active" type="button" data-mode="analysis">📊 Analysis</button>
-      <button class="mode-btn" type="button" id="ride-open">🧭 Ride</button>
+      <button class="mode-btn" type="button" id="ride-open" data-mode="riding">🧭 Ride</button>
     </div>
 
     <!-- Find-a-ride wizard (consent → interview → ranked options). Content

@@ -17,15 +17,20 @@ export function registerPopupCloser(fn: PopupCloser): void {
   popupClosers.push(fn);
 }
 
-/** Close every open floating surface: device + cluster popups (registered
- *  closers), the details modal, the icon lightbox, and the hover tooltip.
- *  Called on every mode switch so no popup outlives the surface it was
- *  opened from. */
+/** Close every open floating surface: device + cluster popups and the
+ *  hover tooltip (registered closers), plus the details modal and the icon
+ *  lightbox. Called on every mode switch so no popup outlives the surface
+ *  it was opened from. The modals close via their own ✕ so their close()
+ *  runs and detaches the document-level Escape listener — a bare .remove()
+ *  would orphan it. */
 export function closeAllPopups(): void {
   for (const close of popupClosers) close();
-  document.querySelector(".ranks-modal")?.remove();
-  document.querySelector(".icon-lightbox")?.remove();
-  document.querySelector(".map-tooltip")?.remove();
+  document
+    .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
+    ?.click();
+  document
+    .querySelector<HTMLButtonElement>(".icon-lightbox .icon-lightbox__close")
+    ?.click();
 }
 
 function storedRibbon(): boolean | null {

@@ -612,6 +612,12 @@ export class Devices {
     return this.popup !== null;
   }
 
+  /** Close the device details popup if one is open (mode switches sweep
+   *  every floating surface). The popup's own close event nulls the field. */
+  closePopup(): void {
+    this.popup?.remove();
+  }
+
   /** Build and show the details popup for one device. Called from the map
    *  click handler (flattened feature properties) and from the
    *  worth-the-walk "Show me" jump (raw GeoJSON properties) — the readers
@@ -2400,7 +2406,10 @@ function showMapTooltip(
   tooltipEl.style.top = `${Math.max(4, ev.clientY - 14)}px`;
 }
 
-function hideMapTooltip(): void {
+/** Exported for chrome.ts's closeAllPopups: the tooltip element is cached
+ *  module-side, so outside code must retire it through here — a bare
+ *  .remove() would leave the cache pointing at a detached node. */
+export function hideMapTooltip(): void {
   tooltipEl?.remove();
   tooltipEl = null;
 }

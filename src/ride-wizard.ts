@@ -1,4 +1,4 @@
-// "Find a ride" wizard: the guided entry into ride mode. A short flow —
+// "Find wheels" wizard: the guided entry into ride mode. A short flow —
 // location consent → awaiting the device's permission prompt → one
 // interview question (what matters most) → a playful processing beat —
 // that ends by handing the rider's answers to the Recommended Devices
@@ -160,7 +160,7 @@ export class RideWizard {
     h.id = "ride-wizard-title";
     const closeBtn = el("button", "ride-wizard__close", "×");
     closeBtn.type = "button";
-    closeBtn.setAttribute("aria-label", "Close Find a ride");
+    closeBtn.setAttribute("aria-label", "Close Find wheels");
     closeBtn.addEventListener("click", () => this.exit());
     header.append(h, closeBtn);
 
@@ -182,7 +182,7 @@ export class RideWizard {
     const p = el(
       "p",
       "ride-wizard__lede",
-      "We need to enable location services to activate “Find a ride” mode — is that cool?",
+      "We need to enable location services to activate “Find wheels” mode — is that cool?",
     );
     const sub = el(
       "p",
@@ -202,7 +202,7 @@ export class RideWizard {
     });
     no.addEventListener("click", () => this.exit());
     row.append(yes, no);
-    this.shell("Find a ride", p, sub, row);
+    this.shell("Find wheels", p, sub, row);
   }
 
   // ---------- Step 2: waiting on the device permission prompt ----------
@@ -223,7 +223,7 @@ export class RideWizard {
       "ride-wizard__hint",
       "Look for your browser's location prompt.",
     );
-    this.shell("Find a ride", spinner, p, sub);
+    this.shell("Find wheels", spinner, p, sub);
 
     const unFix = this.locate.onFix(() => {
       if (this.step === "awaiting") this.renderInterview();
@@ -246,7 +246,7 @@ export class RideWizard {
     back.type = "button";
     back.addEventListener("click", () => this.exit());
     row.append(back);
-    this.shell("Find a ride", p, row);
+    this.shell("Find wheels", p, row);
   }
 
   // ---------- Step 3: the interview ----------
@@ -424,7 +424,7 @@ export class RideWizard {
       document.createTextNode(" to report problem devices."),
     );
 
-    this.shell("Find a ride", q, list, typeRow, saveWrap, row, hint);
+    this.shell("Find wheels", q, list, typeRow, saveWrap, row, hint);
   }
 
   // ---------- Step 4: processing beat → handoff ----------

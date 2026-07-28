@@ -16,6 +16,7 @@ import {
   gaugeColor,
   iconPreviewURL,
   whenModelIconsReady,
+  hideMapTooltip,
   type RideType,
   type ModelKey,
   type QualityFilter,
@@ -65,7 +66,12 @@ import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
-import { initChrome, setRibbonOpen } from "./chrome.ts";
+import {
+  initChrome,
+  setRibbonOpen,
+  closeAllPopups,
+  registerPopupCloser,
+} from "./chrome.ts";
 import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
 
 function need<T extends HTMLElement>(id: string): T {
@@ -118,6 +124,10 @@ const clusters = new Clusters(
   need<HTMLSelectElement>("cluster-region-layer"),
   overlays,
 );
+// Mode switches sweep every open floating surface (closeAllPopups).
+registerPopupCloser(() => devices.closePopup());
+registerPopupCloser(() => clusters.closePopup());
+registerPopupCloser(hideMapTooltip);
 
 // Populated by buildLayerToggles so AreaFilter can programmatically check
 // the matching overlay box when the user picks a category.
@@ -268,7 +278,7 @@ void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
 wireAccount();
-wireRideHud();
+const rideHud = wireRideHud();
 startSunSync();
 wireFreshnessCollapse();
 initInstallPrompt();
@@ -309,9 +319,11 @@ function equityZones(): Promise<IndexedFeature[]> {
   return equityZonesCache;
 }
 
-function wireRideHud(): void {
-  const hud = new RideHud(need("ride-hud"), equityZones, map, devices);
-  need("ride-open").addEventListener("click", () => hud.open());
+// The 🧭 Ride button (data-mode="riding") is bound in wireModes() alongside
+// the other two modes — a separate binding here would double-fire once the
+// mode-bar query matches it.
+function wireRideHud(): RideHud {
+  return new RideHud(need("ride-hud"), equityZones, map, devices);
 }
 
 // ---------- Sun-synced theme ----------
@@ -1014,11 +1026,34 @@ function wireIconography(): void {
     },
   );
   // 📐 Design Options.
+  let gaugeDisplayOn: GaugeDisplay = "always";
   const setDisplay = wireSeg(
     "#gauge-display-seg",
     (b) => b.dataset.display ?? "always",
-    (v) => devices.setGaugeDisplay(v as GaugeDisplay),
+    (v) => {
+      gaugeDisplayOn = v as GaugeDisplay;
+      devices.setGaugeDisplay(gaugeDisplayOn);
+    },
   );
+
+  // ✋ Touch-aware hover: no hover-dependent options on a touch device.
+  // Reactive, not one-shot — a 2-in-1 detaching its keyboard flips this
+  // live. When hover support goes away with the gauge already on "hover",
+  // coerce it back to "always" — otherwise the gauges vanish with no
+  // visible control to bring them back.
+  const canHover = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const hoverOptBtn = document.querySelector<HTMLButtonElement>(
+    '#gauge-display-seg [data-display="hover"]',
+  );
+  const tooltipSection = need("tooltip-section");
+  const syncHoverGate = (): void => {
+    const ok = canHover.matches;
+    if (hoverOptBtn) hoverOptBtn.hidden = !ok;
+    tooltipSection.hidden = !ok;
+    if (!ok && gaugeDisplayOn === "hover") setDisplay("always");
+  };
+  canHover.addEventListener("change", syncHoverGate);
+  syncHoverGate();
   const setThickness = wireSeg(
     "#gauge-thickness-seg",
     (b) => b.dataset.thickness ?? "standard",
@@ -1205,13 +1240,17 @@ function wireAreaFilter(): AreaFilter {
 
 // ---------- Use-case modes ----------
 
-// Two surfaces over one map. "Find a ride" runs the guided wizard
-// (ride-wizard.ts): location consent → interview → ranked options; while
-// it's active the analysis drawer tabs hide and the 🧭 Ride HUD button
-// appears. "Analysis" is the full civic/data surface with every drawer.
-// The Account (login) tab is shared by both. Exiting ride mode — declining
-// consent, closing the wizard, or tapping Analysis — always resets the map
-// to its fresh-load defaults so the wizard's presets never leak.
+// Three modes on one bar. "Find wheels" (data-mode="ride") runs the guided
+// wizard (ride-wizard.ts): location consent → interview → ranked options;
+// while it's active the analysis drawer tabs hide. "Analysis" is the full
+// civic/data surface with every drawer. "Ride" (data-mode="riding") opens
+// the full-screen HUD — it covers all chrome, so its button is never seen
+// selected; what matters is that closing the HUD hands the bar back to
+// whichever mode was active before. The profile button in the top bar is
+// shared by all three. Exiting Find-wheels mode — declining consent,
+// closing the wizard, or tapping Analysis — resets the map to its
+// fresh-load defaults (restoring carried-over filters when option 4 was
+// used) so the wizard's presets never leak.
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
@@ -1373,6 +1412,7 @@ function wireModes(): void {
 
   const exitRide = (): void => {
     if (!rideActive) return;
+    closeAllPopups();
     if (wizard.isOpen()) wizard.close();
     setWizardDocked(false);
     setRideSurface(false);
@@ -1393,6 +1433,7 @@ function wireModes(): void {
   };
 
   const enterRide = (): void => {
+    closeAllPopups();
     rideEntrySnapshot = snapshotFilters();
     rideEntrySummary = filterSummary();
     rideCarriedFilters = false;
@@ -1403,15 +1444,39 @@ function wireModes(): void {
     setWizardDocked(true);
   };
 
+  // Which mode the bar returns to when the HUD closes (End Ride, summary
+  // Done, or BRB) — captured when the HUD opens, since the HUD covers the
+  // bar and a "selected" Ride button is never actually seen.
+  let hudReturnMode: string | null = "analysis";
+  rideHud.setOnHidden(() => setActive(hudReturnMode));
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
-      if (btn.dataset.mode === "ride") {
-        enterRide();
-      } else if (rideActive) {
-        exitRide(); // back to a normal map — no surprise choropleth
-      } else {
-        applyPreset(applyAnalysis);
-        setActive("analysis");
+      switch (btn.dataset.mode) {
+        case "riding":
+          // Third mode: the full-screen HUD. Deliberately does NOT touch
+          // ride/analysis state — opening it mid-Find-wheels must not tear
+          // that mode down (and some popups z-stack above the HUD).
+          closeAllPopups();
+          hudReturnMode =
+            btns.find(
+              (b) =>
+                b.classList.contains("is-active") && b.dataset.mode !== "riding",
+            )?.dataset.mode ?? null;
+          setActive("riding");
+          rideHud.open();
+          break;
+        case "ride":
+          enterRide();
+          break;
+        default:
+          closeAllPopups();
+          if (rideActive) {
+            exitRide(); // back to a normal map — no surprise choropleth
+          } else {
+            applyPreset(applyAnalysis);
+            setActive("analysis");
+          }
       }
     });
   }
