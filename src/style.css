@@ -2922,6 +2922,104 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Saved filter presets (Filters drawer) ---------- */
+.preset-actions {
+  display: flex;
+  gap: 6px;
+}
+.preset-btn {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 8px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.preset-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.preset-form {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.preset-form__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.preset-note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.preset-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.preset-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.preset-item__apply {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preset-item__apply:hover {
+  background: var(--accent-soft);
+}
+.preset-item__delete {
+  appearance: none;
+  flex: none;
+  border: 0;
+  background: transparent;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.preset-item__delete:hover {
+  background: var(--danger-soft);
+  color: var(--fail);
+}
+.preset-item button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Clear All Filters: deliberately plain — text only, no filter iconography. */
 .clear-filters-btn {
   appearance: none;

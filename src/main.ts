@@ -66,6 +66,7 @@ import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
 import { initChrome, setRibbonOpen } from "./chrome.ts";
+import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -139,8 +140,12 @@ let clearRideTypeFilter: () => void = () => {};
 let clearModelFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
+let setQualityFilter: (value: QualityFilter) => void = () => {};
 let resetAllFilters: () => void = () => {};
 let resetIconography: () => void = () => {};
+// wireModes()' `applying` guard, exported to preset appliers so their
+// synthetic events don't drop the mode indicator to "custom".
+let withPresetGuard: (fn: () => Promise<void>) => Promise<void> = (fn) => fn();
 // Ride mode fetches the lean payload (the API's low-end-phone diet); the
 // analysis surface needs the h3 + rank extras. Assigned by wireModes /
 // startRefreshLoop.
@@ -161,7 +166,10 @@ const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "ok-only": "✓ Reliable only",
 };
 
-function refreshChips(): void {
+/** One entry per live constraint — the chip label plus its clear hook.
+ *  Three consumers, one label source: the floating chips, the preset name
+ *  suggestion, and the wizard's carried-filters summary. */
+function activeFilterChips(): Chip[] {
   const active: Chip[] = [];
 
   if (rideTypesOn.size < ALL_RIDE_TYPES.length) {
@@ -229,7 +237,24 @@ function refreshChips(): void {
     });
   }
 
-  chips.render(active);
+  return active;
+}
+
+function refreshChips(): void {
+  chips.render(activeFilterChips());
+}
+
+/** Human one-liner of the live filters, emoji stripped — "Standing only ·
+ *  ≥ 50% · Reliable only". Empty string when nothing is filtered. */
+function filterSummary(): string {
+  return activeFilterChips()
+    .map((c) =>
+      c.label
+        .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join(" · ");
 }
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
@@ -325,7 +350,14 @@ map.on("load", async () => {
   wireHexDensity();
   wireDrawers();
   const areaFilter = wireAreaFilter();
+  applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
   wireModes();
+  wireFilterPresets({
+    snapshot: snapshotFilters,
+    apply: (s) => applyFilterSnapshot(s),
+    suggestName: () => filterSummary() || "All devices",
+    guard: (fn) => withPresetGuard(fn),
+  });
   wireEquityRanks();
 
   // Direct manipulation: clicking a visible region polygon toggles it in
@@ -531,7 +563,66 @@ function wireQuality(): void {
       refreshChips();
     },
   );
+  setQualityFilter = (value) => set(value);
   clearQualityFilter = () => set("any");
+}
+
+// ---------- Filter snapshots (saved presets + ride-mode carry-over) ----------
+
+/** Capture exactly what the Filters drawer owns. Area keeps only the
+ *  display selection — polygons re-resolve on apply. */
+function snapshotFilters(): FilterSnapshot {
+  const display = lastAreaState?.display;
+  return {
+    rideTypes: [...rideTypesOn],
+    models: [...modelsOn],
+    hideUnavailable: need<HTMLInputElement>("hide-unavailable").checked,
+    minBattery: minBatteryPct,
+    quality: qualityOn,
+    area: display ? { layer: display.layer, subset: display.subset } : null,
+  };
+}
+
+/** Click each multi-toggle member into the wanted state so the group's own
+ *  handler (and the whole map→clusters→chips sync path) runs normally. */
+function setToggleGroup(
+  rootSel: string,
+  key: "ride" | "model",
+  want: ReadonlySet<string>,
+): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(
+    `${rootSel} button`,
+  )) {
+    const value = btn.dataset[key];
+    if (!value) continue;
+    if (btn.classList.contains("is-active") !== want.has(value)) btn.click();
+  }
+}
+
+/** Drive every Filters-drawer control to match the snapshot, through each
+ *  control's normal event path. The area restore is async (boundary fetch);
+ *  callers disable their trigger until this settles. Assigned inside
+ *  map.on("load") once the AreaFilter exists. */
+let applyFilterSnapshot: (s: FilterSnapshot) => Promise<void> = () =>
+  Promise.resolve();
+
+function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
+  return async (s: FilterSnapshot): Promise<void> => {
+    setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
+    setToggleGroup("#model-filter", "model", new Set(s.models));
+    const hideCb = need<HTMLInputElement>("hide-unavailable");
+    if (hideCb.checked !== s.hideUnavailable) {
+      hideCb.checked = s.hideUnavailable;
+      hideCb.dispatchEvent(new Event("change"));
+    }
+    const slider = need<HTMLInputElement>("battery-min");
+    if (slider.value !== String(s.minBattery)) {
+      slider.value = String(s.minBattery);
+      slider.dispatchEvent(new Event("input"));
+    }
+    setQualityFilter(s.quality);
+    await areaFilter.applySelection(s.area);
+  };
 }
 
 function wireClearFilters(): void {
@@ -1167,6 +1258,16 @@ function wireModes(): void {
     applying = true;
     try {
       fn();
+    } finally {
+      applying = false;
+    }
+  };
+  // Async flavor of the same guard for saved-filter loads (their area
+  // restore awaits a boundary fetch; the guard must span the whole chain).
+  withPresetGuard = async (fn) => {
+    applying = true;
+    try {
+      await fn();
     } finally {
       applying = false;
     }

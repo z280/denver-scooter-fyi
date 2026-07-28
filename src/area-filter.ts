@@ -86,6 +86,46 @@ export class AreaFilter {
     }
   }
 
+  /**
+   * Preset entry point: set the whole selection programmatically — enable
+   * state, category, and subset — keeping the drawer's controls in sync,
+   * exactly like toggleRegionFromMap does for map clicks. Async because the
+   * category's boundary polygons may still need fetching; callers should
+   * disable their trigger until this settles. `null` disables the filter.
+   */
+  async applySelection(
+    display: { layer: BoundaryLayer; subset: string[] | null } | null,
+  ): Promise<void> {
+    if (!display) {
+      if (this.enabled || this.el.enable.checked) {
+        this.enabled = false;
+        this.el.enable.checked = false;
+        this.el.body.hidden = true;
+        this.emit(null);
+      }
+      return;
+    }
+    this.enabled = true;
+    this.el.enable.checked = true;
+    this.el.body.hidden = false;
+    if (this.category !== display.layer) {
+      this.el.category.value = display.layer;
+      await this.onCategoryChange();
+    }
+    // v1/v2 (all-or-nothing) are fully selected by the category change; a
+    // null subset on a multi-select layer means the same "whole layer".
+    if (ALL_OR_NOTHING.has(display.layer) || !display.subset) return;
+    this.selected = new Set();
+    for (const cb of this.el.options.querySelectorAll<HTMLInputElement>(
+      "input[type=checkbox]",
+    )) {
+      const on = display.subset.includes(cb.value);
+      cb.checked = on;
+      if (on) this.selected.add(cb.value);
+    }
+    this.recomputeAndEmit();
+  }
+
   private onEnableToggle(): void {
     this.enabled = this.el.enable.checked;
     this.el.body.hidden = !this.enabled;

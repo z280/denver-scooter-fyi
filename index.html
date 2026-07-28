@@ -330,6 +330,17 @@
           </div>
         </section>
 
+        <section class="control-group" aria-labelledby="preset-label">
+          <h3 id="preset-label" class="control-label">Saved filters</h3>
+          <div class="preset-actions" role="group" aria-labelledby="preset-label">
+            <button id="preset-save" class="preset-btn" type="button">💾 Save map filter</button>
+            <button id="preset-load" class="preset-btn" type="button">📂 Load map filter</button>
+          </div>
+          <!-- Save name row / saved-set list, rendered by filter-presets.ts -->
+          <div id="preset-panel"></div>
+          <p class="control-hint">Saved on this device only, for now.</p>
+        </section>
+
         <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
       </div>
     </aside>
