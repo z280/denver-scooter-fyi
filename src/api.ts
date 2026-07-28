@@ -246,8 +246,8 @@ const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
  *  would round. Reimplements map-auth's apiFetch error contract — NO_AUTH,
  *  TOKEN_REJECTED (and clears the stale token), HTTP_ERROR with `status` —
  *  which fetchDevicesAuto's fallback keys off. This lives here rather than as
- *  a raw-text variant in map-auth.js because that file is a verbatim upstream
- *  copy that must not be modified. */
+ *  a raw-text variant in map-auth.js to keep that module to just the session
+ *  store (getAuth/isAuthenticated/signOut) the sign-in doors write to. */
 async function authedGetText(
   path: string,
   signal?: AbortSignal,

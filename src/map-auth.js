@@ -1,15 +1,18 @@
-// map-auth.js — minimal helper for talking to data.scooter.fyi private endpoints.
+// map-auth.js — the browser-side session store for data.scooter.fyi.
 //
-// Pair this with /auth-callback.html. After the OAuth flow, the callback
-// page stashes {token, expires} under sessionStorage["scooter_fyi.map_auth"];
-// this module reads it back and attaches it as a Bearer to fetch() calls.
-//
-// Drop into the denver.scooter.fyi site (or any client that needs map-auth).
-// Zero dependencies, no build step required.
+// Despite the name, the GitHub "map-auth" OAuth flow this file was written
+// for is gone: veo-audit 2661e78 removed /map-auth/denver, /map-auth/callback
+// and /map-auth/logout end to end. What survives is the *storage half*, which
+// is very much load-bearing — a {token, expires} blob under
+// sessionStorage["scooter_fyi.map_auth"] that getAuth()/isAuthenticated()
+// read back. The current sign-in doors (Google, magic link, typed code — see
+// auth-session.ts) write that same blob, so every gated feature keys off this
+// module. The retired redirect sign-in (signIn(), the /auth-callback landing
+// page) has been removed; signOut() now revokes against the live
+// POST /api/v1/auth/signout documented in the backend's API.md.
 
 const STORAGE_KEY = "scooter_fyi.map_auth";
 const API_BASE = "https://data.scooter.fyi";
-const SIGNIN_URL = API_BASE + "/map-auth/denver";
 
 /** Read the stashed auth blob; returns null if missing or expired. */
 export function getAuth() {
@@ -32,57 +35,18 @@ export function isAuthenticated() {
   return getAuth() !== null;
 }
 
-/** Kick off the OAuth flow. After GitHub returns, the user lands on
- *  /auth-callback (this site) and is then redirected to `nextPath`. */
-export function signIn(nextPath = "/") {
-  const ret = encodeURIComponent(
-    location.origin + "/auth-callback?next=" + encodeURIComponent(nextPath)
-  );
-  location.assign(SIGNIN_URL + "?return=" + ret);
-}
-
-/** Best-effort server-side revoke + local clear. */
+/** Best-effort server-side revoke + local clear. The revoke is idempotent
+ *  server-side and "must never fail the client", so a network error or a
+ *  non-2xx is ignored — the local clear below is what the UI keys off. */
 export async function signOut() {
   const auth = getAuth();
   if (auth) {
     try {
-      await fetch(API_BASE + "/map-auth/logout", {
+      await fetch(API_BASE + "/api/v1/auth/signout", {
         method: "POST",
         headers: { "Authorization": "Bearer " + auth.token },
       });
     } catch (e) { /* network error — we still clear locally */ }
   }
   try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
-}
-
-/**
- * fetch wrapper that injects the bearer token. Throws on 401 so the caller
- * can redirect to signIn(). Returns the parsed JSON body on success.
- *
- *   const data = await apiFetch("/api/v1/private/devices/current");
- */
-export async function apiFetch(path, init = {}) {
-  const auth = getAuth();
-  if (!auth) {
-    const err = new Error("not authenticated");
-    err.code = "NO_AUTH";
-    throw err;
-  }
-  const headers = new Headers(init.headers || {});
-  headers.set("Authorization", "Bearer " + auth.token);
-  const resp = await fetch(API_BASE + path, { ...init, headers });
-  if (resp.status === 401) {
-    try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
-    const err = new Error("token rejected");
-    err.code = "TOKEN_REJECTED";
-    throw err;
-  }
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    const err = new Error("HTTP " + resp.status + ": " + text.slice(0, 200));
-    err.code = "HTTP_ERROR";
-    err.status = resp.status;
-    throw err;
-  }
-  return resp.json();
 }
