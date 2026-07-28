@@ -107,7 +107,14 @@ function repositionAboveModeSwitch(banner: HTMLElement): void {
   const modeSwitch = document.getElementById("mode-switch");
   const rect = modeSwitch?.getBoundingClientRect();
   if (!rect || rect.height === 0) return;
-  const gap = 10;
+  // The MODE: notch is an absolutely-positioned ::before hanging above the
+  // bar, so it's not in the rect — clear it too when it's showing (it's
+  // suppressed at <=480px, where the bar can wrap).
+  const notch =
+    modeSwitch && getComputedStyle(modeSwitch, "::before").display !== "none"
+      ? 17
+      : 0;
+  const gap = 10 + notch;
   banner.style.bottom = `${Math.round(window.innerHeight - rect.top + gap)}px`;
 }
 
