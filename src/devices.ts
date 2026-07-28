@@ -226,18 +226,13 @@ export class Devices {
    *  vehicle number without our own API ever exposing plates. */
   private readonly plates = new GbfsPlates();
   /** Session status, pushed in by wireAccount() once /auth/session
-   *  resolves. admin lifts the Start button's proximity gate (issue #18);
-   *  supporter-of-record unlocks the ⌛ History affordance (a supporter
-   *  bonus feature) when it lands. */
+   *  resolves. admin lifts the Start button's proximity gate (issue #18). */
   private adminSession = false;
-  private supporterSession = false;
 
-  /** Update the popup-affecting session status (admin proximity bypass,
-   *  supporter history). Safe to call any time; affects popups opened
-   *  after. */
-  setSessionPerks(admin: boolean, supporter: boolean): void {
+  /** Update the popup-affecting session status (admin proximity bypass).
+   *  Safe to call any time; affects popups opened after. */
+  setSessionPerks(admin: boolean): void {
     this.adminSession = admin;
-    this.supporterSession = supporter;
   }
 
   constructor(
@@ -433,7 +428,7 @@ export class Devices {
           ]);
         }
       }
-      // ✨ Essentials tooltip (supporter bonus): model + battery + quality.
+      // ✨ Essentials tooltip: model + battery + quality.
       if (this.tooltipOn) showMapTooltip(e.originalEvent, props);
     });
     this.map.on("mouseleave", POINT_LAYER, () => {
@@ -642,10 +637,18 @@ export class Devices {
              <textarea class="device-popup__report-desc" rows="2"
                placeholder="What is it? Model, seats, pedals, anything you can tell…"
                aria-label="Describe this vehicle"></textarea>
-             <label class="device-popup__report-photo">
+             ${
+               // The API accepts an anonymous text report but rejects an
+               // anonymous photo (401) — we don't take uploads from
+               // unauthenticated callers. Don't offer a control that's
+               // guaranteed to fail; say why instead.
+               isAuthenticated()
+                 ? `<label class="device-popup__report-photo">
                <input type="file" accept="image/*" capture="environment" />
                <span class="device-popup__report-photo-label">📷 Add a photo</span>
-             </label>
+             </label>`
+                 : `<p class="device-popup__report-signin">Sign in to add a photo — your description sends either way.</p>`
+             }
              <div class="device-popup__report-actions">
                <button type="button" class="device-popup__report-cancel" data-action="report-cancel">Cancel</button>
                <button type="submit" class="device-popup__report-send" data-action="report-submit">Send</button>
@@ -934,7 +937,7 @@ export class Devices {
           ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
                <span class="device-popup__report-device-label">Report a problem</span>
                <div class="device-popup__report-chips">
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="failed_unlock">🚫 Won't unlock</button>
+                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="not_rideable">🚫 Not Rideable</button>
                  <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="dead_battery">🪫 Dead battery</button>
                  <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="damaged">🛴 Damaged</button>
                </div>
@@ -1000,7 +1003,6 @@ export class Devices {
           ${startBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
-          <button type="button" class="device-popup__actbtn" data-action="history" aria-haspopup="dialog">⌛ History<span class="device-popup__sparkle">✨</span></button>
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
 
@@ -1088,20 +1090,6 @@ export class Devices {
             (root) => this.wireRangeToggles(root),
           );
         });
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="history"]')
-        ?.addEventListener("click", () => {
-          const historyBody = this.supporterSession
-            ? `<p class="ranks-modal__hint">⌛ Ride history is coming soon — your past rides will live right here.</p>`
-            : `<p class="ranks-modal__hint">✨ Ride history is a <strong>supporter bonus feature</strong>.</p>
-               <p class="ranks-modal__hint">${
-                 signedIn
-                   ? "A donation — one-time or monthly (Account tab) — makes you a supporter of record for 90 days, and your rides will be waiting here."
-                   : "Sign in via the Account tab and chip in a donation — supporters of record get their ride history here."
-               }</p>`;
-          openFloatingModal("⌛ Ride history", historyBody);
-        });
-
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
       // vehicle.

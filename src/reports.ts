@@ -1,7 +1,7 @@
 // Crowdsourced model reports: when the fleet shows a vehicle whose model we
 // don't recognize ("Veo Unknown"), riders can tell us what it is with a
 // short description and an optional photo. Posts multipart to the API's
-// report-ingestion surface (see docs/API_REQUIREMENTS.md §3 — a new
+// report-ingestion surface (see "Rider reports" in the backend's API.md — a new
 // /reports/model endpoint). Anonymous is allowed; a bearer token rides along
 // when the user happens to be signed in so the report can be weighted.
 
@@ -13,9 +13,13 @@ import { getAuth } from "./map-auth.js";
  *  report — it feeds the reports summary/export but, unlike the others, does
  *  NOT flip has_negative_report / reliability_tier server-side. */
 export type DeviceReportType =
-  | "failed_unlock"
+  /** Renamed from `failed_unlock` (veo-audit sql/037). Broader than "the
+   *  unlock failed" — it is the rider's answer to "could you ride it?",
+   *  matching the "Likely rideable" tier language on the map. */
+  | "not_rideable"
   | "dead_battery"
   | "damaged"
+  | "not_found"
   | "improperly_parked";
 
 export interface DeviceReport {
