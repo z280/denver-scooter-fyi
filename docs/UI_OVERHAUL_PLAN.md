@@ -95,6 +95,22 @@ a ribbon. Desktop shows icon + word; mobile shows icon only.
 4. New `src/chrome.ts` for the top bar, ribbon toggle, and right drawer.
    `main.ts` and `devices.ts` are already flagged as oversized in
    `docs/API_INTEGRATION_PLAN.md` — do not grow them.
+5. **The top bar auto-hides on short viewports (decided).** A fixed top bar
+   plus the enlarged mode bar would sandwich the map to roughly 300px on a
+   landscape phone. Below the existing `@media (max-height: 480px)`
+   threshold — the same one the mode bar already uses — hide the bar and
+   float just the hamburger and profile buttons over the map.
+
+   The logo goes with it, so the brand only appears where there is room for
+   it. Three things this must not break:
+
+   - `--topbar-h` becomes `0` in that state. Everything offsetting from it
+     (`#drawer-tabs`, `.drawer`, `.filter-chips`) has to resolve correctly
+     at zero rather than assuming a positive bar height.
+   - The floating buttons need the same `env(safe-area-inset-*)` clearance
+     the bar had — landscape is exactly where the notch becomes a *side*
+     inset, which is why `viewport-fit=cover` is set in the first place.
+   - The skip-link target (below) must still resolve to something visible.
 
 **Gotchas — these break silently:**
 
@@ -172,11 +188,21 @@ have not shipped:
 | Contributions | reports + photo uploads (`/reports/model` is live) | partial |
 | Favorites | no endpoint exists | undefined |
 
-**Recommendation:** build the shell and all 5 panes now, wire Profile
-fully, and give the other four honest empty states that name what unlocks
-them ("Ride history arrives when tracked rides ship"). That gets the
-navigation right without faking data. See §8 — Favorites in particular
-needs a product decision.
+**Decided:** build the shell and all five panes now, wire Profile fully,
+and give the other four honest empty states that name what unlocks them
+("Ride history arrives when tracked rides ship"). Navigation gets its final
+shape without faking data.
+
+**All five stay visible when signed out (decided)** — the menu never
+changes shape. Each gated pane states what an account unlocks, which is
+also the only honest argument for signing in that this app has. Two
+consequences:
+
+- A gated pane needs *two* empty states, not one: "sign in to see this"
+  and "signed in, but this feature hasn't shipped". Collapsing them into
+  one message will read as broken to a signed-in user.
+- Whatever copy Rides uses must not re-promise what the wizard already
+  over-promises (see §9's last bullet). Say what exists.
 
 ---
 
@@ -257,6 +283,15 @@ option on question 1: *"4. Use existing map filters."*
    still sees the 4th option they were promised; it just selects a filter
    *source*, not a ranking weight. Hide the model sub-picker (`typeRow`)
    when it is chosen.
+
+   **Source: the live map filters, not a saved-set picker (decided).**
+   Option 4 carries whatever was active when the rider entered the mode —
+   so it works for someone who has never saved a set, and §5 does not
+   depend on §4 shipping first. Render a read-only one-line summary of what
+   is being carried beneath the option, built from **the same chip-label
+   helper §4 extracts** ("Astro · ≥50% · Reliable only"). Three consumers,
+   one label source. When nothing is filtered, say so plainly rather than
+   showing an empty line.
 2. Checkbox below the choices; on "Find my ride", persist
    `{ priority, typeChoice }` to `scooter-fyi-ride-prefs` when checked.
    `RideWizard.start()` seeds `this.priority` / `this.typeChoice` from it.
@@ -378,11 +413,26 @@ uniformly.**
    so a "selected" HUD button is never actually seen; what matters is that
    closing the HUD returns the bar to whichever mode was active before.
    `RideHud` exposes no close hook today — add one.
-3. **Relabel.** "Find a ride" and "Ride" are tolerable as a mode and a
-   button; as two sibling entries under `MODE:` they are actively
-   confusing. "Riding" or "Live ride" for the third, and consider ordering
-   the bar as the progression it is — Analysis → Find a ride → Riding —
-   rather than the current arbitrary order.
+3. **Relabel — "Find a ride" becomes "Find wheels" (decided).** The
+   collision is resolved from the first mode's end, not the third's, so
+   🧭 Ride keeps its name. The bar reads **Find wheels / Analysis / Ride**.
+
+   This is a wider copy change than it looks — 13 occurrences, 8 of them
+   user-visible:
+
+   | File | Lines | Visible? |
+   |---|---|---|
+   | `index.html` | 581 (button), 577 (comment) | button only |
+   | `ride-wizard.ts` | 109 (aria-label), 131 (consent copy), 151/172/195/315 (`shell()` titles), 304 ("Find my ride") | all |
+   | `recommend.ts` | 176 (empty state) | yes |
+   | `ride-hud.ts` | 354 (BRB copy), 366 (comment) | 354 only |
+   | `main.ts` | 1105 (comment) | no |
+
+   `ride-wizard.ts:304`'s button is "Find my ride" — decide whether that
+   becomes "Find my wheels" or stays; it reads as a sentence, not a label.
+   Leave `data-mode="ride"`, `body.mode-ride`, and the `RideWizard` class
+   name alone: renaming internals alongside copy turns a one-line change
+   into a refactor with no user-visible benefit.
 
 This also settles the stale comment at main.ts:1108, which claims the Ride
 button "appears" in ride mode; no CSS implements that. Under a three-mode
@@ -401,7 +451,18 @@ Each phase builds and ships on its own.
 4. **Ride prefs** (§5) — depends on §4's serializer for option 4.
 5. **Polish** (§6, §7) — hover gating, popup cleanup, mode bar.
 
-## 9. Open questions
+## 9. Decisions and open questions
+
+### 9.1 Decided
+
+| Question | Decision | Lands in |
+|---|---|---|
+| Option 4's filter source | The live map filters, with a read-only summary line — not a saved-set picker | §5 |
+| Right menu when signed out | All five panes visible and gated; menu never changes shape | §3 |
+| "Find a ride" vs "Ride" collision | Rename the **first** mode to **"Find wheels"**; 🧭 Ride keeps its name | §7.1 |
+| Top bar on short viewports | Auto-hide below `max-height: 480px`; float hamburger + profile | §1.5 |
+
+### 9.2 Still open
 
 - **Favorites is defined in entity but not in shape.**
   `docs/UX_PLAN.md:495-501` (§5.2) specifies favouriting vehicle
