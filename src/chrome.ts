@@ -1,10 +1,9 @@
-// App chrome: the fixed top bar, the collapsible left ribbon, the account
-// drawer's pane nav, and popup cleanup on mode switches. The ribbon is the
-// existing #drawer-tabs strip — this module only gives it an open/closed
-// state (body.ribbon-open) driven by the top bar's hamburger; wireDrawers()
-// in main.ts keeps owning the tabs themselves.
-
-import { isAuthenticated } from "./map-auth.js";
+// App chrome: the fixed top bar, the collapsible left ribbon, and popup
+// cleanup on mode switches. The ribbon is the existing #drawer-tabs strip —
+// this module only gives it an open/closed state (body.ribbon-open) driven
+// by the top bar's hamburger; wireDrawers() in main.ts keeps owning the
+// tabs themselves (including the top bar's profile button, which drives
+// the right-side account drawer).
 
 const RIBBON_KEY = "scooter-fyi-ribbon";
 
@@ -108,64 +107,4 @@ export function initChrome(): void {
   hamburger?.addEventListener("click", () => {
     setRibbonOpen(!isRibbonOpen(), { persist: true });
   });
-
-  wireAccountPanes();
-}
-
-/** The account drawer's five panes behind its icon nav. Only Profile has
- *  data today; each gated pane carries TWO empty states — "sign in to get
- *  this" and "signed in, but this hasn't shipped" — because collapsing them
- *  into one message reads as broken to whichever audience it wasn't written
- *  for. Auth state only changes via reload (wireAccount reloads on sign-in
- *  and sign-out), so syncing at init + on window focus mirrors
- *  wireAccount()'s own refresh cadence. */
-function wireAccountPanes(): void {
-  const tabs = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(".account-tab"),
-  );
-  if (tabs.length === 0) return;
-  const panes = Array.from(
-    document.querySelectorAll<HTMLElement>(".account-pane"),
-  );
-
-  // Real tab semantics (tablist/tab/tabpanel): aria-selected + a roving
-  // tabindex, with arrow keys moving the selection — five toggles announced
-  // via aria-pressed would read as independent switches, not one choice.
-  const select = (tab: HTMLButtonElement): void => {
-    for (const t of tabs) {
-      const on = t === tab;
-      t.classList.toggle("is-active", on);
-      t.setAttribute("aria-selected", String(on));
-      t.tabIndex = on ? 0 : -1;
-    }
-    for (const p of panes) p.hidden = p.dataset.pane !== tab.dataset.pane;
-  };
-  tabs.forEach((tab, i) => {
-    tab.addEventListener("click", () => select(tab));
-    tab.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = tabs[(i + 1) % tabs.length];
-        next.focus();
-        select(next);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = tabs[(i - 1 + tabs.length) % tabs.length];
-        prev.focus();
-        select(prev);
-      }
-    });
-  });
-
-  const syncGated = (): void => {
-    const authed = isAuthenticated();
-    for (const p of panes) {
-      const signin = p.querySelector<HTMLElement>(".account-pane__signin");
-      const signedin = p.querySelector<HTMLElement>(".account-pane__signedin");
-      if (signin) signin.hidden = authed;
-      if (signedin) signedin.hidden = !authed;
-    }
-  };
-  syncGated();
-  window.addEventListener("focus", syncGated);
 }
