@@ -1,7 +1,10 @@
-// Ambient types for the hand-written, drop-in map-auth.js helper.
-// The .js file is verbatim from veo-audit/scripts/client/map-auth.js and
-// must not be modified (per AGENT_INSTRUCTIONS.md); these declarations live
-// alongside it so the TS app can import it with type safety.
+// Ambient types for the hand-written map-auth.js session store.
+//
+// This used to be a verbatim copy of veo-audit/scripts/client/map-auth.js,
+// kept unmodified per that repo's AGENT_INSTRUCTIONS.md. Upstream deleted
+// the whole scripts/client/ drop-in set in 2661e78 along with the
+// /map-auth/* routes, so there is no longer an upstream to stay in sync
+// with and the file is now maintained here.
 
 export interface AuthBlob {
   token: string;
@@ -9,16 +12,6 @@ export interface AuthBlob {
   issued_at: string;
 }
 
-export interface ApiError extends Error {
-  code: "NO_AUTH" | "TOKEN_REJECTED" | "HTTP_ERROR";
-  status?: number;
-}
-
 export function getAuth(): AuthBlob | null;
 export function isAuthenticated(): boolean;
-export function signIn(nextPath?: string): void;
 export function signOut(): Promise<void>;
-export function apiFetch<T = unknown>(
-  path: string,
-  init?: RequestInit,
-): Promise<T>;
