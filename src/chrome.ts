@@ -69,11 +69,17 @@ function applyRibbon(open: boolean): void {
 }
 
 /** Programmatic ribbon control — setDrawer() opens the ribbon before it
- *  synthesizes tab clicks, so a drawer never opens out of a hidden strip. */
-export function setRibbonOpen(open: boolean): void {
+ *  synthesizes tab clicks, so a drawer never opens out of a hidden strip.
+ *  Programmatic opens do NOT persist: only the hamburger records a
+ *  preference, otherwise one tap of Analysis (which auto-opens the ribbon
+ *  for its drawer) would permanently override the mobile closed default. */
+export function setRibbonOpen(
+  open: boolean,
+  opts?: { persist?: boolean },
+): void {
   if (document.body.classList.contains("ribbon-open") === open) return;
   applyRibbon(open);
-  persistRibbon(open);
+  if (opts?.persist) persistRibbon(open);
 }
 
 export function isRibbonOpen(): boolean {
@@ -100,7 +106,7 @@ export function initChrome(): void {
   applyRibbon(open);
 
   hamburger?.addEventListener("click", () => {
-    setRibbonOpen(!isRibbonOpen());
+    setRibbonOpen(!isRibbonOpen(), { persist: true });
   });
 
   wireAccountPanes();
