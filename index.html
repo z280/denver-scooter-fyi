@@ -618,8 +618,8 @@
         <button class="drawer-close" type="button" aria-label="Close Account">&times;</button>
       </header>
       <div class="drawer-body">
-        <nav class="account-nav" aria-label="Account sections">
-          <button class="account-tab is-active" type="button" data-pane="profile" aria-pressed="true">
+        <div class="account-nav" role="tablist" aria-label="Account sections">
+          <button class="account-tab is-active" type="button" role="tab" id="account-tab-profile" data-pane="profile" aria-selected="true" aria-controls="account-pane-profile" tabindex="0">
             <!-- Person -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -627,7 +627,7 @@
             </svg>
             <span class="account-tab__label">Profile</span>
           </button>
-          <button class="account-tab" type="button" data-pane="rides" aria-pressed="false">
+          <button class="account-tab" type="button" role="tab" id="account-tab-rides" data-pane="rides" aria-selected="false" aria-controls="account-pane-rides" tabindex="-1">
             <!-- Route pin-to-pin -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="6" cy="19" r="3" />
@@ -636,7 +636,7 @@
             </svg>
             <span class="account-tab__label">Rides</span>
           </button>
-          <button class="account-tab" type="button" data-pane="rankings" aria-pressed="false">
+          <button class="account-tab" type="button" role="tab" id="account-tab-rankings" data-pane="rankings" aria-selected="false" aria-controls="account-pane-rankings" tabindex="-1">
             <!-- Award ribbon -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="8" r="6" />
@@ -644,7 +644,7 @@
             </svg>
             <span class="account-tab__label">Rankings</span>
           </button>
-          <button class="account-tab" type="button" data-pane="contributions" aria-pressed="false" aria-label="Contributions">
+          <button class="account-tab" type="button" role="tab" id="account-tab-contributions" data-pane="contributions" aria-selected="false" aria-controls="account-pane-contributions" tabindex="-1" aria-label="Contributions">
             <!-- Camera -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -652,22 +652,22 @@
             </svg>
             <span class="account-tab__label">Contrib.</span>
           </button>
-          <button class="account-tab" type="button" data-pane="favorites" aria-pressed="false">
+          <button class="account-tab" type="button" role="tab" id="account-tab-favorites" data-pane="favorites" aria-selected="false" aria-controls="account-pane-favorites" tabindex="-1">
             <!-- Heart -->
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
             <span class="account-tab__label">Favorites</span>
           </button>
-        </nav>
+        </div>
 
-        <section class="account-pane" data-pane="profile">
+        <section class="account-pane" role="tabpanel" id="account-pane-profile" aria-labelledby="account-tab-profile" data-pane="profile">
           <section class="control-group" id="account-body" aria-live="polite">
             <!-- populated by wireAccount() in main.ts -->
           </section>
         </section>
 
-        <section class="account-pane" data-pane="rides" hidden>
+        <section class="account-pane" role="tabpanel" id="account-pane-rides" aria-labelledby="account-tab-rides" data-pane="rides" hidden>
           <h3 class="control-label">Rides</h3>
           <p class="account-pane__empty account-pane__signin">
             Ride history arrives when tracked rides ship. An account will
@@ -679,19 +679,20 @@
           </p>
         </section>
 
-        <section class="account-pane" data-pane="rankings" hidden>
+        <section class="account-pane" role="tabpanel" id="account-pane-rankings" aria-labelledby="account-tab-rankings" data-pane="rankings" hidden>
           <h3 class="control-label">Rankings</h3>
           <p class="account-pane__empty account-pane__signin">
-            The points leaderboard hasn't shipped yet. Signing in is what
-            will put your contributions on it.
+            Sign in and your reports earn points right away — the ledger
+            already runs server-side. This pane shows the cross-rider
+            leaderboard once that exists.
           </p>
           <p class="account-pane__empty account-pane__signedin" hidden>
-            The points leaderboard hasn't shipped yet — your reports will
-            count toward it once it does.
+            Your points are already accruing server-side. This pane shows
+            the cross-rider leaderboard once that exists.
           </p>
         </section>
 
-        <section class="account-pane" data-pane="contributions" hidden>
+        <section class="account-pane" role="tabpanel" id="account-pane-contributions" aria-labelledby="account-tab-contributions" data-pane="contributions" hidden>
           <h3 class="control-label">Contributions</h3>
           <p class="account-pane__empty account-pane__signin">
             Sign in to collect the reports and photos you send — model
@@ -699,12 +700,13 @@
             🚫 Not Rideable already work from any device popup.
           </p>
           <p class="account-pane__empty account-pane__signedin" hidden>
-            Your sent reports and photos will be listed here soon. Sending
-            them already works from any device popup.
+            The backend already serves your uploaded photos; this list is
+            the next thing to wire up. Sending reports and photos works
+            from any device popup today.
           </p>
         </section>
 
-        <section class="account-pane" data-pane="favorites" hidden>
+        <section class="account-pane" role="tabpanel" id="account-pane-favorites" aria-labelledby="account-tab-favorites" data-pane="favorites" hidden>
           <h3 class="control-label">Favorites</h3>
           <p class="account-pane__empty account-pane__signin">
             Favorites will let you pin the models and plates you trust and

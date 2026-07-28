@@ -128,17 +128,34 @@ function wireAccountPanes(): void {
     document.querySelectorAll<HTMLElement>(".account-pane"),
   );
 
+  // Real tab semantics (tablist/tab/tabpanel): aria-selected + a roving
+  // tabindex, with arrow keys moving the selection — five toggles announced
+  // via aria-pressed would read as independent switches, not one choice.
   const select = (tab: HTMLButtonElement): void => {
     for (const t of tabs) {
       const on = t === tab;
       t.classList.toggle("is-active", on);
-      t.setAttribute("aria-pressed", String(on));
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
     }
     for (const p of panes) p.hidden = p.dataset.pane !== tab.dataset.pane;
   };
-  for (const tab of tabs) {
+  tabs.forEach((tab, i) => {
     tab.addEventListener("click", () => select(tab));
-  }
+    tab.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = tabs[(i + 1) % tabs.length];
+        next.focus();
+        select(next);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = tabs[(i - 1 + tabs.length) % tabs.length];
+        prev.focus();
+        select(prev);
+      }
+    });
+  });
 
   const syncGated = (): void => {
     const authed = isAuthenticated();

@@ -743,14 +743,13 @@ body:not(.ribbon-open) .drawer-tabs {
      it would otherwise sit on top of — not beside — the expanded text. */
   transform: translate(-50%, calc(-1 * var(--freshness-lift, 0px)));
   transition: transform 0.15s ease;
-  /* Above drawers (30) and the tab strip (32) — unlike filter-chips/
-     icon-legend (25/26), which are fine hiding under an open drawer since
-     they're redundant with it, this is primary navigation (Find wheels /
-     Analysis / Ride) that must stay reachable while a drawer is open. A
-     drawer's max-height reaches nearly full viewport height, so on a short
-     (landscape-phone) viewport its centered x-range overlapped this pill
-     underneath it and swallowed taps. */
-  z-index: 33;
+  /* UNDER the wizard (28) and the drawers (30/31), above chips and the
+     icon legend (25/26). Flipped from the original above-everything choice
+     by maintainer direction on PR #37: any open panel — Find wheels,
+     Filters, Account — wins the overlap, and you close it to get back to
+     the mode bar. The known cost (accepted): on a short viewport a
+     nearly-full-height drawer can cover the bar until it's closed. */
+  z-index: 27;
   display: flex;
   /* Explicit shrink-to-fit: this is a fixed-position flex row with no
      intrinsic width constraint from a parent, which some engines size more
