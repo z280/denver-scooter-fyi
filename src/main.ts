@@ -1594,7 +1594,7 @@ function wireAccount(): void {
       }
 
       // Email sign-in (Postmark) — the only door for now. Two independent
-      // ways to finish, each its own email (matching the veo-audit backend):
+      // ways to finish, each its own email (matching the scooter-fyi-api backend):
       //   • a typed AA000AA code (POST /auth/code → /auth/code/verify), the
       //     in-tab default; and
       //   • a magic link (POST /auth/magic-link), redeemed on return by

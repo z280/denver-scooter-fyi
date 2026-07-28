@@ -27,7 +27,7 @@ reports, and the issuing IP and user-agent on sessions. The authoritative,
 machine-readable retention policy is `GET /api/v1/meta/privacy`.
 
 - **Live site:** https://denver.scooter.fyi
-- **Data API contract:** https://github.com/z280/veo-audit/blob/main/API.md
+- **Data API contract:** https://github.com/z280/scooter-fyi-api/blob/main/API.md
 
 ## Features
 
@@ -218,5 +218,5 @@ scripts/           build-basemap.sh (regenerate + republish the pmtiles)
 
 Historical playback and alerting. Everything stateful — accounts, reports,
 rides, points, profiles — lives in the **data.scooter.fyi** backend
-([veo-audit](https://github.com/z280/veo-audit)); this repo is only its
+([scooter-fyi-api](https://github.com/z280/scooter-fyi-api)); this repo is only its
 frontend and contains no server code.

@@ -77,7 +77,7 @@ const OUTLIER_RISK_HOURS = 48;
  *  scooter that doesn't start — asymmetric costs, asymmetric leniency. */
 const UNKNOWN_DWELL_RATIO = 2;
 
-/** Mirror of the API's recalibrated reliability formula (veo-audit
+/** Mirror of the API's recalibrated reliability formula (scooter-fyi-api
  *  src/quality.py, compute_reliability_tier) — first-match-wins:
  *
  *  high_risk: live negative report; ≥2 failed starts; 1 failed start

@@ -1,6 +1,6 @@
 // Sign-in capabilities, fetched once from the backend's single source of
 // truth: GET /api/v1/auth/config → { google_client_id, google_enabled,
-// magic_link_enabled, code_enabled } (veo-audit API.md §2). The frontend
+// magic_link_enabled, code_enabled } (scooter-fyi-api API.md §2). The frontend
 // renders the Google door — and initializes GIS with the returned client id —
 // straight from this, so "is Google on?" lives in exactly one place (the
 // server) instead of a hardcoded frontend flag that can drift from it.

@@ -13,7 +13,7 @@ import { getAuth } from "./map-auth.js";
  *  report — it feeds the reports summary/export but, unlike the others, does
  *  NOT flip has_negative_report / reliability_tier server-side. */
 export type DeviceReportType =
-  /** Renamed from `failed_unlock` (veo-audit sql/037). Broader than "the
+  /** Renamed from `failed_unlock` (scooter-fyi-api sql/037). Broader than "the
    *  unlock failed" — it is the rider's answer to "could you ride it?",
    *  matching the "Likely rideable" tier language on the map. */
   | "not_rideable"

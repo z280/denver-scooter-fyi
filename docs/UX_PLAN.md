@@ -516,7 +516,7 @@ privilege.
 
 ---
 
-## Appendix — API repo work plan (currently `veo-audit`)
+## Appendix — API repo work plan (`scooter-fyi-api`)
 
 Everything the backend needs, grouped by the frontend phase it unblocks.
 This belongs in the API repo's own planning doc; it's consolidated here so
@@ -560,16 +560,17 @@ the two repos can be sequenced together.
   favorite-device-types spec), computed `badges` on the profile response.
   No `supporter` field.
 
-**On renaming the repo:** `veo-audit` described the scraper; the repo is
-becoming the platform behind scooter.fyi — auth, profiles, reports, *and*
-the audit. Two considerations: (a) the name should match what it serves
+**On renaming the repo — done.** The API repo is now **`scooter-fyi-api`**
+(was `veo-audit`). The old name described the scraper; the repo had become
+the platform behind scooter.fyi — auth, profiles, reports, *and* the audit.
+Two reasons it moved: (a) the name should match what it serves
 (`data.scooter.fyi`), and (b) when journalists or DOTI cite the data
 source, a neutral name reads as infrastructure while "veo-audit" reads as
-a grudge. Suggested: **`scooter-fyi-api`** (clear, matches the domain), or
-`scooter-fyi-platform` if it will also own cron/scraping/exports. GitHub
-auto-redirects old clone URLs and links after a rename, so the cost is
-near zero; keep "Veo Audit" as the public-facing *report/dataset* name
-where the adversarial framing is the point.
+a grudge. (`scooter-fyi-platform` was the alternative had it also taken on
+cron/scraping/exports.) GitHub auto-redirects old clone URLs and links
+after a rename, so nothing broke — but stale references are still worth
+correcting on sight. "Veo Audit" stays as the public-facing
+*report/dataset* name, where the adversarial framing is the point.
 
 ---
 
