@@ -20,8 +20,9 @@ Vanilla TS + Vite, no framework. Three files carry the UI:
   Recommended, Areas, Tools, Compliance, Account/`person`), each with a
   sibling `<aside class="drawer" id="drawer-*">`. The mode bar is
   `<div id="mode-switch">` with three buttons — two `[data-mode]` (`ride`,
-  `analysis`) plus `#ride-open` (🧭 Ride), which opens the HUD and is *not*
-  a mode.
+  `analysis`) plus `#ride-open` (🧭 Ride), which opens the full-screen HUD.
+  The markup treats that third button as an action rather than a mode; §7.1
+  argues the markup is wrong.
 - **`src/main.ts`** (1.8k lines) — `need(id)` lookups plus a `wire*()`
   function per control group. Filter state lives in module-scope variables
   (`rideTypesOn`, `modelsOn`, `minBatteryPct`, `qualityOn`, `lastAreaState`)
@@ -265,9 +266,9 @@ file-folder notch at the top-left reading `MODE:` in small caps.
   positioned above the bar with only the top corners rounded.
 - **`border-radius: 999px` fights a folder tab.** Drop the bar to ~14–16px
   so the notch reads as a tab rather than a bump on a pill.
-- **`#ride-open` is inside `#mode-switch` but is not a mode.** Style the
-  selected-item border off `.mode-btn[data-mode].is-active` only, or the
-  🧭 Ride button will look like a third mode under a "MODE:" label.
+- **`#ride-open` carries `.mode-btn` but has no `data-mode`.** Do not paper
+  over that with a `[data-mode]`-scoped selector — fix the model instead.
+  See §7.1.
 - **`@media (max-width: 480px)` sets `flex-wrap: wrap`.** A notch anchored
   to the top-left of a two-row bar looks broken. Either suppress the notch
   at that breakpoint or stop the bar wrapping.
@@ -278,6 +279,49 @@ file-folder notch at the top-left reading `MODE:` in small caps.
 - Silver gradient needs a **dark-theme variant** (gunmetal) — define both
   under the existing `[data-theme]` token blocks, and keep the selected
   border at ≥3:1 contrast against the gradient in both themes.
+
+### 7.1 There are three modes, not two
+
+The current markup says the mode bar holds two modes plus an action button.
+That is an implementation detail leaking into the product. What the 🧭 Ride
+button actually does:
+
+- opens `.ride-hud` — `position: fixed; inset: 0; z-index: 50`, which
+  covers the mode bar itself (z-33) and every other piece of chrome;
+- requests genuine fullscreen (`exitImmersive()` → `document.exitFullscreen`);
+- paints its own solid background and runs its own ☀/☾ theme control;
+- guards its exit behind a confirmation dialog — "Leave the ride view?"
+  with End Ride / BRB / Cancel.
+
+By every test a user can apply, that is a bigger mode change than
+Find-a-ride → Analysis, which at least share one map. Putting a `MODE:`
+label on the bar and then styling one of its three buttons as not-a-mode
+would be the wrong lesson to draw from the markup. **Treat all three
+uniformly.**
+
+**Give `#ride-open` a real `data-mode`** (`riding`). Then:
+
+1. **Watch for a double listener.** `wireRideHud()` (top-level, main.ts:286)
+   already binds a click handler to `#ride-open`, while `wireModes()`
+   (inside `map.on("load")`) binds to `#mode-switch .mode-btn[data-mode]`.
+   Adding the attribute makes the second query match it, so one tap would
+   open the HUD *and* fall into the click handler's `else` branch —
+   `applyPreset(applyAnalysis)` — resetting the map behind the HUD. Move
+   the HUD's binding into `wireModes()` as an explicit third branch, and
+   pass the `RideHud` handle in.
+2. **Restore the prior mode on exit.** The HUD hides the bar while it's up,
+   so a "selected" HUD button is never actually seen; what matters is that
+   closing the HUD returns the bar to whichever mode was active before.
+   `RideHud` exposes no close hook today — add one.
+3. **Relabel.** "Find a ride" and "Ride" are tolerable as a mode and a
+   button; as two sibling entries under `MODE:` they are actively
+   confusing. "Riding" or "Live ride" for the third, and consider ordering
+   the bar as the progression it is — Analysis → Find a ride → Riding —
+   rather than the current arbitrary order.
+
+This also settles the stale comment at main.ts:1108, which claims the Ride
+button "appears" in ride mode; no CSS implements that. Under a three-mode
+model, always-visible is correct and the comment is what is wrong.
 
 ---
 
