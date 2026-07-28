@@ -75,7 +75,7 @@ export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEn
 // GOOGLE_OAUTH_CLIENT_ID constants were removed so the two can't drift.
 
 /** Admin allowlist for the Google sign-in gate (see
- *  docs/API_REQUIREMENTS.md §2.2), kept here for reference / parity with the
+ *  the backend's API.md), kept here for reference / parity with the
  *  server config. The binding decision is enforced SERVER-SIDE: the API
  *  verifies the Google token and, for a verified email on this list, stamps
  *  the session's `admin` scope. The frontend trusts only that scope (see

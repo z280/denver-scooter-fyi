@@ -1,7 +1,7 @@
 // Email sign-in — magic link + verification code (Postmark-delivered).
 //
 // Two independent doors on the same email, matching the veo-audit backend
-// (see its API.md / API_REQUIREMENTS.md §2.3). Each sends its OWN email:
+// (see the backend's API.md, "Accounts & sessions"). Each sends its OWN email:
 //   • Link door:
 //       1. requestMagicLink(email) → POST /api/v1/auth/magic-link → 202. The
 //          API emails a one-time link like
