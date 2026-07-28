@@ -123,13 +123,11 @@ the strip stays icon-only, exactly as it looks today.
      the bar had — landscape is exactly where the notch becomes a *side*
      inset, which is why `viewport-fit=cover` is set in the first place.
    - The skip-link target (below) must still resolve to something visible.
-   - **Crossing the threshold changes the map container's height, so it
-     needs `map.resize()`.** Rotating a phone crosses it constantly. This
-     codebase already carries a defensive rAF polling guard in
-     `map.ts:createMap` because MapLibre's own `ResizeObserver` has been
-     unreliable for exactly this class of layout-driven resize — don't
-     assume it will catch this one. Hook the media-query `change` listener
-     that toggles the bar, and resize from there.
+   - **No `map.resize()` is needed here** — `#map` is
+     `position: fixed; inset: 0; height: 100dvh`, so every piece of chrome
+     floats over a full-bleed map and hiding the bar never changes the map's
+     box. (An earlier draft of this plan claimed a resize was required. It
+     isn't; noted here so it doesn't get re-added.)
 
 **Gotchas — these break silently:**
 
