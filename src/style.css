@@ -1519,7 +1519,10 @@ body:not(.ribbon-open) .drawer-tabs {
   position: fixed;
   bottom: max(12px, env(safe-area-inset-bottom));
   right: max(12px, env(safe-area-inset-right));
-  z-index: 30;
+  /* A passive status readout: below the wizard (28) and drawers (30/31),
+     like the mode bar (27) — any open panel wins the overlap. (It sat at
+     30 and painted over the Find wheels wizard on landscape phones.) */
+  z-index: 27;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2605,7 +2608,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   max-width: 560px;
   max-height: 86dvh;
   overflow-y: auto;
-  z-index: 28; /* over the map (0), under drawers (30) and the mode pill (33) */
+  z-index: 28; /* over the map (0), mode bar and freshness pill (27); under drawers (30/31) */
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
