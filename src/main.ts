@@ -1233,7 +1233,7 @@ function wireModes(): void {
     onExit: () => exitRide(),
     onLoginHint: () => {
       const tab = document.querySelector<HTMLButtonElement>(
-        '.drawer-tab[data-drawer="person"]',
+        '.drawer-tab[data-drawer="account"]',
       );
       if (tab && !tab.classList.contains("is-active")) tab.click();
     },

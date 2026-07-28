@@ -1,8 +1,10 @@
-// App chrome: the fixed top bar, the collapsible left ribbon, and popup
-// cleanup on mode switches. The ribbon is the existing #drawer-tabs strip —
-// this module only gives it an open/closed state (body.ribbon-open) driven
-// by the top bar's hamburger; wireDrawers() in main.ts keeps owning the
-// tabs themselves.
+// App chrome: the fixed top bar, the collapsible left ribbon, the account
+// drawer's pane nav, and popup cleanup on mode switches. The ribbon is the
+// existing #drawer-tabs strip — this module only gives it an open/closed
+// state (body.ribbon-open) driven by the top bar's hamburger; wireDrawers()
+// in main.ts keeps owning the tabs themselves.
+
+import { isAuthenticated } from "./map-auth.js";
 
 const RIBBON_KEY = "scooter-fyi-ribbon";
 
@@ -95,4 +97,47 @@ export function initChrome(): void {
   hamburger?.addEventListener("click", () => {
     setRibbonOpen(!isRibbonOpen());
   });
+
+  wireAccountPanes();
+}
+
+/** The account drawer's five panes behind its icon nav. Only Profile has
+ *  data today; each gated pane carries TWO empty states — "sign in to get
+ *  this" and "signed in, but this hasn't shipped" — because collapsing them
+ *  into one message reads as broken to whichever audience it wasn't written
+ *  for. Auth state only changes via reload (wireAccount reloads on sign-in
+ *  and sign-out), so syncing at init + on window focus mirrors
+ *  wireAccount()'s own refresh cadence. */
+function wireAccountPanes(): void {
+  const tabs = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".account-tab"),
+  );
+  if (tabs.length === 0) return;
+  const panes = Array.from(
+    document.querySelectorAll<HTMLElement>(".account-pane"),
+  );
+
+  const select = (tab: HTMLButtonElement): void => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-pressed", String(on));
+    }
+    for (const p of panes) p.hidden = p.dataset.pane !== tab.dataset.pane;
+  };
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => select(tab));
+  }
+
+  const syncGated = (): void => {
+    const authed = isAuthenticated();
+    for (const p of panes) {
+      const signin = p.querySelector<HTMLElement>(".account-pane__signin");
+      const signedin = p.querySelector<HTMLElement>(".account-pane__signedin");
+      if (signin) signin.hidden = authed;
+      if (signedin) signedin.hidden = !authed;
+    }
+  };
+  syncGated();
+  window.addEventListener("focus", syncGated);
 }
