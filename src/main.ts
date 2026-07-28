@@ -16,6 +16,7 @@ import {
   gaugeColor,
   iconPreviewURL,
   whenModelIconsReady,
+  hideMapTooltip,
   type RideType,
   type ModelKey,
   type QualityFilter,
@@ -65,6 +66,13 @@ import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
+import {
+  initChrome,
+  setRibbonOpen,
+  closeAllPopups,
+  registerPopupCloser,
+} from "./chrome.ts";
+import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -75,9 +83,11 @@ function need<T extends HTMLElement>(id: string): T {
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
 const { map, geolocate } = createMap("map", theme0);
-// Added AFTER createMap (which registers geolocate in top-right) so the
-// theme toggle stacks directly below the location control.
-map.addControl(new ThemeControl(theme0), "top-right");
+// Added AFTER createMap (which registers geolocate in top-left) so the
+// theme toggle sits directly right of the location control once chrome.ts
+// adopts the corner into the top bar.
+map.addControl(new ThemeControl(theme0), "top-left");
+initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
@@ -114,6 +124,10 @@ const clusters = new Clusters(
   need<HTMLSelectElement>("cluster-region-layer"),
   overlays,
 );
+// Mode switches sweep every open floating surface (closeAllPopups).
+registerPopupCloser(() => devices.closePopup());
+registerPopupCloser(() => clusters.closePopup());
+registerPopupCloser(hideMapTooltip);
 
 // Populated by buildLayerToggles so AreaFilter can programmatically check
 // the matching overlay box when the user picks a category.
@@ -136,6 +150,7 @@ let clearRideTypeFilter: () => void = () => {};
 let clearModelFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
+let setQualityFilter: (value: QualityFilter) => void = () => {};
 let resetAllFilters: () => void = () => {};
 let resetIconography: () => void = () => {};
 // Ride mode fetches the lean payload (the API's low-end-phone diet); the
@@ -158,7 +173,10 @@ const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "ok-only": "✓ Reliable only",
 };
 
-function refreshChips(): void {
+/** One entry per live constraint — the chip label plus its clear hook.
+ *  Three consumers, one label source: the floating chips, the preset name
+ *  suggestion, and the wizard's carried-filters summary. */
+function activeFilterChips(): Chip[] {
   const active: Chip[] = [];
 
   if (rideTypesOn.size < ALL_RIDE_TYPES.length) {
@@ -226,7 +244,24 @@ function refreshChips(): void {
     });
   }
 
-  chips.render(active);
+  return active;
+}
+
+function refreshChips(): void {
+  chips.render(activeFilterChips());
+}
+
+/** Human one-liner of the live filters, emoji stripped — "Standing only ·
+ *  ≥ 50% · Reliable only". Empty string when nothing is filtered. */
+function filterSummary(): string {
+  return activeFilterChips()
+    .map((c) =>
+      c.label
+        .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join(" · ");
 }
 
 // Kick off network-independent work immediately so dots/compliance arrive fast.
@@ -240,7 +275,7 @@ void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
 wireAccount();
-wireRideHud();
+const rideHud = wireRideHud();
 startSunSync();
 wireFreshnessCollapse();
 initInstallPrompt();
@@ -281,9 +316,11 @@ function equityZones(): Promise<IndexedFeature[]> {
   return equityZonesCache;
 }
 
-function wireRideHud(): void {
-  const hud = new RideHud(need("ride-hud"), equityZones, map, devices);
-  need("ride-open").addEventListener("click", () => hud.open());
+// The 🧭 Ride button (data-mode="riding") is bound in wireModes() alongside
+// the other two modes — a separate binding here would double-fire once the
+// mode-bar query matches it.
+function wireRideHud(): RideHud {
+  return new RideHud(need("ride-hud"), equityZones, map, devices);
 }
 
 // ---------- Sun-synced theme ----------
@@ -322,7 +359,13 @@ map.on("load", async () => {
   wireHexDensity();
   wireDrawers();
   const areaFilter = wireAreaFilter();
+  applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
   wireModes();
+  wireFilterPresets({
+    snapshot: snapshotFilters,
+    apply: (s) => applyFilterSnapshot(s),
+    suggestName: () => filterSummary() || "All devices",
+  });
   wireEquityRanks();
 
   // Direct manipulation: clicking a visible region polygon toggles it in
@@ -528,7 +571,66 @@ function wireQuality(): void {
       refreshChips();
     },
   );
+  setQualityFilter = (value) => set(value);
   clearQualityFilter = () => set("any");
+}
+
+// ---------- Filter snapshots (saved presets + ride-mode carry-over) ----------
+
+/** Capture exactly what the Filters drawer owns. Area keeps only the
+ *  display selection — polygons re-resolve on apply. */
+function snapshotFilters(): FilterSnapshot {
+  const display = lastAreaState?.display;
+  return {
+    rideTypes: [...rideTypesOn],
+    models: [...modelsOn],
+    hideUnavailable: need<HTMLInputElement>("hide-unavailable").checked,
+    minBattery: minBatteryPct,
+    quality: qualityOn,
+    area: display ? { layer: display.layer, subset: display.subset } : null,
+  };
+}
+
+/** Click each multi-toggle member into the wanted state so the group's own
+ *  handler (and the whole map→clusters→chips sync path) runs normally. */
+function setToggleGroup(
+  rootSel: string,
+  key: "ride" | "model",
+  want: ReadonlySet<string>,
+): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(
+    `${rootSel} button`,
+  )) {
+    const value = btn.dataset[key];
+    if (!value) continue;
+    if (btn.classList.contains("is-active") !== want.has(value)) btn.click();
+  }
+}
+
+/** Drive every Filters-drawer control to match the snapshot, through each
+ *  control's normal event path. The area restore is async (boundary fetch);
+ *  callers disable their trigger until this settles. Assigned inside
+ *  map.on("load") once the AreaFilter exists. */
+let applyFilterSnapshot: (s: FilterSnapshot) => Promise<void> = () =>
+  Promise.resolve();
+
+function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
+  return async (s: FilterSnapshot): Promise<void> => {
+    setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
+    setToggleGroup("#model-filter", "model", new Set(s.models));
+    const hideCb = need<HTMLInputElement>("hide-unavailable");
+    if (hideCb.checked !== s.hideUnavailable) {
+      hideCb.checked = s.hideUnavailable;
+      hideCb.dispatchEvent(new Event("change"));
+    }
+    const slider = need<HTMLInputElement>("battery-min");
+    if (slider.value !== String(s.minBattery)) {
+      slider.value = String(s.minBattery);
+      slider.dispatchEvent(new Event("input"));
+    }
+    setQualityFilter(s.quality);
+    await areaFilter.applySelection(s.area);
+  };
 }
 
 function wireClearFilters(): void {
@@ -656,7 +758,7 @@ function wireIconography(): void {
   const gauge = need<HTMLInputElement>("gauge-toggle");
 
   // Local mirrors of the devices-side iconography state, for rendering.
-  let style: IconStyle = "use";
+  let style: IconStyle = "data"; // default per Zeke (PR #37)
   let modelIcon: ModelIcon = "comic";
   let iconData: DataSource = "reliability";
   let gaugeData: DataSource = "battery";
@@ -807,11 +909,16 @@ function wireIconography(): void {
   };
 
   // On-map legend: every icon + gauge-ring permutation for the current
-  // settings, docked below the tab-strip menu; hover for descriptions.
+  // settings, docked below the ribbon; hover for descriptions. A collapsed
+  // ribbon's rect is parked off-screen, so the legend hangs from the top
+  // bar instead.
   const positionLegend = (): void => {
     const tabs = document.getElementById("drawer-tabs");
-    if (!tabs) return;
-    const rect = tabs.getBoundingClientRect();
+    const topbar = document.getElementById("topbar");
+    const anchor =
+      document.body.classList.contains("ribbon-open") && tabs ? tabs : topbar;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
     legendEl.style.top = `${Math.round(rect.bottom + 10)}px`;
   };
   const renderLegend = (): void => {
@@ -915,11 +1022,34 @@ function wireIconography(): void {
     },
   );
   // 📐 Design Options.
+  let gaugeDisplayOn: GaugeDisplay = "always";
   const setDisplay = wireSeg(
     "#gauge-display-seg",
     (b) => b.dataset.display ?? "always",
-    (v) => devices.setGaugeDisplay(v as GaugeDisplay),
+    (v) => {
+      gaugeDisplayOn = v as GaugeDisplay;
+      devices.setGaugeDisplay(gaugeDisplayOn);
+    },
   );
+
+  // ✋ Touch-aware hover: no hover-dependent options on a touch device.
+  // Reactive, not one-shot — a 2-in-1 detaching its keyboard flips this
+  // live. When hover support goes away with the gauge already on "hover",
+  // coerce it back to "always" — otherwise the gauges vanish with no
+  // visible control to bring them back.
+  const canHover = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const hoverOptBtn = document.querySelector<HTMLButtonElement>(
+    '#gauge-display-seg [data-display="hover"]',
+  );
+  const tooltipSection = need("tooltip-section");
+  const syncHoverGate = (): void => {
+    const ok = canHover.matches;
+    if (hoverOptBtn) hoverOptBtn.hidden = !ok;
+    tooltipSection.hidden = !ok;
+    if (!ok && gaugeDisplayOn === "hover") setDisplay("always");
+  };
+  canHover.addEventListener("change", syncHoverGate);
+  syncHoverGate();
   const setThickness = wireSeg(
     "#gauge-thickness-seg",
     (b) => b.dataset.thickness ?? "standard",
@@ -964,13 +1094,17 @@ function wireIconography(): void {
   window.addEventListener("resize", () => {
     if (legendToggle.checked) positionLegend();
   });
+  // Ribbon toggling moves the legend's anchor between strip and top bar.
+  window.addEventListener("scooter:ribbon", () => {
+    if (legendToggle.checked) positionLegend();
+  });
 
   resetIconography = () => {
     if (modelIcon !== "comic") {
       modelIcon = "comic";
       devices.setModelIcon("comic");
     }
-    setStyle("use");
+    setStyle("data");
     setIconSrc("reliability");
     setGaugeSrc("battery");
     setDisplay("always");
@@ -1102,24 +1236,34 @@ function wireAreaFilter(): AreaFilter {
 
 // ---------- Use-case modes ----------
 
-// Two surfaces over one map. "Find a ride" runs the guided wizard
-// (ride-wizard.ts): location consent → interview → ranked options; while
-// it's active the analysis drawer tabs hide and the 🧭 Ride HUD button
-// appears. "Analysis" is the full civic/data surface with every drawer.
-// The Account (login) tab is shared by both. Exiting ride mode — declining
-// consent, closing the wizard, or tapping Analysis — always resets the map
-// to its fresh-load defaults so the wizard's presets never leak.
+// Three modes on one bar. "Find wheels" (data-mode="ride") runs the guided
+// wizard (ride-wizard.ts): location consent → interview → ranked options;
+// while it's active the analysis drawer tabs hide. "Analysis" is the full
+// civic/data surface with every drawer. "Ride" (data-mode="riding") opens
+// the full-screen HUD — it covers all chrome, so its button is never seen
+// selected; what matters is that closing the HUD hands the bar back to
+// whichever mode was active before. The profile button in the top bar is
+// shared by all three. Exiting Find-wheels mode — declining consent,
+// closing the wizard, or tapping Analysis — resets iconography/overlays to
+// their fresh-load defaults and restores the filters exactly as they stood
+// on entry, so the wizard's presets never leak and a visit never destroys
+// the analysis setup. The bar always shows the current mode: tweaking
+// filters or iconography does NOT drop it to a "custom" state (per Zeke,
+// PR #37 — the old capture-phase toCustom listener is gone).
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
       "#mode-switch .mode-btn[data-mode]",
     ),
   );
-  let applying = false;
   let rideActive = false;
 
   const setActive = (mode: string | null): void => {
-    for (const b of btns) b.classList.toggle("is-active", b.dataset.mode === mode);
+    for (const b of btns) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
   };
   const setChecked = (id: string, on: boolean): void => {
     const cb = need<HTMLInputElement>(id);
@@ -1139,23 +1283,16 @@ function wireModes(): void {
     const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
     if (open && open.dataset.drawer !== id) open.click();
     if (id) {
+      // Synthetic clicks land on hidden tabs too — with the ribbon
+      // collapsed that would open a drawer with no visible origin, so
+      // reveal the strip first.
+      setRibbonOpen(true);
       const tab = document.querySelector<HTMLButtonElement>(
         `.drawer-tab[data-drawer="${id}"]`,
       );
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
-  /** Run a preset with the `applying` guard up so its synthetic events
-   *  don't count as manual "custom" changes. */
-  const applyPreset = (fn: () => void): void => {
-    applying = true;
-    try {
-      fn();
-    } finally {
-      applying = false;
-    }
-  };
-
   const clearOverlays = (): void => {
     for (const input of layerInputs.values()) {
       if (input.checked) {
@@ -1212,30 +1349,59 @@ function wireModes(): void {
     map.resize();
   };
 
+  // Filters as they stood when ride mode was entered. Snapshotted BEFORE
+  // wizard.start() — onConsentGranted fires applyRide() (a resetAllFilters)
+  // at step one, so by interview time the live state is already gone. The
+  // summary string is captured alongside for the same reason. Restored by
+  // option 4 (before the ranking runs) and unconditionally on exit.
+  let rideEntrySnapshot: FilterSnapshot | null = null;
+  let rideEntrySummary = "";
+
   const wizard = new RideWizard(need("ride-wizard"), locate, {
-    onConsentGranted: () => applyPreset(applyRide),
+    onConsentGranted: () => applyRide(),
     onExit: () => exitRide(),
     onLoginHint: () => {
       const tab = document.querySelector<HTMLButtonElement>(
-        '.drawer-tab[data-drawer="person"]',
+        '.drawer-tab[data-drawer="account"]',
       );
       if (tab && !tab.classList.contains("is-active")) tab.click();
     },
+    filterSummary: () => rideEntrySummary,
     // Interview finished: the Recommended Devices drawer takes over as the
     // home of the ranked list (and keeps re-ranking with the filters).
-    onInterviewDone: (priority, typeChoice, from) => {
+    onInterviewDone: (priority, typeChoice, from, carryOverFilters) => {
       setWizardDocked(false);
-      recommended?.setContext({ from, priority, typeChoice });
-      setDrawer("recommended");
+      const finish = (): void => {
+        recommended?.setContext({ from, priority, typeChoice });
+        setDrawer("recommended");
+      };
+      if (carryOverFilters && rideEntrySnapshot) {
+        // Option 4: re-apply the mode-entry snapshot BEFORE the ranking
+        // runs — rankDevices() already ranks over visibleFeatures(), so
+        // restoring the filters is the whole feature.
+        const snap = rideEntrySnapshot;
+        void applyFilterSnapshot(snap).then(finish);
+      } else {
+        finish();
+      }
     },
   });
 
   const exitRide = (): void => {
     if (!rideActive) return;
+    closeAllPopups();
     if (wizard.isOpen()) wizard.close();
     setWizardDocked(false);
     setRideSurface(false);
-    applyPreset(applyNormal);
+    applyNormal();
+    // ALWAYS restore the filters as they stood on entry — option 4 or not.
+    // Merely visiting Find wheels must never destroy the analysis setup,
+    // and a wiped exit also poisons the next visit's snapshot (the likely
+    // shape of the option-4 bug reported on PR #37).
+    if (rideEntrySnapshot) {
+      void applyFilterSnapshot(rideEntrySnapshot);
+    }
+    rideEntrySnapshot = null;
     // Recommendations are scoped to one Find-a-ride session: drop them so
     // re-entering never shows a stale list from the prior location/answers.
     recommended?.clear();
@@ -1246,6 +1412,15 @@ function wireModes(): void {
   };
 
   const enterRide = (): void => {
+    closeAllPopups();
+    // Re-tapping the active Find-wheels button restarts the wizard, but
+    // must NOT re-snapshot: applyRide() already wiped the live state on
+    // first entry, so a second capture would replace the rider's analysis
+    // setup with the wipe — the exact loss the snapshot exists to prevent.
+    if (!rideActive) {
+      rideEntrySnapshot = snapshotFilters();
+      rideEntrySummary = filterSummary();
+    }
     setDrawer(null);
     setRideSurface(true);
     setActive("ride");
@@ -1253,30 +1428,42 @@ function wireModes(): void {
     setWizardDocked(true);
   };
 
+  // Which mode the bar returns to when the HUD closes (End Ride, summary
+  // Done, or BRB) — captured when the HUD opens, since the HUD covers the
+  // bar and a "selected" Ride button is never actually seen.
+  let hudReturnMode: string | null = "analysis";
+  rideHud.setOnHidden(() => setActive(hudReturnMode));
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
-      if (btn.dataset.mode === "ride") {
-        enterRide();
-      } else if (rideActive) {
-        exitRide(); // back to a normal map — no surprise choropleth
-      } else {
-        applyPreset(applyAnalysis);
-        setActive("analysis");
+      switch (btn.dataset.mode) {
+        case "riding":
+          // Third mode: the full-screen HUD. Deliberately does NOT touch
+          // ride/analysis state — opening it mid-Find-wheels must not tear
+          // that mode down (and some popups z-stack above the HUD).
+          closeAllPopups();
+          hudReturnMode =
+            btns.find(
+              (b) =>
+                b.classList.contains("is-active") && b.dataset.mode !== "riding",
+            )?.dataset.mode ?? null;
+          setActive("riding");
+          rideHud.open();
+          break;
+        case "ride":
+          enterRide();
+          break;
+        default:
+          closeAllPopups();
+          if (rideActive) {
+            exitRide(); // back to a normal map — no surprise choropleth
+          } else {
+            applyAnalysis();
+            setActive("analysis");
+          }
       }
     });
   }
-
-  // Manual changes to any drawer control drop the mode back to custom.
-  // Capture phase so the presets' own synthetic events (guarded by
-  // `applying`) never count. Ride mode is exempt: its surface has no
-  // analysis controls to customize.
-  const toCustom = (e: Event): void => {
-    if (applying || rideActive) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest?.(".drawer")) setActive(null);
-  };
-  document.addEventListener("change", toCustom, true);
-  document.addEventListener("click", toCustom, true);
 }
 
 // ---------- Equity ranks ----------

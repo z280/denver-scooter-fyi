@@ -1,4 +1,4 @@
-// "Find a ride" wizard: the guided entry into ride mode. A short flow —
+// "Find wheels" wizard: the guided entry into ride mode. A short flow —
 // location consent → awaiting the device's permission prompt → one
 // interview question (what matters most) → a playful processing beat —
 // that ends by handing the rider's answers to the Recommended Devices
@@ -10,6 +10,7 @@
 
 import type { Locate, LngLat } from "./locate.ts";
 import type { RidePriority, RideTypeChoice } from "./recommend.ts";
+import { isAuthenticated } from "./map-auth.js";
 
 export interface RideWizardHooks {
   /** Consent granted — apply the ride map preset (caller guards its own
@@ -18,15 +19,64 @@ export interface RideWizardHooks {
   /** Rider declined consent, dismissed the wizard, or location failed —
    *  return to Analysis mode and reset the map. */
   onExit(): void;
-  /** "Log in to save your preferences" hint tapped — open the Account drawer. */
+  /** Sign-in hint tapped — open the Account drawer. */
   onLoginHint(): void;
   /** Interview + processing finished: hand the answers to the Recommended
-   *  Devices drawer. The wizard closes itself right after. */
+   *  Devices drawer. `carryOverFilters` = the rider picked option 4 ("use
+   *  existing map filters"); the caller re-applies the filters it
+   *  snapshotted on mode entry before the ranking runs. The wizard closes
+   *  itself right after. */
   onInterviewDone(
     priority: RidePriority,
     typeChoice: RideTypeChoice,
     from: LngLat,
+    carryOverFilters: boolean,
   ): void;
+  /** Human one-liner of the map filters snapshotted when ride mode was
+   *  entered (the wizard's own presets have already wiped the live state
+   *  by interview time). Empty string = nothing was filtered. */
+  filterSummary(): string;
+}
+
+// Saved Find-a-ride interview answers ("Save this as my default search
+// preference"). Loaded in the constructor — start() can skip straight to
+// the interview when a location fix already exists, so a step hook would
+// be too late.
+const PREFS_KEY = "scooter-fyi-ride-prefs";
+
+interface RidePrefs {
+  priority: RidePriority;
+  typeChoice: RideTypeChoice;
+  carryOverFilters?: boolean;
+}
+
+function loadRidePrefs(): RidePrefs | null {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as RidePrefs;
+    if (p.priority !== "type" && p.priority !== "quality" && p.priority !== "distance") {
+      return null;
+    }
+    if (
+      p.typeChoice !== "astro" &&
+      p.typeChoice !== "cosmo" &&
+      p.typeChoice !== "apollo"
+    ) {
+      return null;
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+function saveRidePrefs(prefs: RidePrefs): void {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* private mode — the choice still applies this session */
+  }
 }
 
 const PROCESSING_LINES = [
@@ -41,18 +91,34 @@ export class RideWizard {
     null;
   private priority: RidePriority = "distance";
   private typeChoice: RideTypeChoice = "astro";
+  /** Option 4: rank against the map filters carried in from Analysis
+   *  (priority stays "distance" underneath — filters bound every priority,
+   *  so this selects a filter *source*, not a ranking weight). */
+  private carryOverFilters = false;
+  private saveAsDefault = false;
   private cleanupFns: (() => void)[] = [];
 
   constructor(
     private readonly root: HTMLElement,
     private readonly locate: Locate,
     private readonly hooks: RideWizardHooks,
-  ) {}
+  ) {
+    const prefs = loadRidePrefs();
+    if (prefs) {
+      this.priority = prefs.priority;
+      this.typeChoice = prefs.typeChoice;
+      this.carryOverFilters = prefs.carryOverFilters === true;
+    }
+  }
 
   /** Open the wizard. Consent only appears when it's actually needed: a
    *  fresh fix skips straight to the interview, and an already-granted
    *  browser permission skips to "Awaiting…" (no prompt will fire). */
   start(): void {
+    // Per-visit opt-in: the save-as-default box starts unchecked every
+    // time, or a one-time save would silently overwrite the stored prefs
+    // on every later interview.
+    this.saveAsDefault = false;
     this.root.hidden = false;
     if (this.locate.current()) {
       this.hooks.onConsentGranted();
@@ -106,7 +172,7 @@ export class RideWizard {
     h.id = "ride-wizard-title";
     const closeBtn = el("button", "ride-wizard__close", "×");
     closeBtn.type = "button";
-    closeBtn.setAttribute("aria-label", "Close Find a ride");
+    closeBtn.setAttribute("aria-label", "Close Find wheels");
     closeBtn.addEventListener("click", () => this.exit());
     header.append(h, closeBtn);
 
@@ -128,7 +194,7 @@ export class RideWizard {
     const p = el(
       "p",
       "ride-wizard__lede",
-      "We need to enable location services to activate “Find a ride” mode — is that cool?",
+      "We need to enable location services to activate “Find wheels” mode — is that cool?",
     );
     const sub = el(
       "p",
@@ -148,7 +214,7 @@ export class RideWizard {
     });
     no.addEventListener("click", () => this.exit());
     row.append(yes, no);
-    this.shell("Find a ride", p, sub, row);
+    this.shell("Find wheels", p, sub, row);
   }
 
   // ---------- Step 2: waiting on the device permission prompt ----------
@@ -169,7 +235,7 @@ export class RideWizard {
       "ride-wizard__hint",
       "Look for your browser's location prompt.",
     );
-    this.shell("Find a ride", spinner, p, sub);
+    this.shell("Find wheels", spinner, p, sub);
 
     const unFix = this.locate.onFix(() => {
       if (this.step === "awaiting") this.renderInterview();
@@ -192,7 +258,7 @@ export class RideWizard {
     back.type = "button";
     back.addEventListener("click", () => this.exit());
     row.append(back);
-    this.shell("Find a ride", p, row);
+    this.shell("Find wheels", p, row);
   }
 
   // ---------- Step 3: the interview ----------
@@ -226,16 +292,17 @@ export class RideWizard {
     const list = el("div", "ride-wizard__choices");
     list.setAttribute("role", "radiogroup");
     const typeRow = el("div", "ride-wizard__typerow");
-    typeRow.hidden = this.priority !== "type";
 
     const choiceBtns: HTMLButtonElement[] = [];
     const syncChoices = (): void => {
       for (const b of choiceBtns) {
-        const on = b.dataset.priority === this.priority;
+        const on = b.dataset.filters
+          ? this.carryOverFilters
+          : !this.carryOverFilters && b.dataset.priority === this.priority;
         b.classList.toggle("is-active", on);
         b.setAttribute("aria-checked", String(on));
       }
-      typeRow.hidden = this.priority !== "type";
+      typeRow.hidden = this.carryOverFilters || this.priority !== "type";
     };
     options.forEach((opt, i) => {
       const btn = el("button", "ride-wizard__choice");
@@ -248,11 +315,41 @@ export class RideWizard {
       );
       btn.addEventListener("click", () => {
         this.priority = opt.value;
+        this.carryOverFilters = false;
         syncChoices();
       });
       choiceBtns.push(btn);
       list.append(btn);
     });
+
+    // Option 4: carry the Analysis-mode map filters into the ranking. Not a
+    // RidePriority — filters already bound every priority, so this picks a
+    // filter source (the snapshot from mode entry), with the ranking itself
+    // defaulting to least-walking-distance.
+    {
+      const summary = this.hooks.filterSummary();
+      const btn = el("button", "ride-wizard__choice");
+      btn.type = "button";
+      btn.dataset.filters = "1";
+      btn.setAttribute("role", "radio");
+      btn.append(
+        el("strong", undefined, "4. Use existing map filters"),
+        el(
+          "span",
+          "ride-wizard__choice-desc",
+          summary
+            ? `Carrying over: ${summary}`
+            : "Nothing is filtered right now — every device stays in play.",
+        ),
+      );
+      btn.addEventListener("click", () => {
+        this.carryOverFilters = true;
+        this.priority = "distance";
+        syncChoices();
+      });
+      choiceBtns.push(btn);
+      list.append(btn);
+    }
 
     // Model sub-picker, shown only when "Exact device type" is the
     // priority. The same model cards as the Filters drawer: badge art +
@@ -300,19 +397,59 @@ export class RideWizard {
     syncChoices();
     syncTypes();
 
+    // Default-unchecked each visit; checking it persists this interview's
+    // answers so the next start() opens pre-seeded. Gated behind sign-in
+    // (per Zeke, PR #37): signed out, the toggle is disabled with a
+    // tooltip naming the requirement.
+    const authed = isAuthenticated();
+    const saveWrap = el("label", "switch ride-wizard__save");
+    const saveCb = el("input");
+    saveCb.type = "checkbox";
+    saveCb.checked = this.saveAsDefault;
+    saveCb.disabled = !authed;
+    saveCb.addEventListener("change", () => {
+      this.saveAsDefault = saveCb.checked;
+    });
+    saveWrap.append(
+      saveCb,
+      el("span", undefined, "Save this as my default search preference"),
+    );
+    if (!authed) {
+      saveWrap.classList.add("switch--disabled");
+      const tip = "Saving your search preference requires being logged in.";
+      saveWrap.title = tip;
+      saveCb.setAttribute("aria-label", tip);
+    }
+
     const row = el("div", "ride-wizard__actions");
     const go = el("button", "login-btn", "Find my ride");
     go.type = "button";
-    go.addEventListener("click", () => this.renderProcessing());
+    go.addEventListener("click", () => {
+      if (this.saveAsDefault) {
+        saveRidePrefs({
+          priority: this.priority,
+          typeChoice: this.typeChoice,
+          carryOverFilters: this.carryOverFilters,
+        });
+      }
+      this.renderProcessing();
+    });
     row.append(go);
 
     const hint = el("p", "ride-wizard__hint");
-    const hintBtn = el("button", "text-btn", "Log in");
-    hintBtn.type = "button";
-    hintBtn.addEventListener("click", () => this.hooks.onLoginHint());
-    hint.append(document.createTextNode("Hint: "), hintBtn, document.createTextNode(" to save your preferences."));
+    if (authed) {
+      hint.textContent = "Preferences save on this device.";
+    } else {
+      const hintBtn = el("button", "text-btn", "Log in");
+      hintBtn.type = "button";
+      hintBtn.addEventListener("click", () => this.hooks.onLoginHint());
+      hint.append(
+        hintBtn,
+        document.createTextNode(" to save your search preferences."),
+      );
+    }
 
-    this.shell("Find a ride", q, list, typeRow, row, hint);
+    this.shell("Find wheels", q, list, typeRow, saveWrap, row, hint);
   }
 
   // ---------- Step 4: processing beat → handoff ----------
@@ -339,7 +476,12 @@ export class RideWizard {
       }
       // Hand the ranked-list job to the Recommended Devices drawer and get
       // out of the way.
-      this.hooks.onInterviewDone(this.priority, this.typeChoice, from);
+      this.hooks.onInterviewDone(
+        this.priority,
+        this.typeChoice,
+        from,
+        this.carryOverFilters,
+      );
       this.close();
     }, 1_400);
     this.cleanupFns.push(() => {

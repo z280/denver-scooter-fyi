@@ -86,6 +86,58 @@ export class AreaFilter {
     }
   }
 
+  /**
+   * Preset entry point: set the whole selection programmatically — enable
+   * state, category, and subset — keeping the drawer's controls in sync,
+   * exactly like toggleRegionFromMap does for map clicks. Async because the
+   * category's boundary polygons may still need fetching; callers should
+   * disable their trigger until this settles. `null` disables the filter.
+   */
+  async applySelection(
+    display: { layer: BoundaryLayer; subset: string[] | null } | null,
+  ): Promise<void> {
+    if (!display) {
+      if (this.enabled || this.el.enable.checked) {
+        this.enabled = false;
+        this.el.enable.checked = false;
+        this.el.body.hidden = true;
+        this.emit(null);
+      }
+      return;
+    }
+    this.enabled = true;
+    this.el.enable.checked = true;
+    this.el.body.hidden = false;
+    if (this.category !== display.layer) {
+      this.el.category.value = display.layer;
+      await this.onCategoryChange();
+    } else {
+      // Same category as last time (e.g. restoring after a reset that only
+      // unchecked the enable box): onCategoryChange won't run, so make sure
+      // the polygons are resolved before the recompute below.
+      await this.ensureIndexed(display.layer);
+    }
+    // The awaits yield: bail if the user disabled the filter mid-fetch
+    // rather than resurrecting a selection they just cleared.
+    if (!this.enabled) return;
+    if (ALL_OR_NOTHING.has(display.layer) || !display.subset) {
+      // Full-layer selection. The changed-category path already emitted in
+      // onCategoryChange; the same-category path hasn't — recompute either
+      // way (it re-emits the same state, which is idempotent downstream).
+      this.recomputeAndEmit();
+      return;
+    }
+    this.selected = new Set();
+    for (const cb of this.el.options.querySelectorAll<HTMLInputElement>(
+      "input[type=checkbox]",
+    )) {
+      const on = display.subset.includes(cb.value);
+      cb.checked = on;
+      if (on) this.selected.add(cb.value);
+    }
+    this.recomputeAndEmit();
+  }
+
   private onEnableToggle(): void {
     this.enabled = this.el.enable.checked;
     this.el.body.hidden = !this.enabled;
@@ -113,6 +165,9 @@ export class AreaFilter {
     }
 
     const indexed = await this.ensureIndexed(this.category);
+    // The fetch yielded: the user may have disabled the filter or switched
+    // category again while it was in flight — don't emit for a stale state.
+    if (!this.enabled || this.category !== value) return;
 
     if (ALL_OR_NOTHING.has(this.category)) {
       // v1/v2 select every region of that layer in one go.

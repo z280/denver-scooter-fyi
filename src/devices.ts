@@ -177,7 +177,7 @@ export class Devices {
   // Iconography: inner badge style + gauge ring (default on). The badge
   // ("icon data") and the ring ("gauge data") have independent signals so
   // riders can see reliability in the icon while the ring tracks battery.
-  private iconStyle: IconStyle = "use";
+  private iconStyle: IconStyle = "data"; // default per Zeke (PR #37): Data, not Ride type
   private modelIcon: ModelIcon = "comic";
   private iconData: DataSource = "reliability";
   private gaugeData: DataSource = "battery";
@@ -610,6 +610,12 @@ export class Devices {
    *  reads this to hold the camera still while the popup is up. */
   hasOpenPopup(): boolean {
     return this.popup !== null;
+  }
+
+  /** Close the device details popup if one is open (mode switches sweep
+   *  every floating surface). The popup's own close event nulls the field. */
+  closePopup(): void {
+    this.popup?.remove();
   }
 
   /** Build and show the details popup for one device. Called from the map
@@ -2400,7 +2406,10 @@ function showMapTooltip(
   tooltipEl.style.top = `${Math.max(4, ev.clientY - 14)}px`;
 }
 
-function hideMapTooltip(): void {
+/** Exported for chrome.ts's closeAllPopups: the tooltip element is cached
+ *  module-side, so outside code must retire it through here — a bare
+ *  .remove() would leave the cache pointing at a detached node. */
+export function hideMapTooltip(): void {
   tooltipEl?.remove();
   tooltipEl = null;
 }

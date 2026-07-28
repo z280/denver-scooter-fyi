@@ -173,7 +173,7 @@ export class RecommendedDevices {
       const p = el(
         "p",
         "recommend-empty",
-        "Run 🛴 Find a ride and answer one question — your best options land here, ranked, and update live as you filter the map.",
+        "Run 🛴 Find wheels and answer one question — your best options land here, ranked, and update live as you filter the map.",
       );
       this.body.append(p);
       return;

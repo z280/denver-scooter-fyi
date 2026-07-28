@@ -46,9 +46,10 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
   it appears only for a signed-in user with location on who is physically at
   the scooter (~75 m). Plates are never exposed to anonymous users, so the
   map can't be scraped back into a competing feed.
-- **Intent modes** (bottom center): one-tap presets — 🛴 *Find a ride*
-  (available devices, reliability coloring, location offer) and 📊 *Audit*
-  (v1 choropleth + compliance gauge). Manual changes drop back to custom.
+- **Intent modes** (bottom center): one-tap presets — 🛴 *Find wheels*
+  (available devices, reliability coloring, location offer) and 📊 *Analysis*
+  (v1 choropleth + compliance gauge). The bar always shows the current
+  mode; tweaking filters or iconography doesn't clear it.
 - **🧭 Ride companion**: a landscape-first HUD (the Veo app has none) where
   the live, pitched follow-cam map fills the whole screen — your position
   marker recenters it as you move, with 3D building extrusions where the
