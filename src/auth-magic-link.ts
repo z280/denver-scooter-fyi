@@ -1,6 +1,6 @@
 // Email sign-in — magic link + verification code (Postmark-delivered).
 //
-// Two independent doors on the same email, matching the veo-audit backend
+// Two independent doors on the same email, matching the scooter-fyi-api backend
 // (see the backend's API.md, "Accounts & sessions"). Each sends its OWN email:
 //   • Link door:
 //       1. requestMagicLink(email) → POST /api/v1/auth/magic-link → 202. The

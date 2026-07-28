@@ -1,5 +1,5 @@
 // Typed client for the data.scooter.fyi public API.
-// Contract: https://raw.githubusercontent.com/z280/veo-audit/main/API.md
+// Contract: https://raw.githubusercontent.com/z280/scooter-fyi-api/main/API.md
 
 import { getAuth, isAuthenticated } from "./map-auth.js";
 
@@ -308,7 +308,7 @@ export async function fetchDevicesAuto(
   if (!isAuthenticated()) return fetchDevices(signal, include);
   try {
     const text = await authedGetText(
-      // The signed-in map feed (veo-audit PR #19): any rider session gets
+      // The signed-in map feed (scooter-fyi-api PR #19): any rider session gets
       // the public field set; ADMIN_EMAILS sessions (either sign-in door)
       // additionally get plates + first-ever/max-range. Same query params
       // as the public endpoint. Until it deploys, the 404 falls through to
