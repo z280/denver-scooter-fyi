@@ -218,30 +218,44 @@ button and email/code forms). No new empty states to write.
 
 ### 3.1 Why the five-pane menu is deferred
 
-Checked against `docs/API_INTEGRATION_PLAN.md` and `docs/UX_PLAN.md`:
+> **Verify backend claims against the backend.** The rows below were
+> checked against the API repo at `scooter-fyi-api` (route table, endpoint
+> docstrings), **not** against `docs/API_INTEGRATION_PLAN.md` — that file is
+> a frontend work plan and describes what *this* repo has yet to consume,
+> which is not the same as what the API serves. An earlier draft of this
+> table got three rows wrong by conflating the two.
 
-| Pane | What actually backs it | Verdict |
+| Pane | What the API actually serves | Verdict |
 |---|---|---|
-| **Profile** | Live now: sign-in, session expiry, admin badge, sign-out | Ships |
-| **Rides** | Ride lifecycle API is live (tracked + off-feed), but `ride-hud.ts` is "all browser-API, zero backend" — we record nothing yet | Phase C |
-| **Rankings** | **Nothing.** "leaderboard" and "ranking" appear in neither doc | Dropped |
-| **Contributions** | `/api/v1/reports/model` is live and the popup posts to it today, so the data exists — but there is no "list my reports" read endpoint; "my uploads" is Phase E | Needs an endpoint |
-| **Favorites** | `UX_PLAN` §5.2, verbatim: "a placeholder pending the fuller spec"; `favorites: []` shape TBD | Needs a spec |
+| **Profile** | `GET/PUT /api/v1/profile` (incl. server-computed badges from `src/badges.py`), `/profile/username`, `/username/regenerate`, `/adjectives`, `/emoji-nouns`, `GET /api/v1/points`. **All live and unconsumed** | Ships — and can be far richer than today's sign-in panel |
+| **Rides** | `GET /api/v1/rides` (paginated, caller-scoped), `/rides/active`, `/rides/export`, full write lifecycle, plus the `/tracked-rides/*` family. Read path is live | Defer — the list will be **empty** until the HUD writes rides (Phase C) |
+| **Rankings** | `GET /api/v1/points` is the **caller's own** ledger; badges likewise. No cross-rider leaderboard route exists — though the account model already carries a `leaderboards` visibility toggle anticipating one (`src/api_meta.py:79`) | **Dropped** — see below |
+| **Contributions** | `GET /api/v1/photos/mine` — purpose-built, "Review all photos I have uploaded (requirement #17)", device photos + ride screenshots, caller-scoped. Plus `/reports/summary` | **Reconsider** — buildable today |
+| **Favorites** | `favorites` is a stored profile field, but nothing implements a favourites sort or highlight, and `UX_PLAN` §5.2 leaves the shape TBD | Defer — needs a spec, not an endpoint |
 
-Two findings drove the deferral:
+**The backend is well ahead of the frontend.** The blocker for most of these
+is frontend consumption, not missing API surface.
+
+Reasons the deferral still holds where it does:
 
 1. **Phase B's content lands in Profile, not in new panes.** Username,
    privacy toggles, home/work coords, badges, theming — `UX_PLAN` §5.2 puts
-   all of it "in the Account drawer". So the next wave of real functionality
-   makes Profile *richer*; it does not populate the other four. A five-item
-   nav would be no less empty after Phase B than before it.
+   all of it "in the Account drawer". So the next wave makes Profile
+   *richer*; it does not populate the other four.
 2. **A nav list is itself chrome.** With one destination there is nothing to
-   navigate between, and shipping four "coming soon" panes needs eight empty
-   states (signed-out and shipped-but-empty for each) for zero function.
+   navigate between.
 
-**What re-opens it:** Phase C, which lands Rides as the first genuine second
-destination. Add the nav then, with two real entries. **Rankings is dropped
-outright** — not deferred — until something specifies it.
+**Rankings is dropped because its content is Profile's, not because nothing
+backs it.** Points and badges are live — but both are self-scoped, and
+`UX_PLAN` §5.2 already places badges in the Account drawer. What does *not*
+exist is a cross-rider leaderboard, which is the only thing "Rankings" would
+mean as a distinct pane. If a leaderboard is ever specified, the account
+model's `leaderboards` consent toggle is already there for it.
+
+**What re-opens the nav:** a second destination with real content. On the
+evidence above that is **Contributions** (live endpoint, data already
+accumulating from the popup's report flow) sooner than Rides (live endpoint,
+no data until Phase C writes).
 
 ---
 
@@ -531,10 +545,12 @@ two phases share one. Do not batch them because they feel small.
   identifiers answers the obvious objection that device ids churn. But that
   passage calls itself "a placeholder pending the fuller spec" and
   `:559-560` leaves `favorites: []` as "shape TBD".
-- **Contributions needs a read endpoint.** Users generate this data today
-  through the popup's report flow, but nothing lists a user their own
-  submissions; "my uploads" is Phase E. This is a backend ask, not frontend
-  work — worth raising early since the data is already accumulating.
+- **Contributions: ship now or hold?** `GET /api/v1/photos/mine` is live and
+  purpose-built for this pane, and the data is already accumulating from the
+  popup's report flow. It is the one deferred pane with no technical blocker
+  — so the deferral is a scope choice, not a dependency. Shipping it also
+  gives the nav its second destination, which is what justifies having a nav
+  at all.
 - **Ribbon default state on desktop** — assumed open. Persisted either way.
 - **Saved filters are device-local** until a preferences endpoint exists.
   The wizard's existing "Log in to save your preferences" hint will still
