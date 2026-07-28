@@ -5,9 +5,26 @@ update on a 90-second loop, color-coded by vehicle type, with optional boundary
 overlays, a per-region choropleth, neighborhood search, and a daily-compliance
 gauge.
 
-It is a static single-page app — no backend, no accounts, no tracking. The
-browser talks directly to the public **data.scooter.fyi** API and renders a
-self-hosted vector basemap.
+It is a static single-page app in the hosting sense — this repo builds to plain
+files on Cloudflare Pages, with no server of its own. It is *not* self-contained:
+the browser talks directly to the public **data.scooter.fyi** API for every bit
+of data, and renders a self-hosted vector basemap.
+
+**The map works fully anonymously.** Everything that draws the map — the device
+feed, boundaries, H3 aggregates, the compliance gauge, routing, and anonymous
+device reports — is unauthenticated. Accounts are **optional** and exist only
+for the features that have to be tied to a person: rider reports, ride tracking
+and history, points, your profile, and the signed-in device feed that exposes
+plates (which is what gates "Unlock in Veo"). Sign-in is Google, an emailed
+magic link, or a typed email code; each mints a server-side bearer session.
+See [src/auth-config.ts](src/auth-config.ts) and [src/auth-session.ts](src/auth-session.ts).
+
+**On tracking:** the frontend loads no analytics, telemetry, ad tech, or
+third-party scripts, and `localStorage` holds only your own settings (theme,
+rate plan, equity ranks, install-prompt dismissal). That is not the same as
+"no data is recorded": the API stores a reporter IP and user-agent on submitted
+reports, and the issuing IP and user-agent on sessions. The authoritative,
+machine-readable retention policy is `GET /api/v1/meta/privacy`.
 
 - **Live site:** https://denver.scooter.fyi
 - **Data API contract:** https://github.com/z280/veo-audit/blob/main/API.md
@@ -179,6 +196,9 @@ basemap/           denver.pmtiles source of truth (uploaded to R2, not to Pages)
 public/            vendored glyphs + sprites + _headers (deployed to Pages)
 src/
   api.ts           typed client for the data.scooter.fyi API
+  auth-*.ts        optional sign-in: capability discovery, Google, magic
+                   link / typed code, and the shared bearer-session store
+  map-auth.js      the sessionStorage session store the auth doors write to
   config.ts        bounds, refresh cadence, colors, overlays, basemap URL
   map.ts           MapLibre map + Protomaps style
   devices.ts       device source, clustering, popups, type filter
@@ -196,5 +216,7 @@ scripts/           build-basemap.sh (regenerate + republish the pmtiles)
 
 ## Out of scope
 
-Accounts, historical playback, trip data, alerting, and any backend. This app
-only visualizes the current public snapshot.
+Historical playback and alerting. Everything stateful — accounts, reports,
+rides, points, profiles — lives in the **data.scooter.fyi** backend
+([veo-audit](https://github.com/z280/veo-audit)); this repo is only its
+frontend and contains no server code.

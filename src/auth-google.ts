@@ -2,7 +2,7 @@
 //
 // Flow: GIS hands us a signed ID token (a JWT credential); we POST it to the
 // API's POST /api/v1/auth/google, which verifies it against Google's JWKS
-// (see docs/API_REQUIREMENTS.md §2.2) and mints the bearer session we then
+// (see the backend's API.md) and mints the bearer session we then
 // persist via auth-session. Admin scope is decided server-side from the
 // verified email against ADMIN_EMAILS.
 //

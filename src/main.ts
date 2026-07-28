@@ -2,7 +2,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
 import {
-  API_BASE,
   fetchDevicesAuto,
   type BoundaryLayer,
   type DeviceInclude,
@@ -60,7 +59,6 @@ import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import {
   fetchSessionInfo,
   isAdminSession,
-  isSupporterOfRecord,
 } from "./auth-session.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
@@ -1462,58 +1460,6 @@ function wireFreshnessCollapse(): void {
   sync();
 }
 
-// ---------- Supporter checkout ----------
-
-/** Ask the API for a Stripe Checkout URL and open it. Two doors share
- *  this (API_REQUIREMENTS §4.1) and both are DONATIONS: POST
- *  /api/v1/billing/donate (one-time) and POST /api/v1/billing/checkout
- *  (monthly recurring). Either makes the donor a ⭐ supporter of record
- *  for 90 days from their last received donation. Feature-detected: until
- *  an endpoint ships, its button degrades to a friendly "not live yet"
- *  note.
- *
- *  Must be called directly from the click handler: the placeholder tab is
- *  opened BEFORE the first await, while we're still in the user-gesture
- *  call stack — window.open after `await fetch` gets popup-blocked in
- *  Safari. The tab is then pointed at Stripe (or closed on failure); if
- *  the browser blocked even the synchronous open, fall back to navigating
- *  this tab (Checkout redirects back via its success/cancel URLs). */
-async function openBillingCheckout(
-  path: string,
-  btn: HTMLButtonElement,
-  note: HTMLElement,
-): Promise<void> {
-  const auth = getAuth();
-  if (!auth) return;
-  btn.disabled = true;
-  note.textContent = "Opening checkout…";
-  const popup = window.open("", "_blank");
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        Accept: "application/json",
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as { url?: string };
-    if (!data.url) throw new Error("no checkout url");
-    note.textContent = "";
-    if (popup) {
-      popup.location.href = data.url;
-    } else {
-      window.location.assign(data.url);
-    }
-  } catch {
-    popup?.close();
-    note.textContent =
-      "Checkout isn't live quite yet — the Stripe hookup is in progress.";
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 // ---------- Account drawer ----------
 
 // Renders the Account drawer body based on map-auth state and keeps the
@@ -1529,8 +1475,6 @@ function wireAccount(): void {
   let adminCheckedToken: string | null = null;
   let adminIsOn = false;
   let adminEmail: string | undefined;
-  let supporterOn = false;
-  let supporterUntil: string | undefined;
   // Backend sign-in capabilities (null until /auth/config resolves).
   let authCfg: AuthConfig | null = null;
 
@@ -1589,65 +1533,6 @@ function wireAccount(): void {
         body.append(badge);
       }
 
-      // One status, no tiers (API_REQUIREMENTS §4.1): a donation — one-time
-      // or monthly — makes you a ⭐ supporter of record for 90 days from
-      // your last received donation. Supporter bonus features are a
-      // thank-you; the audit itself is never paywalled. Donation doors stay
-      // visible even for current supporters (another donation extends the
-      // window).
-      if (adminCheckedToken === auth.token) {
-        if (supporterOn) {
-          const badge = el("div", "account-supporter");
-          const srow = el("div", "account-admin__row");
-          srow.append(
-            el("span", "account-admin__icon", "⭐"),
-            el("strong", undefined, "Supporter of record"),
-          );
-          const untilMs = supporterUntil ? Date.parse(supporterUntil) : NaN;
-          badge.append(
-            srow,
-            el(
-              "p",
-              "account-supporter__note",
-              Number.isFinite(untilMs)
-                ? `Thanks for keeping the data flowing — supporter through ${new Date(untilMs).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
-                : "Thanks for keeping the data flowing.",
-            ),
-          );
-          body.append(badge);
-        }
-        {
-          const up = el("div", "account-support");
-          up.append(
-            el(
-              "p",
-              "account-support__pitch",
-              supporterOn
-                ? "Every donation — one-time or monthly — extends your supporter window another 90 days."
-                : "This map is free for everyone, no paywalls. If it's useful, a donation (one-time or monthly) keeps the data flowing and makes you a supporter of record for 90 days — with the supporter bonus features as a thank-you.",
-            ),
-          );
-          const supNote = el("p", "account-magic-status");
-          supNote.setAttribute("role", "status");
-          const donateBtn = el("button", "login-btn", "💛 Donate once");
-          donateBtn.type = "button";
-          donateBtn.addEventListener("click", () => {
-            void openBillingCheckout("/api/v1/billing/donate", donateBtn, supNote);
-          });
-          const monthlyBtn = el(
-            "button",
-            "login-btn login-btn--secondary",
-            "🔁 Donate monthly",
-          );
-          monthlyBtn.type = "button";
-          monthlyBtn.addEventListener("click", () => {
-            void openBillingCheckout("/api/v1/billing/checkout", monthlyBtn, supNote);
-          });
-          up.append(donateBtn, monthlyBtn, supNote);
-          body.append(up);
-        }
-      }
-
       const signoutBtn = el(
         "button",
         "login-btn login-btn--secondary",
@@ -1675,12 +1560,9 @@ function wireAccount(): void {
         void fetchSessionInfo().then((info) => {
           adminIsOn = isAdminSession(info);
           adminEmail = info?.email;
-          supporterOn = isSupporterOfRecord(info);
-          supporterUntil = info?.supporter_until;
           // Popups need the status too: admins skip the Start proximity
-          // gate (issue #18); supporters of record unlock the History
-          // affordance (a supporter bonus feature).
-          devices.setSessionPerks(adminIsOn, supporterOn);
+          // gate (issue #18).
+          devices.setAdminSession(adminIsOn);
           render();
         });
       }

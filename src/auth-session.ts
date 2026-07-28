@@ -1,17 +1,18 @@
-// Shared session persistence for the alternative sign-in doors (Google,
-// magic link). The whole rest of the app reads auth state through
-// map-auth.js — getAuth()/isAuthenticated()/apiFetch() and, in api.ts,
+// Shared session persistence for the sign-in doors (Google, magic link,
+// typed code). The whole rest of the app reads auth state through
+// map-auth.js — getAuth()/isAuthenticated() and, in api.ts,
 // fetchDevicesAuto(). All of those key off ONE thing: a JSON blob under
 // sessionStorage["scooter_fyi.map_auth"] shaped { token, expires }.
 //
-// map-auth.js is a verbatim upstream copy that must not be modified, so
-// rather than teach it new sign-in flows, the Google / magic-link modules
-// just write that same blob here. Once written, every gated feature (the
-// private device fetch, the "Unlock in Veo" button, the account drawer)
-// treats the user as signed in with zero further changes.
+// map-auth.js is now just that store: its own retired GitHub redirect
+// sign-in is gone, and the sign-in doors write the blob here instead. Once
+// written, every gated feature (the private device fetch, the "Unlock in
+// Veo" button, the account drawer) treats the user as signed in with zero
+// further changes.
 //
 // NOTE on longevity: map-auth uses sessionStorage, so these sessions live
-// for the tab's lifetime. docs/API_REQUIREMENTS.md §2.1 calls for longer
+// for the tab's lifetime. The backend's API.md ("Accounts & sessions")
+// specifies longer
 // rider sessions in localStorage with a silent refresh; that's a follow-up
 // that would move this key and add a refresh call. Matching the existing
 // sessionStorage contract now is what makes the doors work with the current
@@ -59,30 +60,13 @@ export function clearSession(): void {
 }
 
 /** Identity for the current session, from GET /api/v1/auth/session
- *  (docs/API_REQUIREMENTS.md §2.1). The token alone carries no identity, so
+ *  (see the backend's API.md). The token alone carries no identity, so
  *  this is how the UI learns the email / scopes to decide what to show. */
 export interface SessionInfo {
   email?: string;
   scopes?: string[];
-  /** Supporter of record (⭐): true within 90 days of the last received
-   *  donation — one-time or a recurring donation's payment, either counts
-   *  (API_REQUIREMENTS §4.1). */
-  supporter?: boolean;
-  /** When the current supporter window lapses (last donation + 90d). */
-  supporter_until?: string;
-  /** DEPRECATED legacy flag from the retired subscription tier. Treated
-   *  as supporter-of-record until the backend drops it. */
-  premium_user?: boolean;
   admin?: boolean;
   expires?: string;
-}
-
-/** Supporter of record: the canonical read. Accepts the legacy
- *  premium_user flag so nobody loses their bonus features while the
- *  backend migrates to the 90-day donation window. */
-export function isSupporterOfRecord(info: SessionInfo | null): boolean {
-  if (!info) return false;
-  return info.supporter === true || info.premium_user === true;
 }
 
 /** Fetch the current session's identity, or null if not signed in / the

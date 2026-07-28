@@ -62,7 +62,8 @@ const GHOST_HOURS = 72;
 /** One failed start is ambiguous alone (could be a rebalancer scan) but
  *  becomes damning combined with a day of nobody riding it. */
 const CORROBORATION_HOURS = 24;
-/** Peer-relative dwell outlier (API_REQUIREMENTS §1.4, now live): dwell
+/** Peer-relative dwell outlier (see `dwell_percentile_hood` in the
+ *  backend's API.md): dwell
  *  percentile ≥90 among the H3-neighborhood peers AND ≥3× the peer median
  *  AND past the 24h floor. Combined with ≥48h dwell it demotes to risk. */
 const OUTLIER_PERCENTILE = 90;

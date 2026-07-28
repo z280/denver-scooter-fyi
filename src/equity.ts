@@ -6,7 +6,7 @@
 //   2. an "Equity Ranking (Selected)" map overlay drawing the union.
 //
 // Everything is client-side point-in-polygon over the current fleet — no
-// server-side SLA average exists for ranks yet (see docs/API_REQUIREMENTS
+// server-side SLA average exists for ranks yet (see the backend's API.md
 // §1.3). The estimate is a right-now snapshot, labeled as such.
 
 import type { BoundaryLayer, BoundaryProperties, DevicesResponse } from "./api.ts";

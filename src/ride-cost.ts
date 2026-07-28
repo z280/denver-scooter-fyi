@@ -42,7 +42,7 @@ export function formatCents(cents: number): string {
 
 /** The rider's chosen rate plan. Stored locally for now and labeled as an
  *  estimate; moves to the account profile (and behind sign-in) when the
- *  API's auth ships — see docs/API_REQUIREMENTS.md §2.4. */
+ *  API's auth ships — see `PUT /api/v1/profile` in the backend's API.md. */
 export function savedRatePlan(): RatePlanKey | null {
   try {
     const v = localStorage.getItem(RATE_STORAGE_KEY);
