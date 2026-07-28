@@ -31,8 +31,6 @@ import {
   rideCostCents,
   savedRatePlan,
   saveRatePlan,
-  savedVeoPlus,
-  saveVeoPlus,
 } from "./ride-cost.ts";
 
 type HudState = "hidden" | "armed" | "countdown" | "riding" | "summary";
@@ -94,9 +92,6 @@ export class RideHud {
    *  the start of each ride; all-selected means no filter (also shows
    *  unrecognized hardware), an empty selection shows none. */
   private rideModels = new Set<ModelKey>(ALL_MODELS);
-  /** VeoPlus Pass (free unlocks) — waives the per-ride start fee in the
-   *  estimate. Persisted so members don't re-toggle every ride. */
-  private veoPlus = savedVeoPlus();
   /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
    *  Analysis / Find wheels, but the ride state (counter) is preserved so
    *  reopening the HUD resumes it. */
@@ -218,10 +213,6 @@ export class RideHud {
             ${options}
           </select>
         </label>
-        <label class="hud-toggle">
-          <input type="checkbox" id="hud-veoplus" ${this.veoPlus ? "checked" : ""} />
-          <span>VeoPlus Pass? <em>(free unlocks)</em></span>
-        </label>
         <div class="hud-start-row">
           <button type="button" class="hud-btn hud-btn--primary" data-hud="start-now">Start now</button>
           <button type="button" class="hud-btn" data-hud="start-delay">Start in
@@ -236,12 +227,6 @@ export class RideHud {
     this.root
       .querySelector("#hud-delay")
       ?.addEventListener("click", (e) => e.stopPropagation());
-    this.root
-      .querySelector<HTMLInputElement>("#hud-veoplus")
-      ?.addEventListener("change", (e) => {
-        this.veoPlus = (e.target as HTMLInputElement).checked;
-        saveVeoPlus(this.veoPlus);
-      });
   }
 
   private onClick(e: Event): void {
@@ -656,10 +641,6 @@ export class RideHud {
             <span>Rate</span>
             <select id="hud-rate-live" class="select">${rateOptions}</select>
           </label>
-          <label class="hud-toggle">
-            <input type="checkbox" id="hud-veoplus-live" ${this.veoPlus ? "checked" : ""} />
-            <span>VeoPlus Pass (free unlocks)</span>
-          </label>
           <div class="hud-adjust-row hud-devrow">
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
@@ -678,13 +659,6 @@ export class RideHud {
         saveRatePlan((e.target as HTMLSelectElement).value as RatePlanKey);
         this.renderTick();
       });
-    this.root
-      .querySelector<HTMLInputElement>("#hud-veoplus-live")
-      ?.addEventListener("change", (e) => {
-        this.veoPlus = (e.target as HTMLInputElement).checked;
-        saveVeoPlus(this.veoPlus);
-        this.renderTick();
-      });
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -698,7 +672,7 @@ export class RideHud {
     const cost = this.root.querySelector("#hud-cost");
     const rate = savedRatePlan();
     if (cost && rate) {
-      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed, this.veoPlus))}`;
+      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
     }
     const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
@@ -836,7 +810,7 @@ export class RideHud {
 
     const rate = savedRatePlan();
     const plan = planFor(rate ?? "resident");
-    const veoCents = rideCostCents(plan, elapsed, this.veoPlus);
+    const veoCents = rideCostCents(plan, elapsed);
     const limeCents = comparatorCostCents(elapsed);
     const deltaCents = veoCents - limeCents;
     const miles = this.distanceM / 1609.344;
@@ -846,14 +820,14 @@ export class RideHud {
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
       row(
-        `Est. Veo cost (${plan.key}${this.veoPlus ? ", VeoPlus" : ""})`,
+        `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
         formatCents(veoCents),
       ),
       row(`With ${COMPARATOR.name}'s typical pricing`, formatCents(limeCents)),
     ];
 
-    const veoPlusLine = this.veoPlus
-      ? `<p class="hud-note">VeoPlus Pass applied — ${formatCents(plan.unlockCents)} unlock fee waived.</p>`
+    const veoPlusLine = plan.veoPlus
+      ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
       : "";
 
     const monopolyLine =

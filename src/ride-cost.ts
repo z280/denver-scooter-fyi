@@ -16,20 +16,15 @@ export function billableMinutes(elapsedMs: number): number {
   return Math.max(1, Math.ceil(elapsedMs / 60_000));
 }
 
-export function rideCostCents(
-  plan: RatePlan,
-  elapsedMs: number,
-  /** VeoPlus Pass waives the per-ride unlock (start) fee. */
-  waiveUnlock = false,
-): number {
+export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
   let minutes = billableMinutes(elapsedMs);
   if (plan.key === "equity") {
     // 60 free minutes/day; the ticker can't know how much of today's hour
     // is already spent, so it optimistically prices only the overflow.
     minutes = Math.max(0, minutes - 60);
   }
-  const unlock = waiveUnlock ? 0 : plan.unlockCents;
-  return unlock + minutes * plan.perMinCents;
+  // VeoPlus (free unlocks) is a plan variant now — its unlockCents is 0.
+  return plan.unlockCents + minutes * plan.perMinCents;
 }
 
 export function comparatorCostCents(elapsedMs: number): number {
@@ -42,11 +37,22 @@ export function formatCents(cents: number): string {
 
 /** The rider's chosen rate plan. Stored locally for now and labeled as an
  *  estimate; moves to the account profile (and behind sign-in) when the
- *  API's auth ships — see `PUT /api/v1/profile` in the backend's API.md. */
+ *  API's auth ships — see `PUT /api/v1/profile` in the backend's API.md.
+ *  Migrates the retired standalone VeoPlus checkbox into the plan key. */
 export function savedRatePlan(): RatePlanKey | null {
   try {
     const v = localStorage.getItem(RATE_STORAGE_KEY);
-    return v === "resident" || v === "visitor" || v === "equity" ? v : null;
+    let key = RATE_PLANS.some((p) => p.key === v) ? (v as RatePlanKey) : null;
+    if (localStorage.getItem(VEOPLUS_STORAGE_KEY) === "1") {
+      // Legacy flag from when VeoPlus was its own toggle — fold it into
+      // the plan variant, then retire the flag.
+      if (key === "resident" || key === "visitor") {
+        key = `${key}_plus` as RatePlanKey;
+        localStorage.setItem(RATE_STORAGE_KEY, key);
+      }
+      localStorage.removeItem(VEOPLUS_STORAGE_KEY);
+    }
+    return key;
   } catch {
     return null;
   }
@@ -57,24 +63,5 @@ export function saveRatePlan(key: RatePlanKey): void {
     localStorage.setItem(RATE_STORAGE_KEY, key);
   } catch {
     /* private mode — the picker will just show again next ride */
-  }
-}
-
-/** VeoPlus Pass membership (free unlocks). Stored locally alongside the rate;
- *  moves to the account profile when auth ships. */
-export function savedVeoPlus(): boolean {
-  try {
-    return localStorage.getItem(VEOPLUS_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function saveVeoPlus(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(VEOPLUS_STORAGE_KEY, "1");
-    else localStorage.removeItem(VEOPLUS_STORAGE_KEY);
-  } catch {
-    /* private mode — the toggle just defaults off next ride */
   }
 }

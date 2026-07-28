@@ -2702,6 +2702,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   margin: 10px 2px 0;
   font-size: 12.5px;
 }
+/* Signed-out: the save toggle is disabled with a tooltip (title). */
+.switch--disabled {
+  cursor: not-allowed;
+  color: var(--fg-muted);
+}
+.switch--disabled input[type="checkbox"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .ride-wizard__choice-desc {
   display: block;
   margin-top: 2px;

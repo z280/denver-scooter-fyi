@@ -354,17 +354,19 @@
       <div class="drawer-body">
         <section class="control-group" aria-labelledby="icon-style-label">
           <h3 id="icon-style-label" class="control-label">Icon style</h3>
+          <!-- Data first and default (per Zeke, PR #37). -->
           <div id="icon-style-seg" class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="use">Ride type</button>
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-style="data">Data</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-style="model">Model</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-style="data">Data</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-style="use">Ride type</button>
           </div>
           <!-- Filled by wireIconography(): only details pertinent to the
                selected style, with live renderer previews. -->
           <div id="icono-style-detail" class="icono-detail"></div>
         </section>
 
-        <section class="control-group" id="icon-data-section" aria-labelledby="icon-data-label" hidden>
+        <!-- Visible by default: the default icon style is "data". -->
+        <section class="control-group" id="icon-data-section" aria-labelledby="icon-data-label">
           <h3 id="icon-data-label" class="control-label">Icon data</h3>
           <div id="icon-data-seg" class="segmented" role="radiogroup" aria-labelledby="icon-data-label">
             <button class="seg-btn" role="radio" aria-checked="false" data-source="battery">Battery %</button>

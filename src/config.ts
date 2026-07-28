@@ -252,18 +252,31 @@ export function veoParkingReportUrl(r: ParkingReportInput): string {
 // Veo's Denver rates are locked in the city licensing agreement for the
 // contract's duration, so constants are safe. All amounts in cents.
 
-export type RatePlanKey = "resident" | "visitor" | "equity";
+// One flat list, VeoPlus variants included (per Zeke, PR #37): rate is a
+// single field, not a rate + a separate VeoPlus checkbox. The Pass waives
+// the unlock fee, so its variants just carry unlockCents: 0. Equity gets no
+// variant — its unlock is already free, so a Pass changes nothing.
+export type RatePlanKey =
+  | "resident"
+  | "resident_plus"
+  | "visitor"
+  | "visitor_plus"
+  | "equity";
 
 export interface RatePlan {
   key: RatePlanKey;
   label: string;
   unlockCents: number;
   perMinCents: number;
+  /** VeoPlus Pass variant (free unlocks baked into unlockCents). */
+  veoPlus?: boolean;
 }
 
 export const RATE_PLANS: RatePlan[] = [
   { key: "resident", label: "Resident — $1 + 25¢/min", unlockCents: 100, perMinCents: 25 },
+  { key: "resident_plus", label: "Resident w/ VeoPlus Pass — free unlocks + 25¢/min", unlockCents: 0, perMinCents: 25, veoPlus: true },
   { key: "visitor", label: "Visitor — $1 + 39¢/min", unlockCents: 100, perMinCents: 39 },
+  { key: "visitor_plus", label: "Visitor w/ VeoPlus Pass — free unlocks + 39¢/min", unlockCents: 0, perMinCents: 39, veoPlus: true },
   // Equity program: 60 free min/day, then 15¢/min with no unlock fee. The
   // ticker can't know how much of today's free hour is left, so it prices
   // minutes beyond 60 and labels the estimate accordingly.

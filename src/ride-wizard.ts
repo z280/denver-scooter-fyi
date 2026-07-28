@@ -10,6 +10,7 @@
 
 import type { Locate, LngLat } from "./locate.ts";
 import type { RidePriority, RideTypeChoice } from "./recommend.ts";
+import { isAuthenticated } from "./map-auth.js";
 
 export interface RideWizardHooks {
   /** Consent granted — apply the ride map preset (caller guards its own
@@ -397,11 +398,15 @@ export class RideWizard {
     syncTypes();
 
     // Default-unchecked each visit; checking it persists this interview's
-    // answers so the next start() opens pre-seeded.
+    // answers so the next start() opens pre-seeded. Gated behind sign-in
+    // (per Zeke, PR #37): signed out, the toggle is disabled with a
+    // tooltip naming the requirement.
+    const authed = isAuthenticated();
     const saveWrap = el("label", "switch ride-wizard__save");
     const saveCb = el("input");
     saveCb.type = "checkbox";
     saveCb.checked = this.saveAsDefault;
+    saveCb.disabled = !authed;
     saveCb.addEventListener("change", () => {
       this.saveAsDefault = saveCb.checked;
     });
@@ -409,6 +414,12 @@ export class RideWizard {
       saveCb,
       el("span", undefined, "Save this as my default search preference"),
     );
+    if (!authed) {
+      saveWrap.classList.add("switch--disabled");
+      const tip = "Saving your search preference requires being logged in.";
+      saveWrap.title = tip;
+      saveCb.setAttribute("aria-label", tip);
+    }
 
     const row = el("div", "ride-wizard__actions");
     const go = el("button", "login-btn", "Find my ride");
@@ -426,14 +437,17 @@ export class RideWizard {
     row.append(go);
 
     const hint = el("p", "ride-wizard__hint");
-    const hintBtn = el("button", "text-btn", "Log in");
-    hintBtn.type = "button";
-    hintBtn.addEventListener("click", () => this.hooks.onLoginHint());
-    hint.append(
-      document.createTextNode("Preferences save on this device. "),
-      hintBtn,
-      document.createTextNode(" to report problem devices."),
-    );
+    if (authed) {
+      hint.textContent = "Preferences save on this device.";
+    } else {
+      const hintBtn = el("button", "text-btn", "Log in");
+      hintBtn.type = "button";
+      hintBtn.addEventListener("click", () => this.hooks.onLoginHint());
+      hint.append(
+        hintBtn,
+        document.createTextNode(" to save your search preferences."),
+      );
+    }
 
     this.shell("Find wheels", q, list, typeRow, saveWrap, row, hint);
   }

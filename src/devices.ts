@@ -177,7 +177,7 @@ export class Devices {
   // Iconography: inner badge style + gauge ring (default on). The badge
   // ("icon data") and the ring ("gauge data") have independent signals so
   // riders can see reliability in the icon while the ring tracks battery.
-  private iconStyle: IconStyle = "use";
+  private iconStyle: IconStyle = "data"; // default per Zeke (PR #37): Data, not Ride type
   private modelIcon: ModelIcon = "comic";
   private iconData: DataSource = "reliability";
   private gaugeData: DataSource = "battery";

@@ -153,9 +153,6 @@ let clearQualityFilter: () => void = () => {};
 let setQualityFilter: (value: QualityFilter) => void = () => {};
 let resetAllFilters: () => void = () => {};
 let resetIconography: () => void = () => {};
-// wireModes()' `applying` guard, exported to preset appliers so their
-// synthetic events don't drop the mode indicator to "custom".
-let withPresetGuard: (fn: () => Promise<void>) => Promise<void> = (fn) => fn();
 // Ride mode fetches the lean payload (the API's low-end-phone diet); the
 // analysis surface needs the h3 + rank extras. Assigned by wireModes /
 // startRefreshLoop.
@@ -368,7 +365,6 @@ map.on("load", async () => {
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
     suggestName: () => filterSummary() || "All devices",
-    guard: (fn) => withPresetGuard(fn),
   });
   wireEquityRanks();
 
@@ -762,7 +758,7 @@ function wireIconography(): void {
   const gauge = need<HTMLInputElement>("gauge-toggle");
 
   // Local mirrors of the devices-side iconography state, for rendering.
-  let style: IconStyle = "use";
+  let style: IconStyle = "data"; // default per Zeke (PR #37)
   let modelIcon: ModelIcon = "comic";
   let iconData: DataSource = "reliability";
   let gaugeData: DataSource = "battery";
@@ -1108,7 +1104,7 @@ function wireIconography(): void {
       modelIcon = "comic";
       devices.setModelIcon("comic");
     }
-    setStyle("use");
+    setStyle("data");
     setIconSrc("reliability");
     setGaugeSrc("battery");
     setDisplay("always");
@@ -1248,19 +1244,18 @@ function wireAreaFilter(): AreaFilter {
 // selected; what matters is that closing the HUD hands the bar back to
 // whichever mode was active before. The profile button in the top bar is
 // shared by all three. Exiting Find-wheels mode — declining consent,
-// closing the wizard, or tapping Analysis — resets the map to its
-// fresh-load defaults (restoring carried-over filters when option 4 was
-// used) so the wizard's presets never leak.
+// closing the wizard, or tapping Analysis — resets iconography/overlays to
+// their fresh-load defaults and restores the filters exactly as they stood
+// on entry, so the wizard's presets never leak and a visit never destroys
+// the analysis setup. The bar always shows the current mode: tweaking
+// filters or iconography does NOT drop it to a "custom" state (per Zeke,
+// PR #37 — the old capture-phase toCustom listener is gone).
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
       "#mode-switch .mode-btn[data-mode]",
     ),
   );
-  // Depth counter, not a boolean: the async preset guard can overlap the
-  // sync one (or a second async apply), and a boolean would drop the guard
-  // when the first finishes while the second is still mid-flight.
-  let applyDepth = 0;
   let rideActive = false;
 
   const setActive = (mode: string | null): void => {
@@ -1298,27 +1293,6 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
-  /** Run a preset with the guard up so its synthetic events don't count
-   *  as manual "custom" changes. */
-  const applyPreset = (fn: () => void): void => {
-    applyDepth++;
-    try {
-      fn();
-    } finally {
-      applyDepth--;
-    }
-  };
-  // Async flavor of the same guard for saved-filter loads (their area
-  // restore awaits a boundary fetch; the guard must span the whole chain).
-  withPresetGuard = async (fn) => {
-    applyDepth++;
-    try {
-      await fn();
-    } finally {
-      applyDepth--;
-    }
-  };
-
   const clearOverlays = (): void => {
     for (const input of layerInputs.values()) {
       if (input.checked) {
@@ -1378,16 +1352,13 @@ function wireModes(): void {
   // Filters as they stood when ride mode was entered. Snapshotted BEFORE
   // wizard.start() — onConsentGranted fires applyRide() (a resetAllFilters)
   // at step one, so by interview time the live state is already gone. The
-  // summary string is captured alongside for the same reason.
+  // summary string is captured alongside for the same reason. Restored by
+  // option 4 (before the ranking runs) and unconditionally on exit.
   let rideEntrySnapshot: FilterSnapshot | null = null;
   let rideEntrySummary = "";
-  // The rider carried filters in via option 4 — restore them on exit
-  // instead of wiping, or Find-a-ride silently destroys the analysis setup
-  // they deliberately built.
-  let rideCarriedFilters = false;
 
   const wizard = new RideWizard(need("ride-wizard"), locate, {
-    onConsentGranted: () => applyPreset(applyRide),
+    onConsentGranted: () => applyRide(),
     onExit: () => exitRide(),
     onLoginHint: () => {
       const tab = document.querySelector<HTMLButtonElement>(
@@ -1408,9 +1379,8 @@ function wireModes(): void {
         // Option 4: re-apply the mode-entry snapshot BEFORE the ranking
         // runs — rankDevices() already ranks over visibleFeatures(), so
         // restoring the filters is the whole feature.
-        rideCarriedFilters = true;
         const snap = rideEntrySnapshot;
-        void withPresetGuard(() => applyFilterSnapshot(snap)).then(finish);
+        void applyFilterSnapshot(snap).then(finish);
       } else {
         finish();
       }
@@ -1423,12 +1393,14 @@ function wireModes(): void {
     if (wizard.isOpen()) wizard.close();
     setWizardDocked(false);
     setRideSurface(false);
-    applyPreset(applyNormal);
-    if (rideCarriedFilters && rideEntrySnapshot) {
-      const snap = rideEntrySnapshot;
-      void withPresetGuard(() => applyFilterSnapshot(snap));
+    applyNormal();
+    // ALWAYS restore the filters as they stood on entry — option 4 or not.
+    // Merely visiting Find wheels must never destroy the analysis setup,
+    // and a wiped exit also poisons the next visit's snapshot (the likely
+    // shape of the option-4 bug reported on PR #37).
+    if (rideEntrySnapshot) {
+      void applyFilterSnapshot(rideEntrySnapshot);
     }
-    rideCarriedFilters = false;
     rideEntrySnapshot = null;
     // Recommendations are scoped to one Find-a-ride session: drop them so
     // re-entering never shows a stale list from the prior location/answers.
@@ -1448,7 +1420,6 @@ function wireModes(): void {
     if (!rideActive) {
       rideEntrySnapshot = snapshotFilters();
       rideEntrySummary = filterSummary();
-      rideCarriedFilters = false;
     }
     setDrawer(null);
     setRideSurface(true);
@@ -1487,29 +1458,12 @@ function wireModes(): void {
           if (rideActive) {
             exitRide(); // back to a normal map — no surprise choropleth
           } else {
-            applyPreset(applyAnalysis);
+            applyAnalysis();
             setActive("analysis");
           }
       }
     });
   }
-
-  // Manual changes to any drawer control drop the mode back to custom.
-  // Capture phase so the presets' own synthetic events (guarded by
-  // `applying`) never count. Ride mode is exempt: its surface has no
-  // analysis controls to customize.
-  const toCustom = (e: Event): void => {
-    if (applyDepth > 0 || rideActive) return;
-    const t = e.target as HTMLElement | null;
-    // The saved-filter controls apply through withPresetGuard, but this
-    // capture-phase listener sees the triggering click before that guard
-    // can engage — exempt them here or loading a preset always nulls the
-    // mode (the exact symptom the guard exists to prevent).
-    if (t?.closest?.(".preset-actions, #preset-panel")) return;
-    if (t?.closest?.(".drawer")) setActive(null);
-  };
-  document.addEventListener("change", toCustom, true);
-  document.addEventListener("click", toCustom, true);
 }
 
 // ---------- Equity ranks ----------

@@ -1,8 +1,7 @@
 // Saved map-filter sets: serialize exactly what the Filters drawer owns —
 // nothing else — to localStorage, with Save/Load controls in that drawer.
-// main.ts supplies the state access (snapshot/apply/suggestName) plus the
-// preset guard that keeps synthetic events from dropping the mode indicator
-// to "custom"; this module owns storage and the drawer UI.
+// main.ts supplies the state access (snapshot/apply/suggestName); this
+// module owns storage and the drawer UI.
 
 import type { BoundaryLayer } from "./api.ts";
 import type { ModelKey, QualityFilter, RideType } from "./devices.ts";
@@ -86,9 +85,6 @@ export interface FilterPresetDeps {
   apply(s: FilterSnapshot): Promise<void>;
   /** Suggested preset name, from the shared chip-label helper. */
   suggestName(): string;
-  /** wireModes()' `applying` guard, so applying a preset doesn't null the
-   *  active mode indicator. */
-  guard(fn: () => Promise<void>): Promise<void>;
 }
 
 export function wireFilterPresets(deps: FilterPresetDeps): void {
@@ -172,7 +168,7 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
         busy = true;
         for (const b of list.querySelectorAll("button")) b.disabled = true;
         try {
-          await deps.guard(() => deps.apply(preset));
+          await deps.apply(preset);
           note(`Loaded “${preset.name}”.`, loadBtn);
         } catch (e) {
           console.error("preset load failed", e);
