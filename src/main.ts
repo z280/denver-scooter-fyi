@@ -57,14 +57,11 @@ import {
   promptGoogleOneTap,
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
-import {
-  fetchSessionInfo,
-  isAdminSession,
-} from "./auth-session.ts";
+import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
-import { getAuth, isAuthenticated, signOut } from "./map-auth.js";
+import { getAuth, isAuthenticated } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
 import {
   initChrome,
@@ -1656,24 +1653,14 @@ function wireAccount(): void {
   if (!body) return;
 
   let countdownTimer: number | undefined;
-  // Admin status is resolved once per token (identity comes from
-  // /auth/session, not the token blob). Cached so the minute-tick re-render
-  // and focus re-render don't refetch.
-  let adminCheckedToken: string | null = null;
-  let adminIsOn = false;
-  let adminEmail: string | undefined;
   // Backend sign-in capabilities (null until /auth/config resolves).
   let authCfg: AuthConfig | null = null;
-
-  const formatRemaining = (expiresIso: string): string => {
-    const ms = new Date(expiresIso).getTime() - Date.now();
-    if (ms <= 0) return "expired";
-    const totalMin = Math.floor(ms / 60000);
-    const h = Math.floor(totalMin / 60);
-    const m = totalMin % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  };
+  // Handle for the signed-in panel (account.ts); null while signed out.
+  let signedIn: AccountHandle | null = null;
+  // Key of the state the current DOM was built for. Same key → refresh in
+  // place instead of rebuilding, so the minute tick and focus events don't
+  // destroy open editors or a half-typed sign-in form.
+  let renderedKey: string | null = null;
 
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -1686,77 +1673,8 @@ function wireAccount(): void {
     return node;
   };
 
-  const render = (): void => {
-    window.clearTimeout(countdownTimer);
-    body.replaceChildren();
-    const auth = getAuth();
-    if (auth) {
-      const status = el("div", "account-status");
-      const row = el("div", "account-status__row");
-      row.append(
-        el("span", "account-status__dot"),
-        el("strong", undefined, "Signed in"),
-      );
-      const expiryP = el("p", "account-status__expiry");
-      expiryP.append(
-        document.createTextNode("Session expires in "),
-        el("span", undefined, formatRemaining(auth.expires)),
-      );
-      status.append(row, expiryP);
-      body.append(status);
-
-      // Administrator Mode badge, shown once we've confirmed the session is
-      // on the admin allowlist (Google + verified allowlisted email → admin
-      // scope, enforced server-side).
-      if (adminIsOn && adminCheckedToken === auth.token) {
-        const badge = el("div", "account-admin");
-        const brow = el("div", "account-admin__row");
-        brow.append(
-          el("span", "account-admin__icon", "🛡️"),
-          el("strong", undefined, "Administrator Mode"),
-        );
-        badge.append(brow);
-        if (adminEmail) badge.append(el("p", "account-admin__email", adminEmail));
-        body.append(badge);
-      }
-
-      const signoutBtn = el(
-        "button",
-        "login-btn login-btn--secondary",
-        "Sign out",
-      );
-      signoutBtn.type = "button";
-      signoutBtn.addEventListener("click", async () => {
-        signoutBtn.disabled = true;
-        signoutBtn.textContent = "Signing out…";
-        try {
-          await signOut();
-        } finally {
-          // Reload so all data refetches drop back to the public endpoint
-          // and the UI resets cleanly to the unauthenticated state.
-          location.reload();
-        }
-      });
-      body.append(signoutBtn);
-
-      // Resolve admin status once per token, then re-render to reveal the
-      // badge. Marking the token as checked up front prevents the minute
-      // re-render from refetching.
-      if (adminCheckedToken !== auth.token) {
-        adminCheckedToken = auth.token;
-        void fetchSessionInfo().then((info) => {
-          adminIsOn = isAdminSession(info);
-          adminEmail = info?.email;
-          // Popups need the status too: admins skip the Start proximity
-          // gate (issue #18).
-          devices.setAdminSession(adminIsOn);
-          render();
-        });
-      }
-
-      // Re-render once a minute to keep the countdown current.
-      countdownTimer = window.setTimeout(render, 60_000);
-    } else {
+  const buildSignedOut = (): void => {
+    {
       const intro = el("p", "account-intro");
       intro.textContent =
         "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
@@ -1934,6 +1852,35 @@ function wireAccount(): void {
 
       body.append(emailForm, codeForm);
     }
+  };
+
+  const render = (): void => {
+    window.clearTimeout(countdownTimer);
+    const auth = getAuth();
+    const key = auth ? `in:${auth.token}` : `out:${authCfg ? 1 : 0}`;
+    if (key === renderedKey) {
+      // Same state — update the countdown in place; nothing rebuilds, so
+      // open editors and half-typed forms survive.
+      signedIn?.refresh();
+    } else {
+      renderedKey = key;
+      signedIn?.dispose();
+      signedIn = null;
+      body.replaceChildren();
+      if (auth) {
+        signedIn = renderSignedInAccount(body, auth, {
+          setAdminSession: (on) => devices.setAdminSession(on),
+          // A rejected token has already been cleared from storage;
+          // re-running render() lands in the signed-out branch.
+          onAuthLost: () => render(),
+        });
+      } else {
+        buildSignedOut();
+      }
+    }
+    // Re-check once a minute while signed in: keeps the countdown current
+    // and notices local expiry (getAuth() self-clears past `expires`).
+    if (auth) countdownTimer = window.setTimeout(render, 60_000);
   };
 
   render();
