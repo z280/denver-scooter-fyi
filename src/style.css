@@ -1276,6 +1276,53 @@ body:not(.ribbon-open) .drawer-tabs {
 .account-magic-status--error {
   color: var(--fail);
 }
+.username-line {
+  margin: 0 0 6px;
+}
+.username-line__display {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.username-line__raw {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.combo {
+  position: relative;
+  margin: 6px 0;
+}
+.combo input.select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.combo__list {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.combo__option {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.combo__option:hover,
+.combo__option[aria-selected="true"] {
+  background: var(--accent-soft);
+}
 
 .brand-link img {
   display: block;

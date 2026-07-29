@@ -5,7 +5,12 @@
 
 import {
   ApiError,
+  fetchAdjectives,
+  fetchEmojiNouns,
   fetchProfile,
+  fetchRoyaltyTitles,
+  regenerateUsername,
+  setUsername,
   updateProfile,
   type Profile,
   type ProfileUpdate,
@@ -367,6 +372,335 @@ export function renderSignedInAccount(
     return wrap;
   };
 
+  // ----- Combo input (adjective / emoji-noun pickers) --------------------
+
+  interface ComboEntry {
+    /** Canonical value sent to the API. */
+    value: string;
+    /** What the user sees and types against. */
+    label: string;
+  }
+
+  interface Combo {
+    node: HTMLElement;
+    /** The picked canonical value, or an exact label/value match of what
+     *  was typed; null when nothing valid is selected. */
+    chosen(): string | null;
+  }
+
+  /** Lightweight combobox: text input filtering a curated list client-side
+   *  (the lexicons are small and fetched once), listbox of ≤8 matches,
+   *  Arrow/Enter/Escape keyboard support. No free text reaches the API —
+   *  only canonical entry values. */
+  const makeCombo = (label: string, entries: ComboEntry[]): Combo => {
+    const wrap = el("div", "combo");
+    const input = el("input", "select");
+    input.type = "text";
+    input.placeholder = label;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "false");
+    input.setAttribute("aria-label", label);
+    const list = el("ul", "combo__list");
+    list.setAttribute("role", "listbox");
+    list.hidden = true;
+
+    let picked: ComboEntry | null = null;
+    let matches: ComboEntry[] = [];
+    let highlighted = -1;
+
+    const close = (): void => {
+      list.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      highlighted = -1;
+    };
+    const pick = (entry: ComboEntry): void => {
+      picked = entry;
+      input.value = entry.label;
+      close();
+    };
+    const renderList = (): void => {
+      const q = input.value.trim().toLowerCase();
+      matches = (
+        q
+          ? entries.filter((e) => e.label.toLowerCase().includes(q))
+          : entries
+      ).slice(0, 8);
+      list.replaceChildren(
+        ...matches.map((entry, i) => {
+          const li = el("li", "combo__option", entry.label);
+          li.setAttribute("role", "option");
+          li.setAttribute("aria-selected", String(i === highlighted));
+          // mousedown beats the input's blur, so the pick lands first.
+          li.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            pick(entry);
+          });
+          return li;
+        }),
+      );
+      list.hidden = matches.length === 0;
+      input.setAttribute("aria-expanded", String(!list.hidden));
+    };
+
+    input.addEventListener("input", () => {
+      picked = null;
+      highlighted = -1;
+      renderList();
+    });
+    input.addEventListener("focus", renderList);
+    input.addEventListener("blur", close);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        close();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (list.hidden) renderList();
+        if (!matches.length) return;
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        highlighted =
+          (highlighted + delta + matches.length) % matches.length;
+        renderList();
+        return;
+      }
+      if (e.key === "Enter" && !list.hidden && highlighted >= 0) {
+        e.preventDefault();
+        pick(matches[highlighted]);
+      }
+    });
+
+    wrap.append(input, list);
+    return {
+      node: wrap,
+      chosen() {
+        if (picked) return picked.value;
+        const typed = input.value.trim().toLowerCase();
+        if (!typed) return null;
+        const exact = entries.find(
+          (e) =>
+            e.label.toLowerCase() === typed || e.value.toLowerCase() === typed,
+        );
+        return exact ? exact.value : null;
+      },
+    };
+  };
+
+  // ----- Public identity section -----------------------------------------
+
+  const buildIdentitySection = (p: Profile): HTMLElement => {
+    const sec = accountSection("Public identity");
+
+    const line = el("div", "username-line");
+    const displayEl = el("div", "username-line__display");
+    const rawEl = el("div", "username-line__raw");
+    line.append(displayEl, rawEl);
+    const renderNameLine = (): void => {
+      const name = profile?.display_name ?? profile?.public_username ?? "—";
+      displayEl.textContent = name;
+      const raw = profile?.public_username ?? "";
+      rawEl.textContent = raw;
+      rawEl.hidden = !raw || raw === name;
+    };
+    renderNameLine();
+
+    const nameStatus = makeStatus();
+    const regenBtn = el("button", "text-btn", "New random name");
+    regenBtn.type = "button";
+    const chooseBtn = el("button", "text-btn", "Choose…");
+    chooseBtn.type = "button";
+    const actions = el("div", "account-field__row");
+    actions.append(regenBtn, chooseBtn);
+    const pickerSlot = el("div");
+
+    /** display_name is a server-side generated column (title + " " + name);
+     *  mirror the formula locally so a username change needs no refetch. */
+    const applyUsername = (newName: string): void => {
+      if (!profile) return;
+      profile.public_username = newName;
+      profile.display_name = profile.royalty_title
+        ? `${profile.royalty_title} ${newName}`
+        : newName;
+      renderNameLine();
+    };
+
+    // Regenerate and set share ONE 10/hour rate-limit bucket — a 429 from
+    // either locks both until the window lapses (and survives reopening
+    // the picker, since the lock lives on the buttons themselves).
+    let usernameActions: HTMLButtonElement[] = [regenBtn, chooseBtn];
+    const lockUsernameActions = (seconds: number): void => {
+      for (const b of usernameActions) b.disabled = true;
+      window.setTimeout(
+        () => {
+          if (disposed) return;
+          for (const b of usernameActions) b.disabled = false;
+          nameStatus.clear();
+        },
+        Math.max(1, seconds) * 1000,
+      );
+    };
+    const handleUsernameError = (err: unknown, fallback: string): void => {
+      if (err instanceof ApiError && err.status === 429) {
+        nameStatus.set(describeError(err, fallback), true);
+        lockUsernameActions(err.retryAfter ?? 15 * 60);
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        nameStatus.set("That combination is taken — pick another.", true);
+        return;
+      }
+      nameStatus.set(describeError(err, fallback), true);
+    };
+
+    regenBtn.addEventListener("click", () => {
+      regenBtn.disabled = true;
+      nameStatus.set("Rolling…");
+      regenerateUsername()
+        .then((res) => {
+          if (disposed) return;
+          regenBtn.disabled = false;
+          applyUsername(res.public_username);
+          nameStatus.set("Saved.");
+        })
+        .catch((err: unknown) => {
+          if (disposed) return;
+          regenBtn.disabled = false;
+          handleUsernameError(err, "Couldn't roll a new name.");
+        });
+    });
+
+    // Picker: built lazily on first expand (fetches both lexicons once).
+    let pickerBuilt = false;
+    let pickerVisible = false;
+    const buildPicker = async (): Promise<void> => {
+      const [adj, nouns] = await Promise.all([
+        fetchAdjectives(),
+        fetchEmojiNouns(),
+      ]);
+      if (disposed) return;
+      const adjCombo = makeCombo(
+        "Adjective",
+        adj.adjectives.map((a) => ({ value: a, label: a })),
+      );
+      const nounCombo = makeCombo(
+        "Emoji noun",
+        nouns.emoji_nouns.map((n) => ({
+          value: n.emoji,
+          label: `${n.emoji} ${n.word}`,
+        })),
+      );
+      const applyBtn = el("button", "login-btn login-btn--secondary", "Apply");
+      applyBtn.type = "button";
+      usernameActions = [regenBtn, chooseBtn, applyBtn];
+      const pickerHint = el(
+        "p",
+        "account-magic-status",
+        "Pick either half (or both) — the other stays as-is.",
+      );
+      applyBtn.addEventListener("click", () => {
+        const adjective = adjCombo.chosen() ?? undefined;
+        const emoji = nounCombo.chosen() ?? undefined;
+        if (!adjective && !emoji) {
+          nameStatus.set(
+            "Pick an adjective or an emoji noun from the lists first.",
+            true,
+          );
+          return;
+        }
+        applyBtn.disabled = true;
+        nameStatus.set("Saving…");
+        setUsername({ adjective, emoji })
+          .then((res) => {
+            if (disposed) return;
+            applyBtn.disabled = false;
+            applyUsername(res.public_username);
+            nameStatus.set("Saved.");
+            pickerSlot.hidden = true;
+            pickerVisible = false;
+          })
+          .catch((err: unknown) => {
+            if (disposed) return;
+            applyBtn.disabled = false;
+            handleUsernameError(err, "Couldn't save that name.");
+          });
+      });
+      pickerSlot.append(adjCombo.node, nounCombo.node, applyBtn, pickerHint);
+    };
+    chooseBtn.addEventListener("click", () => {
+      if (!pickerBuilt) {
+        pickerBuilt = true;
+        pickerVisible = true;
+        nameStatus.set("Loading word lists…");
+        buildPicker()
+          .then(() => {
+            if (!disposed) nameStatus.clear();
+          })
+          .catch(() => {
+            if (disposed) return;
+            pickerBuilt = false;
+            pickerVisible = false;
+            nameStatus.set("Couldn't load the word lists — try again.", true);
+          });
+        return;
+      }
+      pickerVisible = !pickerVisible;
+      pickerSlot.hidden = !pickerVisible;
+    });
+
+    sec.append(line, actions, pickerSlot, nameStatus.node);
+
+    // Royalty title: curated list in PICKER order (related titles adjacent)
+    // — render exactly as served, never sorted. Purely decorative and not
+    // unique; written via PUT /profile.
+    const titleWrap = el("div", "account-field");
+    titleWrap.append(el("span", "control-label", "Royalty title"));
+    const titleSelect = el("select", "select");
+    titleSelect.setAttribute("aria-label", "Royalty title");
+    titleSelect.disabled = true;
+    const titleStatus = makeStatus();
+    const noneOpt = el("option", undefined, "No title");
+    noneOpt.value = "";
+    titleSelect.append(noneOpt);
+    void fetchRoyaltyTitles()
+      .then((res) => {
+        if (disposed) return;
+        for (const t of res.royalty_titles) {
+          const opt = el("option", undefined, t);
+          opt.value = t;
+          titleSelect.append(opt);
+        }
+        titleSelect.value = p.royalty_title ?? "";
+        titleSelect.disabled = false;
+      })
+      .catch(() => {
+        if (!disposed) titleStatus.set("Couldn't load titles.", true);
+      });
+    titleSelect.addEventListener("change", () => {
+      const prev = profile?.royalty_title ?? "";
+      const next = titleSelect.value || null;
+      titleSelect.disabled = true;
+      titleStatus.set("Saving…");
+      savePatch({ royalty_title: next })
+        .then(() => {
+          titleStatus.set("Saved.");
+          renderNameLine();
+        })
+        .catch((err: unknown) => {
+          titleSelect.value = prev;
+          titleStatus.set(describeError(err, "Couldn't save the title."), true);
+        })
+        .finally(() => {
+          titleSelect.disabled = false;
+        });
+    });
+    titleWrap.append(titleSelect, titleStatus.node);
+    sec.append(titleWrap);
+
+    return sec;
+  };
+
   // ----- Profile section -------------------------------------------------
 
   const buildProfileSection = (p: Profile): HTMLElement => {
@@ -510,7 +844,10 @@ export function renderSignedInAccount(
       .then((p) => {
         if (disposed) return;
         profile = p;
-        profileSlot.replaceChildren(buildProfileSection(p));
+        profileSlot.replaceChildren(
+          buildIdentitySection(p),
+          buildProfileSection(p),
+        );
       })
       .catch((e: unknown) => {
         if (disposed) return;
