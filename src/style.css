@@ -1339,7 +1339,8 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 .swatch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(24px, 1fr));
+  /* 30px min + gap keeps taps usable in the ~300px drawer body. */
+  grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
   gap: 6px;
 }
 .swatch {

@@ -59,19 +59,21 @@ export function savedRatePlan(): RatePlanKey | null {
   }
 }
 
-export function saveRatePlan(key: RatePlanKey): void {
-  const prev = savedRatePlan();
+/** Persist the pick locally and offer it to the account sync hook.
+ *  Returns false when localStorage rejected the write (private mode) so
+ *  callers can say so instead of claiming the device saved it. The hook
+ *  fires on every save — the account layer gates on the SERVER's current
+ *  value, which both dedupes no-op PUTs and retries after a failed sync. */
+export function saveRatePlan(key: RatePlanKey): boolean {
+  let persisted = true;
   try {
     localStorage.setItem(RATE_STORAGE_KEY, key);
   } catch {
     /* private mode — the picker will just show again next ride */
+    persisted = false;
   }
-  // The VeoPlus variants collapse to one server value (the Pass is a local
-  // pricing refinement the API doesn't model), so only a base-plan change
-  // is worth pushing to the account.
-  if (syncHook && (!prev || toApiRatePlan(prev) !== toApiRatePlan(key))) {
-    syncHook(toApiRatePlan(key));
-  }
+  syncHook?.(toApiRatePlan(key));
+  return persisted;
 }
 
 // ---------- Account sync (PUT /api/v1/profile { rate_plan }) ----------

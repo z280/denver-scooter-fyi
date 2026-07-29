@@ -25,7 +25,6 @@ import {
   applyServerRatePlan,
   saveRatePlan,
   setRatePlanSyncHook,
-  toApiRatePlan,
 } from "./ride-cost.ts";
 import { reverseGeocode } from "./geocode.ts";
 
@@ -106,6 +105,9 @@ const BADGE_EMOJI: Record<string, string> = {
   miles_100: "🏁",
   streak_7: "🔥",
 };
+
+/** Unique-id counter for combobox aria wiring (ids must be document-unique). */
+let comboUid = 0;
 
 /** True once every completion criterion the API scores is met (email AND
  *  rate plan AND phone AND at least one of home/work) — worth 10 points. */
@@ -220,10 +222,15 @@ export function renderSignedInAccount(
   let onProfileSaved: (() => void) | null = null;
 
   /** All profile writes funnel through here so the cache, the completion
-   *  hint, and interested sections stay in sync. */
+   *  hint, and interested sections stay in sync. Writes are sequenced:
+   *  when PUTs overlap (independent fields each have their own Save), only
+   *  the latest write's response becomes the cache, so an early response
+   *  arriving late can't roll the cache back. */
+  let saveSeq = 0;
   const savePatch = async (patch: ProfileUpdate): Promise<Profile> => {
+    const seq = ++saveSeq;
     const updated = await updateProfile(patch);
-    if (!disposed) {
+    if (!disposed && seq === saveSeq) {
       profile = updated;
       refreshHint();
       onProfileSaved?.();
@@ -398,13 +405,21 @@ export function renderSignedInAccount(
     value: string;
     /** What the user sees and types against. */
     label: string;
+    /** Extra strings that count as an exact match (e.g. the noun word,
+     *  so "owl" resolves without typing the emoji). */
+    terms?: string[];
   }
+
+  /** What the input currently resolves to: nothing typed, typed text that
+   *  matches no curated entry (must not be silently dropped), or a value. */
+  type ComboResolution =
+    | { kind: "empty" }
+    | { kind: "unmatched" }
+    | { kind: "value"; value: string };
 
   interface Combo {
     node: HTMLElement;
-    /** The picked canonical value, or an exact label/value match of what
-     *  was typed; null when nothing valid is selected. */
-    chosen(): string | null;
+    resolve(): ComboResolution;
   }
 
   /** Lightweight combobox: text input filtering a curated list client-side
@@ -412,6 +427,7 @@ export function renderSignedInAccount(
    *  Arrow/Enter/Escape keyboard support. No free text reaches the API —
    *  only canonical entry values. */
   const makeCombo = (label: string, entries: ComboEntry[]): Combo => {
+    const uid = `combo-${++comboUid}`;
     const wrap = el("div", "combo");
     const input = el("input", "select");
     input.type = "text";
@@ -421,7 +437,10 @@ export function renderSignedInAccount(
     input.setAttribute("role", "combobox");
     input.setAttribute("aria-expanded", "false");
     input.setAttribute("aria-label", label);
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-controls", `${uid}-list`);
     const list = el("ul", "combo__list");
+    list.id = `${uid}-list`;
     list.setAttribute("role", "listbox");
     list.hidden = true;
 
@@ -432,6 +451,7 @@ export function renderSignedInAccount(
     const close = (): void => {
       list.hidden = true;
       input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
       highlighted = -1;
     };
     const pick = (entry: ComboEntry): void => {
@@ -449,6 +469,7 @@ export function renderSignedInAccount(
       list.replaceChildren(
         ...matches.map((entry, i) => {
           const li = el("li", "combo__option", entry.label);
+          li.id = `${uid}-opt-${i}`;
           li.setAttribute("role", "option");
           li.setAttribute("aria-selected", String(i === highlighted));
           // mousedown beats the input's blur, so the pick lands first.
@@ -461,6 +482,13 @@ export function renderSignedInAccount(
       );
       list.hidden = matches.length === 0;
       input.setAttribute("aria-expanded", String(!list.hidden));
+      // Announce and reveal the keyboard highlight.
+      if (highlighted >= 0 && highlighted < matches.length) {
+        input.setAttribute("aria-activedescendant", `${uid}-opt-${highlighted}`);
+        list.children[highlighted]?.scrollIntoView({ block: "nearest" });
+      } else {
+        input.removeAttribute("aria-activedescendant");
+      }
     };
 
     input.addEventListener("input", () => {
@@ -497,22 +525,24 @@ export function renderSignedInAccount(
     wrap.append(input, list);
     return {
       node: wrap,
-      chosen() {
-        if (picked) return picked.value;
+      resolve() {
+        if (picked) return { kind: "value", value: picked.value };
         const typed = input.value.trim().toLowerCase();
-        if (!typed) return null;
+        if (!typed) return { kind: "empty" };
         const exact = entries.find(
           (e) =>
-            e.label.toLowerCase() === typed || e.value.toLowerCase() === typed,
+            e.label.toLowerCase() === typed ||
+            e.value.toLowerCase() === typed ||
+            e.terms?.some((t) => t.toLowerCase() === typed),
         );
-        return exact ? exact.value : null;
+        return exact ? { kind: "value", value: exact.value } : { kind: "unmatched" };
       },
     };
   };
 
   // ----- Public identity section -----------------------------------------
 
-  const buildIdentitySection = (p: Profile): HTMLElement => {
+  const buildIdentitySection = (): HTMLElement => {
     const sec = accountSection("Public identity");
 
     const line = el("div", "username-line");
@@ -611,6 +641,8 @@ export function renderSignedInAccount(
         nouns.emoji_nouns.map((n) => ({
           value: n.emoji,
           label: `${n.emoji} ${n.word}`,
+          // Typing just the word (no emoji) still resolves.
+          terms: [n.word],
         })),
       );
       const applyBtn = el("button", "login-btn login-btn--secondary", "Apply");
@@ -622,8 +654,19 @@ export function renderSignedInAccount(
         "Pick either half (or both) — the other stays as-is.",
       );
       applyBtn.addEventListener("click", () => {
-        const adjective = adjCombo.chosen() ?? undefined;
-        const emoji = nounCombo.chosen() ?? undefined;
+        const adj = adjCombo.resolve();
+        const noun = nounCombo.resolve();
+        // Typed-but-unmatched text must not be silently dropped from the
+        // PUT — the server only accepts curated values.
+        if (adj.kind === "unmatched" || noun.kind === "unmatched") {
+          nameStatus.set(
+            "Pick options from the lists — free text can't be saved.",
+            true,
+          );
+          return;
+        }
+        const adjective = adj.kind === "value" ? adj.value : undefined;
+        const emoji = noun.kind === "value" ? noun.value : undefined;
         if (!adjective && !emoji) {
           nameStatus.set(
             "Pick an adjective or an emoji noun from the lists first.",
@@ -639,6 +682,9 @@ export function renderSignedInAccount(
             applyBtn.disabled = false;
             applyUsername(res.public_username);
             nameStatus.set("Saved.");
+            // Hiding the picker removes the focused Apply button from the
+            // tab order — hand focus back to its toggle.
+            if (pickerSlot.contains(document.activeElement)) chooseBtn.focus();
             pickerSlot.hidden = true;
             pickerVisible = false;
           })
@@ -682,23 +728,37 @@ export function renderSignedInAccount(
     titleSelect.setAttribute("aria-label", "Royalty title");
     titleSelect.disabled = true;
     const titleStatus = makeStatus();
+    const titleRetry = el("button", "text-btn", "Retry");
+    titleRetry.type = "button";
+    titleRetry.hidden = true;
     const noneOpt = el("option", undefined, "No title");
     noneOpt.value = "";
     titleSelect.append(noneOpt);
-    void fetchRoyaltyTitles()
-      .then((res) => {
-        if (disposed) return;
-        for (const t of res.royalty_titles) {
-          const opt = el("option", undefined, t);
-          opt.value = t;
-          titleSelect.append(opt);
-        }
-        titleSelect.value = p.royalty_title ?? "";
-        titleSelect.disabled = false;
-      })
-      .catch(() => {
-        if (!disposed) titleStatus.set("Couldn't load titles.", true);
-      });
+    // Retryable: the panel only rebuilds on token change, so a failed
+    // lexicon fetch must not permanently dead-end the control.
+    const loadTitles = (): void => {
+      titleRetry.hidden = true;
+      titleStatus.clear();
+      fetchRoyaltyTitles()
+        .then((res) => {
+          if (disposed) return;
+          titleSelect.replaceChildren(noneOpt);
+          for (const t of res.royalty_titles) {
+            const opt = el("option", undefined, t);
+            opt.value = t;
+            titleSelect.append(opt);
+          }
+          titleSelect.value = profile?.royalty_title ?? "";
+          titleSelect.disabled = false;
+        })
+        .catch(() => {
+          if (disposed) return;
+          titleStatus.set("Couldn't load titles.", true);
+          titleRetry.hidden = false;
+        });
+    };
+    titleRetry.addEventListener("click", loadTitles);
+    loadTitles();
     titleSelect.addEventListener("change", () => {
       const prev = profile?.royalty_title ?? "";
       const next = titleSelect.value || null;
@@ -717,7 +777,7 @@ export function renderSignedInAccount(
           titleSelect.disabled = false;
         });
     });
-    titleWrap.append(titleSelect, titleStatus.node);
+    titleWrap.append(titleSelect, titleRetry, titleStatus.node);
     sec.append(titleWrap);
 
     sec.append(buildColorsBlock());
@@ -763,6 +823,9 @@ export function renderSignedInAccount(
     renderPreview();
 
     const closeEditor = (): void => {
+      // Tearing the editor down removes the focused button from the DOM —
+      // hand focus back to the toggle instead of dropping it on <body>.
+      if (editorSlot.contains(document.activeElement)) editBtn.focus();
       editorSlot.replaceChildren();
     };
 
@@ -819,6 +882,47 @@ export function renderSignedInAccount(
           return btn;
         });
         grid.append(...buttons);
+
+        // Roving tabindex: one tab stop per grid (not 128), arrows move
+        // within it. Columns are read from the live grid layout.
+        let focusIdx = 0;
+        const applyTabStops = (): void => {
+          buttons.forEach((b, i) => {
+            b.tabIndex = i === focusIdx ? 0 : -1;
+          });
+        };
+        applyTabStops();
+        grid.addEventListener("focusin", (e) => {
+          const i = buttons.indexOf(e.target as HTMLButtonElement);
+          if (i >= 0 && i !== focusIdx) {
+            focusIdx = i;
+            applyTabStops();
+          }
+        });
+        grid.addEventListener("keydown", (e) => {
+          const cols =
+            getComputedStyle(grid).gridTemplateColumns.split(" ").length || 1;
+          const step =
+            e.key === "ArrowRight"
+              ? 1
+              : e.key === "ArrowLeft"
+                ? -1
+                : e.key === "ArrowDown"
+                  ? cols
+                  : e.key === "ArrowUp"
+                    ? -cols
+                    : 0;
+          if (!step) return;
+          e.preventDefault();
+          // Walk in the pressed direction, skipping disabled swatches.
+          let i = focusIdx + step;
+          while (i >= 0 && i < buttons.length && buttons[i].disabled) i += step;
+          if (i < 0 || i >= buttons.length) return;
+          focusIdx = i;
+          applyTabStops();
+          buttons[i].focus();
+        });
+
         return {
           node: grid,
           update() {
@@ -910,12 +1014,16 @@ export function renderSignedInAccount(
               );
               void fetchRulingColors()
                 .then((res) => {
-                  if (disposed) return;
                   taken = toPalette(res).taken;
-                  updateAll();
                 })
                 .catch(() => {
-                  /* stale set stays; the next Apply may 409 again */
+                  /* refetch failed — the stale set stays and the next
+                     Apply may 409 again, but the editor must not dead-end */
+                })
+                .finally(() => {
+                  // Always re-grey and re-enable Apply, refetch or not;
+                  // otherwise a failed refetch leaves Apply stuck disabled.
+                  if (!disposed) updateAll();
                 });
               return;
             }
@@ -1050,13 +1158,14 @@ export function renderSignedInAccount(
     rateSelect.addEventListener("change", () => {
       const key = rateSelect.value as RatePlanKey;
       if (!RATE_PLANS.some((pl) => pl.key === key)) return;
-      rateStatus.set("Saving…");
-      // Persists locally and, via the sync hook below, PUTs the base plan.
-      // A VeoPlus-variant switch with the same base is local-only; say so.
-      const before = profile?.rate_plan ?? null;
-      saveRatePlan(key);
-      if (toApiRatePlan(key) === before) {
-        rateStatus.set("Saved on this device.");
+      // saveRatePlan persists locally and fires the sync hook, which owns
+      // the status messaging (PUT vs. local-only). Report a localStorage
+      // failure afterwards so it wins over the hook's optimistic copy.
+      if (!saveRatePlan(key)) {
+        rateStatus.set(
+          "Couldn't save on this device (private browsing?) — your account may still sync.",
+          true,
+        );
       }
     });
     rateWrap.append(rateSelect, rateStatus.node);
@@ -1229,44 +1338,59 @@ export function renderSignedInAccount(
     return sec;
   };
 
-  // ----- Rate-plan account sync (registered while this panel is alive) ---
-  setRatePlanSyncHook((plan) => {
-    updateProfile({ rate_plan: plan })
-      .then((updated) => {
-        if (disposed) return;
-        profile = updated;
-        refreshHint();
-        onProfileSaved?.();
-        rateSyncStatus?.set("Saved to your account.");
-      })
-      .catch((err: unknown) => {
-        // localStorage already has the change; only the account sync failed.
-        console.warn("rate plan sync failed", err);
-        if (!disposed) {
-          rateSyncStatus?.set(
-            describeError(err, "Saved on this device; couldn't sync to your account."),
-            true,
-          );
-        }
-      });
-  });
+  // ----- Rate-plan account sync ------------------------------------------
+  // Registered only once the profile GET has resolved: the gate compares
+  // against the SERVER's value (not localStorage), so a failed sync PUT is
+  // retried on the next pick even with an unchanged base, and a pre-load
+  // pick can't PUT ahead of the initial GET and then be overwritten by it.
+  const registerRateSync = (): void => {
+    setRatePlanSyncHook((plan) => {
+      if (profile?.rate_plan === plan) {
+        // Base plan already on the account — this was a local-only change
+        // (e.g. a VeoPlus-variant flip the API doesn't model).
+        rateSyncStatus?.set("Saved on this device.");
+        return;
+      }
+      rateSyncStatus?.set("Saving…");
+      savePatch({ rate_plan: plan })
+        .then(() => {
+          if (!disposed) rateSyncStatus?.set("Saved to your account.");
+        })
+        .catch((err: unknown) => {
+          // localStorage already has the change; only the account sync
+          // failed. Picking any plan again retries (the server-value gate
+          // above still sees the mismatch).
+          console.warn("rate plan sync failed", err);
+          if (!disposed) {
+            rateSyncStatus?.set(
+              describeError(
+                err,
+                "Saved on this device; couldn't sync to your account.",
+              ),
+              true,
+            );
+          }
+        });
+    });
+  };
 
   // ----- Load & assemble -------------------------------------------------
 
   const loadProfile = (): void => {
-    profileSlot.replaceChildren(
-      el("p", "account-magic-status", "Loading profile…"),
-    );
+    const loading = el("p", "account-magic-status", "Loading profile…");
+    loading.setAttribute("role", "status");
+    profileSlot.replaceChildren(loading);
     fetchProfile()
       .then((p) => {
         if (disposed) return;
         profile = p;
         profileSlot.replaceChildren(
-          buildIdentitySection(p),
+          buildIdentitySection(),
           buildProfileSection(p),
           buildBadgesSection(p),
           buildPointsSection(),
         );
+        registerRateSync();
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -1274,7 +1398,10 @@ export function renderSignedInAccount(
           deps.onAuthLost();
           return;
         }
+        // role=alert: with the container-level aria-live gone, a silent
+        // paragraph would leave screen-reader users on "Loading…" forever.
         const err = el("p", "account-error", "Couldn't load your profile.");
+        err.setAttribute("role", "alert");
         const retry = el("button", "text-btn", "Retry");
         retry.type = "button";
         retry.addEventListener("click", loadProfile);

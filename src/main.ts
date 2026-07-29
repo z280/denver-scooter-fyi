@@ -1661,6 +1661,10 @@ function wireAccount(): void {
   // place instead of rebuilding, so the minute tick and focus events don't
   // destroy open editors or a half-typed sign-in form.
   let renderedKey: string | null = null;
+  // Sign-in form state that must survive the one legitimate signed-out
+  // rebuild (auth-config resolving): a typed address and an already-sent
+  // code. Codes are 3/hour per email — wiping one is expensive.
+  const signedOutState = { email: "", sentEmail: "" };
 
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -1745,7 +1749,16 @@ function wireAccount(): void {
       codeStatus.setAttribute("aria-live", "polite");
       codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
 
-      let sentEmail = "";
+      // Restore state from before an auth-config rebuild, if any.
+      emailInput.value = signedOutState.email;
+      let sentEmail = signedOutState.sentEmail;
+      if (sentEmail && emailInput.value.trim() === sentEmail) {
+        codeForm.hidden = false;
+        emailSubmit.textContent = "Resend code";
+      } else {
+        sentEmail = "";
+        signedOutState.sentEmail = "";
+      }
       const validEmail = (): string | null => {
         const email = emailInput.value.trim();
         if (!isProbablyEmail(email)) {
@@ -1758,8 +1771,10 @@ function wireAccount(): void {
       // email after we revealed the code step, retract it so they can't verify
       // an old code against a new address (or vice-versa).
       emailInput.addEventListener("input", () => {
+        signedOutState.email = emailInput.value;
         if (sentEmail && emailInput.value.trim() !== sentEmail) {
           sentEmail = "";
+          signedOutState.sentEmail = "";
           codeForm.hidden = true;
           codeStatus.textContent = "";
           emailSubmit.textContent = "Email me a sign-in code";
@@ -1783,6 +1798,7 @@ function wireAccount(): void {
         requestLoginCode(email)
           .then(() => {
             sentEmail = email;
+            signedOutState.sentEmail = email;
             emailSubmit.disabled = false;
             linkBtn.disabled = false;
             emailSubmit.textContent = "Resend code";
@@ -1811,6 +1827,7 @@ function wireAccount(): void {
             emailSubmit.disabled = false;
             linkBtn.disabled = false;
             sentEmail = "";
+            signedOutState.sentEmail = "";
             codeForm.hidden = true;
             emailStatus.textContent =
               "📧 Check your inbox for a sign-in link (valid 15 minutes).";
