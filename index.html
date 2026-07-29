@@ -619,7 +619,10 @@
         <button class="drawer-close" type="button" aria-label="Close Account">&times;</button>
       </header>
       <div class="drawer-body">
-        <section class="control-group" id="account-body" aria-live="polite">
+        <!-- No container-level aria-live: the signed-in panel is a full
+             profile surface now, and announcing every rebuild would drown
+             screen readers. Feedback lines inside carry role="status". -->
+        <section class="control-group" id="account-body">
           <!-- populated by wireAccount() in main.ts -->
         </section>
       </div>
