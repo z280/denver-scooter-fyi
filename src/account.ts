@@ -9,6 +9,7 @@ import {
   fetchEmojiNouns,
   fetchProfile,
   fetchRoyaltyTitles,
+  fetchRulingColors,
   regenerateUsername,
   setUsername,
   updateProfile,
@@ -698,7 +699,281 @@ export function renderSignedInAccount(
     titleWrap.append(titleSelect, titleStatus.node);
     sec.append(titleWrap);
 
+    sec.append(buildColorsBlock());
+
     return sec;
+  };
+
+  // ----- Ruling colors ----------------------------------------------------
+
+  /** #rrggbb + alpha → rgba() string for the fill preview (the border
+   *  always renders opaque, matching the leaderboard map). */
+  const hexWithAlpha = (hex: string, alpha: number): string => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return hex;
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  };
+
+  const buildColorsBlock = (): HTMLElement => {
+    const wrap = el("div", "account-field");
+    wrap.append(el("span", "control-label", "Ruling colors"));
+    const rowEl = el("div", "account-field__row");
+    const preview = el("span", "color-preview");
+    const editBtn = el("button", "text-btn");
+    editBtn.type = "button";
+    const editorSlot = el("div");
+    const colorsStatus = makeStatus();
+
+    const renderPreview = (): void => {
+      const f = profile?.ruling_color;
+      const b = profile?.ruling_border_color;
+      const a = profile?.ruling_alpha ?? 0.6;
+      if (f && b) {
+        preview.hidden = false;
+        preview.style.background = hexWithAlpha(f, a);
+        preview.style.borderColor = b;
+        editBtn.textContent = "Edit";
+      } else {
+        preview.hidden = true;
+        editBtn.textContent = "Pick your colors";
+      }
+    };
+    renderPreview();
+
+    const closeEditor = (): void => {
+      editorSlot.replaceChildren();
+    };
+
+    interface PaletteData {
+      colors: { hex: string; name: string }[];
+      taken: Set<string>;
+    }
+
+    /** The claimed-pair set, with our own current claim carved out so the
+     *  grids never grey the user out of the pair they already hold (e.g.
+     *  when only changing alpha). */
+    const toPalette = (res: {
+      ruling_colors: { hex: string; name: string }[];
+      taken_pairs: { fill: string; border: string }[];
+    }): PaletteData => {
+      const taken = new Set(
+        res.taken_pairs.map((tp) => `${tp.fill}|${tp.border}`),
+      );
+      if (profile?.ruling_color && profile.ruling_border_color) {
+        taken.delete(`${profile.ruling_color}|${profile.ruling_border_color}`);
+      }
+      return { colors: res.ruling_colors, taken };
+    };
+
+    const buildEditor = (palette: PaletteData): void => {
+      let { taken } = palette;
+      let fill = profile?.ruling_color ?? null;
+      let border = profile?.ruling_border_color ?? null;
+      let alpha = profile?.ruling_alpha ?? 0.6;
+
+      const editor = el("div", "color-editor");
+      const livePreview = el("span", "color-preview color-preview--live");
+
+      const makeGrid = (
+        kind: "fill" | "border",
+      ): { node: HTMLElement; update(): void } => {
+        const grid = el("div", "swatch-grid");
+        grid.setAttribute(
+          "aria-label",
+          kind === "fill" ? "Fill color" : "Border color",
+        );
+        const buttons: HTMLButtonElement[] = palette.colors.map((c) => {
+          const btn = el("button", "swatch");
+          btn.type = "button";
+          btn.style.background = c.hex;
+          btn.title = c.name;
+          btn.setAttribute("aria-label", c.name);
+          btn.dataset.hex = c.hex;
+          btn.addEventListener("click", () => {
+            if (kind === "fill") fill = c.hex;
+            else border = c.hex;
+            updateAll();
+          });
+          return btn;
+        });
+        grid.append(...buttons);
+        return {
+          node: grid,
+          update() {
+            for (const btn of buttons) {
+              const hex = btn.dataset.hex!;
+              const selected = kind === "fill" ? hex === fill : hex === border;
+              btn.setAttribute("aria-pressed", String(selected));
+              // Grey out the other half's picks that can't pair with the
+              // current selection: same color, or an already-claimed pair.
+              const conflict =
+                kind === "fill"
+                  ? border != null &&
+                    (hex === border || taken.has(`${hex}|${border}`))
+                  : fill != null &&
+                    (hex === fill || taken.has(`${fill}|${hex}`));
+              btn.disabled = conflict;
+              btn.classList.toggle("swatch--taken", conflict);
+            }
+          },
+        };
+      };
+
+      const fillGrid = makeGrid("fill");
+      const borderGrid = makeGrid("border");
+
+      const alphaRow = el("div", "alpha-row");
+      const alphaInput = el("input");
+      alphaInput.type = "range";
+      alphaInput.min = "0.10";
+      alphaInput.max = "1.00";
+      alphaInput.step = "0.01";
+      alphaInput.value = String(alpha);
+      alphaInput.setAttribute("aria-label", "Fill opacity");
+      const alphaOut = el("span", "alpha-row__value");
+
+      const applyBtn = el("button", "login-btn", "Apply");
+      applyBtn.type = "button";
+      const clearBtn = el("button", "text-btn", "Clear colors");
+      clearBtn.type = "button";
+      const cancelBtn = el("button", "text-btn", "Cancel");
+      cancelBtn.type = "button";
+
+      const updateAll = (): void => {
+        fillGrid.update();
+        borderGrid.update();
+        alphaOut.textContent = `${Math.round(alpha * 100)}%`;
+        livePreview.style.background = fill
+          ? hexWithAlpha(fill, alpha)
+          : "transparent";
+        livePreview.style.borderColor = border ?? "transparent";
+        applyBtn.disabled = !(
+          fill &&
+          border &&
+          fill !== border &&
+          !taken.has(`${fill}|${border}`)
+        );
+        clearBtn.hidden = !(
+          profile?.ruling_color && profile.ruling_border_color
+        );
+      };
+
+      alphaInput.addEventListener("input", () => {
+        alpha = Number(alphaInput.value);
+        updateAll();
+      });
+
+      applyBtn.addEventListener("click", () => {
+        if (!fill || !border) return;
+        applyBtn.disabled = true;
+        colorsStatus.set("Claiming…");
+        savePatch({
+          ruling_color: fill,
+          ruling_border_color: border,
+          ruling_alpha: Math.min(1, Math.max(0.1, Number(alpha.toFixed(2)))),
+        })
+          .then(() => {
+            colorsStatus.set("Saved — this pair is yours.");
+            renderPreview();
+            closeEditor();
+          })
+          .catch((err: unknown) => {
+            if (err instanceof ApiError && err.status === 409) {
+              // Someone claimed the pair between palette load and Apply.
+              // Refresh the claim set, re-grey, and keep the selection so
+              // the user only has to adjust one half.
+              colorsStatus.set(
+                "Someone just claimed that combo — pick a different pair.",
+                true,
+              );
+              void fetchRulingColors()
+                .then((res) => {
+                  if (disposed) return;
+                  taken = toPalette(res).taken;
+                  updateAll();
+                })
+                .catch(() => {
+                  /* stale set stays; the next Apply may 409 again */
+                });
+              return;
+            }
+            colorsStatus.set(
+              describeError(err, "Couldn't save your colors."),
+              true,
+            );
+            updateAll();
+          });
+      });
+
+      clearBtn.addEventListener("click", () => {
+        clearBtn.disabled = true;
+        colorsStatus.set("Releasing…");
+        // Both null together releases the claim; alpha keeps its server
+        // default for the next claim.
+        savePatch({ ruling_color: null, ruling_border_color: null })
+          .then(() => {
+            colorsStatus.set("Colors cleared — the pair is released.");
+            renderPreview();
+            closeEditor();
+          })
+          .catch((err: unknown) => {
+            clearBtn.disabled = false;
+            colorsStatus.set(
+              describeError(err, "Couldn't clear your colors."),
+              true,
+            );
+          });
+      });
+
+      cancelBtn.addEventListener("click", () => {
+        colorsStatus.clear();
+        closeEditor();
+      });
+
+      alphaRow.append(alphaInput, alphaOut, livePreview);
+      const buttonRow = el("div", "account-field__row");
+      buttonRow.append(applyBtn, clearBtn, cancelBtn);
+      editor.append(
+        el("p", "control-label", "Fill"),
+        fillGrid.node,
+        el("p", "control-label", "Border"),
+        borderGrid.node,
+        alphaRow,
+        buttonRow,
+      );
+      editorSlot.replaceChildren(editor);
+      updateAll();
+    };
+
+    editBtn.addEventListener("click", () => {
+      if (editorSlot.childElementCount > 0) {
+        closeEditor();
+        return;
+      }
+      editBtn.disabled = true;
+      colorsStatus.set("Loading palette…");
+      // Fetched fresh on every open so taken_pairs reflects the present.
+      fetchRulingColors()
+        .then((res) => {
+          if (disposed) return;
+          editBtn.disabled = false;
+          colorsStatus.clear();
+          buildEditor(toPalette(res));
+        })
+        .catch((err: unknown) => {
+          if (disposed) return;
+          editBtn.disabled = false;
+          colorsStatus.set(
+            describeError(err, "Couldn't load the palette."),
+            true,
+          );
+        });
+    });
+
+    rowEl.append(preview, editBtn);
+    wrap.append(rowEl, editorSlot, colorsStatus.node);
+    return wrap;
   };
 
   // ----- Profile section -------------------------------------------------

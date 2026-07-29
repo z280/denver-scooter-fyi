@@ -1323,6 +1323,63 @@ body:not(.ribbon-open) .drawer-tabs {
 .combo__option[aria-selected="true"] {
   background: var(--accent-soft);
 }
+.color-preview {
+  display: inline-block;
+  width: 34px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  flex: none;
+}
+.color-editor {
+  margin: 8px 0;
+}
+.color-editor .control-label {
+  margin: 8px 0 4px;
+}
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(24px, 1fr));
+  gap: 6px;
+}
+.swatch {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+}
+.swatch[aria-pressed="true"] {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+.swatch--taken {
+  opacity: 0.25;
+  cursor: not-allowed;
+  background-image: linear-gradient(
+    135deg,
+    transparent 45%,
+    var(--fg) 45%,
+    var(--fg) 55%,
+    transparent 55%
+  ) !important;
+}
+.alpha-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+.alpha-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.alpha-row__value {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  min-width: 4ch;
+  text-align: right;
+}
 
 .brand-link img {
   display: block;
