@@ -11,47 +11,54 @@ Last reconciled against the backend on 2026-07-29.
 
 ---
 
-## ⚠️ Live now, and half of it is degraded
+## ⚠️ The verification row is not gated on `sms_enabled`
 
-**This is a description of production, not a warning about a future
-deploy.** Pushing to `main` deploys denver.scooter.fyi automatically
-(see [Deployment](../README.md#deployment)), so merging
-[#40](https://github.com/z280/denver-scooter-fyi/pull/40) at 17:30 UTC on
-2026-07-29 shipped SMS sign-in to production — against a backend that does
-not have it yet.
+Both halves of SMS shipped on 2026-07-29 — the frontend in
+[#40](https://github.com/z280/denver-scooter-fyi/pull/40) (17:30 UTC) and
+the backend in
+[scooter-fyi-api#32](https://github.com/z280/scooter-fyi-api/pull/32)
+(17:36 UTC). Both auto-deploy on merge, so both are in production.
 
-The backend half is the open PR
-[z280/scooter-fyi-api#32](https://github.com/z280/scooter-fyi-api/pull/32)
-(`feat/sms-sign-in-via-comms`): `/api/v1/auth/sms/*`,
-`/api/v1/profile/phone/*`, the `sms_enabled` capability flag, and the
-`phone_verified` / `sms_opted_out` profile fields. Verified against
-`scooter-fyi-api` `origin/main` on 2026-07-29 — no `auth/sms` route exists
-there.
+What is *not* in production is a working SMS door, and the reason is worth
+knowing because it is a supported steady state rather than a transient:
 
-| Frontend surface | In production right now | Why |
+```
+$ curl https://data.scooter.fyi/api/v1/auth/config
+{… "code_enabled":true, "sms_enabled":false}
+```
+
+`COMMS_TOKEN` is unset on the server, and a blank token is a **documented,
+supported configuration** — the backend 503s the SMS endpoints and reports
+`sms_enabled:false` rather than failing. SMS can legitimately be off at any
+time, for the same reason Postmark can be.
+
+| Frontend surface | With `sms_enabled:false` | Why |
 | --- | --- | --- |
-| "Text me a sign-in code" door | **Hidden. No impact.** | `auth-config.ts` reads `d.sms_enabled === true`, so a *missing* flag is a "no" and the door never renders. |
-| Account → Phone → "Verify by text" | **Live and broken.** Offers verification that 404s. | `phone_verified` is absent, which is falsy, so the row reads it as "not verified yet" and shows a working button. The button POSTs `/api/v1/profile/phone/code`, which does not exist yet. |
+| "Text me a sign-in code" door | **Hidden. Correct.** | `main.ts` renders it only under `authCfg?.smsEnabled`. |
+| Account → Phone → "Verify by text" | **Shown, and 503s on press.** | The row is gated on the `phone_verified` *data field*, never on `smsEnabled`, so it offers verification whether or not the server can send anything. |
 
-Blast radius of the broken half: signed-in riders who already have a phone
-number saved, who open the Account drawer, and who press the button. The
-row hides itself entirely when there is no number on file. Nothing is
-corrupted and nothing is charged — the request 404s and the panel shows a
-generic failure — but it invites an action that cannot succeed.
+This is a live defect, not a deploy-ordering artifact: it recurs any time
+SMS is switched off. The fix is one condition — gate the verification row
+on `smsEnabled` as well, exactly as the sign-in door already is.
 
-**Resolution: merge and deploy scooter-fyi-api#32.** No frontend change is
-needed; the row starts working the moment the endpoints exist. Verify
-against the running API, not the branch diff — a merged PR is not a
-deployed one.
+**The general rule it illustrates.** One surface is gated on a *capability
+flag* and the other on a *data field*. A missing or false flag is
+unambiguous ("the server can't do this"), but a `false` boolean field
+describes the *record*, not the server's ability to act on it — and here
+`false` is precisely the state that prompts the rider to act. Gate on the
+capability; use the data field only to decide what to say once the
+capability is present.
 
-**The asymmetry is the lesson.** One surface is gated on a *capability
-flag* and the other on a *data field*. A missing flag is unambiguous ("the
-server didn't say yes"), but a missing boolean is indistinguishable from
-`false` — and `false` is precisely the state that prompts the rider to act.
-When a surface depends on unshipped backend work, gate it on something
-whose absence means "off", not on something whose absence means "not done
-yet". Had the verification row been gated on `smsEnabled` too, this deploy
-would have been inert instead of half-degraded.
+### Still to land
+
+- **[scooter-fyi-api#33](https://github.com/z280/scooter-fyi-api/pull/33)**
+  wires `COMMS_TOKEN` / `COMMS_BASE_URL` through the deploy workflow into
+  the container's `.env`. Until it merges, `sms_enabled` stays false.
+- **Reachability.** comms binds `127.0.0.1:8090` on the host while the API
+  runs in bridge containers, so the API cannot currently reach it — verified
+  by `ConnectTimeout` from `pipeline_worker` to both the tailnet URL and the
+  bridge gateway. Merging #33 before that is fixed would flip
+  `sms_enabled` true and turn a hidden door into a visible broken one.
 
 ## Where things stand
 
@@ -71,13 +78,11 @@ Verified against `scooter-fyi-api` `origin/main` and its open PRs on
   were missing, and that warning is retired. The "Veo Unknown → Tell us!"
   form and the "🚫 Not rideable" chip work against `main`.
 
-**Pending on the backend (scooter-fyi-api#32, open):**
-
-- **SMS sign-in and phone verification.** `/api/v1/auth/sms/code`,
-  `/api/v1/auth/sms/code/verify`, `/api/v1/profile/phone/code`,
-  `/api/v1/profile/phone/verify`, plus `sms_enabled` on `/auth/config` and
-  `phone_verified` / `sms_opted_out` on the profile. The frontend half is
-  already merged here — see the deploy dependency above.
+- **SMS sign-in and phone verification** (scooter-fyi-api#32, merged and
+  deployed 2026-07-29): `/api/v1/auth/sms/code`, `/api/v1/auth/sms/code/verify`,
+  `/api/v1/profile/phone/code`, `/api/v1/profile/phone/verify`, plus
+  `sms_enabled` on `/auth/config` and `phone_verified` / `sms_opted_out` on
+  the profile. Deployed but **inert** — see above.
 
 **Frontend-only, no backend dependency:**
 

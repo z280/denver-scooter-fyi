@@ -542,8 +542,8 @@ the two repos can be sequenced together.
   [z280-comms](https://github.com/z280/comms). Typing the code back is also
   the only thing that marks a number verified, which is what lets
   `/api/v1/profile/phone/code` + `/verify` attach a proved number to an
-  existing account. Not on the backend's `main` yet — see the deploy
-  dependency in [API_INTEGRATION_PLAN.md](API_INTEGRATION_PLAN.md).
+  existing account. Merged and deployed, but inert until `COMMS_TOKEN` is
+  configured — see [API_INTEGRATION_PLAN.md](API_INTEGRATION_PLAN.md).
 - `GET/PUT /api/v1/profile` — stores the rate choice
   (`resident | visitor | equity`) and future preferences.
 - `ADMIN_EMAILS` allowlist (initially `zneill@gmail.com`); Google-door
