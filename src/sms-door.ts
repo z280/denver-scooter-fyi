@@ -95,11 +95,34 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
     state.sentPhone = "";
   }
 
+  // A send is in flight (button disabled, don't touch it), and the E.164
+  // number the last send came back opted-out for (button disabled until the
+  // rider types a DIFFERENT one). They disable the same button for opposite
+  // reasons — one clears itself, the other needs the rider to act — and the
+  // opt-out is a fact about that number, not about this form, which is why
+  // it's stored as the number rather than as a boolean.
+  let sending = false;
+  let optedOutPhone = "";
+
   // A code is bound to the number it was texted to; if the rider edits the
   // number after we revealed the code step, retract it so they can't verify
   // an old code against a new number.
   phoneInput.addEventListener("input", () => {
     state.phone = phoneInput.value;
+    // An opt-out disables the button and restyles the status line, because
+    // retrying THAT number is pointless. But a fat-fingered digit can land
+    // on a stranger's number that has texted STOP, and correcting the typo
+    // is the very next thing the rider does — so a number that differs from
+    // the refused one has to clear it, or the door dead-ends until a page
+    // reload. Guarded on `sending` so this can't re-enable the button
+    // mid-request and allow a double send.
+    if (optedOutPhone && !sending &&
+        normalizeUsPhone(phoneInput.value) !== optedOutPhone) {
+      optedOutPhone = "";
+      phoneSubmit.disabled = false;
+      phoneStatus.className = "account-magic-status";
+      phoneStatus.textContent = "";
+    }
     if (sentPhone && normalizeUsPhone(phoneInput.value) !== sentPhone) {
       sentPhone = "";
       state.sentPhone = "";
@@ -120,10 +143,12 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
       return;
     }
     const phone = normalizeUsPhone(raw)!;
+    sending = true;
     phoneSubmit.disabled = true;
     phoneStatus.textContent = "Sending…";
     requestSmsCode(phone)
       .then(() => {
+        sending = false;
         sentPhone = phone;
         state.sentPhone = phone;
         phoneSubmit.disabled = false;
@@ -134,8 +159,17 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
         codeInput.focus();
       })
       .catch((err: unknown) => {
+        sending = false;
         phoneSubmit.disabled = false;
-        codeForm.hidden = true;
+        // A refused send never invalidates a code the rider is ALREADY
+        // holding. A 429 is raised before the API even issues a new code,
+        // and every other failure burns the new one server-side and leaves
+        // the previous one live and newest (scooter-fyi-api#32). Hiding the
+        // entry box would therefore take away the one thing that still
+        // works, and push them into spending another of three hourly texts
+        // to get back a code they already have. Only hide it when there is
+        // genuinely nothing to type in.
+        if (!sentPhone) codeForm.hidden = true;
         if (err instanceof SmsOptedOut) {
           // Verbatim, and styled as information rather than an error: the
           // rider did this on purpose, and this sentence is the only place
@@ -144,12 +178,14 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
           phoneStatus.textContent = err.message;
           phoneStatus.className = "account-magic-status account-optout";
           phoneSubmit.disabled = true;
+          optedOutPhone = phone;
           return;
         }
         phoneStatus.className = "account-magic-status";
         if (err instanceof AuthSendError && err.status === 429) {
-          phoneStatus.textContent =
-            "Too many texts requested — wait a few minutes before asking for another.";
+          phoneStatus.textContent = sentPhone
+            ? "You already have a code — enter it below, or wait a few minutes to request another."
+            : "Too many texts requested — wait a few minutes before asking for another.";
         } else if (err instanceof AuthSendError && err.status === 400) {
           // The server's own reason ("that number can't receive texts…").
           phoneStatus.textContent = err.message;

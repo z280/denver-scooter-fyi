@@ -24,10 +24,12 @@ and [src/auth-session.ts](src/auth-session.ts).
 **On texts:** the number you sign in with is only usable once you have
 *proved* you answer it, by typing back a texted code. A number saved in your
 profile is a contact detail, not proof, and cannot sign anyone in — including
-somebody who typed in yours. You can stop texts at any time by replying STOP,
-which blocks them at the gateway rather than at a setting we control; the app
-will tell you plainly when that has happened, and only an UNSTOP text undoes
-it.
+somebody who typed in yours. You can stop texts at any time by replying STOP.
+That blocks them at the gateway rather than at a setting we control, and the
+gateway is **shared with other applications on the same phone number**, so a
+STOP stops all of them, not only scooter.fyi — worth knowing before you send
+it. The app will tell you plainly when that has happened, and only an UNSTOP
+text undoes it.
 
 **On tracking:** the frontend loads no analytics, telemetry, ad tech, or
 third-party scripts, and `localStorage` holds only your own settings (theme,

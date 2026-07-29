@@ -1175,8 +1175,14 @@ export function renderSignedInAccount(
         // They chose this. It cannot be undone from here — only a text
         // from that handset clears it, because consent belongs to the
         // person holding the phone, not to a checkbox in our UI.
+        // Scope stated explicitly: the block lives at the shared gateway,
+        // so it covers every application sending from that number, not just
+        // us. A rider who reads it as scooter.fyi-only will be surprised by
+        // what else stops — and by what UNSTOP turns back on.
         line.textContent =
-          "🚫 Texts are blocked for this number. Reply UNSTOP to our last message to allow them again.";
+          "🚫 Texts are blocked for this number — that applies to every service " +
+          "texting from it, not just scooter.fyi. Reply UNSTOP to our last " +
+          "message to allow them again.";
         verifyBtn.hidden = true;
         return;
       }
@@ -1224,21 +1230,39 @@ export function renderSignedInAccount(
       }
       codeSubmit.disabled = true;
       status.set("Verifying…");
-      verifyPhoneNumber(phone, code)
-        .then(() => {
+      verifyPhoneNumber(phone, code).then(
+        () => {
+          // The code is BURNED now — single-use, server-side. So from here
+          // on nothing may report a failure that implies the rider should
+          // try that code again, because it never will work.
           codeSubmit.disabled = false;
+          codeForm.hidden = true;
+          status.set("Verified.");
           // Re-read rather than assuming: the server decides what the
-          // account now looks like.
-          return fetchProfile().then((fresh) => {
-            profile = fresh;
-            render(fresh);
-            status.set("Verified.");
-          });
-        })
-        .catch((err: unknown) => {
+          // account now looks like. Chained separately from the verify —
+          // not with .catch() on the same chain — so a failed refresh can't
+          // be reported as a failed verification. It isn't one, and telling
+          // them to re-enter a spent code would send them in circles.
+          // Worst case the row reads stale until the panel is reopened.
+          fetchProfile()
+            .then((fresh) => {
+              if (disposed) return;
+              profile = fresh;
+              render(fresh);
+              status.set("Verified.");
+            })
+            .catch(() => {
+              /* the "Verified." above still stands */
+            });
+        },
+        (err: unknown) => {
           codeSubmit.disabled = false;
-          status.set(describeError(err, "That code didn't work — check it or resend."), true);
-        });
+          status.set(
+            describeError(err, "That code didn't work — check it or resend."),
+            true,
+          );
+        },
+      );
     });
 
     wrap.append(line, verifyBtn, codeForm, status.node);
