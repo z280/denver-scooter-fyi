@@ -241,29 +241,73 @@ export function fetchDevices(
 // token so the UI reflects the signed-out state, exactly as apiFetch does.
 const AUTH_STORAGE_KEY = "scooter_fyi.map_auth";
 
-/** Authenticated GET returning the raw response text, so the caller can parse
- *  the JSON itself and preserve the large-integer H3 fields that JSON.parse
- *  would round. Reimplements map-auth's apiFetch error contract — NO_AUTH,
- *  TOKEN_REJECTED (and clears the stale token), HTTP_ERROR with `status` —
- *  which fetchDevicesAuto's fallback keys off. This lives here rather than as
- *  a raw-text variant in map-auth.js to keep that module to just the session
- *  store (getAuth/isAuthenticated/signOut) the sign-in doors write to. */
-async function authedGetText(
-  path: string,
-  signal?: AbortSignal,
-): Promise<string> {
+/** Failure from an authenticated endpoint. `code`/`status` intentionally
+ *  match the ad-hoc `Error & { code, status }` shape the bearer helpers threw
+ *  before this class existed, so fetchDevicesAuto's fallback checks keep
+ *  working unchanged. `retryAfter`/`detail`/`errorKey` are only populated on
+ *  the JSON path, where the error body has been read. */
+export class ApiError extends Error {
+  readonly code: "NO_AUTH" | "TOKEN_REJECTED" | "HTTP_ERROR";
+  readonly status?: number;
+  /** Seconds from the Retry-After header; set on 429 responses. */
+  readonly retryAfter?: number;
+  /** Parsed `detail` from the error body — a string, or an object for
+   *  endpoints that return a structured `{ error: "..." }` code. */
+  readonly detail?: unknown;
+  /** `detail.error` when detail is an object with a stable error key. */
+  readonly errorKey?: string;
+  constructor(
+    message: string,
+    code: ApiError["code"],
+    extra?: {
+      status?: number;
+      retryAfter?: number;
+      detail?: unknown;
+      errorKey?: string;
+    },
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = extra?.status;
+    this.retryAfter = extra?.retryAfter;
+    this.detail = extra?.detail;
+    this.errorKey = extra?.errorKey;
+  }
+}
+
+type HttpMethod = "GET" | "PUT" | "POST" | "DELETE";
+
+interface AuthedInit {
+  method?: HttpMethod;
+  /** JSON-serialized into the request body with Content-Type set. */
+  body?: unknown;
+  signal?: AbortSignal;
+}
+
+/** Core bearer fetch: attaches Authorization, throws NO_AUTH when signed
+ *  out and TOKEN_REJECTED on 401 (clearing the stale sessionStorage blob so
+ *  the UI reflects the signed-out state). Any other response — including
+ *  non-2xx — is returned for the caller to interpret. */
+async function authedFetch(path: string, init: AuthedInit): Promise<Response> {
   const auth = getAuth();
   if (!auth) {
-    const err: Error & { code?: string } = new Error("not authenticated");
-    err.code = "NO_AUTH";
-    throw err;
+    throw new ApiError("not authenticated", "NO_AUTH");
+  }
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${auth.token}`,
+  };
+  let body: string | undefined;
+  if (init.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(init.body);
   }
   const res = await fetch(`${API_BASE}${path}`, {
-    signal,
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${auth.token}`,
-    },
+    method: init.method ?? "GET",
+    signal: init.signal,
+    headers,
+    body,
   });
   if (res.status === 401) {
     try {
@@ -271,19 +315,249 @@ async function authedGetText(
     } catch {
       /* sessionStorage unavailable — nothing to clear */
     }
-    const err: Error & { code?: string } = new Error("token rejected");
-    err.code = "TOKEN_REJECTED";
-    throw err;
+    throw new ApiError("token rejected", "TOKEN_REJECTED");
   }
+  return res;
+}
+
+/** Authenticated GET returning the raw response text, so the caller can parse
+ *  the JSON itself and preserve the large-integer H3 fields that JSON.parse
+ *  would round. Error contract — NO_AUTH, TOKEN_REJECTED (clearing the stale
+ *  token), HTTP_ERROR with `status` — is what fetchDevicesAuto's fallback
+ *  keys off. This lives here rather than as a raw-text variant in map-auth.js
+ *  to keep that module to just the session store (getAuth/isAuthenticated/
+ *  signOut) the sign-in doors write to. */
+async function authedGetText(
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await authedFetch(path, { signal });
   if (!res.ok) {
-    const err: Error & { code?: string; status?: number } = new Error(
-      `HTTP ${res.status}`,
-    );
-    err.code = "HTTP_ERROR";
-    err.status = res.status;
-    throw err;
+    throw new ApiError(`HTTP ${res.status}`, "HTTP_ERROR", {
+      status: res.status,
+    });
   }
   return res.text();
+}
+
+/** Authenticated JSON round-trip for the profile/points/username endpoints.
+ *  On non-2xx, reads the `{ detail }` error body — `detail` may be a plain
+ *  string or an object carrying a stable `error` key — and the Retry-After
+ *  header on 429, and throws an ApiError carrying all of it. */
+export async function authedFetchJSON<T>(
+  path: string,
+  init: AuthedInit = {},
+): Promise<T> {
+  const res = await authedFetch(path, init);
+  if (!res.ok) {
+    let detail: unknown;
+    try {
+      const parsed = JSON.parse(await res.text()) as { detail?: unknown };
+      detail = parsed?.detail;
+    } catch {
+      /* non-JSON error body — leave detail unset */
+    }
+    const errorKey =
+      typeof detail === "object" && detail !== null && "error" in detail
+        ? String((detail as { error: unknown }).error)
+        : undefined;
+    const retryHeader = res.headers.get("Retry-After");
+    const retryAfter =
+      res.status === 429 && retryHeader && /^\d+$/.test(retryHeader)
+        ? Number(retryHeader)
+        : undefined;
+    const message =
+      typeof detail === "string" ? detail : (errorKey ?? `HTTP ${res.status}`);
+    throw new ApiError(message, "HTTP_ERROR", {
+      status: res.status,
+      retryAfter,
+      detail,
+      errorKey,
+    });
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Profile, username, points — the authenticated account surface.
+// ---------------------------------------------------------------------------
+
+export type ApiRatePlan = "resident" | "visitor" | "equity";
+
+export interface ProfileBadge {
+  id: string;
+  label: string;
+  earned_at: string;
+}
+
+export interface Profile {
+  email: string | null;
+  phone_number: string | null;
+  /** Server-computed adjective+emoji-noun pair; change via the username
+   *  endpoints, never via PUT /profile (it is ignored there). */
+  public_username: string | null;
+  show_public_username: boolean;
+  show_in_leaderboards: boolean;
+  rate_plan: ApiRatePlan | null;
+  theme: string | null;
+  favorites: unknown[];
+  home_lat: number | null;
+  home_lng: number | null;
+  work_lat: number | null;
+  work_lng: number | null;
+  royalty_title: string | null;
+  /** Read-only generated column: royalty_title + " " + public_username. */
+  display_name: string | null;
+  /** Leaderboard-territory fill hex; the (fill, border) pair is globally
+   *  unique and always set (or cleared) together. */
+  ruling_color: string | null;
+  ruling_border_color: string | null;
+  /** 0.10–1.00, default 0.60; applies to the fill only. */
+  ruling_alpha: number | null;
+  badges: ProfileBadge[];
+}
+
+/** PUT /api/v1/profile is a partial merge: send any subset, omitted fields
+ *  are untouched. home/work coordinates and the ruling colour pair must be
+ *  sent together (both values, or both null to clear). */
+export type ProfileUpdate = Partial<
+  Pick<
+    Profile,
+    | "email"
+    | "phone_number"
+    | "show_public_username"
+    | "show_in_leaderboards"
+    | "rate_plan"
+    | "theme"
+    | "favorites"
+    | "home_lat"
+    | "home_lng"
+    | "work_lat"
+    | "work_lng"
+    | "royalty_title"
+    | "ruling_color"
+    | "ruling_border_color"
+    | "ruling_alpha"
+  >
+>;
+
+export function fetchProfile(signal?: AbortSignal): Promise<Profile> {
+  return authedFetchJSON<Profile>("/api/v1/profile", { signal });
+}
+
+export function updateProfile(patch: ProfileUpdate): Promise<Profile> {
+  return authedFetchJSON<Profile>("/api/v1/profile", {
+    method: "PUT",
+    body: patch,
+  });
+}
+
+/** Re-roll to a new random adjective + emoji-noun pair. Shares one 10/hour
+ *  rate-limit bucket with setUsername. */
+export function regenerateUsername(): Promise<{ public_username: string }> {
+  return authedFetchJSON<{ public_username: string }>(
+    "/api/v1/profile/username/regenerate",
+    { method: "POST" },
+  );
+}
+
+/** Set either or both username halves from the curated lists. 400 when
+ *  neither is sent or a value is off-list, 409 when the pair is taken.
+ *  Shares the 10/hour bucket with regenerateUsername. */
+export function setUsername(parts: {
+  adjective?: string;
+  emoji?: string;
+}): Promise<{ public_username: string }> {
+  return authedFetchJSON<{ public_username: string }>(
+    "/api/v1/profile/username",
+    { method: "PUT", body: parts },
+  );
+}
+
+export interface EmojiNoun {
+  emoji: string;
+  word: string;
+}
+
+export function fetchAdjectives(
+  signal?: AbortSignal,
+): Promise<{ adjectives: string[] }> {
+  return authedFetchJSON<{ adjectives: string[] }>("/api/v1/adjectives", {
+    signal,
+  });
+}
+
+export function fetchEmojiNouns(
+  signal?: AbortSignal,
+): Promise<{ emoji_nouns: EmojiNoun[] }> {
+  return authedFetchJSON<{ emoji_nouns: EmojiNoun[] }>("/api/v1/emoji-nouns", {
+    signal,
+  });
+}
+
+/** Royalty titles come back in picker order (related titles adjacent), not
+ *  alphabetical — render as served, never sort. */
+export function fetchRoyaltyTitles(
+  signal?: AbortSignal,
+): Promise<{ royalty_titles: string[] }> {
+  return authedFetchJSON<{ royalty_titles: string[] }>(
+    "/api/v1/royalty-titles",
+    { signal },
+  );
+}
+
+export interface RulingColor {
+  hex: string;
+  name: string;
+  hue_family: string;
+}
+
+export interface RulingColorsResponse {
+  ruling_colors: RulingColor[];
+  /** Claimed (fill, border) combinations — grey these out in the picker
+   *  instead of discovering them by 409. Pairs only; never who holds one. */
+  taken_pairs: { fill: string; border: string }[];
+}
+
+export function fetchRulingColors(
+  signal?: AbortSignal,
+): Promise<RulingColorsResponse> {
+  return authedFetchJSON<RulingColorsResponse>("/api/v1/ruling-colors", {
+    signal,
+  });
+}
+
+export interface PointsEntry {
+  id: number;
+  created_at: string;
+  action: string;
+  points: number;
+  vehicle_identifier: string | null;
+  status: string;
+}
+
+export interface PointsResponse {
+  /** Sum of confirmed entries across the whole ledger, not just this page. */
+  total_points: number;
+  entries: PointsEntry[];
+}
+
+/** Owner-only points ledger, newest first. `before` is a cursor: pass a
+ *  previous entry's `created_at` back verbatim — server timestamps carry
+ *  their timezone offset, which the API requires (400 without one). */
+export function fetchPoints(
+  opts: { limit?: number; before?: string } = {},
+  signal?: AbortSignal,
+): Promise<PointsResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.before !== undefined) params.set("before", opts.before);
+  const qs = params.toString();
+  return authedFetchJSON<PointsResponse>(
+    `/api/v1/points${qs ? `?${qs}` : ""}`,
+    { signal },
+  );
 }
 
 /**
