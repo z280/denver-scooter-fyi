@@ -394,6 +394,15 @@ export interface ProfileBadge {
 export interface Profile {
   email: string | null;
   phone_number: string | null;
+  /** Whether anyone has PROVED they answer that number, by typing back a
+   *  texted code. A number saved through PUT /profile starts unverified —
+   *  it is a contact detail, and contact details are not proof — and only a
+   *  verified number can be used to sign in. */
+  phone_verified: boolean;
+  /** They texted STOP. Consent is enforced by the SMS gateway and is global
+   *  across every application sharing the sender, so this is a local echo
+   *  for honest UI; only an UNSTOP text can clear it. */
+  sms_opted_out: boolean;
   /** Server-computed adjective+emoji-noun pair; change via the username
    *  endpoints, never via PUT /profile (it is ignored there). */
   public_username: string | null;
@@ -451,6 +460,33 @@ export function updateProfile(patch: ProfileUpdate): Promise<Profile> {
     method: "PUT",
     body: patch,
   });
+}
+
+/** Text a code to prove you answer the number on your profile (or the one
+ *  passed). Draws on the SAME send budget as the SMS sign-in door — one
+ *  handset — so 429 here can be caused by sign-in traffic. 409 means that
+ *  number has blocked texts, and the `detail` names the keyword that
+ *  unblocks it. */
+export function requestPhoneCode(
+  phoneNumber?: string,
+): Promise<{ sent: boolean; phone_number: string }> {
+  return authedFetchJSON<{ sent: boolean; phone_number: string }>(
+    "/api/v1/profile/phone/code",
+    { method: "POST", body: phoneNumber ? { phone_number: phoneNumber } : {} },
+  );
+}
+
+/** Type the code back. On success the number is attached to THIS account as
+ *  verified — which is what stops SMS sign-in from creating a second
+ *  account for a rider who saved their number here first. */
+export function verifyPhoneNumber(
+  phoneNumber: string,
+  code: string,
+): Promise<{ phone_number: string; phone_verified: boolean }> {
+  return authedFetchJSON<{ phone_number: string; phone_verified: boolean }>(
+    "/api/v1/profile/phone/verify",
+    { method: "POST", body: { phone_number: phoneNumber, code } },
+  );
 }
 
 /** Re-roll to a new random adjective + emoji-noun pair. Shares one 10/hour
