@@ -260,7 +260,9 @@ export function renderSignedInAccount(
     placeholder: string;
     autocomplete?: string;
     fallbackError: string;
-    save(v: string | null): Promise<unknown>;
+    /** Resolves with the canonical stored value (the server may normalize,
+     *  e.g. phone numbers) so the field can re-sync after save. */
+    save(v: string | null): Promise<string | null>;
   }): HTMLElement => {
     const wrap = el("div", "account-field");
     wrap.append(el("span", "control-label", opts.label));
@@ -288,8 +290,9 @@ export function renderSignedInAccount(
       fieldStatus.set("Saving…");
       opts
         .save(v === "" ? null : v)
-        .then(() => {
-          savedValue = v;
+        .then((canonical) => {
+          savedValue = canonical ?? "";
+          input.value = savedValue;
           saveBtn.disabled = false;
           saveBtn.hidden = true;
           fieldStatus.set("Saved.");
@@ -941,6 +944,13 @@ export function renderSignedInAccount(
               btn.disabled = conflict;
               btn.classList.toggle("swatch--taken", conflict);
             }
+            // If the roving tab stop just got disabled, the grid would fall
+            // out of the tab order entirely — move it to an enabled swatch.
+            if (buttons[focusIdx].disabled) {
+              const first = buttons.findIndex((b) => !b.disabled);
+              if (first >= 0) focusIdx = first;
+              applyTabStops();
+            }
           },
         };
       };
@@ -1120,7 +1130,7 @@ export function renderSignedInAccount(
         placeholder: sessionEmail ?? "you@email.com",
         autocomplete: "email",
         fallbackError: "Couldn't save your email.",
-        save: (v) => savePatch({ email: v }),
+        save: (v) => savePatch({ email: v }).then((u) => u.email),
       }),
       textField({
         label: "Phone",
@@ -1129,7 +1139,7 @@ export function renderSignedInAccount(
         placeholder: "+1 303 555 0123",
         autocomplete: "tel",
         fallbackError: "Couldn't save your phone number.",
-        save: (v) => savePatch({ phone_number: v }),
+        save: (v) => savePatch({ phone_number: v }).then((u) => u.phone_number),
       }),
     );
 
