@@ -7,12 +7,14 @@ import {
   ApiError,
   fetchAdjectives,
   fetchEmojiNouns,
+  fetchPoints,
   fetchProfile,
   fetchRoyaltyTitles,
   fetchRulingColors,
   regenerateUsername,
   setUsername,
   updateProfile,
+  type PointsEntry,
   type Profile,
   type ProfileUpdate,
 } from "./api.ts";
@@ -92,6 +94,18 @@ function accountSection(title: string): HTMLElement {
   sec.append(el("h3", "account-section__title", title));
   return sec;
 }
+
+/** Known badge ids → chip emoji. Unknown ids (the API adds badges without
+ *  notice) fall back to a generic medal and the server-provided label. */
+const BADGE_EMOJI: Record<string, string> = {
+  first_report: "📝",
+  reporter_10: "🗣️",
+  ghost_hunter: "👻",
+  discount_watchdog: "🏷️",
+  miles_10: "🛴",
+  miles_100: "🏁",
+  streak_7: "🔥",
+};
 
 /** True once every completion criterion the API scores is met (email AND
  *  rate plan AND phone AND at least one of home/work) — worth 10 points. */
@@ -201,6 +215,9 @@ export function renderSignedInAccount(
   // Status line of the rate-plan control, once built — the sync hook below
   // reports there whichever picker (drawer or HUD) triggered it.
   let rateSyncStatus: StatusLine | null = null;
+  // Fires after any successful profile PUT; the points section listens to
+  // notice the one-time completion award landing.
+  let onProfileSaved: (() => void) | null = null;
 
   /** All profile writes funnel through here so the cache, the completion
    *  hint, and interested sections stay in sync. */
@@ -209,6 +226,7 @@ export function renderSignedInAccount(
     if (!disposed) {
       profile = updated;
       refreshHint();
+      onProfileSaved?.();
     }
     return updated;
   };
@@ -1088,6 +1106,126 @@ export function renderSignedInAccount(
     return sec;
   };
 
+  // ----- Badges section ---------------------------------------------------
+
+  const buildBadgesSection = (p: Profile): HTMLElement => {
+    const sec = accountSection("Badges");
+    if (!p.badges.length) {
+      // Shown (not hidden) even when empty: it advertises the feature.
+      sec.append(
+        el(
+          "p",
+          "account-hint",
+          "No badges yet — file a report or log a ride to earn your first.",
+        ),
+      );
+      return sec;
+    }
+    const rowEl = el("div", "badge-row");
+    for (const badge of p.badges) {
+      const chip = el(
+        "span",
+        "badge-chip",
+        `${BADGE_EMOJI[badge.id] ?? "🏅"} ${badge.label}`,
+      );
+      const earned = new Date(badge.earned_at).toLocaleDateString();
+      chip.title = `${badge.label} — earned ${earned}`;
+      chip.setAttribute("aria-label", chip.title);
+      rowEl.append(chip);
+    }
+    sec.append(rowEl);
+    return sec;
+  };
+
+  // ----- Points section ---------------------------------------------------
+
+  const buildPointsSection = (): HTMLElement => {
+    const sec = accountSection("Points");
+    const total = el("div", "points-total");
+    const emptyMsg = el("p", "account-hint", "No points yet.");
+    emptyMsg.hidden = true;
+    const list = el("ul", "points-ledger");
+    const moreBtn = el("button", "text-btn", "Load more");
+    moreBtn.type = "button";
+    moreBtn.hidden = true;
+    const ptsStatus = makeStatus();
+    const LIMIT = 10;
+    // Cursor for the next page: the oldest entry's created_at, passed back
+    // to the API verbatim (server timestamps carry the offset it requires).
+    let oldest: string | null = null;
+    let wasComplete = profile ? isProfileComplete(profile) : false;
+
+    const entryItem = (en: PointsEntry): HTMLLIElement => {
+      const confirmed = en.status === "confirmed";
+      const li = el(
+        "li",
+        confirmed ? "points-entry" : "points-entry points-entry--muted",
+      );
+      const label = el(
+        "span",
+        "points-entry__label",
+        en.action.replace(/_/g, " ") + (confirmed ? "" : ` (${en.status})`),
+      );
+      const date = new Date(en.created_at).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      });
+      const idTail = en.vehicle_identifier
+        ? ` · …${en.vehicle_identifier.slice(-4)}`
+        : "";
+      const meta = el(
+        "span",
+        "points-entry__meta",
+        `+${en.points} · ${date}${idTail}`,
+      );
+      li.append(label, meta);
+      return li;
+    };
+
+    const load = (before?: string): void => {
+      moreBtn.disabled = true;
+      ptsStatus.set("Loading…");
+      fetchPoints({ limit: LIMIT, before })
+        .then((res) => {
+          if (disposed) return;
+          moreBtn.disabled = false;
+          ptsStatus.clear();
+          total.textContent = `⭐ ${res.total_points.toLocaleString()} points`;
+          const items = res.entries.map(entryItem);
+          if (before) list.append(...items);
+          else list.replaceChildren(...items);
+          emptyMsg.hidden = list.childElementCount > 0;
+          if (res.entries.length) {
+            oldest = res.entries[res.entries.length - 1].created_at;
+          }
+          // A full page suggests more history; a short one is the end.
+          moreBtn.hidden = res.entries.length < LIMIT;
+        })
+        .catch((err: unknown) => {
+          if (disposed) return;
+          moreBtn.disabled = false;
+          ptsStatus.set(describeError(err, "Couldn't load your points."), true);
+        });
+    };
+
+    moreBtn.addEventListener("click", () => load(oldest ?? undefined));
+
+    // When a PUT completes the profile, the one-time +10 lands server-side;
+    // reload page 1 so the award shows up without a manual refresh.
+    onProfileSaved = () => {
+      if (!profile) return;
+      const nowComplete = isProfileComplete(profile);
+      if (nowComplete && !wasComplete) {
+        wasComplete = true;
+        load();
+      }
+    };
+
+    load();
+    sec.append(total, emptyMsg, list, moreBtn, ptsStatus.node);
+    return sec;
+  };
+
   // ----- Rate-plan account sync (registered while this panel is alive) ---
   setRatePlanSyncHook((plan) => {
     updateProfile({ rate_plan: plan })
@@ -1095,6 +1233,7 @@ export function renderSignedInAccount(
         if (disposed) return;
         profile = updated;
         refreshHint();
+        onProfileSaved?.();
         rateSyncStatus?.set("Saved to your account.");
       })
       .catch((err: unknown) => {
@@ -1122,6 +1261,8 @@ export function renderSignedInAccount(
         profileSlot.replaceChildren(
           buildIdentitySection(p),
           buildProfileSection(p),
+          buildBadgesSection(p),
+          buildPointsSection(),
         );
       })
       .catch((e: unknown) => {

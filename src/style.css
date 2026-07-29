@@ -1380,6 +1380,50 @@ body:not(.ribbon-open) .drawer-tabs {
   min-width: 4ch;
   text-align: right;
 }
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.badge-chip {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.points-total {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.points-ledger {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.points-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.points-entry:last-child {
+  border-bottom: none;
+}
+.points-entry--muted {
+  color: var(--fg-muted);
+}
+.points-entry__label {
+  overflow-wrap: anywhere;
+}
+.points-entry__meta {
+  flex: none;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
 
 .brand-link img {
   display: block;
