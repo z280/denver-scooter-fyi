@@ -57,6 +57,7 @@ import {
   promptGoogleOneTap,
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
+import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
@@ -1664,7 +1665,7 @@ function wireAccount(): void {
   // Sign-in form state that must survive the one legitimate signed-out
   // rebuild (auth-config resolving): a typed address and an already-sent
   // code. Codes are 3/hour per email — wiping one is expensive.
-  const signedOutState = { email: "", sentEmail: "" };
+  const signedOutState = { email: "", sentEmail: "", phone: "", sentPhone: "" };
 
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -1868,6 +1869,20 @@ function wireAccount(): void {
       });
 
       body.append(emailForm, codeForm);
+
+      // Sign in by text — shown only when the backend says z280-comms is
+      // configured (fail-closed in auth-config.ts, so a rider is never
+      // invited to type their phone number into a door that can't work).
+      if (authCfg?.smsEnabled) {
+        body.append(el("div", "account-or", "or"));
+        buildSmsDoor(body, {
+          el,
+          state: signedOutState,
+          // Same as the email door: the session is persisted, so reload to
+          // let every fetch pick up the bearer token.
+          onSignedIn: () => location.reload(),
+        });
+      }
     }
   };
 

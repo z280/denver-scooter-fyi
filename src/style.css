@@ -1276,6 +1276,20 @@ body:not(.ribbon-open) .drawer-tabs {
 .account-magic-status--error {
   color: var(--fail);
 }
+/* Someone who texted STOP hasn't hit an error — they got what they asked
+   for. Styled as a standing notice rather than a failure, and given room to
+   breathe because it carries the exact keyword and number that undo it,
+   which is the only actionable thing on screen at that point. */
+.account-optout {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg);
+}
 .username-line {
   margin: 0 0 6px;
 }

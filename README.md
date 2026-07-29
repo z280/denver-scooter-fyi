@@ -16,8 +16,18 @@ device reports — is unauthenticated. Accounts are **optional** and exist only
 for the features that have to be tied to a person: rider reports, ride tracking
 and history, points, your profile, and the signed-in device feed that exposes
 plates (which is what gates "Unlock in Veo"). Sign-in is Google, an emailed
-magic link, or a typed email code; each mints a server-side bearer session.
-See [src/auth-config.ts](src/auth-config.ts) and [src/auth-session.ts](src/auth-session.ts).
+magic link, a typed email code, or a code texted to a US mobile number; each
+mints a server-side bearer session. Which doors appear is decided by the
+backend, not by a frontend flag — see [src/auth-config.ts](src/auth-config.ts)
+and [src/auth-session.ts](src/auth-session.ts).
+
+**On texts:** the number you sign in with is only usable once you have
+*proved* you answer it, by typing back a texted code. A number saved in your
+profile is a contact detail, not proof, and cannot sign anyone in — including
+somebody who typed in yours. You can stop texts at any time by replying STOP,
+which blocks them at the gateway rather than at a setting we control; the app
+will tell you plainly when that has happened, and only an UNSTOP text undoes
+it.
 
 **On tracking:** the frontend loads no analytics, telemetry, ad tech, or
 third-party scripts, and `localStorage` holds only your own settings (theme,
@@ -198,7 +208,11 @@ public/            vendored glyphs + sprites + _headers (deployed to Pages)
 src/
   api.ts           typed client for the data.scooter.fyi API
   auth-*.ts        optional sign-in: capability discovery, Google, magic
-                   link / typed code, and the shared bearer-session store
+                   link / typed code, texted code, and the shared
+                   bearer-session store
+  sms-door.ts      the "text me a code" sign-in forms (its own module: it is
+                   the only door whose failure mode is a deliberate choice
+                   rather than an error)
   map-auth.js      the sessionStorage session store the auth doors write to
   account.ts       signed-in Account panel: profile fields, username +
                    royalty title + ruling colors, badges, points ledger

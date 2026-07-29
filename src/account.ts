@@ -12,8 +12,10 @@ import {
   fetchRoyaltyTitles,
   fetchRulingColors,
   regenerateUsername,
+  requestPhoneCode,
   setUsername,
   updateProfile,
+  verifyPhoneNumber,
   type PointsEntry,
   type Profile,
   type ProfileUpdate,
@@ -27,6 +29,7 @@ import {
   setRatePlanSyncHook,
 } from "./ride-cost.ts";
 import { reverseGeocode } from "./geocode.ts";
+import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 
 export interface AccountSignedInDeps {
   /** Push resolved admin status to the device layer (popup gates). */
@@ -1115,6 +1118,134 @@ export function renderSignedInAccount(
     return wrap;
   };
 
+  /** Phone verification: the difference between a number we can contact and
+   *  a number that can sign you in.
+   *
+   *  A number saved through PUT /profile is a contact detail, and contact
+   *  details are not proof of anything — anyone can type anyone's number.
+   *  Only typing back a texted code marks it verified, and only a verified
+   *  number opens the SMS sign-in door. Without this row a rider would save
+   *  their number, try to sign in by text, and silently land in a SECOND,
+   *  empty account, because the backend refuses to resolve an unverified
+   *  number to an existing one (and it refuses for good reason: otherwise
+   *  claiming a stranger's number would intercept their sign-in).
+   *
+   *  Returns a handle so the Phone field can refresh it after a save —
+   *  changing your number drops the verification, by design. */
+  const phoneVerificationRow = (
+    initial: Profile,
+  ): { node: HTMLElement; update(p: Profile): void } => {
+    const wrap = el("div", "account-field");
+    const line = el("p", "account-magic-status");
+    line.setAttribute("role", "status");
+    line.setAttribute("aria-live", "polite");
+    const verifyBtn = el("button", "text-btn", "Verify by text");
+    verifyBtn.type = "button";
+
+    // Revealed only after a code is sent.
+    const codeForm = el("form", "account-field__row");
+    codeForm.hidden = true;
+    const codeInput = el("input", "select");
+    codeInput.type = "text";
+    codeInput.autocomplete = "one-time-code";
+    codeInput.autocapitalize = "characters";
+    codeInput.spellcheck = false;
+    codeInput.maxLength = 9;
+    codeInput.placeholder = "AB123XY";
+    codeInput.setAttribute("aria-label", "Verification code");
+    const codeSubmit = el("button", "text-btn", "Confirm");
+    codeSubmit.type = "submit";
+    codeForm.append(codeInput, codeSubmit);
+    const status = makeStatus();
+
+    let phone = initial.phone_number ?? "";
+
+    const render = (p: Profile): void => {
+      phone = p.phone_number ?? "";
+      codeForm.hidden = true;
+      status.clear();
+      verifyBtn.disabled = false;
+      if (!phone) {
+        // Nothing to verify. Say nothing rather than nagging.
+        wrap.hidden = true;
+        return;
+      }
+      wrap.hidden = false;
+      if (p.sms_opted_out) {
+        // They chose this. It cannot be undone from here — only a text
+        // from that handset clears it, because consent belongs to the
+        // person holding the phone, not to a checkbox in our UI.
+        line.textContent =
+          "🚫 Texts are blocked for this number. Reply UNSTOP to our last message to allow them again.";
+        verifyBtn.hidden = true;
+        return;
+      }
+      if (p.phone_verified) {
+        line.textContent = `✓ ${formatUsPhone(phone)} is verified — you can sign in with it.`;
+        verifyBtn.hidden = true;
+        return;
+      }
+      line.textContent =
+        "This number isn't verified yet. Verify it to sign in by text.";
+      verifyBtn.hidden = false;
+      // US-only door: don't offer a button that can only fail.
+      if (!isProbablyUsPhone(phone)) {
+        line.textContent =
+          "Sign-in by text is US-only, so this number can't be verified.";
+        verifyBtn.hidden = true;
+      }
+    };
+
+    verifyBtn.addEventListener("click", () => {
+      verifyBtn.disabled = true;
+      status.set("Sending…");
+      requestPhoneCode(phone)
+        .then((r) => {
+          verifyBtn.disabled = false;
+          status.set(`Texted ${formatUsPhone(r.phone_number)} — enter the code (valid 10 minutes).`);
+          verifyBtn.textContent = "Resend";
+          codeForm.hidden = false;
+          codeInput.focus();
+        })
+        .catch((err: unknown) => {
+          verifyBtn.disabled = false;
+          // describeError surfaces the server's own sentence for a 409,
+          // which is the one that names the keyword that unblocks.
+          status.set(describeError(err, "Couldn't send the code — try again."), true);
+        });
+    });
+
+    codeForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const code = codeInput.value.replace(/[^A-Za-z0-9]/g, "");
+      if (!/^[A-Za-z0-9]{6,10}$/.test(code)) {
+        status.set("Enter the code from the text (like AB123XY).", true);
+        return;
+      }
+      codeSubmit.disabled = true;
+      status.set("Verifying…");
+      verifyPhoneNumber(phone, code)
+        .then(() => {
+          codeSubmit.disabled = false;
+          // Re-read rather than assuming: the server decides what the
+          // account now looks like.
+          return fetchProfile().then((fresh) => {
+            profile = fresh;
+            render(fresh);
+            status.set("Verified.");
+          });
+        })
+        .catch((err: unknown) => {
+          codeSubmit.disabled = false;
+          status.set(describeError(err, "That code didn't work — check it or resend."), true);
+        });
+    });
+
+    wrap.append(line, verifyBtn, codeForm, status.node);
+    render(initial);
+    return { node: wrap, update: render };
+  };
+
   // ----- Profile section -------------------------------------------------
 
   const buildProfileSection = (p: Profile): HTMLElement => {
@@ -1132,15 +1263,27 @@ export function renderSignedInAccount(
         fallbackError: "Couldn't save your email.",
         save: (v) => savePatch({ email: v }).then((u) => u.email),
       }),
+    );
+
+    // Saving a DIFFERENT number drops its verification server-side (proof
+    // belongs to a number, not to an account), so the row below re-reads
+    // from the save response rather than assuming it still says "verified".
+    const phoneVerify = phoneVerificationRow(p);
+    sec.append(
       textField({
         label: "Phone",
         type: "tel",
         value: p.phone_number ?? "",
-        placeholder: "+1 303 555 0123",
+        placeholder: "(303) 555-1212",
         autocomplete: "tel",
         fallbackError: "Couldn't save your phone number.",
-        save: (v) => savePatch({ phone_number: v }).then((u) => u.phone_number),
+        save: (v) =>
+          savePatch({ phone_number: v }).then((u) => {
+            phoneVerify.update(u);
+            return u.phone_number;
+          }),
       }),
+      phoneVerify.node,
     );
 
     // Rate plan: one flat list, VeoPlus variants included (per PR #37 — a
