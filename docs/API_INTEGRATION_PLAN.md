@@ -7,31 +7,56 @@ and the handful of design constraints that shape the UI. It deliberately
 does not restate request/response shapes — that duplication is what the
 retired `API_REQUIREMENTS.md` turned into.
 
-Last reconciled against the backend on 2026-07-28.
+Last reconciled against the backend on 2026-07-29.
 
 ---
 
-## ⚠️ Cross-repo deploy dependency — read before merging
+## ⚠️ Live now, and half of it is degraded
 
-**This frontend branch depends on `scooter-fyi-api` changes that are NOT on
-`main`.** They live in the open, unmerged PR
-[z280/scooter-fyi-api#27](https://github.com/z280/scooter-fyi-api/pull/27)
-(`feat/decommercialize-and-off-feed-rides`). Shipping this frontend against
-today's deployed backend breaks rider reporting in two places:
+**This is a description of production, not a warning about a future
+deploy.** Pushing to `main` deploys denver.scooter.fyi automatically
+(see [Deployment](../README.md#deployment)), so merging
+[#40](https://github.com/z280/denver-scooter-fyi/pull/40) at 17:30 UTC on
+2026-07-29 shipped SMS sign-in to production — against a backend that does
+not have it yet.
 
-| Frontend feature | Backend requirement | State on `scooter-fyi-api` `main` |
+The backend half is the open PR
+[z280/scooter-fyi-api#32](https://github.com/z280/scooter-fyi-api/pull/32)
+(`feat/sms-sign-in-via-comms`): `/api/v1/auth/sms/*`,
+`/api/v1/profile/phone/*`, the `sms_enabled` capability flag, and the
+`phone_verified` / `sms_opted_out` profile fields. Verified against
+`scooter-fyi-api` `origin/main` on 2026-07-29 — no `auth/sms` route exists
+there.
+
+| Frontend surface | In production right now | Why |
 | --- | --- | --- |
-| "Veo Unknown → Tell us!" model report | `POST /api/v1/reports/model` (`sql/038_model_reports.sql`) | **Missing** — the endpoint does not exist; every submit 404s |
-| "🚫 Not rideable" report chip | `not_rideable` report type (`sql/037_not_rideable_report_type.sql`) | **Missing** — `main` still only accepts `failed_unlock`; the chip is rejected |
+| "Text me a sign-in code" door | **Hidden. No impact.** | `auth-config.ts` reads `d.sms_enabled === true`, so a *missing* flag is a "no" and the door never renders. |
+| Account → Phone → "Verify by text" | **Live and broken.** Offers verification that 404s. | `phone_verified` is absent, which is falsy, so the row reads it as "not verified yet" and shows a working button. The button POSTs `/api/v1/profile/phone/code`, which does not exist yet. |
 
-**Deploy order: merge and deploy scooter-fyi-api#27 first, then this.** Verify
-against the running API (not the branch diff) before deploying the
-frontend — a merged PR is not a deployed one.
+Blast radius of the broken half: signed-in riders who already have a phone
+number saved, who open the Account drawer, and who press the button. The
+row hides itself entirely when there is no number on file. Nothing is
+corrupted and nothing is charged — the request 404s and the panel shows a
+generic failure — but it invites an action that cannot succeed.
+
+**Resolution: merge and deploy scooter-fyi-api#32.** No frontend change is
+needed; the row starts working the moment the endpoints exist. Verify
+against the running API, not the branch diff — a merged PR is not a
+deployed one.
+
+**The asymmetry is the lesson.** One surface is gated on a *capability
+flag* and the other on a *data field*. A missing flag is unambiguous ("the
+server didn't say yes"), but a missing boolean is indistinguishable from
+`false` — and `false` is precisely the state that prompts the rider to act.
+When a surface depends on unshipped backend work, gate it on something
+whose absence means "off", not on something whose absence means "not done
+yet". Had the verification row been gated on `smsEnabled` too, this deploy
+would have been inert instead of half-degraded.
 
 ## Where things stand
 
 Verified against `scooter-fyi-api` `origin/main` and its open PRs on
-2026-07-28.
+2026-07-29.
 
 **Already merged and live on the backend:**
 
@@ -39,25 +64,25 @@ Verified against `scooter-fyi-api` `origin/main` and its open PRs on
   `[-105.06, 39.65, -104.88, 39.79]`), but `battery_percent_estimate` is
   `null` on every request until the regression model has enough
   observations to fit. Treat the battery number as optional garnish.
-- Auth, profiles, and the existing report surfaces
-  (`POST /api/v1/reports/device` with the pre-rename type list,
+- Auth, profiles, and the report surfaces (`POST /api/v1/reports/device`,
   `/reports/summary`).
+- **`POST /api/v1/reports/model` and the `not_rideable` report type.**
+  Both shipped with scooter-fyi-api#27; this doc previously warned they
+  were missing, and that warning is retired. The "Veo Unknown → Tell us!"
+  form and the "🚫 Not rideable" chip work against `main`.
 
-**Pending on the backend (scooter-fyi-api#27, unmerged):**
+**Pending on the backend (scooter-fyi-api#32, open):**
 
-- **`POST /api/v1/reports/model`.** Until this merges *and* deploys, the
-  "Veo Unknown → Tell us!" form in the device popup posts into the void.
-- **`failed_unlock` → `not_rideable`.** The frontend chip already sends
-  `not_rideable` (reading "🚫 Not rideable", matching the "Likely
-  rideable" tier language). `main` still only accepts `failed_unlock`.
+- **SMS sign-in and phone verification.** `/api/v1/auth/sms/code`,
+  `/api/v1/auth/sms/code/verify`, `/api/v1/profile/phone/code`,
+  `/api/v1/profile/phone/verify`, plus `sms_enabled` on `/auth/config` and
+  `phone_verified` / `sms_opted_out` on the profile. The frontend half is
+  already merged here — see the deploy dependency above.
 
 **Frontend-only, no backend dependency:**
 
 - **The app is fully decommercialized.** No supporter status, no Stripe,
   no donate buttons, no paid tier. Signed-in and admin are the only gates.
-  (scooter-fyi-api#27 also drops the backend's supporter columns —
-  `sql/036_decommercialize.sql` — but nothing here reads them, so this
-  half ships safely on its own.)
 
 **Already done:** the backend repo has been renamed `veo-audit` →
 `scooter-fyi-api`, so this doc and the rest of this repo name it that way.
@@ -66,8 +91,8 @@ resolves — it is just wrong, not broken.
 
 ## Constraints that actually shape the UI
 
-Four things in the API are not obvious from the endpoint list and will
-produce wrong-looking UI if missed.
+These are not obvious from the endpoint list and will produce
+wrong-looking UI if missed.
 
 **Tracked rides redact their `gbfs_*` fields until you report your own
 end.** The rider must commit to their own numbers before seeing the
@@ -91,6 +116,52 @@ tracked-ride and off-feed waypoints are 600/hour (≈1 per 6 s sustained, so
 buffer and flush). There is still no shared 429 handler in `api.ts` —
 adding one is part of Phase A, not polish.
 
+### SMS: six things the endpoint list doesn't tell you
+
+Texts go through [z280-comms](https://github.com/z280/comms), a shared
+service, not straight to a handset. That single fact is behind all of
+these, and none of them are visible in the request shapes.
+
+**A saved number is a contact detail; only a texted code is proof.** The
+profile PUT will happily store any number — anyone can type anyone's.
+Signing in requires `phone_verified`, which only the verify endpoint sets.
+So the Account panel has to distinguish "we have a number for you" from
+"you have proved you answer it", and an unverified claim *loses* the number
+to whoever proves it. Never present a saved number as though it were a
+working sign-in method.
+
+**Consent is global, and enforced upstream.** One phone number serves
+several applications, so a STOP texted to any of them blocks all of them —
+including us, for people we have never messaged. Expect `409` for
+strangers. Two consequences for copy: show the server's sentence
+**verbatim** (it names the exact keyword and number that unblock, and a
+paraphrase names ones that don't), and never imply the block is
+scooter.fyi-only, because it isn't.
+
+**Opting out is not an error state.** The rider did it on purpose. Style it
+as a standing notice, not a failure, and don't invite a retry that cannot
+work — but do scope the "don't retry" to *that number*, since correcting a
+mistyped digit is the most likely next action.
+
+**Both doors draw on one send budget.** Sign-in and profile verification
+share the same physical handset, so a `429` in the Account panel can be
+caused by sign-in traffic the rider never generated. A number that is
+already verified skips the global daily ceiling — a returning owner whose
+only door is SMS can't be locked out by other people's traffic — but
+per-number limits still apply.
+
+**A refused send never invalidates a code the rider already holds.** A
+`429` is raised before a new code is even issued, and every other failure
+burns the *new* code server-side and leaves the previous one live. So a
+failed resend must not hide the code entry box; doing so pushes the rider
+to spend another of three hourly texts to get back a code they already
+have.
+
+**Nothing is guaranteed delivered.** A `202` means accepted, not delivered,
+and there is no delivery receipt to wait for. Sign-in codes are safe under
+this — the rider just asks for another — but do not build any flow that
+assumes the text arrived.
+
 ## Sequencing
 
 **Phase A — typed clients and session plumbing.** ✅ Shipped (profile
@@ -99,6 +170,12 @@ a shared bearer `authedFetchJSON`, and typed wrappers for profile,
 username + lexicons, ruling colors, and points. `api.ts` remains the
 single place bearer tokens are attached. The session-lifetime work
 (localStorage + `/auth/refresh`) is still open.
+
+**Landed outside these phases: SMS sign-in.** The phone door and the
+Account panel's verification row shipped in #40, ahead of Phase A's shared
+429 handler — so they do their own `Retry-After` handling inline. Fold them
+into the shared path when Phase A lands rather than leaving two
+conventions.
 
 **Phase B — points and public identity.** ✅ Shipped (profile branch), in
 `src/account.ts` behind the signed-in Account panel: points ledger with

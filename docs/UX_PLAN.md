@@ -537,6 +537,13 @@ the two repos can be sequenced together.
   `POST /api/v1/auth/refresh`, so ride mode never demands a street-corner
   re-login. (The current short sessionStorage session stays fine for
   admin.)
+- **Delivered 2026-07-29** — a fourth door: `POST /api/v1/auth/sms/code` +
+  `/verify`, a code texted to a US mobile via
+  [z280-comms](https://github.com/z280/comms). Typing the code back is also
+  the only thing that marks a number verified, which is what lets
+  `/api/v1/profile/phone/code` + `/verify` attach a proved number to an
+  existing account. Not on the backend's `main` yet — see the deploy
+  dependency in [API_INTEGRATION_PLAN.md](API_INTEGRATION_PLAN.md).
 - `GET/PUT /api/v1/profile` — stores the rate choice
   (`resident | visitor | equity`) and future preferences.
 - `ADMIN_EMAILS` allowlist (initially `zneill@gmail.com`); Google-door
