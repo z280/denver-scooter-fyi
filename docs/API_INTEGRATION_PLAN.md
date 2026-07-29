@@ -93,17 +93,21 @@ adding one is part of Phase A, not polish.
 
 ## Sequencing
 
-**Phase A — typed clients and session plumbing.** Extend `src/api.ts` with
-typed wrappers for the endpoints below, plus a shared 429/`Retry-After`
-path. `api.ts` is already the single place bearer tokens are attached; keep
-it that way. Ships in isolation.
+**Phase A — typed clients and session plumbing.** ✅ Shipped (profile
+branch): `src/api.ts` gained `ApiError` (code/status/Retry-After/detail),
+a shared bearer `authedFetchJSON`, and typed wrappers for profile,
+username + lexicons, ruling colors, and points. `api.ts` remains the
+single place bearer tokens are attached. The session-lifetime work
+(localStorage + `/auth/refresh`) is still open.
 
-**Phase B — points and public identity.** Points ledger, username picker
-(regenerate + adjective/emoji search), privacy toggles, home/work
-coordinates, badges row. Self-contained and no dependency on rides — but
-note `miles_10` / `miles_100` / `streak_7` only start moving once Phase C
-ships, and the points ledger stays thin until C–E land. Consider shipping
-B and C together if the empty state reads badly.
+**Phase B — points and public identity.** ✅ Shipped (profile branch), in
+`src/account.ts` behind the signed-in Account panel: points ledger with
+cursor pagination, username picker (regenerate + adjective/emoji combos
+over the curated lexicons), royalty title, ruling-colors claim editor,
+privacy toggles, email/phone, home/work coordinates, rate plan synced to
+the account, badges row, and the profile-completion hint. Note
+`miles_10` / `miles_100` / `streak_7` only start moving once Phase C
+ships, and the points ledger stays thin until C–E land.
 
 **Phase C — rides in the HUD (largest phase).** `src/ride-hud.ts` is
 currently "all browser-API, zero backend." Give it a server side:

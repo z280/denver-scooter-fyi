@@ -1223,6 +1223,209 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
 }
 
+/* ---------- Signed-in profile surface (account.ts) ---------- */
+.account-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.account-section__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.account-field {
+  margin: 0 0 10px;
+}
+.account-field .control-label {
+  display: block;
+  margin-bottom: 4px;
+}
+.account-field__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-field__row input.select,
+.account-field__row .select {
+  flex: 1;
+  min-width: 0;
+}
+.account-field__save {
+  flex: none;
+}
+.account-location__value {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.account-hint {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.account-switch {
+  margin: 6px 0;
+}
+.account-magic-status--error {
+  color: var(--fail);
+}
+.username-line {
+  margin: 0 0 6px;
+}
+.username-line__display {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.username-line__raw {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.combo {
+  position: relative;
+  margin: 6px 0;
+}
+.combo input.select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.combo__list {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.combo__option {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.combo__option:hover,
+.combo__option[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+.color-preview {
+  display: inline-block;
+  width: 34px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  flex: none;
+}
+.color-editor {
+  margin: 8px 0;
+}
+.color-editor .control-label {
+  margin: 8px 0 4px;
+}
+.swatch-grid {
+  display: grid;
+  /* 30px min + gap keeps taps usable in the ~300px drawer body. */
+  grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
+  gap: 6px;
+}
+.swatch {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+}
+.swatch[aria-pressed="true"] {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+.swatch--taken {
+  opacity: 0.25;
+  cursor: not-allowed;
+  background-image: linear-gradient(
+    135deg,
+    transparent 45%,
+    var(--fg) 45%,
+    var(--fg) 55%,
+    transparent 55%
+  ) !important;
+}
+.alpha-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+.alpha-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.alpha-row__value {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  min-width: 4ch;
+  text-align: right;
+}
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.badge-chip {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.points-total {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.points-ledger {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.points-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.points-entry:last-child {
+  border-bottom: none;
+}
+.points-entry--muted {
+  color: var(--fg-muted);
+}
+.points-entry__label {
+  overflow-wrap: anywhere;
+}
+.points-entry__meta {
+  flex: none;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .brand-link img {
   display: block;
   /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
