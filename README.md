@@ -200,6 +200,8 @@ src/
   auth-*.ts        optional sign-in: capability discovery, Google, magic
                    link / typed code, and the shared bearer-session store
   map-auth.js      the sessionStorage session store the auth doors write to
+  account.ts       signed-in Account panel: profile fields, username +
+                   royalty title + ruling colors, badges, points ledger
   config.ts        bounds, refresh cadence, colors, overlays, basemap URL
   map.ts           MapLibre map + Protomaps style
   devices.ts       device source, clustering, popups, type filter

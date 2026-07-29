@@ -472,6 +472,9 @@ export function renderSignedInAccount(
     input.addEventListener("blur", close);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        // Swallow it while the list is open: Escape should close the
+        // dropdown, not the whole drawer (document-level handler).
+        if (!list.hidden) e.stopPropagation();
         close();
         return;
       }
