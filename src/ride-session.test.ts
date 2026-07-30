@@ -691,6 +691,20 @@ describe("persistence", () => {
     expect(parseRideSession(serializeRideSession(doc))).toEqual(doc);
   });
 
+  it("round-trips dest.inCoverage — a reload mid-Screen-4 keeps the greyed-route hint", () => {
+    const doc = ridingDoc({ dest: { ...DEST, inCoverage: false } });
+    const restored = parseRideSession(serializeRideSession(doc));
+    expect(restored?.dest?.inCoverage).toBe(false);
+    expect(restored).toEqual(doc);
+
+    // A doc from before this field existed (or a `true`/absent flag) must
+    // still parse cleanly with no stray `inCoverage` key.
+    const withoutFlag = ridingDoc();
+    const restoredWithout = parseRideSession(serializeRideSession(withoutFlag));
+    expect(restoredWithout?.dest).not.toHaveProperty("inCoverage");
+    expect(restoredWithout).toEqual(withoutFlag);
+  });
+
   it("discards a doc it cannot trust", () => {
     expect(parseRideSession(null)).toBeNull();
     expect(parseRideSession("not json")).toBeNull();

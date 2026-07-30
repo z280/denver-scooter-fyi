@@ -139,6 +139,14 @@ export interface RideSessionDest {
   label: string;
   lat: number;
   lon: number;
+  /** Whether the geocode result that produced this destination fell inside
+   *  `/geocode/search`'s coverage area — a purely cosmetic hint (Screen 4's
+   *  greyed-route treatment), never a functional gate: `ride-screen-dest.ts`
+   *  passes it through, `ride-screen-routes.ts` degrades gracefully off its
+   *  own routing call's `out_of_coverage` error either way. Optional so
+   *  every existing construction site (and any persisted `v: 1` doc from
+   *  before this field existed) keeps compiling/parsing unchanged. */
+  inCoverage?: boolean;
 }
 
 export interface RideSessionRoute {
@@ -800,7 +808,9 @@ function parseDest(raw: unknown): RideSessionDest | null {
   const lat = num(d.lat);
   const lon = num(d.lon);
   if (lat === null || lon === null) return null;
-  return { label: str(d.label) ?? "", lat, lon };
+  const dest: RideSessionDest = { label: str(d.label) ?? "", lat, lon };
+  if (typeof d.inCoverage === "boolean") dest.inCoverage = d.inCoverage;
+  return dest;
 }
 
 function parseRoute(raw: unknown): RideSessionRoute | null {

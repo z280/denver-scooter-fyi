@@ -2893,6 +2893,27 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   }
 }
 
+/* ride-screen-start.ts — Screen 6 "Start in Veo" countdown card. Reuses
+   .ride-wizard__body / .ride-wizard__lede / .ride-wizard__hint / .login-btn
+   for everything else; this is just the big countdown digit, sized for a
+   MODAL PANE — deliberately NOT .hud-card--countdown .hud-countdown's
+   min(48vh,240px), which is sized for the full-screen HUD and would blow out
+   the dialog if reused here. */
+.ride-screen-start__countdown {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  text-align: center;
+}
+.ride-screen-start__countdown-digit {
+  font-size: min(22vh, 96px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+}
+
 /* Interview choices */
 .ride-wizard__choices {
   display: flex;
@@ -3032,6 +3053,56 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ride-wizard__route {
   width: 100%;
+}
+
+/* ride-screen-select.ts — Screen 2's Plate #/Battery % confirm strip. */
+.ride-screen-select__confirm {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.ride-screen-select__field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-screen-select__field-label {
+  font-weight: 600;
+}
+.ride-screen-select__field input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Screen 3 "Where to?" (src/ride-screen-dest.ts) ----------
+   Reuses `.ride-wizard__body`, `.ride-modal__lede`/`.ride-modal__hint`, and
+   `.ride-options`/`.ride-option` verbatim (same as Screen 2's disambiguation
+   list) — these three rules are the screen's only net-new surface: a larger
+   "wide text bar" search input, a plain-text divider label above the Recent
+   Destinations rows, and the in_coverage:false greying (opacity, not hidden —
+   the row stays fully clickable). */
+.ride-screen-dest__input {
+  font-size: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+.ride-screen-dest__section {
+  margin: 6px 2px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.ride-option.is-out-of-coverage {
+  opacity: 0.55;
+}
+.ride-option.is-out-of-coverage .ride-option__desc {
+  font-style: italic;
 }
 
 /* Limited room (mobile): the wizard becomes a right-side panel and the map
@@ -3502,6 +3573,109 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ranks-modal__close:hover {
   background: var(--accent-soft);
+  color: var(--fg);
+}
+/* ---------- ride-settings.ts: Screen 2 "Ride Mode Options" panel ---------- */
+.ride-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ride-settings__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ride-settings__row:last-of-type {
+  border-bottom: none;
+}
+.ride-settings__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-settings__row--disabled .ride-settings__label-text {
+  opacity: 0.55;
+}
+.ride-settings__trophy {
+  font-size: 12px;
+}
+.ride-settings__info {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ride-settings__info:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.ride-settings__control.segmented {
+  width: 100%;
+}
+.ride-settings__row--disabled .seg-btn {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.ride-settings__reason {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+.ride-settings__footnote {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.ride-settings__usuals-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ride-settings__usuals-btn:hover {
+  background: var(--accent-soft);
+}
+/* ---------- ride-settings.ts: ℹ info-modal body (shares the .ranks-modal shell) ---------- */
+.ride-info-modal__body {
+  margin-top: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.ride-info-modal__body p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.ride-info-modal__body p:last-child {
+  margin-bottom: 0;
+}
+.ride-info-modal__body strong {
   color: var(--fg);
 }
 /* ---------- ✨ Essentials hover tooltip ---------- */
@@ -4000,6 +4174,113 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
     box-shadow: var(--shadow);
     overflow: hidden;
   }
+}
+
+/* ---------------------------------------------------------------------
+   Screen 4 — route choice (src/ride-screen-routes.ts).
+   --------------------------------------------------------------------- */
+
+/* Primary pane: toggle list + status line + NEXT/Continue control. Reuses
+   .ride-wizard__body (flex column + gap + padding) and .ride-options /
+   .ride-option for the cards themselves — only the additions below are new. */
+.ride-route-list {
+  flex: 1;
+}
+.ride-route-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.ride-route-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* Tombstone loading cards — left-to-right shimmer wipe (master Part 0
+   Screen 4: "four route-option tombstones with a left-to-right
+   border/content shining wipe effect"). Sits on top of .ride-option's own
+   border/background/padding/radius. */
+.ride-route-tombstone {
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-route-tombstone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent-soft),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: ride-route-shimmer 1.4s ease-in-out infinite;
+}
+.ride-route-tombstone__bar {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--border);
+}
+.ride-route-tombstone__bar--title {
+  width: 62%;
+  height: 14px;
+}
+.ride-route-tombstone__bar--meta {
+  width: 40%;
+}
+@keyframes ride-route-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-route-tombstone::after {
+    animation: none;
+  }
+}
+
+/* Secondary pane: the route-preview map (a small standalone MapLibre
+   instance — see ride-screen-routes.ts's DEVIATION 1 comment for why it
+   isn't the app's shared map). */
+.ride-route-overview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 220px;
+}
+.ride-route-map {
+  flex: 1;
+  min-height: 200px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.ride-route-map--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+}
+
+/* Graceful-degrade message (every profile out of coverage / erroring, or no
+   origin/destination to route between at all). Reuses .ride-modal__placeholder
+   for the centered flex-column layout; this just centers the button instead
+   of letting it stretch full-width. */
+.ride-route-degrade .login-btn {
+  align-self: center;
 }
 
 /* ---------- Ride wizard landscape keypad (src/ride-keypad.ts) ----------

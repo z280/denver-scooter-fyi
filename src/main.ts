@@ -60,6 +60,21 @@ import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { isRideModalEnabled, wireRideModal } from "./ride-modal.ts";
 import { wireRideDeepLink } from "./ride-deeplink.ts";
+import { createRideSessionStore, type RideSessionStore } from "./ride-session.ts";
+import { wireRideScreenAuth } from "./ride-screen-auth.ts";
+import {
+  wireRideScreenSelect,
+  type RideOptionsPanelBuilder,
+} from "./ride-screen-select.ts";
+import { wireRideScreenDest } from "./ride-screen-dest.ts";
+import { wireRideScreenRoutes } from "./ride-screen-routes.ts";
+import { wireRideScreenStart } from "./ride-screen-start.ts";
+import {
+  renderRideOptionsPanel,
+  defaultRideOptionsFor,
+  loadRideModePoints,
+  type ResolvedRideModePoints,
+} from "./ride-settings.ts";
 import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { type EquityRank } from "./config.ts";
@@ -92,6 +107,12 @@ initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
+// The single ride-mode session doc every Screen 1–6 module (ride-screen-*.ts)
+// reads and writes through — created once here, never inside a screen module,
+// so the wizard has exactly one session, not one per screen. Persists to
+// localStorage on every transition (ride-session.ts's own concern); recovery
+// on load (crash/reload/409) is F3's seat, not wired here.
+const rideSession: RideSessionStore = createRideSessionStore();
 const overlays = new Overlays(map, need("choropleth-legend"));
 const equity = new EquityRanks(overlays, () => renderEquityMetric());
 const hexDensity = new HexDensity(map, need("hexbin-legend"));
@@ -342,6 +363,48 @@ function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices);
 }
 
+// ---------- Ride mode wizard (Screens 1–6) ----------
+
+// Resolved 🏆 point values for ride-settings.ts's three trophy-row ℹ modals.
+// Kicked off once, lazily, the first time the wizard is actually wired (see
+// `warmRideModePoints()` below) rather than unconditionally at boot — the
+// `scooter-fyi-ride-modal` dev flag gates the whole feature, so a plain map
+// visitor should never trigger this fetch. loadRideModePoints() never
+// throws — offline / pre-A1 it resolves to the same baked-in fallback
+// renderRideOptionsPanel already defaults to, so `rideModePoints` staying
+// `undefined` until this settles is harmless.
+let rideModePoints: ResolvedRideModePoints | undefined;
+function warmRideModePoints(): void {
+  void loadRideModePoints().then((points) => {
+    rideModePoints = points;
+  });
+}
+
+/** Bridges ride-settings.ts's `renderRideOptionsPanel` (Screen 2's "Ride Mode
+ *  Options" content) into ride-screen-select.ts's `RideOptionsPanelBuilder`
+ *  seam for Screen 2's secondary pane — the two lanes' own interface
+ *  contracts, glued here since only the integrator can see both. */
+const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
+  const doc = rideSession.current();
+  const context = {
+    private: doc?.private ?? false,
+    authenticated: isAuthenticated(),
+  };
+  const options = doc?.options ?? defaultRideOptionsFor(context);
+  const panel = renderRideOptionsPanel({
+    options,
+    context,
+    onChange: (next) => {
+      rideSession.dispatch({ type: "setOptions", options: next });
+    },
+    onOpenUsuals: hooks.onUsuals,
+    usualsAvailable: hooks.hasUsuals,
+    points: rideModePoints,
+  });
+  container.append(panel.element);
+  return { dispose: () => panel.destroy() };
+};
+
 // ---------- Sun-synced theme ----------
 
 // Auto mode (theme follows sunrise/sunset in Denver) lives in the map's
@@ -419,11 +482,9 @@ map.on("load", async () => {
     freshness.error();
   }
 
-  // ---------- Ride wizard (F1 plumbing; screens land in F2) ----------
+  // ---------- Ride wizard (F1 shell + F2 screens) ----------
   // Behind the `scooter-fyi-ride-modal` dev flag, which stays the gate until F3
-  // flips it default-on (frontend plan, "Entry"). F1 lands the shell, the
-  // keypad and the `?ride=` consume but registers no screens yet, so an ungated
-  // deep link would open a placeholder wizard in production. The 🧭 Ride button
+  // flips it default-on (frontend plan, "Entry"). The 🧭 Ride button
   // (wireModes()'s `case "riding"`) is deliberately NOT swapped here — that swap
   // is F3's, because it has to keep BRB's in-page resume route.
   //
@@ -452,7 +513,49 @@ map.on("load", async () => {
         const [lng, lat] = feat.geometry.coordinates;
         devices.jumpToDevice(feat.properties.device_id, lng, lat);
       },
+      // Every open (a deep link, or a later re-entry) starts one fresh session
+      // doc — `reduceRideSession`'s own guard rejects this over a live/post
+      // ride, so a re-entry mid-ride can never clobber it. Guest-vs-private is
+      // NOT decided here: it defaults to `false` and Screen 2's device pick
+      // (own device vs. a real Veo scooter) is what actually derives it.
+      onOpen: () => {
+        rideSession.dispatch({
+          type: "open",
+          options: defaultRideOptionsFor({
+            private: false,
+            authenticated: isAuthenticated(),
+          }),
+        });
+      },
+      // Every screen change — including the first, right after `onOpen` above
+      // picks screen "1" — persists the shell's actual current screen onto the
+      // session doc, so a reload mid-wizard (F3's recovery) knows where the
+      // rider was. `ScreenId` (ride-modal.ts) and `WizardScreenId`
+      // (ride-session.ts) are member-for-member identical unions (see both
+      // files' own comments), so this needs no cast.
+      onScreenChange: (id) => {
+        rideSession.dispatch({ type: "goto", screen: id });
+      },
     });
+    // Screens 1–6 (phase F2). Each `wireRideScreenX` call registers its own
+    // screen(s) into ride-modal.ts's registry (`registerRideScreen`) — no
+    // further main.ts wiring needed per screen beyond handing it the shared
+    // `rideSession`/`locate`/`devices` instances every lane's report asked
+    // for. Order doesn't matter (registration is a plain Map keyed by screen
+    // id), but auth is wired first so its GPS-permission priming has the most
+    // lead time before the rider can reach it (ride-screen-auth.ts's own
+    // module note).
+    wireRideScreenAuth({ locate });
+    wireRideScreenSelect({
+      devices,
+      locate,
+      session: rideSession,
+      buildOptionsPanel: buildRideOptionsPanel,
+    });
+    wireRideScreenDest({ session: rideSession, locate });
+    wireRideScreenRoutes({ session: rideSession, locate, devices });
+    wireRideScreenStart({ session: rideSession, locate });
+    warmRideModePoints();
     // `?ride=` is consumed only once `?ml=` has definitively NOT been redeemed.
     // ride-deeplink.ts carries the same guard, but it can only reach for it
     // while `?ml=` is still in the URL — and redemption strips the param in a
