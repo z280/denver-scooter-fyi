@@ -455,6 +455,20 @@ function buildSelectScreen(
       return;
     }
     if (selection.kind === "manual") return; // nothing resolved to store yet
+    // A real Veo device picked by an unauthenticated rider is STILL a private
+    // ride (master glossary's "Ride" entry: private = "My own Device" OR
+    // guest — a guest has no account for `POST /tracked-rides` to attribute a
+    // `tracked_rides` row to, regardless of which device they picked; that
+    // endpoint is session-authed, so a guest calling it would just 401).
+    // Passed explicitly rather than left to the reducer's "own device or
+    // already private" default — ride-session.ts's own `setDevice` doc calls
+    // this out by name: "Screen 2 passes it explicitly when a guest signs in
+    // mid-wizard, or when switching off own-device should make the ride
+    // points-eligible again." Without this, `doc.private` would silently stay
+    // `false` for a guest's real-device pick, which (a) leaves the Screen 2
+    // 🏆 cascades showing points-earning options as available when they never
+    // will be, and (b) leaves Screen 6 trying the authed-only
+    // `POST /tracked-rides` for a rider with no session, which always fails.
     deps.session.dispatch({
       type: "setDevice",
       device: {
@@ -463,6 +477,7 @@ function buildSelectScreen(
         model: selection.candidate.model,
         batteryConfirmed: parsedBattery(),
       },
+      private: !isAuthenticated(),
     });
   }
 

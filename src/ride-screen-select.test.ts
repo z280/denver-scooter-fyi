@@ -415,6 +415,52 @@ describe("Screen 2 — selection and session sync", () => {
     expect(session.current()?.private).toBe(true);
   });
 
+  it("selecting a real device as a guest (signed out) still marks the ride private", () => {
+    // Regression: a guest's real-device pick must be private too — there's no
+    // account for `POST /tracked-rides` (session-authed) to attribute a
+    // `tracked_rides` row to, so Screen 6 must never attempt that call for a
+    // guest (see ride-screen-start.ts's FIX note). Before this fix,
+    // `syncSessionDevice` never passed `private` explicitly for a non-"own"
+    // device, so it silently stayed `false` for a guest.
+    setAuthed(false);
+    const near = feature("near", V1, ORIGIN);
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    row.click();
+    expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V1 });
+    expect(session.current()?.private).toBe(true);
+  });
+
+  it("selecting a real device while signed in keeps the ride points-eligible, even switching off a prior own-device pick", () => {
+    // ride-session.ts's `setDevice` doc: "or when switching off own-device
+    // should make the ride points-eligible again."
+    setAuthed(true);
+    const near = feature("near", V1, ORIGIN);
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("My own Device"),
+    ) as HTMLButtonElement;
+    ownBtn.click();
+    expect(session.current()?.private).toBe(true);
+
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
+    row.click();
+    expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V1 });
+    expect(session.current()?.private).toBe(false);
+  });
+
   it("typing a battery percent stores it as batteryConfirmed on the selected device", () => {
     const near = feature("near", V1, ORIGIN);
     const devices = fakeDevices([near]);

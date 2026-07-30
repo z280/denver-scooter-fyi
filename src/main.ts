@@ -39,7 +39,7 @@ import {
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
-import { RideHud } from "./ride-hud.ts";
+import { RideHud, isLiveRideEntry } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
@@ -58,7 +58,7 @@ import {
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
-import { isRideModalEnabled, wireRideModal } from "./ride-modal.ts";
+import { isRideModalEnabled, openRideModal, wireRideModal } from "./ride-modal.ts";
 import { wireRideDeepLink } from "./ride-deeplink.ts";
 import { createRideSessionStore, type RideSessionStore } from "./ride-session.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -1615,17 +1615,29 @@ function wireModes(): void {
     btn.addEventListener("click", () => {
       switch (btn.dataset.mode) {
         case "riding":
-          // Third mode: the full-screen HUD. Deliberately does NOT touch
-          // ride/analysis state — opening it mid-Find-wheels must not tear
-          // that mode down (and some popups z-stack above the HUD).
+          // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
+          // "Entry" — F3 flips this on unconditionally; no dev-flag gate
+          // here) UNLESS a tracked ride is already live, in which case a
+          // second tap must resume the HUD (whose paused path resumes
+          // correctly) instead of opening a fresh wizard over a running ride
+          // — `ride-session.ts`'s own `open` reducer guard rejects exactly
+          // that anyway, but the button should never even attempt it.
+          // "Live" (`isLiveRideEntry`) covers both a same-tab BRB'd ride
+          // (the HUD's own `paused` flag) and the session doc still reading
+          // `riding`/`countdown` (e.g. right after a reload, before the
+          // tracking-integration lane's resume flow has re-attached the HUD).
           closeAllPopups();
-          hudReturnMode =
-            btns.find(
-              (b) =>
-                b.classList.contains("is-active") && b.dataset.mode !== "riding",
-            )?.dataset.mode ?? null;
-          setActive("riding");
-          rideHud.open();
+          if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
+            hudReturnMode =
+              btns.find(
+                (b) =>
+                  b.classList.contains("is-active") && b.dataset.mode !== "riding",
+              )?.dataset.mode ?? null;
+            setActive("riding");
+            rideHud.open();
+          } else {
+            openRideModal();
+          }
           break;
         case "ride":
           enterRide();

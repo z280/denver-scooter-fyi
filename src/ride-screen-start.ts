@@ -38,6 +38,24 @@
 // ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
+// FIX — guest/private rides must never call the authed-only start endpoint.
+//
+// `startTrackedRide` (api.ts) is `authedFetchJSON`-backed — session-authed,
+// 401s with no bearer token. `startScreenSkip` only gates on a real device +
+// `cost_hud`, not on auth, and `cost_hud` defaults `true`
+// (`ride-settings.ts`'s `defaultRideOptions`) — so an unauthenticated guest
+// who picks a real Veo device reaches this screen in the common case. A
+// guest's real-device pick is still a PRIVATE ride (`ride-screen-select.ts`'s
+// `syncSessionDevice` now sets `doc.private` accordingly — see its own
+// comment for why), and `ride-session.ts`'s `rideStarted` action already
+// supports a `rideId: null` / `private: true` local-only start for exactly
+// this case. `finishStart` below branches on `doc.private`: a private ride
+// never attempts the network call (which would otherwise throw `NO_AUTH` and
+// strand the guest on a "Couldn't start the ride" loop with no way forward)
+// and instead starts the ride locally, matching the master glossary's guest
+// ride ("no server key, no points; tracks stay local").
+//
+// ---------------------------------------------------------------------------
 // SCOPE NOTE — track-store is deliberately NOT touched here.
 //
 // `startTrackedRide`'s response carries `track_signing` (the per-ride HMAC
@@ -127,8 +145,13 @@ export interface RideScreenStartDeps {
    *  track-store lane wires it, don't need a fake. */
   onRideStarted?(ride: StartedTrackedRide): void;
   /** Clock injection for tests; defaults to `Date.now`. Only used as a
-   *  fallback when the server's own `started_at` fails to parse. */
+   *  fallback when the server's own `started_at` fails to parse, and as the
+   *  private-ride start clock (there is no server `started_at` to prefer). */
   now?(): number;
+  /** Injected for tests (deterministic ids); defaults to
+   *  `crypto.getRandomValues`. Only used for a private/guest ride's local
+   *  `trackKeyId` — a real server ride's id comes from the API response. */
+  randomBytes?(n: number): Uint8Array;
 }
 
 /** Register Screen 6. Call once at startup; returns an unregister function
@@ -171,6 +194,29 @@ function describeStartError(err: unknown): string {
 function resolveStartedAtMs(ride: StartedTrackedRide, now: () => number): number {
   const ms = Date.parse(ride.started_at);
   return Number.isFinite(ms) ? ms : now();
+}
+
+/** `private-<hex>` local track id (ride-session.ts's `RideSessionDoc.
+ *  trackKeyId` doc: "a `private-<hex>` local id for a private one"; the same
+ *  convention `track-store.ts`'s own `startPrivateRide` uses). Generated here
+ *  rather than imported from `track-store.ts` — wiring the actual recorder is
+ *  Phase F3's job (see the module SCOPE NOTE); this is only what the SESSION
+ *  transition needs to identify the local, unsigned recording it names. */
+function randomPrivateTrackId(randomBytes: (n: number) => Uint8Array): string {
+  const bytes = randomBytes(6);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return `private-${hex}`;
+}
+
+function defaultRandomBytes(n: number): Uint8Array {
+  const bytes = new Uint8Array(n);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < n; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return bytes;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +452,27 @@ function buildStartScreen(
       errorMessage = "We lost your location or scooter selection — try again.";
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
+      return;
+    }
+
+    // Guest / private ride (see the module FIX note): never attempt the
+    // authed-only `POST /tracked-rides` — it would throw NO_AUTH for a
+    // signed-out rider every time. Start locally instead: no `rideId`, a
+    // freshly generated local `trackKeyId`, `private: true`. The Veo app
+    // start itself already happened (the countdown / "I already started" tap
+    // that got us here) — this only decides whether a `tracked_rides` row
+    // exists server-side to track it against.
+    if (doc.private) {
+      const nowFn = deps.now ?? (() => Date.now());
+      const randomBytesFn = deps.randomBytes ?? defaultRandomBytes;
+      deps.session.dispatch({
+        type: "rideStarted",
+        rideId: null,
+        startedAtMs: nowFn(),
+        trackKeyId: randomPrivateTrackId(randomBytesFn),
+        private: true,
+      });
+      ctx.next();
       return;
     }
 

@@ -77,6 +77,20 @@ function sessionAt(
   return store;
 }
 
+/** Same as `sessionAt`, but the device selection is explicitly marked
+ *  private — a guest's real-device pick (`ride-screen-select.ts`'s
+ *  `syncSessionDevice` now does this for real; see this file's "guest /
+ *  private ride" tests below). */
+function privateSessionAt(
+  device: RideSessionDevice,
+  costHud = true,
+): RideSessionStore {
+  const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+  store.dispatch({ type: "open", options: baseOptions(costHud), screen: "6" });
+  store.dispatch({ type: "setDevice", device, private: true });
+  return store;
+}
+
 interface FakeLocate extends LocateLike {
   emitFix(pos: LngLat): void;
 }
@@ -479,5 +493,71 @@ describe("start failures", () => {
     expect(session.current()?.screen).toBe("6");
     expect(root().textContent).toContain("already have an active ride");
     expect(rideModalRoot()).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guest / private rides — regression: must never call the authed-only
+// `POST /tracked-rides` (see this module's FIX note). A private ride's
+// real-device pick reaches this screen just like a signed-in rider's (the
+// skip predicate only gates on device + cost_hud, not auth), and `cost_hud`
+// defaults ON, so this is the common guest path, not an edge case.
+// ---------------------------------------------------------------------------
+
+describe("guest / private rides — never call the authed start endpoint", () => {
+  it('"I already started": starts locally, no network call, and hands off', async () => {
+    const session = privateSessionAt(DEVICE, true);
+    const startTrackedRide = vi.fn();
+    const onRideStarted = vi.fn();
+    wire(session, { startTrackedRide, onRideStarted, now: () => 1_700_000_000_000 });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("I already started").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(onRideStarted).not.toHaveBeenCalled();
+
+    const doc = session.current();
+    expect(doc?.state).toBe("riding");
+    expect(doc?.rideId).toBeNull();
+    expect(doc?.private).toBe(true);
+    expect(doc?.trackKeyId).toMatch(/^private-[0-9a-f]{12}$/);
+    expect(doc?.startedAtMs).toBe(1_700_000_000_000);
+
+    // Screen 6 is the last flow step: same handoff as the server-ride path.
+    expect(rideModalRoot()).toBeNull();
+    expect(currentRideScreen()).toBeNull();
+  });
+
+  it("the timed countdown also starts locally with no network call", async () => {
+    vi.useFakeTimers();
+    const session = privateSessionAt(DEVICE, true);
+    const startTrackedRide = vi.fn();
+    wire(session, { startTrackedRide });
+    openRideModal({ fastForwardTo: "6" });
+
+    anchors()[0].click();
+    expect(session.current()?.state).toBe("countdown");
+    await vi.advanceTimersByTimeAsync(START_COUNTDOWN_S * 1000);
+
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(session.current()?.state).toBe("riding");
+    expect(session.current()?.rideId).toBeNull();
+    expect(session.current()?.private).toBe(true);
+  });
+
+  it("generates a fresh trackKeyId from the injected randomBytes source", async () => {
+    const session = privateSessionAt(DEVICE, true);
+    const randomBytes = vi.fn((n: number) => new Uint8Array(n).fill(0xab));
+    wire(session, { startTrackedRide: vi.fn(), randomBytes });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("I already started").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.current()?.trackKeyId).toBe("private-abababababab");
   });
 });

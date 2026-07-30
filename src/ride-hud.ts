@@ -32,6 +32,118 @@ import {
   savedRatePlan,
   saveRatePlan,
 } from "./ride-cost.ts";
+import { closeAllPopups } from "./chrome.ts";
+import { endTrackedRide, type EndRideIn } from "./api.ts";
+import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
+import type { TrackFix, TrackRecorder } from "./track-store.ts";
+
+// ---------------------------------------------------------------------------
+// F3: tracked-ride seams (frontend plan, `ride-hud.ts` module-map row + the
+// F3 phase section). This module never CREATES a ride-session doc or a
+// track-store recorder — `ride-screen-start.ts` (F2) owns the former,
+// whichever module wires the Screen 6 → HUD handoff owns the latter's
+// lifecycle (opening/resuming IndexedDB is async and belongs with the rest
+// of that recovery machinery). ride-hud.ts only CONSUMES both: it feeds the
+// shared watchPosition into an already-live recorder, and it dispatches the
+// one ride-session action it ever needs (`endRide`, for the F3 interim
+// minimal end-report — see `reportTrackedRideEnd` below).
+// ---------------------------------------------------------------------------
+
+/** The recorder methods ride-hud.ts calls — a `Pick`, not the whole
+ *  `TrackRecorder`, so a fake in tests (or a future alternate implementation)
+ *  only has to satisfy what this module actually uses. */
+export type RideHudTrackControl = Pick<TrackRecorder, "addFix" | "finish">;
+
+/** The one ride-session action ride-hud.ts ever dispatches. */
+export type RideHudSessionControl = Pick<RideSessionStore, "dispatch">;
+
+export interface RideHudDeps {
+  /** Wired once the tracking-integration lane (or the integrator) attaches
+   *  the shared `RideSessionStore` — omit it and ride-hud.ts behaves exactly
+   *  as it does today (a legacy, session-doc-free HUD): the F3 interim end
+   *  report in `reportTrackedRideEnd` simply has nothing to dispatch to. */
+  session?: RideHudSessionControl;
+}
+
+/** What `beginHandoff` needs to put the HUD straight into `riding` for a ride
+ *  already started elsewhere (the wizard's Screen 6 countdown/"I already
+ *  started", or a reload recovery's `restore_riding` outcome) — skipping the
+ *  legacy armed/countdown screens entirely. */
+export interface TrackedRideHandoff {
+  /** null for a private/guest ride: no `tracked_rides` row exists, so BRB and
+   *  End Ride keep ride-hud's original, untracked behavior for it. */
+  rideId: string | null;
+  startedAtMs: number;
+  /** Already-recording (or resumed) track-store recorder, or null when this
+   *  ride isn't recording (a private ride with tracking unavailable/off, or
+   *  the tracking-integration lane hasn't attached one yet — see
+   *  `attachTrackRecorder`). ride-hud.ts never creates or resumes one. */
+  recorder: RideHudTrackControl | null;
+}
+
+// ---------------------------------------------------------------------------
+// Pure decision helpers — extracted so the branches the F3 phase section
+// calls out ("the rideModels-empty-push decision, the BRB tracked-vs-private
+// branch decision, the interim end-report field set") are unit-testable
+// without a DOM, a Map, or geolocation. The class methods below call these
+// rather than re-implementing the same conditions inline.
+// ---------------------------------------------------------------------------
+
+/** Which model filter to push to the device layer for a given "Show"
+ *  selection. Every model selected (the ride-start default is now EMPTY, not
+ *  every model — see `RideHud`'s `rideModels` field) means "no filter" (also
+ *  shows unrecognized hardware); anything else, including the empty set,
+ *  restricts to exactly that set — an empty set is `setRideModelFilter`'s
+ *  documented "show none" path, which is what makes ride start hide every
+ *  scooter by default. */
+export function rideModelFilterFor(
+  models: ReadonlySet<ModelKey>,
+): ReadonlySet<ModelKey> | null {
+  return models.size === ALL_MODELS.length ? null : new Set(models);
+}
+
+/** BRB's tracked-vs-private branch (frontend plan, Phase F3 "BRB" note): a
+ *  tracked ride (a server `rideId`) keeps its clock anchored and its
+ *  recording running straight through BRB — only the HUD's visual display
+ *  leaves and returns. A private/guest/legacy ride (`rideId === null`) keeps
+ *  the original stop-the-watcher-and-freeze-the-clock behavior, unchanged. */
+export type BrbStrategy = "continue_tracking" | "freeze_and_stop";
+
+export function brbStrategyFor(rideId: string | null): BrbStrategy {
+  return rideId !== null ? "continue_tracking" : "freeze_and_stop";
+}
+
+/** The F3 interim End Ride report's field set (frontend plan, Phase F3 "ride
+ *  end" note): `endTrackedRide`'s REQUIRED fields only — `ended_at`,
+ *  `end_lat`, `end_lon`. The §10 fields (`reported_minutes`,
+ *  `reported_plan`) and the rider-entered battery/cost are Screen 8's, which
+ *  doesn't exist until F4's `ride-post.ts` lands — sending them here would be
+ *  inventing data the rider was never asked for. */
+export function minimalEndReport(endedAtMs: number, pos: LngLat): EndRideIn {
+  return {
+    ended_at: new Date(endedAtMs).toISOString(),
+    end_lat: pos.lat,
+    end_lon: pos.lng,
+  };
+}
+
+/** Is a tracked ride already live, such that a second 🧭 tap must resume the
+ *  HUD instead of opening a fresh wizard over a running ride? (frontend plan,
+ *  "Entry" + Phase F3's entry-point flag flip.) Covers both a same-tab BRB'd
+ *  ride (the HUD's own `paused` flag — `RideHud.isPaused()`) and the
+ *  persisted session doc still reading `riding`/`countdown` (e.g. immediately
+ *  after a reload, before the tracking-integration lane's resume flow has
+ *  re-attached the HUD via `beginHandoff`). Exported so main.ts's entry-point
+ *  guard is a one-line call, and so the condition is unit-testable without
+ *  constructing a `RideHud` or a `RideSessionStore`. */
+export function isLiveRideEntry(
+  hudPaused: boolean,
+  sessionDocState: RideSessionState | null | undefined,
+): boolean {
+  return (
+    hudPaused || sessionDocState === "riding" || sessionDocState === "countdown"
+  );
+}
 
 type HudState = "hidden" | "armed" | "countdown" | "riding" | "summary";
 
@@ -88,10 +200,12 @@ export class RideHud {
   private needleEl: SVGElement | null = null;
   /** Map camera state captured on ride start, restored on exit. */
   private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
-  /** Which models the follow-cam shows (HUD "Show" pills). Reset to all at
-   *  the start of each ride; all-selected means no filter (also shows
-   *  unrecognized hardware), an empty selection shows none. */
-  private rideModels = new Set<ModelKey>(ALL_MODELS);
+  /** Which models the follow-cam shows (HUD "Show" pills). Reset to EMPTY at
+   *  the start of each ride (F3: hide every scooter by default) — the rider
+   *  re-shows models on demand via the wrench panel's chips. All-selected
+   *  means no filter (also shows unrecognized hardware); anything else,
+   *  including empty, restricts to that set (see `rideModelFilterFor`). */
+  private rideModels = new Set<ModelKey>();
   /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
    *  Analysis / Find wheels, but the ride state (counter) is preserved so
    *  reopening the HUD resumes it. */
@@ -103,6 +217,20 @@ export class RideHud {
   /** Elapsed ms captured at BRB, so the clock resumes from where it paused
    *  instead of counting the time spent away. */
   private pausedElapsedMs = 0;
+  /** Set only for a ride that has a `tracked_rides` row (F3 handoff /
+   *  `beginHandoff`); null for the legacy armed→start flow and for a
+   *  private/guest ride. The sole discriminator `brbStrategyFor` and the F3
+   *  interim end-report branch on — see the module's pure-helpers section. */
+  private trackedRideId: string | null = null;
+  /** The live track-store recorder for the current ride, or null when this
+   *  ride isn't recording. Independent of `trackedRideId`: a private/guest
+   *  ride can still record locally (Save Ride Tracks on), just never donate
+   *  it. ride-hud.ts only feeds it fixes and seals it — see the module's F3
+   *  seams note. */
+  private trackRecorder: RideHudTrackControl | null = null;
+  /** Dispatches the F3 interim End Ride report onto the shared ride-session
+   *  doc. Null when the integrator hasn't wired one — see `RideHudDeps`. */
+  private readonly session: RideHudSessionControl | null;
 
   constructor(
     container: HTMLElement,
@@ -113,8 +241,12 @@ export class RideHud {
     private readonly map: MLMap,
     /** Device layer control: ride-scoped tap behavior + visibility filter. */
     private readonly deviceCtl: RideDeviceControl,
+    /** F3 tracked-ride seams — optional so every pre-F3 call site (and every
+     *  test that only needs the legacy HUD) keeps compiling unchanged. */
+    deps: RideHudDeps = {},
   ) {
     this.root = container;
+    this.session = deps.session ?? null;
     this.root.addEventListener("click", (e) => this.onClick(e));
     // Re-acquire the wake lock when the tab comes back (the browser
     // silently releases it on hide).
@@ -146,6 +278,40 @@ export class RideHud {
     // chance even if it was dismissed last time around.
     this.setLandscapeHintDismissed(false);
     this.setState("armed");
+  }
+
+  /** True while a ride is backgrounded via BRB. main.ts's entry-point guard
+   *  (`wireModes()`, case "riding") reads this — via `isLiveRideEntry` —
+   *  to decide whether a second 🧭 tap should resume the HUD instead of
+   *  opening a fresh wizard over a running ride. */
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  /** Enter the riding view for a ride already started elsewhere: the
+   *  wizard's Screen 6 → HUD handoff (frontend plan, `ride-hud.ts` row), or a
+   *  reload recovery's `restore_riding` outcome. Skips the legacy
+   *  armed/countdown screens entirely — `handoff` supplies the ride's
+   *  identity and start time, this only wires the live view around it.
+   *  Idempotent while already riding, so a redundant recovery call can't
+   *  restart sensors mid-ride. */
+  beginHandoff(handoff: TrackedRideHandoff): void {
+    if (this.state === "riding") return;
+    void this.enterImmersive();
+    this.enterRiding({
+      startedAtMs: handoff.startedAtMs,
+      rideId: handoff.rideId,
+      recorder: handoff.recorder,
+    });
+  }
+
+  /** Attach (or replace, or clear) the live track-store recorder for the
+   *  CURRENT ride — for a recorder that finishes an async open/resume
+   *  slightly after `beginHandoff()` already put the HUD on screen, or for
+   *  the tracking-integration lane to hand over a freshly re-imported one
+   *  after a reload. A no-op call with the HUD not riding is harmless. */
+  attachTrackRecorder(recorder: RideHudTrackControl | null): void {
+    this.trackRecorder = recorder;
   }
 
   /** We're encouraging landscape, not enforcing it — the tip (pre-ride note
@@ -293,6 +459,15 @@ export class RideHud {
       case "end":
         void this.endRide();
         break;
+      case "stop-tracking":
+        this.showStopTrackingPrompt();
+        break;
+      case "stop-tracking-confirm":
+        void this.confirmStopTracking();
+        break;
+      case "stop-tracking-cancel":
+        this.hideStopTrackingPrompt();
+        break;
       case "dev": {
         const model = btn.dataset.model as ModelKey;
         if (this.rideModels.has(model)) this.rideModels.delete(model);
@@ -323,12 +498,10 @@ export class RideHud {
       .join("");
   }
 
-  /** Push the current model selection to the map. All selected → no filter
-   *  (also shows unrecognized hardware); a partial set restricts to those
-   *  models; none selected → an empty set hides every device. */
+  /** Push the current model selection to the map — see `rideModelFilterFor`
+   *  for the all/partial/none decision. */
   private applyRideModels(): void {
-    const all = this.rideModels.size === ALL_MODELS.length;
-    this.deviceCtl.setRideModelFilter(all ? null : new Set(this.rideModels));
+    this.deviceCtl.setRideModelFilter(rideModelFilterFor(this.rideModels));
   }
 
   // ---------- Leave the ride view (exit door → End Ride / BRB) ----------
@@ -336,9 +509,10 @@ export class RideHud {
   /** Prominent prompt over the live HUD: End Ride (finish + summary) or BRB
    *  (background the ride, keep the counter). Dismissible via Cancel. */
   private showExitPrompt(): void {
-    if (this.root.querySelector(".hud-exit-prompt")) return;
+    if (this.root.querySelector('[data-hud-prompt="exit"]')) return;
     const el = document.createElement("div");
     el.className = "hud-exit-prompt";
+    el.dataset.hudPrompt = "exit";
     el.innerHTML = `
       <div class="hud-exit-card" role="dialog" aria-label="Leave ride view">
         <p class="hud-exit-title">Leave the ride view?</p>
@@ -354,34 +528,107 @@ export class RideHud {
   }
 
   private hideExitPrompt(): void {
-    this.root.querySelector(".hud-exit-prompt")?.remove();
+    this.root.querySelector('[data-hud-prompt="exit"]')?.remove();
   }
 
-  /** BRB: background the ride. The counter is frozen (resumes from here, not
-   *  counting the time away), sensors/immersive/follow-cam are released, and
-   *  the HUD hides so the map chrome (Analysis / Find wheels) returns. */
+  /** The wrench panel's "Stop tracking" confirm — same visual treatment as
+   *  the exit prompt (`.hud-exit-prompt`/`.hud-exit-card`), a distinct
+   *  `data-hud-prompt` so the two never collide when queried/dismissed. Copy
+   *  must say contribution points are effectively forfeited: the chain's
+   *  last waypoint won't correlate with the GBFS end, which server-side
+   *  validation treats as `end_mismatch` — an INELIGIBLE verdict paying zero
+   *  awards, not a reduced one (frontend plan, `ride-hud.ts` "wrench panel"
+   *  note). */
+  private showStopTrackingPrompt(): void {
+    if (this.root.querySelector('[data-hud-prompt="stop-tracking"]')) return;
+    const el = document.createElement("div");
+    el.className = "hud-exit-prompt";
+    el.dataset.hudPrompt = "stop-tracking";
+    el.innerHTML = `
+      <div class="hud-exit-card" role="dialog" aria-label="Stop tracking this ride">
+        <p class="hud-exit-title">Stop tracking this ride?</p>
+        <p class="hud-exit-note">We seal what's recorded so far and stop right
+          here — your ride keeps going. Because your last saved point won't
+          line up with wherever you actually finish, that's a location
+          mismatch, not just a shorter track, so this ride will very likely
+          come back ineligible for contribution points rather than reduced —
+          unless you're already within about 150 m / 10 min of your real
+          drop-off.</p>
+        <div class="hud-exit-actions">
+          <button type="button" class="hud-btn hud-btn--end" data-hud="stop-tracking-confirm">Stop tracking</button>
+          <button type="button" class="hud-btn hud-btn--primary" data-hud="stop-tracking-cancel">Keep tracking</button>
+        </div>
+      </div>`;
+    this.root.appendChild(el);
+  }
+
+  private hideStopTrackingPrompt(): void {
+    this.root.querySelector('[data-hud-prompt="stop-tracking"]')?.remove();
+  }
+
+  /** Seal the final partial batch and halt further recording — the ride and
+   *  HUD keep running. Removes the wrench panel's button directly rather than
+   *  a full `renderRiding()` (which would also close the panel and reset any
+   *  other transient UI state mid-adjustment). */
+  private async confirmStopTracking(): Promise<void> {
+    this.hideStopTrackingPrompt();
+    const recorder = this.trackRecorder;
+    if (!recorder) return;
+    this.trackRecorder = null; // halt further recording immediately
+    this.root.querySelector('[data-hud="stop-tracking"]')?.remove();
+    try {
+      await recorder.finish();
+    } catch (e) {
+      console.error("stop tracking: sealing the final track batch failed", e);
+    }
+  }
+
+  /** BRB: background the ride. A tracked ride (F3 adaptation) keeps its clock
+   *  anchored and its shared watcher + track-store recording running — only
+   *  the HUD's visual display leaves; a private/guest/legacy ride keeps the
+   *  original behavior: the watcher stops and the counter freezes (resumes
+   *  from here, not counting the time away). Either way the HUD hides so the
+   *  map chrome (Analysis / Find wheels) returns. */
   private pauseRide(): void {
     this.hideExitPrompt();
-    this.pausedElapsedMs = Date.now() - this.startedAt;
+    if (brbStrategyFor(this.trackedRideId) === "continue_tracking") {
+      // Release the wake lock and the tick/countdown timers (nothing to
+      // render while hidden) but keep the geolocation watch alive — see
+      // `stopSensors`'s `keepGeoWatch` option and `onFix`'s `following` gate,
+      // which stops it from moving a map the rider isn't looking at.
+      this.stopSensors({ keepGeoWatch: true });
+    } else {
+      this.pausedElapsedMs = Date.now() - this.startedAt;
+      this.stopSensors();
+    }
     this.paused = true;
-    this.stopSensors();
     this.exitFollowCam();
     this.exitImmersive();
     this.restoreTheme();
     this.setState("hidden");
   }
 
-  /** Come back from BRB: continue the clock from where it froze and restore
-   *  the riding view. Invoked from open() (a user gesture, so immersive
-   *  fullscreen/landscape can re-engage). */
+  /** Come back from BRB: restore the riding view. A tracked ride's clock was
+   *  never touched and its watcher never stopped (see `pauseRide`), so only
+   *  the visual pieces need re-mounting; a private/guest/legacy ride
+   *  continues the clock from where it froze and restarts the watcher.
+   *  Invoked from open() (a user gesture, so immersive fullscreen/landscape
+   *  can re-engage). */
   private async resumeRide(): Promise<void> {
     this.paused = false;
-    this.startedAt = Date.now() - this.pausedElapsedMs;
+    const tracked = brbStrategyFor(this.trackedRideId) === "continue_tracking";
+    if (!tracked) {
+      this.startedAt = Date.now() - this.pausedElapsedMs;
+    }
     void this.enterImmersive();
     this.setState("riding");
     this.renderRiding();
+    // `setState` cleared the ride-model filter on the way to `hidden` — push
+    // the (unchanged) current selection back (frontend plan: "resumeRide
+    // needs the SAME re-push").
+    this.applyRideModels();
     this.enterFollowCam();
-    this.startSensors();
+    if (!tracked) this.startSensors();
     void this.acquireWakeLock();
   }
 
@@ -481,8 +728,19 @@ export class RideHud {
 
   // ---------- Riding ----------
 
-  private async startRide(): Promise<void> {
-    this.startedAt = Date.now();
+  /** Fresh ride entry, shared by the legacy armed→countdown→start flow and
+   *  `beginHandoff`'s wizard/reload handoff — the two ways a ride can begin.
+   *  Resets every per-ride accumulator, hides every scooter by default (F3;
+   *  see `rideModelFilterFor`), closes any lingering popups/tooltips, and
+   *  starts the single shared watchPosition (F3; see `onFix`/`startSensors`). */
+  private enterRiding(opts: {
+    startedAtMs: number;
+    rideId: string | null;
+    recorder: RideHudTrackControl | null;
+  }): void {
+    this.startedAt = opts.startedAtMs;
+    this.trackedRideId = opts.rideId;
+    this.trackRecorder = opts.recorder;
     this.smoothedMps = 0;
     this.distanceM = 0;
     this.lastFix = null;
@@ -491,12 +749,18 @@ export class RideHud {
     this.lastBearing = 0;
     this.paused = false;
     this.pausedElapsedMs = 0;
-    this.rideModels = new Set(ALL_MODELS); // every ride starts showing all
+    this.rideModels = new Set(); // every ride starts hiding every scooter
     this.setState("riding");
     this.renderRiding();
+    this.applyRideModels();
+    closeAllPopups();
     this.enterFollowCam();
     this.startSensors();
     void this.acquireWakeLock();
+  }
+
+  private async startRide(): Promise<void> {
+    this.enterRiding({ startedAtMs: Date.now(), rideId: null, recorder: null });
   }
 
   /** Pitch the map into follow-cam framing and raise 3D buildings. Camera
@@ -587,9 +851,10 @@ export class RideHud {
 
   private renderRiding(): void {
     // The map IS the screen. Only tiny cutouts sit over it, one per corner:
-    //   top-left  — cost (transparent, contrasting)
+    //   top-left  — ride clock, ≈ cost just below it (F3 relocation — was
+    //               bottom-left, sharing that corner with the round buttons)
     //   top-right — digital mph (transparent, contrasting)
-    //   bottom-left  — ride clock + End (stop) + adjust (wrench)
+    //   bottom-left  — ONLY the three round buttons now (exit/end/adjust)
     //   bottom-right — analog speedometer with an animated needle
     const rateOptions = RATE_PLANS.map(
       (p) =>
@@ -598,7 +863,10 @@ export class RideHud {
     this.root.innerHTML = `
       <div class="hud-live">
         <div class="hud-corner hud-corner--tl">
-          <span id="hud-cost" class="hud-readout hud-readout--cost"></span>
+          <div class="hud-tl-stack">
+            <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
+            <span id="hud-cost" class="hud-readout hud-readout--cost hud-readout--cost-sub"></span>
+          </div>
         </div>
         <div class="hud-corner hud-corner--tr">
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
@@ -610,7 +878,6 @@ export class RideHud {
           <span class="hud-rotate-badge__text">Landscape works best</span>
         </div>
         <div class="hud-corner hud-corner--bl">
-          <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
           <div class="hud-cutout-btns">
             <button type="button" class="hud-round-btn" data-hud="exit" aria-label="Leave ride view">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -630,6 +897,7 @@ export class RideHud {
         <div class="hud-corner hud-corner--br">${speedoMarkup()}</div>
 
         <div class="hud-adjust-panel" hidden>
+          <div id="hud-adjust-clock" class="hud-adjust-clock">0:00</div>
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="-60000">−1m</button>
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="-15000">−15s</button>
@@ -645,6 +913,7 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
+          ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
             <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>
@@ -664,11 +933,26 @@ export class RideHud {
     this.renderTick();
   }
 
+  /** Wrench panel's "Stop tracking" row — only while there is something to
+   *  stop AND a tracked ride to have contribution points on (the confirm
+   *  copy is specifically about donation eligibility, which never applies to
+   *  a private ride). */
+  private stopTrackingRowMarkup(): string {
+    if (!this.trackRecorder || this.trackedRideId === null) return "";
+    return `
+          <div class="hud-adjust-row">
+            <button type="button" class="hud-btn hud-btn--end" data-hud="stop-tracking">Stop tracking</button>
+          </div>`;
+  }
+
   private renderTick(): void {
     if (this.state !== "riding") return;
     const elapsed = Date.now() - this.startedAt;
+    const clockText = formatClock(elapsed);
     const clock = this.root.querySelector("#hud-clock");
-    if (clock) clock.textContent = formatClock(elapsed);
+    if (clock) clock.textContent = clockText;
+    const adjustClock = this.root.querySelector("#hud-adjust-clock");
+    if (adjustClock) adjustClock.textContent = clockText;
     const cost = this.root.querySelector("#hud-cost");
     const rate = savedRatePlan();
     if (cost && rate) {
@@ -728,30 +1012,52 @@ export class RideHud {
     }
     this.lastFix = { pos, t };
 
-    // Drive the follow-cam: recenter on the rider, bearing-up when moving.
-    if (
-      fix.coords.heading !== null &&
-      Number.isFinite(fix.coords.heading) &&
-      this.smoothedMps >= BEARING_MIN_MPS
-    ) {
-      this.lastBearing = fix.coords.heading;
+    // Shared watchPosition (F3): every fix feeds track-store too, regardless
+    // of follow-cam / BRB state — a backgrounded TRACKED ride keeps recording
+    // (see `pauseRide`'s tracked branch, which deliberately leaves this
+    // watcher running through BRB). This is the only place ride-hud.ts ever
+    // calls into track-store's per-fix API; nothing here posts to the
+    // retired per-waypoint upload endpoint.
+    if (this.trackRecorder) {
+      const trackFix: TrackFix = {
+        tMs: fix.timestamp,
+        lat: fix.coords.latitude,
+        lon: fix.coords.longitude,
+        accM: fix.coords.accuracy,
+      };
+      void this.trackRecorder.addFix(trackFix);
     }
-    this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
-    // Hold the camera still while a device popup is open, so it doesn't slide
-    // out from under the rider mid-read. The marker still tracks; recentering
-    // resumes on the next fix after the popup closes.
-    if (!this.deviceCtl.hasOpenPopup()) {
-      this.map.easeTo({
-        center: [pos.lng, pos.lat],
-        // Push the focal point down so the rider sits low on screen and sees
-        // the road ahead. Screen-space offset, so it stays "toward the bottom"
-        // regardless of which way the bearing-up map is rotated.
-        offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
-        bearing: this.lastBearing,
-        pitch: RIDE_PITCH,
-        zoom: RIDE_ZOOM,
-        duration: 700,
-      });
+
+    // Drive the follow-cam only while it's actually mounted. BRB tears it
+    // down (`exitFollowCam`) without necessarily stopping a tracked ride's
+    // watcher, so a fix arriving mid-BRB must not move a map the rider is
+    // looking at for something else (Analysis / Find wheels).
+    if (this.following) {
+      if (
+        fix.coords.heading !== null &&
+        Number.isFinite(fix.coords.heading) &&
+        this.smoothedMps >= BEARING_MIN_MPS
+      ) {
+        this.lastBearing = fix.coords.heading;
+      }
+      this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
+      // Hold the camera still while a device popup is open, so it doesn't
+      // slide out from under the rider mid-read. The marker still tracks;
+      // recentering resumes on the next fix after the popup closes.
+      if (!this.deviceCtl.hasOpenPopup()) {
+        this.map.easeTo({
+          center: [pos.lng, pos.lat],
+          // Push the focal point down so the rider sits low on screen and
+          // sees the road ahead. Screen-space offset, so it stays "toward
+          // the bottom" regardless of which way the bearing-up map is
+          // rotated.
+          offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
+          bearing: this.lastBearing,
+          pitch: RIDE_PITCH,
+          zoom: RIDE_ZOOM,
+          duration: 700,
+        });
+      }
     }
     this.renderTick();
   }
@@ -778,9 +1084,15 @@ export class RideHud {
     }
   }
 
-  private stopSensors(): void {
-    if (this.watchId !== null) navigator.geolocation.clearWatch(this.watchId);
-    this.watchId = null;
+  /** `keepGeoWatch` is BRB's tracked-ride escape hatch (`pauseRide`): release
+   *  the wake lock and the tick/countdown timers (nothing renders while
+   *  hidden) but leave the geolocation watch — and therefore track-store
+   *  recording — running. Every other call site wants the full stop. */
+  private stopSensors(opts: { keepGeoWatch?: boolean } = {}): void {
+    if (!opts.keepGeoWatch) {
+      if (this.watchId !== null) navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
     window.clearInterval(this.tickTimer);
     window.clearInterval(this.countdownTimer);
     void this.wakeLock?.release().catch(() => {});
@@ -794,6 +1106,16 @@ export class RideHud {
     const endPos = this.lastFix?.pos ?? null;
     this.stopSensors();
     this.exitFollowCam();
+
+    // F3 interim (ride-post.ts / Screen 8 don't exist until F4): a tracked
+    // ride's End Ride owns the minimal PATCH /end itself — required so an
+    // unreported end doesn't 409 the rider's next ride start. Fire-and-forget
+    // so a slow/offline network never blocks the summary the rider is about
+    // to see; failures are logged, not surfaced, and a later reload's
+    // recovery table picks the loose end back up (see `reportTrackedRideEnd`).
+    if (this.trackedRideId !== null) {
+      void this.reportTrackedRideEnd(this.trackedRideId, endPos ?? this.startPos);
+    }
 
     let endedInZone = false;
     if (endPos) {
@@ -853,6 +1175,42 @@ export class RideHud {
         <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.</p>
         <button type="button" class="hud-btn hud-btn--primary" data-hud="done">Done</button>
       </div>`;
+  }
+
+  /** F3 interim End Ride report (frontend plan, Phase F3 "ride end" note):
+   *  seals the final track-store batch, sends the MINIMAL `PATCH /end`
+   *  (`minimalEndReport` — ended_at/end_lat/end_lon only; the §10 fields are
+   *  Screen 8's, in F4), then marks the session doc `done` — requires the
+   *  store to have been created with `legacyEndRide: true` (see this
+   *  module's header note and the integrator report; without it the doc
+   *  lands on `ending(8)` instead, a screen that doesn't exist yet in F3).
+   *  Best-effort throughout: a failure here must not strand the rider on the
+   *  summary screen — the doc simply stays unreported, and a later reload's
+   *  recovery table (`seal_and_end` / the 409 prompt) picks the loose end
+   *  back up. */
+  private async reportTrackedRideEnd(
+    rideId: string,
+    pos: LngLat | null,
+  ): Promise<void> {
+    const recorder = this.trackRecorder;
+    this.trackRecorder = null; // stop feeding fixes into a ride that is over
+    try {
+      await recorder?.finish();
+    } catch (e) {
+      console.error("end ride: sealing the final track batch failed", e);
+    }
+    if (!pos) {
+      console.error(
+        "end ride: no GPS fix available — the minimal /end report was skipped",
+      );
+      return;
+    }
+    try {
+      await endTrackedRide(rideId, minimalEndReport(Date.now(), pos));
+      this.session?.dispatch({ type: "endRide" });
+    } catch (e) {
+      console.error("end ride: reporting the minimal /end failed", e);
+    }
   }
 }
 
