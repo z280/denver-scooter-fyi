@@ -1344,8 +1344,11 @@ export class Devices {
   }
 
   /** Center the map on a device and open its popup — used by the
-   *  worth-the-walk suggestion. */
-  private jumpToDevice(deviceId: string, lng: number, lat: number): void {
+   *  worth-the-walk suggestion, and by the ride wizard's `?ride=` deep-link
+   *  entry (hence public: `ride-deeplink.ts` lands the rider on the scanned
+   *  device). Note the popup only opens for a device the map's display filters
+   *  currently keep — a filtered-out device still gets centered. */
+  jumpToDevice(deviceId: string, lng: number, lat: number): void {
     this.map.easeTo({
       center: [lng, lat],
       zoom: Math.max(this.map.getZoom(), 15.5),
@@ -1562,6 +1565,16 @@ export class Devices {
   visibleFeatures(): DevicesResponse["features"] {
     if (!this.all) return [];
     return this.filtered();
+  }
+
+  /** Every feature in the last response, ignoring every display filter.
+   *  Read-only view for the ride wizard's Screen 2 disambiguation list and the
+   *  `?ride=plate:` reverse lookup: those answer "which device am I standing
+   *  next to", so a leftover model / battery / quality / area filter must not
+   *  be able to hide the very scooter the rider is holding. Everything that
+   *  paints the map keeps using visibleFeatures(). */
+  allFeatures(): DevicesResponse["features"] {
+    return this.all ? this.all.features.slice() : [];
   }
 
   private filtered(): DevicesResponse["features"] {

@@ -57,6 +57,9 @@ import {
   promptGoogleOneTap,
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
+import { refreshSessionIfStale } from "./auth-session.ts";
+import { isRideModalEnabled, wireRideModal } from "./ride-modal.ts";
+import { wireRideDeepLink } from "./ride-deeplink.ts";
 import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { type EquityRank } from "./config.ts";
@@ -281,9 +284,27 @@ initInstallPrompt();
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
 // Inert when no token is present, so it's harmless before the endpoints exist.
-void consumePendingMagicLink().then((ok) => {
-  if (ok) location.reload();
-});
+//
+// The promise is KEPT (rather than `void`ed) because `?ride=` must be consumed
+// AFTER `?ml=`: on success the reload re-enters authenticated with the deep link
+// still in the URL, so wireRideDeepLink (down in the map-load block) stands down
+// until this settles — resolving `true` means "a reload is coming, leave the URL
+// alone", `false` means "the deep link is yours".
+//
+// With no link to redeem, this is also where the silent session refresh runs
+// (ride-mode F1): rider sessions are 30-day sliding, so a token older than a
+// day gets rotated once per load. Every guard lives inside auth-session.ts —
+// stale-only, one attempt per load, compare-and-set on the write, and a 401 that
+// clears nothing another tab has since rotated — so this stays a fire-and-forget
+// line. Sequenced AFTER the redemption decision on purpose: a freshly minted
+// magic-link session must never race a rotation of the token it replaces.
+const magicLinkSettled: Promise<boolean> = consumePendingMagicLink().then(
+  (ok) => {
+    if (ok) location.reload();
+    else void refreshSessionIfStale();
+    return ok;
+  },
+);
 
 // Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
 // dialog on load — but only if the backend's /auth/config says Google is
@@ -397,6 +418,61 @@ map.on("load", async () => {
   } else {
     freshness.error();
   }
+
+  // ---------- Ride wizard (F1 plumbing; screens land in F2) ----------
+  // Behind the `scooter-fyi-ride-modal` dev flag, which stays the gate until F3
+  // flips it default-on (frontend plan, "Entry"). F1 lands the shell, the
+  // keypad and the `?ride=` consume but registers no screens yet, so an ungated
+  // deep link would open a placeholder wizard in production. The 🧭 Ride button
+  // (wireModes()'s `case "riding"`) is deliberately NOT swapped here — that swap
+  // is F3's, because it has to keep BRB's in-page resume route.
+  //
+  // Wired after the first device response because a `?ride=plate:` link
+  // reverse-resolves the plate against the UNFILTERED device set — an empty list
+  // would send an otherwise-resolvable plate down the manual path. The
+  // vehicle-identifier form does not need the list, so this still runs when the
+  // fetch failed.
+  if (isRideModalEnabled()) {
+    wireRideModal({
+      // The entry's id is a 16-hex `vehicle_identifier` on the `?ride=<hex>`
+      // path but a `device_id` on the `?ride=plate:` path (GbfsPlates' reverse
+      // lookup speaks device_id — gbfs.ts's index is keyed on Veo's bike_id).
+      // Accept either and hand jumpToDevice the device_id it matches popups on.
+      jumpToDevice: (id) => {
+        const want = id.toLowerCase();
+        const feat = devices
+          .allFeatures()
+          .find(
+            (f) =>
+              f.properties.device_id === id ||
+              String(f.properties.vehicle_identifier ?? "").toLowerCase() ===
+                want,
+          );
+        if (!feat) return;
+        const [lng, lat] = feat.geometry.coordinates;
+        devices.jumpToDevice(feat.properties.device_id, lng, lat);
+      },
+    });
+    // `?ride=` is consumed only once `?ml=` has definitively NOT been redeemed.
+    // ride-deeplink.ts carries the same guard, but it can only reach for it
+    // while `?ml=` is still in the URL — and redemption strips the param in a
+    // `finally` just before it reloads, so by the time this runs the param can
+    // already be gone with a reload in flight. Consuming `?ride=` there would
+    // replaceState it away and the reloaded document would land with no deep
+    // link. Gating on the promise covers that window too; the hook below stays
+    // wired so the module's own guard still holds on the other ordering.
+    void magicLinkSettled.then((redeemed) => {
+      if (redeemed) return;
+      wireRideDeepLink({
+        magicLinkSettled,
+        // allFeatures(), never visibleFeatures(): a leftover model / battery /
+        // quality / area filter must not hide the scooter the rider is holding.
+        deviceIds: () =>
+          devices.allFeatures().map((f) => f.properties.device_id),
+      });
+    });
+  }
+
   // Warm the default-selected ranks' polygons so the estimate populates.
   void equity.warm();
   startRefreshLoop();

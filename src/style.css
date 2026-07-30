@@ -3804,3 +3804,284 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   width: 100%;
   height: 100%;
 }
+
+/* ---------- Ride-mode wizard shell (src/ride-modal.ts) ----------
+   The Screens 1–6 modal: a full-bleed sheet on a phone, a centered card on a
+   desktop. Layout is a two-pane CSS grid — portrait stacks the panes as rows,
+   landscape lays them out as columns (2fr 3fr on Screen 4 for the 40/60 split
+   the plan specifies). The `@media (orientation: landscape)` query is the
+   baseline; ride-modal.ts's matchMedia listener flips `is-landscape` /
+   `is-portrait` on the root, and those class rules deliberately out-specify the
+   media query so JS stays authoritative (and forced-orientation tests work).
+   z-index 52: over the ride HUD (50) so the two can never fight, under the
+   safe-area mask (55) and under the shared floating modals (70) — the eight ℹ
+   info modals open on top of the wizard, not behind it.
+   The scrim is the repo's modal scrim value, matching .ranks-modal and
+   .install-modal (no token exists for it — it is deliberately theme-independent
+   in all three). */
+.ride-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 52;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(13, 27, 42, 0.35);
+}
+.ride-modal__card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  color: var(--fg);
+  border: 0;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.ride-modal__card:focus {
+  outline: none;
+}
+.ride-modal__header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ride-modal__back {
+  justify-self: start;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ride-modal__back:hover {
+  background: var(--accent-soft);
+}
+.ride-modal__back[hidden] {
+  display: none;
+}
+.ride-modal__title {
+  margin: 0;
+  grid-column: 2;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+}
+.ride-modal__close {
+  justify-self: end;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.ride-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* Portrait default: stacked halves (owner's "top half / bottom half"). */
+.ride-modal__grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.ride-modal__grid[data-panes="1"] {
+  grid-template-rows: 1fr;
+}
+/* min-height/min-width 0 is what lets a pane scroll instead of stretching the
+   grid track past the viewport. */
+.ride-modal__pane {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ride-modal__pane[hidden] {
+  display: none;
+}
+.ride-modal__lede {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ride-modal__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-modal__placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+}
+/* Landscape: side-by-side (owner's "left half / right half"), with Screen 4's
+   40/60 split. */
+@media (orientation: landscape) {
+  .ride-modal__grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+  .ride-modal__grid[data-split="40-60"] {
+    grid-template-columns: 2fr 3fr;
+  }
+  .ride-modal__grid[data-panes="1"] {
+    grid-template-columns: 1fr;
+  }
+}
+/* The JS class is authoritative (3 classes / 2 classes + attribute beats the
+   media query's single class), so an orientation flip never depends on the two
+   agreeing about what "landscape" means. */
+.ride-modal.is-portrait .ride-modal__grid {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.ride-modal.is-portrait .ride-modal__grid[data-panes="1"] {
+  grid-template-rows: 1fr;
+}
+.ride-modal.is-landscape .ride-modal__grid {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.ride-modal.is-landscape .ride-modal__grid[data-split="40-60"] {
+  grid-template-columns: 2fr 3fr;
+}
+.ride-modal.is-landscape .ride-modal__grid[data-panes="1"] {
+  grid-template-columns: 1fr;
+}
+/* A landscape phone has almost no vertical room — shrink the chrome, not the
+   panes. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .ride-modal__header {
+    padding: 6px 10px;
+  }
+  .ride-modal__title {
+    font-size: 14px;
+  }
+  .ride-modal__grid {
+    gap: 8px;
+    padding: 8px 10px 10px;
+  }
+}
+/* Desktop: a deliberate card rather than a full-bleed takeover. */
+@media (min-width: 900px) and (min-height: 620px) {
+  .ride-modal {
+    align-items: center;
+    padding: 24px;
+  }
+  .ride-modal__card {
+    flex: 0 1 auto;
+    width: min(1100px, 100%);
+    height: min(760px, 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+}
+
+/* ---------- Ride wizard landscape keypad (src/ride-keypad.ts) ----------
+   Only ever rendered in landscape (portrait uses the native keyboard via
+   inputmode="numeric"), so it is sized to fill the pane it is slotted into: the
+   digit rows share the height evenly and Done keeps a fixed band at the bottom.
+   Keys are >=44px, tabular, and `touch-action: manipulation` to skip the
+   double-tap-zoom delay. The bound input carries `inputmode="none"` (never
+   readonly) while the keypad is attached — see the module header. */
+.ride-keypad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  user-select: none;
+}
+.ride-keypad__row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.ride-keypad__row--done {
+  grid-template-columns: 1fr;
+  flex: 0 0 auto;
+}
+.ride-keypad__key {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px;
+  font-family: inherit;
+  font-size: clamp(17px, 3.6vh, 30px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ride-keypad__key:hover {
+  background: var(--accent-soft);
+}
+.ride-keypad__key:active {
+  background: var(--accent-soft);
+  transform: translateY(1px);
+}
+.ride-keypad__key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ride-keypad__key--clear,
+.ride-keypad__key--backspace {
+  font-size: clamp(14px, 2.6vh, 20px);
+  color: var(--fg-muted);
+  background: var(--bg-subtle);
+}
+.ride-keypad__key--done {
+  min-height: 48px;
+  font-size: clamp(15px, 2.8vh, 22px);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: transparent;
+}
+.ride-keypad__key--done:hover,
+.ride-keypad__key--done:active {
+  background: var(--accent);
+  filter: brightness(1.06);
+}
+/* The field the keypad is driving, so it is obvious which one the keys feed. */
+input[data-ride-keypad="on"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-keypad__key:active {
+    transform: none;
+  }
+}

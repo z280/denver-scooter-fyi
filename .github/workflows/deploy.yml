@@ -39,6 +39,17 @@ jobs:
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID || vars.VITE_GOOGLE_CLIENT_ID }}
 
+      # Vitest (ride-mode phase F1). Offline — every suite stubs fetch and web
+      # storage — so this needs no secrets and no network.
+      - run: npm test
+
+      # tests/fixtures/track-chain-vectors.json is a cross-repo byte contract:
+      # the same file, byte-identical, backs the API repo's track_verify tests.
+      # This re-derives it from scripts/gen-track-vectors.mjs and fails if a
+      # single byte drifted (a hand-edit, an editor reformat), so the two repos
+      # cannot silently desynchronise.
+      - run: npm run vectors:check
+
       # Direct Upload of dist/. Push to main -> production deploy. A PR deploys
       # to a stable per-PR preview URL. The --branch value is built only from
       # the PR number (an integer) and the literal "main", never from the
