@@ -21,8 +21,11 @@
 // corner markup, the wrench panel's Stop-tracking confirm dialog wiring, the
 // shared watchPosition callback's DOM/map side effects, and the BRB/end-
 // report class methods' orchestration (`pauseRide`/`resumeRide`/`endRide`/
-// `reportTrackedRideEnd`) — each of those is a thin, direct consumer of one
+// `handOffTrackedRideEnd`) — each of those is a thin, direct consumer of one
 // of the pure functions above (verified by reading, not by a DOM harness).
+// The F4 tracked-ride hand-off (Screen 8 takeover, no legacy summary, no
+// PATCH /end from this module) DOES get a real DOM harness, though — see
+// ride-hud-integration.test.ts's "ending a TRACKED ride..." test.
 import { describe, expect, it } from "vitest";
 
 import { ALL_MODELS, type ModelKey } from "./devices.ts";

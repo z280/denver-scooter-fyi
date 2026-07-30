@@ -65,6 +65,7 @@ import { wireRideDeepLink } from "./ride-deeplink.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
+  type RideRecoveryNote,
   type RideSessionStore,
 } from "./ride-session.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
@@ -76,6 +77,7 @@ import {
 import { wireRideScreenDest } from "./ride-screen-dest.ts";
 import { wireRideScreenRoutes } from "./ride-screen-routes.ts";
 import { wireRideScreenStart } from "./ride-screen-start.ts";
+import { wireRidePost } from "./ride-post.ts";
 import {
   renderRideOptionsPanel,
   defaultRideOptionsFor,
@@ -96,6 +98,11 @@ import {
   registerPopupCloser,
 } from "./chrome.ts";
 import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
+import {
+  wireLeaderboard,
+  createLayerPause,
+  type LayerPause,
+} from "./leaderboard.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -119,13 +126,26 @@ const devices = new Devices(map, locate);
 // so the wizard has exactly one session, not one per screen. Persists to
 // localStorage on every transition (ride-session.ts's own concern); recovery
 // on load (crash/reload/409) is F3's seat, not wired here.
-// `legacyEndRide: true` is the F3 interim: no Screen 8 exists yet, so
-// `endRide` must land a tracked ride straight on `done` (the legacy HUD
-// summary owns the minimal `PATCH /end` itself — see ride-hud.ts's
-// `reportTrackedRideEnd`) rather than `ending(8)`, a screen nothing renders
-// yet. Turn this off once F4 lands Screen 8.
+// `legacyEndRide: false` (F4): `endRide` (the LIVE "rider taps End Ride
+// mid-ride" action) now lands a tracked ride on `ending(8)` like every other
+// path into it, instead of skipping straight to `done`. This was the F3
+// interim's job while there was no Screen 8 to hand off to — the legacy HUD
+// summary owned the minimal `PATCH /end` itself back then (ride-hud.ts's
+// now-retired `reportTrackedRideEnd`). F4 landed Screen 8 as a real module
+// (`ride-post.ts`, wired below), and ride-hud.ts's `endRide()` now branches
+// on a tracked ride to `handOffTrackedRideEnd()` — sealing the final local
+// batch and dispatching `{type:"endRide"}` WITHOUT sending any `PATCH /end`
+// itself (that invariant belongs to Screen 8's own buttons now — see
+// ride-session.ts's END-REPORT INVARIANT header comment) and WITHOUT
+// rendering the legacy "summary" DOM, which is what makes flipping this flag
+// safe: there is no longer a competing legacy render for `wireRideScreen8`'s
+// reactive mount to double up against. Private/guest rides are untouched —
+// `reduceRideSession`'s `endRide` case already sends them straight to `done`
+// regardless of this flag (master Part 0 gates Screen 8 on "a Veo device was
+// selected, i.e. not a private ride"), and ride-hud.ts keeps their legacy
+// client-only summary permanently.
 const rideSession: RideSessionStore = createRideSessionStore({
-  legacyEndRide: true,
+  legacyEndRide: false,
 });
 const overlays = new Overlays(map, need("choropleth-legend"));
 const equity = new EquityRanks(overlays, () => renderEquityMetric());
@@ -135,6 +155,19 @@ const hexDensity = new HexDensity(map, need("hexbin-legend"));
 // wire functions.
 let clearChoropleth: () => void = () => {};
 let clearHexDensity: () => void = () => {};
+// 🏆 Leaderboard pause controllers for hex density / the region choropleth
+// (frontend plan's Leaderboard section). Placeholder no-ops until
+// wireHexDensity()/wireChoropleth() run and replace them with the
+// real-backed controllers — same bootstrapping shape as clearHexDensity/
+// clearChoropleth above.
+let hexDensityPause: LayerPause<HexSize | null> = createLayerPause(
+  { getActive: () => null, apply: () => {} },
+  null,
+);
+let choroplethPause: LayerPause<BoundaryLayer | null> = createLayerPause(
+  { getActive: () => null, apply: () => {} },
+  null,
+);
 const freshness = new Freshness(
   need("freshness"),
   need("freshness-text"),
@@ -409,8 +442,16 @@ function getTrackStore(): Promise<TrackStore> {
  *  Every other outcome (`reopen_wizard`, `restore_wizard`, `restore_screen`,
  *  `local_end`, `none`) still gets its recovered doc persisted, so storage
  *  stays consistent with what the recovery table decided, but drives no
- *  further UI — F4 territory. */
-async function recoverActiveRide(): Promise<void> {
+ *  further UI — F4 territory.
+ *
+ *  Returns the outcome's `note` (F4): `seal_and_end` can land the recovered
+ *  doc straight on `ending(8)` with `note: "ride_expired"` (the watch elapsed
+ *  before the rider tapped End Ride) — Screen 8 shows that as a "your ride
+ *  expired" banner, but only if it learns about it. `ride-post.ts`'s
+ *  `wireRidePost` reads `recoveryNote` once at wire time (recovery is a
+ *  once-per-page-load reconciliation), so the call site below wires it only
+ *  after this promise settles — see that call site's own comment. */
+async function recoverActiveRide(): Promise<RideRecoveryNote | null> {
   let outcome: Awaited<ReturnType<typeof recoverRideSession>>;
   try {
     outcome = await recoverRideSession({
@@ -429,13 +470,13 @@ async function recoverActiveRide(): Promise<void> {
     });
   } catch (e) {
     console.error("ride recovery failed", e);
-    return;
+    return null;
   }
 
-  if (outcome.action === "prompt_resume_or_end") return;
+  if (outcome.action === "prompt_resume_or_end") return outcome.note;
   if (outcome.doc) rideSession.replace(outcome.doc);
   if (outcome.action !== "restore_riding" && outcome.action !== "seal_and_end") {
-    return;
+    return outcome.note;
   }
 
   let recorder: RideHudTrackControl | null = null;
@@ -463,6 +504,7 @@ async function recoverActiveRide(): Promise<void> {
       recorder,
     });
   }
+  return outcome.note;
 }
 
 // ---------- Ride mode wizard (Screens 1–6) ----------
@@ -541,6 +583,24 @@ map.on("load", async () => {
   wireRecommended();
   wireChoropleth();
   wireHexDensity();
+  // 🏆 Leaderboard: the single wireX() entry point (frontend plan's
+  // Leaderboard section). Must come after wireChoropleth()/wireHexDensity()
+  // above — that's what replaces choroplethPause/hexDensityPause from their
+  // placeholder no-ops with the real-backed controllers this needs to pause.
+  // The profile button is looked up by its stable selector (index.html gives
+  // it no id); the null-guard is defensive only — it's static markup and
+  // should always be found.
+  const profileBtn = document.querySelector<HTMLButtonElement>(
+    '.topbar__right .drawer-tab[data-drawer="account"]',
+  );
+  if (profileBtn) {
+    wireLeaderboard(map, profileBtn, {
+      devices,
+      closeAllPopups,
+      hexDensityPause,
+      choroplethPause,
+    });
+  }
   wireDrawers();
   const areaFilter = wireAreaFilter();
   applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
@@ -603,11 +663,37 @@ map.on("load", async () => {
     // persisted session doc against the server / local track-store BEFORE
     // anything renders, and silently resume the HUD + recording when a ride
     // was already live across the reload — the phase's real acceptance bar
-    // ("reload mid-ride restores HUD + tracking within ~3 s"). Fire-and-forget:
-    // recovery is async (it may hit the network), and nothing else in boot
-    // should wait on it.
+    // ("reload mid-ride restores HUD + tracking within ~3 s"). Fire-and-forget
+    // for the rest of boot: recovery is async (it may hit the network), and
+    // nothing else should wait on it.
+    //
+    // F4: Screens 8/9/10 (`ride-post.ts`) wire only once this settles, not
+    // alongside the wireRideScreenX calls below, so `wireRidePost`'s
+    // `recoveryNote` dep (read once, at wire time) can carry
+    // `recoverActiveRide`'s resolved note straight through — see that
+    // function's own doc comment. `recoverRideSession` can land a reloaded
+    // doc directly on `ending(8)` (the `seal_and_end` outcome, watch expired
+    // before the rider tapped End Ride) via `rideSession.replace()`, which
+    // bypasses the reducer's `legacyEndRide` gate entirely — so Screen 8
+    // already renders correctly for THAT path regardless of the flag. The
+    // *live* "rider taps End Ride mid-ride" path also reaches `ending(8)`
+    // now (`legacyEndRide: false` above + ride-hud.ts's `handOffTrackedRideEnd`
+    // hand-off), and recovery reliably resolves within a few seconds of load
+    // — long before a rider could organically reach End Ride — so deferring
+    // this wiring until recovery settles still costs nothing in practice.
     onWired: () => {
-      void recoverActiveRide();
+      void recoverActiveRide().then((recoveryNote) => {
+        wireRidePost({
+          session: rideSession,
+          locate,
+          recoveryNote,
+          // Screen 9's pane-header point values — same already-warmed value
+          // Screen 2's ℹ modals use (see `warmRideModePoints()` below); a
+          // getter so a still-in-flight fetch at wire time is still picked
+          // up by the time a rider could ever actually reach Screen 9.
+          points: () => rideModePoints,
+        });
+      });
     },
     // The entry's id is a 16-hex `vehicle_identifier` on the `?ride=<hex>`
     // path but a `device_id` on the `?ride=plate:` path (GbfsPlates' reverse
@@ -1469,15 +1555,7 @@ function wireIconography(): void {
 
 function wireChoropleth(): void {
   const select = need<HTMLSelectElement>("choropleth-select");
-  // Reset to Off without re-triggering the change handler's side effects.
-  clearChoropleth = () => {
-    if (!select.value) return;
-    select.value = "";
-    void overlays.setChoropleth(null);
-  };
-  select.addEventListener("change", async () => {
-    const layer = (select.value || null) as BoundaryLayer | null;
-    if (layer) clearHexDensity(); // mutually exclusive with hex density
+  const applyChoropleth = async (layer: BoundaryLayer | null): Promise<void> => {
     select.disabled = true;
     try {
       await overlays.setChoropleth(layer);
@@ -1488,6 +1566,28 @@ function wireChoropleth(): void {
     } finally {
       select.disabled = false;
     }
+  };
+  // 🏆 Leaderboard: while open, a pick here only updates the stored value —
+  // the real overlays.setChoropleth call is deferred to the leaderboard's
+  // close() (leaderboard.ts's LayerPause). Unchanged (applies immediately)
+  // when the leaderboard has never been opened.
+  choroplethPause = createLayerPause<BoundaryLayer | null>(
+    {
+      getActive: () => (select.value || null) as BoundaryLayer | null,
+      apply: applyChoropleth,
+    },
+    null,
+  );
+  // Reset to Off without re-triggering the change handler's side effects.
+  clearChoropleth = () => {
+    if (!select.value) return;
+    select.value = "";
+    choroplethPause.recordChange(null);
+  };
+  select.addEventListener("change", () => {
+    const layer = (select.value || null) as BoundaryLayer | null;
+    if (layer) clearHexDensity(); // mutually exclusive with hex density
+    choroplethPause.recordChange(layer);
   });
 }
 
@@ -1498,6 +1598,18 @@ function wireHexDensity(): void {
   const metricRow = need("hexbin-metric-row");
   const metricSelect = need<HTMLSelectElement>("hexbin-metric-select");
 
+  // 🏆 Leaderboard: see wireChoropleth()'s matching comment — same deferred-
+  // apply-while-open behavior, mirrored for the hex-density seg control.
+  hexDensityPause = createLayerPause<HexSize | null>(
+    {
+      getActive: () =>
+        (btns.find((b) => b.classList.contains("is-active"))?.dataset.hex ||
+          null) as HexSize | null,
+      apply: (size) => void hexDensity.setSize(size),
+    },
+    null,
+  );
+
   const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
       const on = b === btn;
@@ -1507,7 +1619,7 @@ function wireHexDensity(): void {
     const size = (btn.dataset.hex || "") as HexSize | "";
     if (size) clearChoropleth(); // mutually exclusive with the choropleth
     metricRow.hidden = !size;
-    void hexDensity.setSize(size || null);
+    hexDensityPause.recordChange(size || null);
   };
   // Reset to Off (used when the choropleth takes over).
   clearHexDensity = () => {

@@ -33,7 +33,12 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
-import { endTrackedRide, type EndRideIn } from "./api.ts";
+// F4: `endTrackedRide` itself is no longer called from this module — Screen 8
+// (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
+// `handOffTrackedRideEnd` below). `EndRideIn` stays imported for
+// `minimalEndReport`'s return type, which stays exported/tested as a pure
+// function even though this class no longer calls it itself.
+import type { EndRideIn } from "./api.ts";
 import { selectedDevice } from "./ride-session.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
 import type { TrackFix, TrackRecorder } from "./track-store.ts";
@@ -47,8 +52,10 @@ import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
 // lifecycle (opening/resuming IndexedDB is async and belongs with the rest
 // of that recovery machinery). ride-hud.ts only CONSUMES both: it feeds the
 // shared watchPosition into an already-live recorder, and it dispatches the
-// one ride-session action it ever needs (`endRide`, for the F3 interim
-// minimal end-report — see `reportTrackedRideEnd` below).
+// one ride-session action it ever needs (`endRide` — F4: seals the final
+// batch and hands a tracked ride off to Screen 8, see
+// `handOffTrackedRideEnd` below; a private ride still gets the original
+// client-only close-out via `endPrivateRide`).
 // ---------------------------------------------------------------------------
 
 /** The recorder methods ride-hud.ts calls — a `Pick`, not the whole
@@ -67,9 +74,9 @@ export type RideHudSessionControl = Pick<RideSessionStore, "dispatch" | "current
 export interface RideHudDeps {
   /** Wired once the tracking-integration lane (or the integrator) attaches
    *  the shared `RideSessionStore` — omit it and ride-hud.ts behaves exactly
-   *  as it does today (a legacy, session-doc-free HUD): the F3 interim end
-   *  report in `reportTrackedRideEnd` has nothing to dispatch to, and the
-   *  Screen 7 nav overlay never mounts (no doc to read a `route` off of). */
+   *  as it does today (a legacy, session-doc-free HUD): `handOffTrackedRideEnd`
+   *  has nothing to dispatch to, and the Screen 7 nav overlay never mounts
+   *  (no doc to read a `route` off of). */
   session?: RideHudSessionControl;
 }
 
@@ -1197,35 +1204,44 @@ export class RideHud {
   // ---------- Summary ----------
 
   private async endRide(): Promise<void> {
-    const elapsed = Date.now() - this.startedAt;
-    const endPos = this.lastFix?.pos ?? null;
     this.stopSensors();
     this.exitFollowCam();
     this.navHud?.dispose();
     this.navHud = null;
     this.navHudContainer = null;
 
-    // F3 interim (ride-post.ts / Screen 8 don't exist until F4): a tracked
-    // ride's End Ride owns the minimal PATCH /end itself — required so an
-    // unreported end doesn't 409 the rider's next ride start. Fire-and-forget
-    // so a slow/offline network never blocks the summary the rider is about
-    // to see; failures are logged, not surfaced, and a later reload's
-    // recovery table picks the loose end back up (see `reportTrackedRideEnd`).
-    //
-    // A private/guest ride has no `PATCH /end` to send at all (master Part 0
-    // gates Screen 8 on "a Veo device was selected, i.e. not a private
-    // ride") — but the session doc still has to close out to `done`, or it
-    // is left stranded on `riding` forever: `reduceRideSession`'s `open`
-    // guard rejects starting a NEW ride while any doc reads `isRideLive`,
-    // and `isLiveRideEntry` would keep routing the next 🧭 tap back into
-    // `rideHud.open()`'s legacy armed screen instead of the wizard. Nothing
-    // here waits on a network report, so it can — and must — happen right
-    // away rather than only on the tracked-ride branch above.
+    // F4: `ride-post.ts` (Screens 8-10, wired from main.ts alongside this
+    // HUD) now owns the whole post-ride funnel for a TRACKED ride — the
+    // legacy client-only summary below is retired for that case (frontend
+    // plan's ride-hud.ts module-map row: "the summary state is replaced by a
+    // handoff to ride-post.ts ... for tracked rides only"). Per the state
+    // machine's END-REPORT INVARIANT (ride-session.ts's header comment) the
+    // ride's single `PATCH /end` fires from SCREEN 8's own buttons, never on
+    // merely entering `ending(8)` — so this handler's only remaining job on
+    // a tracked ride is to seal the local chain's final batch and hand the
+    // session off; see `handOffTrackedRideEnd` for why it must not call
+    // `endTrackedRide` itself anymore (that was the F3 interim's job,
+    // retired now that Screen 8 exists to do it with the rider-entered
+    // battery/cost/§10 fields) and must not render the card below.
     if (this.trackedRideId !== null) {
-      void this.reportTrackedRideEnd(this.trackedRideId, endPos ?? this.startPos);
-    } else {
-      void this.endPrivateRide();
+      await this.handOffTrackedRideEnd();
+      return;
     }
+
+    // Private/guest ride: unchanged from F3. There is no `PATCH /end` to
+    // send at all (master Part 0 gates Screen 8 on "a Veo device was
+    // selected, i.e. not a private ride") — but the session doc still has to
+    // close out to `done`, or it is left stranded on `riding` forever:
+    // `reduceRideSession`'s `open` guard rejects starting a NEW ride while
+    // any doc reads `isRideLive`, and `isLiveRideEntry` would keep routing
+    // the next 🧭 tap back into `rideHud.open()`'s legacy armed screen
+    // instead of the wizard. The legacy client-only summary card below is
+    // this branch's PERMANENT experience, not an interim one (the module
+    // map: "private/guest rides keep the legacy client-only summary
+    // permanently").
+    const elapsed = Date.now() - this.startedAt;
+    const endPos = this.lastFix?.pos ?? null;
+    void this.endPrivateRide();
 
     let endedInZone = false;
     if (endPos) {
@@ -1287,21 +1303,23 @@ export class RideHud {
       </div>`;
   }
 
-  /** F3 interim End Ride report (frontend plan, Phase F3 "ride end" note):
-   *  seals the final track-store batch, sends the MINIMAL `PATCH /end`
-   *  (`minimalEndReport` — ended_at/end_lat/end_lon only; the §10 fields are
-   *  Screen 8's, in F4), then marks the session doc `done` — requires the
-   *  store to have been created with `legacyEndRide: true` (see this
-   *  module's header note and the integrator report; without it the doc
-   *  lands on `ending(8)` instead, a screen that doesn't exist yet in F3).
-   *  Best-effort throughout: a failure here must not strand the rider on the
-   *  summary screen — the doc simply stays unreported, and a later reload's
-   *  recovery table (`seal_and_end` / the 409 prompt) picks the loose end
-   *  back up. */
-  private async reportTrackedRideEnd(
-    rideId: string,
-    pos: LngLat | null,
-  ): Promise<void> {
+  /** F4 hand-off (frontend plan, ride-hud.ts module-map row): seal the final
+   *  local batch and close the HUD's own view — no `PATCH /end` here (that
+   *  invariant belongs to Screen 8's own buttons now, per
+   *  ride-session.ts's END-REPORT INVARIANT header comment) and no legacy
+   *  summary DOM. `ride-post-s8.ts`'s `wireRideScreen8` is subscribed to the
+   *  shared session store (`main.ts` wires it once, at boot, well before a
+   *  rider could organically reach End Ride) and mounts its own full-screen
+   *  `.ride-post-modal` overlay reactively the instant the `endRide` dispatch
+   *  below lands the doc on `ending(8)` — dispatching BEFORE hiding this view
+   *  means Screen 8 is already in the DOM by the time the HUD's own view
+   *  disappears, so there is never a blank frame and never a double-render of
+   *  two competing post-ride surfaces (the risk this flow's `legacyEndRide`
+   *  interim guarded against — see `main.ts`'s ride-session store comment).
+   *  Best-effort on the seal: a failure there must not strand the rider with
+   *  neither the HUD nor Screen 8 on screen — the doc still transitions and
+   *  Screen 10's waypoint gate simply sees fewer (or zero) waypoints. */
+  private async handOffTrackedRideEnd(): Promise<void> {
     const recorder = this.trackRecorder;
     this.trackRecorder = null; // stop feeding fixes into a ride that is over
     try {
@@ -1309,25 +1327,17 @@ export class RideHud {
     } catch (e) {
       console.error("end ride: sealing the final track batch failed", e);
     }
-    if (!pos) {
-      console.error(
-        "end ride: no GPS fix available — the minimal /end report was skipped",
-      );
-      return;
-    }
-    try {
-      await endTrackedRide(rideId, minimalEndReport(Date.now(), pos));
-      this.session?.dispatch({ type: "endRide" });
-    } catch (e) {
-      console.error("end ride: reporting the minimal /end failed", e);
-    }
+    this.exitImmersive();
+    this.restoreTheme();
+    this.session?.dispatch({ type: "endRide" });
+    this.setState("hidden");
   }
 
   /** Close out a private/guest ride (or a legacy, session-free quick-start
    *  ride) from `endRide`: seal whatever local recording exists and
    *  dispatch the session doc straight to `done`. There is no `PATCH /end`
    *  to send for a private ride (see `endRide`'s comment), so — unlike
-   *  `reportTrackedRideEnd` — nothing here needs to wait on the network;
+   *  `handOffTrackedRideEnd` — nothing here needs to wait on the network;
    *  this stays `async`/fire-and-forget only because `recorder.finish()`
    *  itself is. A no-op `dispatch` when there is no live doc at all (the
    *  legacy armed→countdown→`startRide()` path never touches

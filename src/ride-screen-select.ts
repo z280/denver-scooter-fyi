@@ -307,6 +307,29 @@ export function wireRideScreenSelect(deps: RideScreenSelectDeps): () => void {
   const resolved: ResolvedDeps = { ...deps, plates, listRideUsuals: listUsuals };
 
   const unreg2 = registerRideScreen("2", {
+    // F4 fix: the S8 [New Destination] loop (`ending(8) → wizard:3`) keeps
+    // the same rideId/device and re-enters the wizard via
+    // `openRideModal({ fastForwardTo: "3" })` — but `resolveStartScreen`
+    // (ride-modal.ts) walks the flow from Screen 1 and returns the FIRST
+    // registered screen that doesn't ask to be skipped, so with no skip
+    // predicate here it stopped on Screen 2 (re-pick a device) instead of
+    // landing on Screen 3, exactly the gap this lane's own header comment
+    // flagged for the integrator. The signal is unambiguous and needs no new
+    // plumbing: `doc.state === "wizard"` with a non-null `rideId` is the
+    // New-Destination loop's own doc shape (`ride-session.ts`'s
+    // `isRideLive` — a FRESH wizard "open" always starts with `rideId:
+    // null`, per `blankRideSession`), so it can never misfire on an
+    // ordinary device pick. Skipping here matters beyond UX: without it, a
+    // rider who taps a device on this stray Screen 2 would `setDevice` a
+    // DIFFERENT device onto an already-started tracked_rides row (legal per
+    // `reduceRideSession`'s `setDevice` guard, which only checks
+    // `doc.state === "wizard"`) with no server-side re-validation, and
+    // walking the flow onward could re-reach Screen 6 and re-dispatch
+    // `rideStarted`/`startTrackedRide` for a ride that is already live.
+    skip: () => {
+      const doc = resolved.session.current();
+      return doc !== null && doc.state === "wizard" && doc.rideId !== null;
+    },
     factory: (ctx) => buildSelectScreen(ctx, resolved),
   });
   const unreg25 = registerRideScreen("2.5", {

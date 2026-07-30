@@ -429,4 +429,64 @@ describe("RideHud + ride-nav-hud + track-store, fully wired: the shared watchPos
     // No PATCH /end for a private ride — nothing should have hit the network.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("ending a TRACKED ride via the round Stop button hands off to Screen 8 instead of the legacy summary", async () => {
+    // Regression test for the F4 integration fix: `endRide()` used to (F3
+    // interim) send its own `PATCH /end` via `endTrackedRide` AND
+    // unconditionally render the legacy client-only "Ride summary" card for
+    // EVERY ride, tracked or not — which is exactly the double-render the
+    // module map's ride-hud.ts row retires ("the summary state is replaced
+    // by a handoff to ride-post.ts ... for tracked rides only"). A tracked
+    // ride's End Ride must now: seal the final local batch, dispatch
+    // `{type:"endRide"}` with NO network call of its own (the single
+    // `PATCH /end` belongs to Screen 8's own buttons per
+    // ride-session.ts's END-REPORT INVARIANT), hide the HUD's own view, and
+    // never paint the legacy summary markup at all.
+    const rideId = "ride-int-hud-end";
+    const startedAtMs = Date.now() - 5000;
+    const doc = buildDoc(rideId, startedAtMs);
+    const dispatch = vi.fn();
+    const session = { current: () => doc, dispatch };
+
+    const signing = await genSigning(rideId);
+    const trackStore = await openTrackStore({ storage: new MemoryTrackStorage() });
+    const recorder: TrackRecorder = await trackStore.startServerRide(signing);
+    // Give the recorder something to seal on `finish()`.
+    await recorder.addFix({ tMs: startedAtMs + 1000, lat: ROUTE_LAT, lon: ROUTE_LNG0, accM: 5 });
+
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const rideHud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session },
+    );
+
+    rideHud.beginHandoff({ rideId, startedAtMs, recorder });
+
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    // `handOffTrackedRideEnd` awaits `recorder.finish()` first — a REAL
+    // WebCrypto sign+digest against MemoryTrackStorage, not just a promise
+    // microtask, so its wall-clock time varies with machine/CPU load under
+    // full-suite parallelism. Poll rather than a fixed-tick flush.
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({ type: "endRide" });
+    });
+    // No PATCH /end from ride-hud.ts itself — Screen 8 owns that now.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // The HUD's own view is gone (no competing legacy card underneath
+    // whatever `ride-post-s8.ts` mounts elsewhere in the document)...
+    expect(container.hidden).toBe(true);
+    // ...and specifically never rendered the retired legacy summary markup.
+    expect(container.innerHTML).not.toContain("Ride summary");
+    // The final batch actually sealed locally.
+    const info = recorder.info();
+    expect(info.batchCount).toBe(1);
+    expect(info.waypointCount).toBe(1);
+  });
 });

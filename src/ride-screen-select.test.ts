@@ -15,6 +15,7 @@ import {
   currentRideScreen,
   openRideModal,
   resetRideModal,
+  resolveStartScreen,
   rideModalRoot,
 } from "./ride-modal.ts";
 import {
@@ -612,6 +613,55 @@ describe("Screen 2 — selection and session sync", () => {
     closeRideModal();
 
     expect(disposes[mountBuilds]).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Screen 2's skip gate — the F4 [New Destination] loop fix.
+// ---------------------------------------------------------------------------
+
+describe("Screen 2 — skip gate for the S8 [New Destination] loop", () => {
+  it("is NOT skipped on a fresh wizard entry (rideId is null)", () => {
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    const session = newSession(); // open()'d fresh — state "wizard", rideId null
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+
+    expect(resolveStartScreen({ fastForwardTo: "3" })).toBe("2");
+  });
+
+  it("IS skipped when a New-Destination-loop doc (wizard state, live rideId) fast-forwards to Screen 3", () => {
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    const session = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    // Drive the real reducer through Screen 8's [New Destination] path
+    // (`ending(8) → wizard:3`) rather than hand-building a doc, so this test
+    // proves the fix against ride-session.ts's actual transitions.
+    session.dispatch({ type: "open", options: OPTIONS });
+    session.dispatch({
+      type: "setDevice",
+      device: { vehicleIdentifier: V1, plate: null, model: null, batteryConfirmed: 80 },
+    });
+    session.dispatch({ type: "goto", screen: "6" });
+    session.dispatch({
+      type: "rideStarted",
+      rideId: "ride-loop-1",
+      startedAtMs: Date.now(),
+      trackKeyId: "ride-loop-1",
+    });
+    session.dispatch({ type: "endRide" }); // riding -> ending(8)
+    const nd = session.dispatch({ type: "newDestination" }); // -> wizard:3, same rideId
+    expect(nd?.accepted).toBe(true);
+    expect(session.current()).toMatchObject({ state: "wizard", screen: "3", rideId: "ride-loop-1" });
+
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+
+    // Screen 3 itself isn't registered in this isolated test, so a correct
+    // skip steps past Screen 2 and returns the (unregistered) fast-forward
+    // target itself — landing anywhere else (in particular "2", the
+    // regression this test guards) would mean the loop dead-ends back on
+    // device disambiguation instead of "Where to?".
+    expect(resolveStartScreen({ fastForwardTo: "3" })).toBe("3");
   });
 });
 

@@ -3749,6 +3749,66 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--accent-soft);
   color: var(--fg);
 }
+/* ---------- leaderboard.ts: 🏆 topbar toggle + cell detail panel ---------- */
+.leaderboard-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.leaderboard-detail__leader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.leaderboard-detail__swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  flex: none;
+}
+.leaderboard-detail__leader-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.leaderboard-detail__leader-points {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.leaderboard-detail__runners {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.leaderboard-detail__runner {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.leaderboard-detail__totals {
+  font-size: 12px;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.leaderboard-detail__empty {
+  font-size: 14px;
+  color: var(--fg);
+  margin: 4px 0 8px;
+}
+.leaderboard-detail__hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 0 0 10px;
+}
 /* ---------- ride-settings.ts: Screen 2 "Ride Mode Options" panel ---------- */
 .ride-settings {
   display: flex;
@@ -4539,4 +4599,291 @@ input[data-ride-keypad="on"] {
   .ride-keypad__key:active {
     transform: none;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   ride-post-s8.ts / ride-post-s9.ts / ride-post-s10.ts (via ride-post.ts) —
+   Screens 8/9/10, the post-ride flow. Each renders as its own independent
+   floating overlay (not through ride-modal.ts's chrome — see
+   ride-post-s8.ts's ARCHITECTURE note for why), sharing one backdrop/card
+   shell modeled on .ranks-modal, plus the wizard's existing .ride-modal__lede
+   / .ride-modal__hint / .ride-wizard__actions / .login-btn / .select /
+   .segmented / .seg-btn / .ride-option / .ride-options classes wherever a
+   screen already reuses them (see each module's own DOM). Only what's
+   genuinely new to these three screens gets a new rule below.
+   --------------------------------------------------------------------------- */
+.ride-post-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+}
+.ride-post-modal__card {
+  width: min(440px, 94vw);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px 18px 18px;
+}
+/* Screen 9's two-pane (scooter + navigation) layout needs more room than the
+   single-column summary/form S8 and S10 render. */
+.ride-post-modal__card.ride-post-s9 {
+  width: min(680px, 96vw);
+}
+
+/* ---- Screen 8: cost summary + Rush Quit / New Destination / Veo form ---- */
+.ride-post-s8__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s8__row {
+  margin: 4px 0;
+  font-size: 13.5px;
+  color: var(--fg);
+}
+.ride-post-s8__cost {
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--bg-subtle);
+}
+.ride-post-s8__cost-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.ride-post-s8__cost-row dt,
+.ride-post-s8__cost-row dd {
+  margin: 0;
+}
+.ride-post-s8__cost-row--total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s8__bill-note {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.ride-post-s8__note {
+  margin: 2px 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ride-post-s8__note--warn {
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-fg);
+  color: var(--fg);
+}
+.ride-post-s8__error {
+  margin: 2px 0;
+  font-size: 12.5px;
+  color: var(--fail);
+}
+.ride-post-s8__actions {
+  margin-top: 8px;
+}
+.ride-post-s8__form.ride-post-s8__body {
+  gap: 10px;
+}
+.ride-post-s8__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.ride-post-s8__field-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-post-s8__field-hint {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* ---- Screen 9: dual survey panes (scooter feedback + nav feedback) ---- */
+.ride-post-s9__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+.ride-post-s9__pane-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s9__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s9__field--bonus {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.ride-post-s9__question {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+/* Overrides .ride-options' vertical full-width stack (built for the device
+   picker's larger rows) with a wrapped tag-chip layout, more legible for a
+   16-item "choose any" checklist. */
+.ride-post-s9__issues {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ride-post-s9__issues li {
+  display: contents;
+}
+.ride-post-s9__issues .ride-option {
+  width: auto;
+  padding: 6px 10px;
+  border-width: 1px;
+  font-size: 12.5px;
+}
+.ride-post-s9__issues .ride-option.is-selected {
+  border-width: 2px;
+  padding: 5px 9px;
+}
+.ride-post-s9__qualitative {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.ride-post-s9__qualitative:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ride-post-s9__char-hint {
+  margin: 0;
+}
+.ride-post-s9__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ride-post-s9__skip,
+.ride-post-s9__submit {
+  appearance: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ride-post-s9__skip {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+.ride-post-s9__skip:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.ride-post-s9__submit {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.ride-post-s9__submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ride-post-s9__skip:disabled,
+.ride-post-s9__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---- Screen 10: eligibility copy + donation + points + recent trips ---- */
+.ride-post-s10__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s10__sentence {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.ride-post-s10__row {
+  margin: 3px 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.ride-post-s10__donation {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+.ride-post-s10__donation h4,
+.ride-post-s10__recent-trips h4 {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s10__verification,
+.ride-post-s10__points,
+.ride-post-s10__trip-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.ride-post-s10__verification li,
+.ride-post-s10__points li,
+.ride-post-s10__trip {
+  margin: 3px 0;
+}
+.ride-post-s10__error {
+  margin: 2px 0;
+  font-size: 12.5px;
+  color: var(--fail);
+}
+.ride-post-s10__actions {
+  margin-top: 8px;
+}
+.ride-post-s10__recent-trips {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
