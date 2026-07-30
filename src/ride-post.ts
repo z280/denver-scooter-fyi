@@ -26,7 +26,8 @@
 // non-linear ending→survey→eligibility tail (see ride-post-s8.ts's
 // ARCHITECTURE note for the full reasoning, which applies equally to 9/10).
 
-import { openTrackStore } from "./track-store.ts";
+import type { LngLat } from "./locate.ts";
+import { openTrackStore, type TrackStore } from "./track-store.ts";
 import {
   phaseOf,
   type RideGateFacts,
@@ -47,6 +48,12 @@ import { trapFocusWithin } from "./modal-focus-trap.ts";
 export interface RidePostDeps {
   session: RideSessionStore;
   locate: LocateLike;
+  /** `RideHud.getLastFix()` — threaded through to Screen 8 (review fix: see
+   *  `ride-post-s8.ts`'s `getLastFix` doc comment for why it's preferred
+   *  over `locate.current()`). Defaults to a stub returning `null`, which
+   *  falls through to `locate.current()` (tests, or a private ride the HUD
+   *  never tracked). */
+  getLastFix?(): LngLat | null;
   /** Screen 9's pane-header point values — same "copy can never drift"
    *  discipline as Screen 2's ℹ modals. Read fresh on every Screen 9 mount
    *  (a getter, not a static value) so a `main.ts`-level `loadRideModePoints()`
@@ -62,16 +69,26 @@ export interface RidePostDeps {
   recoveryNote?: RideRecoveryNote | null;
   /** Injected for tests; defaults to a lazily-opened `openTrackStore()`. */
   getGateFacts?(trackId: string | null): Promise<RideGateFacts>;
+  /** Shared TrackStore accessor (review fix): with IndexedDB unavailable,
+   *  `openTrackStore()` degrades to a fresh, empty in-memory adapter on
+   *  EVERY call, so a `getGateFacts`/donation reader that opens its own store
+   *  independently of `main.ts`'s recording instance never sees this tab's
+   *  actual batches. `main.ts` passes its own module-level `getTrackStore()`
+   *  singleton here so Screens 8/9/10 all read the SAME store the ride was
+   *  recorded into. Defaults to a lazily-opened, module-private
+   *  `openTrackStore()` (kept for tests/back-compat / no injected caller). */
+  getTrackStore?(): Promise<TrackStore>;
   /** Where every screen mounts; defaults to `document.body`. */
   mountRoot?: HTMLElement;
 }
 
 async function defaultGetGateFacts(
   trackId: string | null,
+  getTrackStore: () => Promise<TrackStore>,
 ): Promise<RideGateFacts> {
   if (!trackId) return { hasWaypoints: false };
   try {
-    const store = await openTrackStore();
+    const store = await getTrackStore();
     const tip = await store.readTip(trackId);
     return {
       hasWaypoints: (tip?.waypointCount ?? 0) + (tip?.pendingCount ?? 0) > 0,
@@ -191,13 +208,20 @@ function wireRidePostS9(deps: {
  *  Returns a full teardown of all three sub-screens, for tests/HMR. */
 export function wireRidePost(deps: RidePostDeps): () => void {
   const mountRoot = deps.mountRoot ?? document.body;
-  const getGateFacts = deps.getGateFacts ?? defaultGetGateFacts;
+  const getTrackStore = deps.getTrackStore ?? openTrackStore;
+  const getGateFacts =
+    deps.getGateFacts ??
+    ((trackId: string | null) => defaultGetGateFacts(trackId, getTrackStore));
 
   const unwireS8 = wireRideScreen8({
     session: deps.session,
     locate: deps.locate,
     recoveryNote: deps.recoveryNote ?? null,
     mountRoot,
+    // Same resolved `getGateFacts` as S9 below — both read through the one
+    // shared `getTrackStore` (see the module's shared-store review fix).
+    getGateFacts,
+    getLastFix: deps.getLastFix ?? (() => null),
   } satisfies RideScreen8Deps);
 
   const unwireS9 = wireRidePostS9({
@@ -210,6 +234,7 @@ export function wireRidePost(deps: RidePostDeps): () => void {
   const unwireS10 = wireRidePostS10({
     session: deps.session,
     mountRoot,
+    getTrackStore,
   } satisfies RidePostS10Deps);
 
   return () => {

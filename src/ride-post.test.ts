@@ -22,6 +22,8 @@ import {
 import type { LocateLike } from "./ride-post-s8.ts";
 import type { ResolvedRideModePoints } from "./ride-settings.ts";
 import { wireRidePost } from "./ride-post.ts";
+import type { TrackSigning } from "./api.ts";
+import { base64UrlEncode, openTrackStore } from "./track-store.ts";
 
 function baseOptions(overrides: Partial<RideOptions> = {}): RideOptions {
   return {
@@ -242,6 +244,62 @@ describe("wireRidePost", () => {
       recoveryNote: "ride_expired",
     });
     expect(root.textContent).toMatch(/expired/i);
+    unwire();
+  });
+
+  // Review fix regression: with IndexedDB unavailable, `openTrackStore()`
+  // degrades to a fresh, empty in-memory adapter on EVERY independent call.
+  // Screen 9's gate must read through the SAME store `main.ts` recorded the
+  // ride into (injected here as `getTrackStore`), not a store of its own.
+  it("Screen 9's gate sees waypoints recorded through the shared injected TrackStore", async () => {
+    const signing: TrackSigning = {
+      alg: "HS256",
+      key_id: RIDE_ID,
+      key: base64UrlEncode(new Uint8Array(32).fill(7)),
+      nonce: "00112233445566778899aabbccddeeff",
+      issued_at: new Date(STARTED_AT_MS).toISOString(),
+    };
+    const sharedStore = await openTrackStore({ indexedDBFactory: null });
+    const recorder = await sharedStore.startServerRide(signing);
+    await recorder.addFix({ tMs: 0, lat: 39.7, lon: -105 });
+    await recorder.addFix({ tMs: 1000, lat: 39.701, lon: -105 });
+    await recorder.sealOpenBatch();
+
+    const session = sessionAtSurvey();
+    const unwire = wireRidePost({
+      session,
+      locate: fakeLocate(),
+      mountRoot: root,
+      getTrackStore: async () => sharedStore,
+    });
+
+    const skipBtn = root.querySelector<HTMLButtonElement>(".ride-post-s9__skip");
+    expect(skipBtn).not.toBeNull();
+    skipBtn!.click();
+    await flush();
+
+    // `shouldShowEligibility` only lands here when `facts.hasWaypoints` is
+    // true — the shared store's recorded batch, not an independent empty one.
+    expect(session.current()?.state).toBe("eligibility");
+    unwire();
+  });
+
+  it("without an injected getTrackStore, an independently-opened store sees nothing (baseline)", async () => {
+    const session = sessionAtSurvey();
+    const unwire = wireRidePost({
+      session,
+      locate: fakeLocate(),
+      mountRoot: root,
+      // No `getTrackStore` override — falls back to a fresh
+      // `openTrackStore()` per call, which (indexedDB unavailable in this
+      // test environment) is always empty.
+    });
+
+    const skipBtn = root.querySelector<HTMLButtonElement>(".ride-post-s9__skip");
+    skipBtn!.click();
+    await flush();
+
+    expect(session.current()?.state).toBe("done");
     unwire();
   });
 });

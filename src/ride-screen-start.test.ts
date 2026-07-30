@@ -187,37 +187,38 @@ describe("startScreenSkip — device + cost_hud matrix", () => {
     expect(startScreenSkip(null)).toBe(true);
   });
 
+  // Review fix: Screen 6 is universal for ANY selected device (own or real) —
+  // it no longer gates on `cost_hud` at all. Skip only when nothing was
+  // selected. Before this fix, "own device" and "real device, cost_hud off"
+  // both skipped — and since `rideStarted` has no other legal dispatch site,
+  // neither flavor of ride could ever reach `riding` (see the tests below).
   it.each([
     ["no device", null, true, true],
     ["no device", null, false, true],
-    ["own device", OWN_DEVICE, true, true],
-    ["own device", OWN_DEVICE, false, true],
+    ["own device", OWN_DEVICE, true, false],
+    ["own device", OWN_DEVICE, false, false],
     ["a specific Veo device, cost_hud ON -> shown", DEVICE, true, false],
-    ["a specific Veo device, cost_hud OFF -> skipped", DEVICE, false, true],
+    ["a specific Veo device, cost_hud OFF -> shown", DEVICE, false, false],
   ] as const)("%s, cost_hud=%s -> skip=%s", (_label, device, costHud, expected) => {
     const store = sessionAt(device, costHud);
     expect(startScreenSkip(store.current())).toBe(expected);
   });
 
-  it("wires end-to-end via nextFlowScreen: reachable only for device+cost_hud on", () => {
-    // Screen 6 is the LAST flow step, so `resolveStartScreen`'s own landing
-    // logic isn't the right probe here (with nothing registered after it, a
-    // skipped Screen 6 falls through to that function's "land on the target
-    // anyway" fallback — a documented quirk of being the terminal screen, not
-    // a bug). `nextFlowScreen("4", …)` is what the wizard ACTUALLY calls when
-    // Screen 4's [Next] fires, and it shows the real consequence: when Screen
-    // 6 skips, the flow reports itself COMPLETE right after Screen 4 — see
-    // this module's DEVIATION note for what that implies for own-device /
-    // cost_hud-off rides.
-    const shown = sessionAt(DEVICE, true);
-    const unregShown = wire(shown);
-    expect(nextFlowScreen("4", {}, {})).toBe("6");
-    unregShown();
-
-    const hidden = sessionAt(DEVICE, false);
-    const unregHidden = wire(hidden);
-    expect(nextFlowScreen("4", {}, {})).toBeNull();
-    unregHidden();
+  it("wires end-to-end via nextFlowScreen: reachable regardless of device/cost_hud", () => {
+    // `nextFlowScreen("4", …)` is what the wizard ACTUALLY calls when Screen
+    // 4's [Next] fires. Screen 6 shows for every device configuration now —
+    // own device and cost_hud off included (review fix).
+    for (const [device, costHud] of [
+      [DEVICE, true],
+      [DEVICE, false],
+      [OWN_DEVICE, true],
+      [OWN_DEVICE, false],
+    ] as const) {
+      const store = sessionAt(device, costHud);
+      const unreg = wire(store);
+      expect(nextFlowScreen("4", {}, {})).toBe("6");
+      unreg();
+    }
   });
 });
 
@@ -494,6 +495,29 @@ describe("start failures", () => {
     expect(root().textContent).toContain("already have an active ride");
     expect(rideModalRoot()).not.toBeNull();
   });
+
+  // Review fix regression: a 409 used to always render a dead-end static
+  // message. When the caller wires `onServerConflict` (main.ts does, to show
+  // the shared resume-or-end prompt), that hook fires instead and the static
+  // copy is suppressed.
+  it("409 with onServerConflict wired: calls the hook instead of the static message", async () => {
+    const session = sessionAt(DEVICE, true);
+    const startTrackedRide = vi
+      .fn()
+      .mockRejectedValue(new ApiError("conflict", "HTTP_ERROR", { status: 409 }));
+    const onServerConflict = vi.fn();
+    wire(session, { startTrackedRide, onServerConflict });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("I already started").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onServerConflict).toHaveBeenCalledTimes(1);
+    expect(root().textContent).not.toContain("already have an active ride");
+    expect(session.current()?.state).toBe("wizard");
+    expect(session.current()?.screen).toBe("6");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -559,5 +583,100 @@ describe("guest / private rides — never call the authed start endpoint", () =>
     await Promise.resolve();
 
     expect(session.current()?.trackKeyId).toBe("private-abababababab");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review fix regression: own-device and cost_hud-off rides used to skip
+// Screen 6 entirely, and since `rideStarted` has no other legal dispatch
+// site, neither could ever reach `riding`. Both configurations must now
+// reach `riding` and hand off, exactly like a normal Veo-device ride.
+// ---------------------------------------------------------------------------
+
+describe("own device — Screen 6 is now universal", () => {
+  function ownDeviceSession(): RideSessionStore {
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "6" });
+    store.dispatch({ type: "setDevice", device: OWN_DEVICE });
+    return store;
+  }
+
+  it("renders a simplified 'Start ride mode' affordance — no Veo links, no countdown", () => {
+    const session = ownDeviceSession();
+    wire(session);
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent).toContain("Your own device");
+    expect(anchors().length).toBe(0);
+    expect(() => buttonWithText("Start ride mode")).not.toThrow();
+  });
+
+  it("Start ride mode reaches riding (private, no server call) and hands off", async () => {
+    const session = ownDeviceSession();
+    const startTrackedRide = vi.fn();
+    const onRideStarted = vi.fn();
+    const onPrivateRideStarted = vi.fn();
+    wire(session, {
+      startTrackedRide,
+      onRideStarted,
+      onPrivateRideStarted,
+      now: () => 1_700_000_000_000,
+    });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("Start ride mode").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(onRideStarted).not.toHaveBeenCalled();
+
+    const doc = session.current();
+    expect(doc?.state).toBe("riding");
+    expect(doc?.rideId).toBeNull();
+    expect(doc?.private).toBe(true);
+    expect(doc?.startedAtMs).toBe(1_700_000_000_000);
+
+    // Bug #2: `onPrivateRideStarted` must fire with the SAME trackKeyId the
+    // doc already carries, so the caller can attach a local recorder under
+    // that exact id.
+    expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
+    expect(onPrivateRideStarted).toHaveBeenCalledWith(doc?.trackKeyId);
+    expect(doc?.trackKeyId).toMatch(/^private-[0-9a-f]{12}$/);
+
+    expect(rideModalRoot()).toBeNull();
+    expect(currentRideScreen()).toBeNull();
+  });
+
+  it("GPS gating still applies: the Start button is disabled with no fix", () => {
+    const session = ownDeviceSession();
+    const locate = fakeLocate(null);
+    wire(session, { locate });
+    openRideModal({ fastForwardTo: "6" });
+    expect(buttonWithText("Start ride mode").disabled).toBe(true);
+    locate.emitFix(FIX);
+    expect(buttonWithText("Start ride mode").disabled).toBe(false);
+  });
+});
+
+describe("a specific Veo device with cost_hud OFF — Screen 6 is now universal", () => {
+  it('"I already started" reaches riding via the normal server-ride path', async () => {
+    const session = sessionAt(DEVICE, false);
+    const started = fakeStartedRide({ started_at: "2026-07-29T18:30:00Z" });
+    const startTrackedRide = vi.fn().mockResolvedValue(started);
+    const onRideStarted = vi.fn();
+    wire(session, { startTrackedRide, onRideStarted });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("I already started").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(startTrackedRide).toHaveBeenCalledTimes(1);
+    const doc = session.current();
+    expect(doc?.state).toBe("riding");
+    expect(doc?.rideId).toBe("ride-1");
+    expect(doc?.private).toBe(false);
+    expect(onRideStarted).toHaveBeenCalledWith(started);
+    expect(rideModalRoot()).toBeNull();
   });
 });

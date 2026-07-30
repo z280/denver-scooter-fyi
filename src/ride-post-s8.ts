@@ -260,6 +260,16 @@ export interface RideScreen8Deps {
     body: EndRideIn,
     signal?: AbortSignal,
   ): Promise<TrackedRide>;
+  /** The ride's own last-known GPS fix (`RideHud.getLastFix()`, threaded in
+   *  by `main.ts` — this module deliberately never imports `ride-hud.ts`
+   *  itself, see the module ARCHITECTURE note). Preferred over
+   *  `locate.current()` for both end-report buttons (review fix): `Locate`
+   *  expires its fix after 5 minutes and may never have been started at all
+   *  on the GPS-permission-skip path, whereas the ride's actual last fix is
+   *  known good for as long as the ride was tracked. Defaults to a stub
+   *  returning `null` (tests, or a private ride the HUD never tracked),
+   *  which simply falls through to `locate.current()`. */
+  getLastFix?(): LngLat | null;
   /** [New Destination]'s wizard reopen. Injected for tests; defaults to
    *  `openRideModal` from ride-modal.ts. See the module's NEW-DESTINATION
    *  GAP note for what this does and does not solve on its own today. */
@@ -295,6 +305,7 @@ interface ResolvedDeps {
     body: EndRideIn,
     signal?: AbortSignal,
   ): Promise<TrackedRide>;
+  getLastFix(): LngLat | null;
   openRideModal(entry: { fastForwardTo: "3" }): void;
   getGateFacts(trackId: string | null): Promise<RideGateFacts>;
   now(): number;
@@ -328,6 +339,7 @@ function resolveDeps(deps: RideScreen8Deps): ResolvedDeps {
     session: deps.session,
     locate: deps.locate,
     endTrackedRide: deps.endTrackedRide ?? defaultEndTrackedRide,
+    getLastFix: deps.getLastFix ?? (() => null),
     openRideModal: deps.openRideModal ?? defaultOpenRideModal,
     getGateFacts: deps.getGateFacts ?? defaultGetGateFacts,
     now: deps.now ?? (() => Date.now()),
@@ -382,8 +394,6 @@ function mountRideScreen8(
   deps: ResolvedDeps,
   onClosed: () => void,
 ): MountedScreen8 {
-  const frozenNowMs = deps.now();
-  const elapsedMs = frozenElapsedMs(doc.startedAtMs, frozenNowMs);
   const rideId = doc.rideId;
 
   const backdrop = el("div", "ride-post-modal");
@@ -399,11 +409,32 @@ function mountRideScreen8(
   let error: string | null = null;
   let batteryRaw = "";
   let costRaw = "";
-  let minutesRaw = String(prefillReportedMinutes(elapsedMs));
+  let minutesRaw = "";
+  let minutesInitialized = false;
   let abortController: AbortController | null = null;
 
+  // The clock/cost breakdown stay LIVE (the frontend plan: "the clock keeps
+  // running while the rider finishes in Veo") until `stopClock()` freezes
+  // them — either the rider's own (stop) press, or an implicit stop the
+  // instant they open/submit the Veo form without having pressed it first.
+  // Review fix: these used to be frozen the instant this modal mounted.
+  let stoppedElapsedMs: number | null = null;
+  let clockTimer: number | undefined;
+
+  function liveElapsedMs(): number {
+    return stoppedElapsedMs ?? frozenElapsedMs(doc.startedAtMs, deps.now());
+  }
+
+  function stopClock(): void {
+    if (stoppedElapsedMs !== null) return;
+    stoppedElapsedMs = liveElapsedMs();
+    if (clockTimer !== undefined) {
+      window.clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+  }
+
   const planKey = deps.ratePlan() ?? "resident";
-  const breakdown = screen8CostBreakdown(elapsedMs, planKey, deps.taxRate());
 
   // House rule: "anything modal" needs a focus trap (see
   // modal-focus-trap.ts's own header for why this isn't ride-modal.ts's
@@ -414,6 +445,7 @@ function mountRideScreen8(
   function destroy(): void {
     if (destroyed) return;
     destroyed = true;
+    if (clockTimer !== undefined) window.clearInterval(clockTimer);
     untrapFocus();
     abortController?.abort();
     backdrop.remove();
@@ -440,6 +472,8 @@ function mountRideScreen8(
   // ---------------- summary mode ----------------
 
   function renderSummary(): HTMLElement {
+    const elapsedMs = liveElapsedMs();
+    const breakdown = screen8CostBreakdown(elapsedMs, planKey, deps.taxRate());
     const wrap = el("div", "ride-post-s8__body");
     const title = el(
       "h2",
@@ -467,7 +501,15 @@ function mountRideScreen8(
     }
 
     wrap.append(
-      row("Ride time", `${formatFrozenClock(elapsedMs)} (stop)`),
+      clockRow(
+        elapsedMs,
+        stoppedElapsedMs === null
+          ? () => {
+              stopClock();
+              render();
+            }
+          : null,
+      ),
     );
     wrap.append(costBreakdownRows(breakdown));
     wrap.append(
@@ -525,11 +567,18 @@ function mountRideScreen8(
     return frag;
   }
 
+  /** The ride's last fix, preferring `RideHud.getLastFix()` over
+   *  `locate.current()` (see the module's `getLastFix` doc comment / the
+   *  review fix this implements) — used by both end-report buttons below. */
+  function resolveEndFix(): LngLat | null {
+    return deps.getLastFix() ?? deps.locate.current();
+  }
+
   // ---------------- Rush Quit ----------------
 
   async function onRushQuit(): Promise<void> {
     if (busy || !rideId) return;
-    const fix = deps.locate.current();
+    const fix = resolveEndFix();
     if (!fix) {
       error =
         "We need a GPS fix to end your ride — check location services and try again.";
@@ -582,6 +631,14 @@ function mountRideScreen8(
 
   function onOpenVeoForm(): void {
     if (busy) return;
+    // Implicit stop for a rider who never pressed (stop) — see the module's
+    // clock review-fix note on `mountRideScreen8`. A no-op once already
+    // stopped.
+    stopClock();
+    if (!minutesInitialized) {
+      minutesRaw = String(prefillReportedMinutes(liveElapsedMs()));
+      minutesInitialized = true;
+    }
     mode = "veo-form";
     error = null;
     render();
@@ -690,7 +747,7 @@ function mountRideScreen8(
     const minutes = parsedMinutes();
     const cents = parseDollarsToCents(costRaw);
     if (battery === null || minutes === null || cents === null) return;
-    const fix = deps.locate.current();
+    const fix = resolveEndFix();
     if (!fix) {
       error =
         "We need a GPS fix to end your ride — check location services and try again.";
@@ -730,11 +787,18 @@ function mountRideScreen8(
   // works on a connected node — focusing a detached one is a silent no-op.
   deps.mountRoot.append(backdrop);
   render();
+  // Ticks the live clock/cost breakdown while summary mode is showing and
+  // unstopped — cleared by `stopClock()` and by `destroy()`.
+  clockTimer = window.setInterval(() => {
+    if (destroyed || mode !== "summary" || stoppedElapsedMs !== null) return;
+    render();
+  }, 1000);
   const unFix = deps.locate.onFix(() => {
     if (destroyed || busy) return;
-    // A late fix can only ever clear the "we need a GPS fix" error — it never
-    // repaints the cost breakdown (frozen at mount) or resets typed form
-    // values, so a full `render()` is safe and cheap.
+    // A late fix can only ever clear the "we need a GPS fix" error — typed
+    // form values are untouched by a full `render()`, and the cost
+    // breakdown/clock are already live (or already frozen), so this is
+    // always safe and cheap.
     if (error && error.startsWith("We need a GPS fix")) {
       error = null;
       render();
@@ -753,9 +817,21 @@ function mountRideScreen8(
 // Small DOM builders
 // ---------------------------------------------------------------------------
 
-function row(label: string, value: string): HTMLElement {
+/** "Ride time" row — a real Stop control while live, frozen text once
+ *  stopped. */
+function clockRow(elapsedMs: number, onStop: (() => void) | null): HTMLElement {
   const wrap = el("p", "ride-post-s8__row");
-  wrap.append(el("strong", undefined, `${label}: `), document.createTextNode(value));
+  wrap.append(el("strong", undefined, "Ride time: "));
+  wrap.append(document.createTextNode(`${formatFrozenClock(elapsedMs)} `));
+  if (onStop) {
+    const stopBtn = el("button", "ride-post-s8__stop-btn", "(stop)");
+    stopBtn.type = "button";
+    stopBtn.setAttribute("aria-label", "Stop the ride clock");
+    stopBtn.addEventListener("click", onStop);
+    wrap.append(stopBtn);
+  } else {
+    wrap.append(el("span", "ride-post-s8__stopped", "(stopped)"));
+  }
   return wrap;
 }
 

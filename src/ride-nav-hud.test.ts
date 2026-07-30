@@ -23,6 +23,7 @@ import {
   createNavHud,
   currentManeuverIndex,
   decodePolyline,
+  distanceToLineString,
   nearestShapeIndex,
   noteOffRouteSample,
   type NavHudOptions,
@@ -194,6 +195,48 @@ describe("advanceMonotonic — out-and-back route (the case monotonic matching e
     const noisyFixAtOutboundSix = { lat: 39.7 + 6 * 0.0002, lng: -104.99 };
     const match = advanceMonotonic(coords, noisyFixAtOutboundSix, lastIndex);
     expect(match.index).toBeGreaterThanOrEqual(lastIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review fix: the off-route sample must measure distance to the route LINE,
+// not to the nearest VERTEX. A sparse ~160m straight segment — the review
+// comment's own example — makes the two disagree by ~80m at the midpoint.
+// ---------------------------------------------------------------------------
+
+describe("distanceToLineString — point-to-segment, not point-to-vertex", () => {
+  // A north-south segment ~160m long (1 degree latitude ~= 111,320m), sparse
+  // enough (two vertices, nothing in between) that vertex-only matching and
+  // true line distance diverge sharply at the midpoint.
+  const SEGMENT_LENGTH_DEG = 160 / 111_320;
+  const A: LngLatCoord = [-104.99, 39.7];
+  const B: LngLatCoord = [-104.99, 39.7 + SEGMENT_LENGTH_DEG];
+  const coords = [A, B];
+  const midLat = 39.7 + SEGMENT_LENGTH_DEG / 2;
+
+  it("a rider at the segment's midpoint reads ~0m from the line despite being ~80m from either vertex", () => {
+    const fix = { lat: midLat, lng: -104.99 };
+    // Sanity check: this is exactly the failure mode being fixed — the OLD
+    // vertex-only distance reads ~80m here, which is > the 50m threshold.
+    const vertexDistance = nearestShapeIndex(coords, fix, 0, coords.length - 1).distanceM;
+    expect(vertexDistance).toBeGreaterThan(50);
+
+    expect(distanceToLineString(coords, fix)).toBeLessThan(1);
+  });
+
+  it("a point >50m perpendicular to the segment correctly reads as off-route", () => {
+    // ~68m east of the midpoint at this latitude (111,320 * cos(39.7deg) per
+    // degree of longitude).
+    const fix = { lat: midLat, lng: -104.99 + 0.0008 };
+    const d = distanceToLineString(coords, fix);
+    expect(d).toBeGreaterThan(50);
+    expect(d).toBeLessThan(100);
+  });
+
+  it("an empty shape returns Infinity; a single point falls back to point distance", () => {
+    expect(distanceToLineString([], { lat: 39.7, lng: -104.99 })).toBe(Infinity);
+    const single = distanceToLineString([A], { lat: A[1], lng: A[0] });
+    expect(single).toBeLessThan(1);
   });
 });
 
@@ -521,6 +564,46 @@ describe("off-route re-route via feedFix", () => {
       hud.feedFix(lat, lng);
     }
     expect(fetchRoute).not.toHaveBeenCalled();
+  });
+
+  // Review fix regression: a sparse ~160m two-point segment (nothing between
+  // its vertices) is exactly the shape the vertex-only bug misjudged.
+  describe("a sparse long segment (point-to-line, not point-to-vertex)", () => {
+    const SEGMENT_LENGTH_DEG = 160 / 111_320;
+    const sparseCoords: LngLatCoord[] = [
+      [-104.99, 39.7],
+      [-104.99, 39.7 + SEGMENT_LENGTH_DEG],
+    ];
+    const midLat = 39.7 + SEGMENT_LENGTH_DEG / 2;
+
+    it("the midpoint (on the line, ~80m from either vertex) never triggers a reroute", () => {
+      let t = 0;
+      const { hud, fetchRoute } = setup({
+        route: makeRoute({ polyline: encodePolyline(sparseCoords) }),
+        now: () => t,
+      });
+      for (let i = 0; i < 6; i++) {
+        t += 5_000;
+        hud.feedFix(midLat, -104.99);
+      }
+      expect(fetchRoute).not.toHaveBeenCalled();
+    });
+
+    it("a point >50m perpendicular to it reroutes only after the sustained interval", () => {
+      let t = 0;
+      const { hud, fetchRoute } = setup({
+        route: makeRoute({ polyline: encodePolyline(sparseCoords) }),
+        now: () => t,
+      });
+      const offLng = -104.99 + 0.0008; // ~68m east at this latitude
+      hud.feedFix(midLat, offLng);
+      t = 5_000;
+      hud.feedFix(midLat, offLng); // only 5s sustained so far
+      expect(fetchRoute).not.toHaveBeenCalled();
+      t = 10_000;
+      hud.feedFix(midLat, offLng); // 10s sustained -> triggers
+      expect(fetchRoute).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("calls fetchRoute with only the route's own profile, from the current fix to the session dest", () => {

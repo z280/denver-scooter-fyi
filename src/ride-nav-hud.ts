@@ -38,10 +38,13 @@
 // points the outbound leg already used) and on a GPS jump landing across a
 // switchback (a noisy fix can land closer, as the crow flies, to a shape
 // point on a nearby-but-already-passed leg than to the true next point).
-// The UNCONSTRAINED nearest-point distance (searched over the whole shape,
-// no window) is still computed on every fix — that number, not the
-// windowed/monotonic one, is what feeds the off-route test below, exactly
-// as the frontend plan specifies.
+// A separate, UNCONSTRAINED measurement (searched over the whole shape, no
+// window) still runs on every fix and feeds the off-route test below — but
+// it is a point-to-SEGMENT (line) distance (`distanceToLineString`), not a
+// point-to-VERTEX one (review fix: `nearestShapeIndex`'s vertex-only search
+// can badly over-report distance on a sparse polyline — a rider at a
+// segment's midpoint reads as far from either endpoint despite being on the
+// line itself; see that function's own doc comment).
 //
 // ── Off-route re-route ──────────────────────────────────────────────────
 // >50m from the route line, sustained for 10s, triggers a re-route: a fresh
@@ -150,6 +153,72 @@ export function nearestShapeIndex(
     }
   }
   return { index: bestIndex, distanceM: bestDist };
+}
+
+/** Squared-length-free point-to-segment distance in a flat, LOCAL xy plane
+ *  (meters) — the perpendicular distance from `p` to the closest point on
+ *  segment `a`-`b`, clamped to the segment's own endpoints when the
+ *  perpendicular foot falls outside it. */
+function pointToSegmentDistanceXY(
+  p: readonly [number, number],
+  a: readonly [number, number],
+  b: readonly [number, number],
+): number {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  const t = Math.max(
+    0,
+    Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / lenSq),
+  );
+  const projX = a[0] + t * abx;
+  const projY = a[1] + t * aby;
+  return Math.hypot(p[0] - projX, p[1] - projY);
+}
+
+/** Minimum perpendicular (point-to-LINE, not point-to-vertex) distance,
+ *  meters, from `fix` to any segment of `coords`. Review fix: vertex-only
+ *  nearest-point matching (`nearestShapeIndex`) can badly over-report
+ *  distance on a sparse polyline — a rider at the exact midpoint of a 160m
+ *  straight segment is ~80m from either endpoint despite being 0m from the
+ *  route LINE, which would wrongly declare them off-route and trigger a
+ *  reroute every cooldown. GeoJSON LineString semantics never guarantee
+ *  vertices dense enough for vertex distance to stand in for line distance,
+ *  so the off-route sample below measures the line directly. Uses a local
+ *  equirectangular (flat-earth) projection centered on `fix` — accurate to
+ *  well under a meter of error at city scale over segment lengths this
+ *  short, ample margin for a 50m threshold; `nearestShapeIndex` /
+ *  `advanceMonotonic` (true great-circle distance) remain the maneuver
+ *  ADVANCE mechanism — this function is used ONLY for the off-route sample,
+ *  per the frontend plan. An empty `coords` returns `Infinity` — nothing to
+ *  measure against; a single-point `coords` falls back to point distance. */
+export function distanceToLineString(
+  coords: readonly LngLatCoord[],
+  fix: ShapeFix,
+): number {
+  if (coords.length === 0) return Infinity;
+  if (coords.length === 1) {
+    const [lng, lat] = coords[0];
+    return distanceMeters({ lat, lng }, { lat: fix.lat, lng: fix.lng });
+  }
+  const latRad = (fix.lat * Math.PI) / 180;
+  const mPerDegLat = 111_320;
+  const mPerDegLng = 111_320 * Math.cos(latRad);
+  const toXY = (lng: number, lat: number): [number, number] => [
+    (lng - fix.lng) * mPerDegLng,
+    (lat - fix.lat) * mPerDegLat,
+  ];
+  const fixXY: [number, number] = [0, 0];
+
+  let best = Infinity;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const [lng1, lat1] = coords[i];
+    const [lng2, lat2] = coords[i + 1];
+    const d = pointToSegmentDistanceXY(fixXY, toXY(lng1, lat1), toXY(lng2, lat2));
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 /** One step of MONOTONIC advance: nearest-point match constrained to the
@@ -760,8 +829,14 @@ export function createNavHud(
         currentManeuverIdx,
       );
 
-      const unconstrained = nearestShapeIndex(coords, { lat, lng }, 0, coords.length - 1);
-      const decision = noteOffRouteSample(offRoute, unconstrained.distanceM, now());
+      // Review fix: the off-route sample measures distance to the route
+      // LINE (`distanceToLineString`), not to the nearest shape VERTEX — see
+      // that function's own doc comment for why vertex distance is wrong
+      // here. `nearestShapeIndex`/`advanceMonotonic` above remain the
+      // maneuver-advance mechanism; this is a separate, parallel measurement
+      // that never affects `lastMatchedIndex`.
+      const offRouteDistanceM = distanceToLineString(coords, { lat, lng });
+      const decision = noteOffRouteSample(offRoute, offRouteDistanceM, now());
       offRoute = decision.state;
 
       renderCard();

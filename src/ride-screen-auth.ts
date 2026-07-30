@@ -115,9 +115,29 @@ export function wireRideScreenAuth(deps: RideScreenAuthDeps): () => void {
   // is an even stronger signal and wins immediately without waiting on the
   // Permissions API at all — and covers browsers with no Permissions API.
   let gpsGranted = deps.locate.current() !== null;
+  // Shared across this outer priming query AND `buildScreen`'s own inner one
+  // (see `ScreenDeps.triggerOnceForGrant`): both independently detect
+  // "granted" (a real race whenever the wizard opens before this outer query
+  // has resolved, which is exactly when `buildScreen` mounts and starts its
+  // own query), and without this guard both would call `trigger()` — a
+  // harmless-but-wasteful duplicate geolocation request. At most one fires.
+  let triggeredForCachedGrant = false;
+  function triggerOnceForGrant(): void {
+    if (triggeredForCachedGrant) return;
+    triggeredForCachedGrant = true;
+    // Permission is already granted (not a fresh prompt) — safe to trigger
+    // outside a user gesture. Without this, `skip()` starts returning true
+    // the instant permission resolves, but no fix is ever requested, so the
+    // rider reaches Screen 6 and waits indefinitely for a GPS fix that never
+    // arrives.
+    deps.locate.trigger();
+  }
   if (!gpsGranted) {
     void queryPermission().then((state) => {
-      if (state === "granted") gpsGranted = true;
+      if (state === "granted") {
+        gpsGranted = true;
+        triggerOnceForGrant();
+      }
     });
   }
 
@@ -133,6 +153,7 @@ export function wireRideScreenAuth(deps: RideScreenAuthDeps): () => void {
         onGpsGranted: () => {
           gpsGranted = true;
         },
+        triggerOnceForGrant,
       }),
   });
   return unregister;
@@ -143,6 +164,9 @@ interface ScreenDeps {
   loadCfg(): Promise<AuthConfig>;
   onSignedIn(): void;
   queryPermission(): Promise<GeoPermissionState>;
+  /** De-dupes against the outer wire-time priming query — see its own doc
+   *  comment. */
+  triggerOnceForGrant(): void;
   /** Flips the module-level cache in `wireRideScreenAuth` so a LATER
    *  `resolveStartScreen`/`nextFlowScreen` call (e.g. re-opening the wizard
    *  after this tab already granted GPS) sees it without re-querying. */
@@ -225,7 +249,10 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
       gpsGranted = true;
       deps.onGpsGranted();
       // No prompt will fire (already granted) — safe to call outside a tap.
-      deps.locate.trigger();
+      // De-duped against the outer wire-time query (see `triggerOnceForGrant`'s
+      // own doc comment) — whichever of the two resolves "granted" first is
+      // the one that actually calls `locate.trigger()`.
+      deps.triggerOnceForGrant();
       renderGps();
       maybeAdvance();
     });

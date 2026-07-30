@@ -483,6 +483,73 @@ describe("Screen 8 renders the frozen clock + cost breakdown", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Review fix regression: the clock/cost breakdown used to freeze the instant
+// this modal mounted. The frontend plan is explicit that the clock keeps
+// running while the rider finishes in Veo, and `(stop)` is a real control
+// that freezes the value used to prefill reported minutes — not literal text.
+// ---------------------------------------------------------------------------
+
+describe("Screen 8's clock stays live until (stop) is pressed", () => {
+  it("keeps ticking (time + cost) until Stop, then freezes both", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(STARTED_AT_MS + 125_000); // mount at 2:05 elapsed
+    const session = sessionAtEnding();
+    const { unwire } = wire(session, {
+      now: () => Date.now(),
+      taxRate: () => 0.08,
+      ratePlan: () => "resident",
+    });
+
+    expect(root().textContent).toContain("Ride time: 2:05");
+    expect(costRowText("Total")).toBe(
+      `$${(estimateWithTax(planFor("resident"), 125_000, 0.08).total / 100).toFixed(2)}`,
+    );
+
+    // Two more minutes pass while the modal just sits there — both the clock
+    // and the cost breakdown must keep moving.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(root().textContent).toContain("Ride time: 4:05");
+    expect(costRowText("Total")).toBe(
+      `$${(estimateWithTax(planFor("resident"), 245_000, 0.08).total / 100).toFixed(2)}`,
+    );
+
+    buttonWithText("(stop)").click();
+    expect(root().textContent).toContain("Ride time: 4:05");
+    expect(root().textContent).toContain("(stopped)");
+    expect(() => buttonWithText("(stop)")).toThrow();
+    const frozenTime = "4:05";
+    const frozenTotal = costRowText("Total");
+
+    // Time keeps moving in the world; the frozen display must not.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(root().textContent).toContain(`Ride time: ${frozenTime}`);
+    expect(costRowText("Total")).toBe(frozenTotal);
+
+    unwire();
+  });
+
+  it("opening the Veo form implicitly stops the clock if the rider never pressed Stop", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(STARTED_AT_MS + 125_000);
+    const session = sessionAtEnding();
+    const { unwire } = wire(session, { now: () => Date.now() });
+
+    await vi.advanceTimersByTimeAsync(60_000); // 3:05 elapsed by the time they tap
+    buttonWithText("I ended my ride in Veo").click();
+
+    // §10's minutes prefill reflects the elapsed AT THE MOMENT the form
+    // opened (185_000ms -> 4 billable minutes: ceil(185s / 60) = 4), not a
+    // stale mount-time value.
+    const minutesInput = [...root().querySelectorAll("input")].find(
+      (i) => i.getAttribute("aria-label") === "Ride time reported (minutes)",
+    ) as HTMLInputElement;
+    expect(minutesInput.value).toBe(String(prefillReportedMinutes(185_000)));
+
+    unwire();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Rush Quit
 // ---------------------------------------------------------------------------
 
@@ -520,6 +587,33 @@ describe("[Rush Quit]", () => {
     expect(endTrackedRide).not.toHaveBeenCalled();
     expect(root().textContent).toMatch(/GPS fix/);
     expect(session.current()?.state).toBe("ending");
+    unwire();
+  });
+
+  // Review fix regression: `Locate.current()` expires after 5 minutes and may
+  // never have been started at all on the GPS-permission-skip path, whereas
+  // the ride's own last fix (surfaced via `getLastFix`, backed by
+  // `RideHud.getLastFix()` in production) is known good for as long as the
+  // ride was tracked. It must win over a stale/null `locate.current()`, and
+  // never trigger a new watcher (`locate.trigger` isn't even part of this
+  // module's `LocateLike` contract).
+  it("prefers getLastFix() over a null locate.current(), with no new watcher", async () => {
+    const session = sessionAtEnding();
+    const hudFix: LngLat = { lng: -104.5, lat: 39.5, accuracy: 8 };
+    const getLastFix = vi.fn(() => hudFix);
+    const { unwire, endTrackedRide } = wire(session, {
+      locate: fakeLocate(null),
+      getLastFix,
+    });
+
+    buttonWithText("Rush Quit").click();
+    await flush();
+
+    expect(getLastFix).toHaveBeenCalled();
+    expect(endTrackedRide).toHaveBeenCalledTimes(1);
+    const [, body] = endTrackedRide.mock.calls[0];
+    expect(body).toMatchObject({ end_lat: hudFix.lat, end_lon: hudFix.lng });
+    expect(session.current()?.state).toBe("done");
     unwire();
   });
 

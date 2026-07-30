@@ -16,7 +16,9 @@ import {
   type RideOptions,
   type RideValidation,
   type TrackedRide,
+  type TrackSigning,
 } from "./api.ts";
+import { base64UrlEncode, openTrackStore } from "./track-store.ts";
 import {
   createRideSessionStore,
   memoryRideSessionStorage,
@@ -27,6 +29,7 @@ import {
   buildEligibilityCopy,
   describeDonateError,
   describeRecentTripsError,
+  DONATION_DISCLOSURE_TEXT,
   formatKm,
   isAlreadyDonatedError,
   joinReasonClauses,
@@ -574,6 +577,131 @@ describe("initial validation load", () => {
     expect(sentenceText()).toBe(buildEligibilityCopy({ status: "pending", reasons: [] }));
     expect(root().textContent).toMatch(/Couldn't check your ride/);
     expect(buttonWithText("Donate This Trip's Data").disabled).toBe(false);
+    unwire();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Privacy/completeness review fix: the master plan resolves "no route ever
+// leaves its owner" against donation via explicit, per-ride, per-donation
+// consent WITH disclosed de-identification — the disclosure must render
+// immediately before the affirmative [Donate This Trip's Data] action
+// whenever that action is still available, in every validation state.
+// ---------------------------------------------------------------------------
+
+describe("donation consent disclosure", () => {
+  it("mentions the required ≤28h de-identification / irrevocability language", () => {
+    expect(DONATION_DISCLOSURE_TEXT).toMatch(/28 hours/);
+    expect(DONATION_DISCLOSURE_TEXT).toMatch(/anonymous and irrevocable/);
+  });
+
+  it("is present before validation has loaded", () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session);
+    expect(root().textContent).toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+
+  it("is present once validation settles (pending)", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ validation: { status: "pending", reasons: [] } })),
+      ),
+    });
+    await flush();
+    expect(root().textContent).toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+
+  it("is present when the validation fetch fails", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() => Promise.reject(new Error("offline"))),
+    });
+    await flush();
+    expect(root().textContent).toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+
+  it("is present for a decided ineligible verdict too", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(
+          fakeTrackedRide({
+            validation: { status: "ineligible", reasons: ["trip_too_short"] },
+          }),
+        ),
+      ),
+    });
+    await flush();
+    expect(root().textContent).toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+
+  it("disappears once the ride has already been donated", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session);
+    await flush();
+    buttonWithText("Donate This Trip's Data").click();
+    await flush();
+    expect(root().textContent).not.toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review fix regression: with IndexedDB unavailable, `openTrackStore()`
+// degrades to a fresh, empty in-memory adapter on EVERY independent call.
+// The donation reader's default (`defaultReadDonationBody`) must read
+// through the SAME injected `getTrackStore` `ride-post.ts` shares with the
+// rest of the post-ride flow, not one it opens for itself.
+// ---------------------------------------------------------------------------
+
+describe("shared TrackStore — donation reader", () => {
+  it("readDonationBody's default reads the exact batches recorded through the injected getTrackStore", async () => {
+    const signing: TrackSigning = {
+      alg: "HS256",
+      key_id: RIDE_ID,
+      key: base64UrlEncode(new Uint8Array(32).fill(7)),
+      nonce: "00112233445566778899aabbccddeeff",
+      issued_at: new Date(STARTED_AT_MS).toISOString(),
+    };
+    const sharedStore = await openTrackStore({ indexedDBFactory: null });
+    const recorder = await sharedStore.startServerRide(signing);
+    await recorder.addFix({ tMs: 0, lat: 39.7, lon: -105 });
+    await recorder.addFix({ tMs: 1000, lat: 39.701, lon: -105 });
+    const sealed = await recorder.sealOpenBatch();
+    if (!sealed) throw new Error("fixture failed to seal a batch");
+
+    const session = sessionAtEligibility();
+    const donateTrack = vi.fn(
+      (_rideId: string, _body: unknown, _signal?: AbortSignal) =>
+        Promise.resolve(fakeDonateResponse()),
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    // NOTE: calling `wireRidePostS10` directly (not through this file's own
+    // `wire()` helper) so `readDonationBody` is left UNSET — exercising the
+    // module's real default, which is what actually reads through
+    // `getTrackStore`. `wire()`'s own mock would otherwise mask this.
+    const unwire = wireRidePostS10({
+      session,
+      getTrackedRide: vi.fn(() => Promise.resolve(fakeTrackedRide())),
+      donateTrack,
+      getTrackStore: async () => sharedStore,
+      mountRoot: container,
+    });
+    await flush();
+
+    buttonWithText("Donate This Trip's Data").click();
+    await flush();
+
+    expect(donateTrack).toHaveBeenCalledTimes(1);
+    const [, body] = donateTrack.mock.calls[0];
+    expect(body).toMatchObject({ batches: [sealed.jws] });
+
     unwire();
   });
 });

@@ -175,6 +175,22 @@ describe("wireRideScreenAuth — skip gate", () => {
     await flush();
     expect(resolveStartScreen({ fastForwardTo: "1" })).toBe("1");
   });
+
+  // Review fix regression: the leap-past used to only flip the cached flag,
+  // never actually request a fix — a rider with permission already granted
+  // (but no live fix yet, e.g. a fresh tab) would then skip straight past
+  // Screen 1 to Screen 6 and wait forever for a fix nothing ever asked for.
+  it("authenticated + permission granted + no current fix: skips Screen 1 and calls trigger() exactly once", async () => {
+    setAuthed(true);
+    const locate = fakeLocate(null);
+    wire({
+      locate,
+      queryGeoPermission: () => Promise.resolve<GeoPermissionState>("granted"),
+    });
+    await flush();
+    expect(resolveStartScreen({ fastForwardTo: "1" })).toBe("2");
+    expect(locate.triggerCalls).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

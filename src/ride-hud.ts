@@ -343,6 +343,22 @@ export class RideHud {
     this.trackRecorder = recorder;
   }
 
+  /** The ride's own last-known GPS fix — the same one `endRide()`'s equity
+   *  check and the F3 legacy private-ride summary already read internally.
+   *  Exposed (review fix) so Screen 8 (`ride-post-s8.ts`, which deliberately
+   *  never imports this module — see its own ARCHITECTURE note) can prefer
+   *  the ride's actual last fix over a fresh `Locate.current()` read, which
+   *  expires after 5 minutes and may never have been started at all on the
+   *  GPS-permission-skip path. `stopSensors()` (called at ride end, before
+   *  this would ever be read) only clears the watch/timers — it never
+   *  touches `lastFix` — so this stays valid through end-of-ride and the
+   *  handoff into Screen 8. Reset to null at the start of every ride (see
+   *  `enterRiding`), so a stale fix from a PRIOR ride can never leak into a
+   *  new one. */
+  getLastFix(): LngLat | null {
+    return this.lastFix?.pos ?? null;
+  }
+
   /** We're encouraging landscape, not enforcing it — the tip (pre-ride note
    *  + in-ride badge) is dismissible, and dismissing either one silences
    *  both for the rest of this ride attempt. Orientation reactivity itself

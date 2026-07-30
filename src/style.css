@@ -4650,6 +4650,25 @@ input[data-ride-keypad="on"] {
   font-size: 13.5px;
   color: var(--fg);
 }
+.ride-post-s8__stop-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ride-post-s8__stop-btn:hover {
+  color: var(--fg);
+}
+.ride-post-s8__stopped {
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
 .ride-post-s8__cost {
   margin: 6px 0;
   border: 1px solid var(--border);
@@ -4841,6 +4860,16 @@ input[data-ride-keypad="on"] {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--fg);
+}
+.ride-post-s10__disclosure {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
 }
 .ride-post-s10__row {
   margin: 3px 0;

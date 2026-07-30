@@ -138,7 +138,7 @@ import {
   type RideSessionDoc,
   type RideSessionStore,
 } from "./ride-session.ts";
-import { openTrackStore } from "./track-store.ts";
+import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +226,24 @@ export function buildEligibilityCopy(validation: RideValidation): string {
         `couldn't be determined because there was an internal error.`
       );
   }
+}
+
+/** Screen 10's donation consent disclosure — master `RIDE_MODE_OVERHAUL_PLAN.md`
+ *  Part 3 §1's resolution of "no route ever leaves its owner" against
+ *  donation: explicit, per-ride, per-donation consent WITH disclosed
+ *  de-identification, using that section's own required phrase verbatim
+ *  ("anonymous and irrevocable after de-identification (≤28 h)") alongside
+ *  the retention mechanics from `RIDE_MODE_OVERHAUL_PLAN.md`'s de-id
+ *  definition (4 h after points settle, hard floor 28 h after donation).
+ *  Exported for direct unit testing, same convention as `buildEligibilityCopy`. */
+export const DONATION_DISCLOSURE_TEXT =
+  "Donating uploads this ride's waypoints and route for verification and points. " +
+  "Your account link is removed within 28 hours of donating (sooner once points " +
+  "settle) — after that, the data is anonymous and irrevocable: it can no longer " +
+  "be deleted or traced back to you. Until then, deleting this ride removes it entirely.";
+
+function donationDisclosure(): HTMLElement {
+  return el("p", "ride-post-s10__disclosure", DONATION_DISCLOSURE_TEXT);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,8 +410,11 @@ export function tripDateLabel(iso: string): string {
 // header's READBACK note).
 // ---------------------------------------------------------------------------
 
-async function defaultReadDonationBody(trackId: string): Promise<DonateTrackIn> {
-  const store = await openTrackStore();
+async function defaultReadDonationBody(
+  trackId: string,
+  getTrackStore: () => Promise<TrackStore>,
+): Promise<DonateTrackIn> {
+  const store = await getTrackStore();
   const batches = await store.storage.getBatches(trackId);
   const body: DonateTrackIn = { batches: batches.map((b) => b.jws) };
   const last = batches.length ? batches[batches.length - 1] : null;
@@ -444,6 +465,14 @@ export interface RidePostS10Deps {
    *  behind the same explicit gesture as the upload keeps the "opt-in, one
    *  button" story simple to audit. */
   readDonationBody?(trackId: string): Promise<DonateTrackIn>;
+  /** Shared TrackStore accessor (review fix): `openTrackStore()` degrades to
+   *  a brand-new, empty in-memory adapter on every call when IndexedDB is
+   *  unavailable, so a donation reader that opens its own store
+   *  independently of the ride's actual recording instance sees no batches.
+   *  `ride-post.ts`'s `wireRidePost` passes `main.ts`'s shared
+   *  `getTrackStore()` singleton here. Defaults to a lazily-opened,
+   *  module-private `openTrackStore()` (tests / no injected caller). */
+  getTrackStore?(): Promise<TrackStore>;
   /** "See recent trips". Injected for tests; defaults to this module's own
    *  `listTrackedRides` (see the module header's DEVIATION note). */
   listTrackedRides?(
@@ -479,11 +508,14 @@ interface ResolvedDeps {
 }
 
 function resolveDeps(deps: RidePostS10Deps): ResolvedDeps {
+  const getTrackStore = deps.getTrackStore ?? openTrackStore;
   return {
     session: deps.session,
     getTrackedRide: deps.getTrackedRide ?? apiGetTrackedRide,
     donateTrack: deps.donateTrack ?? apiDonateTrack,
-    readDonationBody: deps.readDonationBody ?? defaultReadDonationBody,
+    readDonationBody:
+      deps.readDonationBody ??
+      ((trackId: string) => defaultReadDonationBody(trackId, getTrackStore)),
     listTrackedRides: deps.listTrackedRides ?? listTrackedRides,
     recentTripsLimit: deps.recentTripsLimit ?? 5,
     onClosed: deps.onClosed ?? (() => {}),
@@ -623,6 +655,14 @@ function mountRidePostS10(
     if (busy) {
       wrap.append(el("p", "ride-modal__hint", "Working…"));
     }
+
+    // Privacy/completeness review fix: the master plan resolves "no route
+    // ever leaves its owner" against donation via explicit, per-ride,
+    // per-donation consent WITH disclosed de-identification — Screen 10's
+    // consent copy must say so immediately before the affirmative action,
+    // not merely somewhere in the privacy policy. Shown whenever donation is
+    // still an available action (not after it's already been used).
+    if (!donated) wrap.append(donationDisclosure());
 
     const actions = el("div", "ride-wizard__actions ride-post-s10__actions");
     const donateBtn = actionButton(

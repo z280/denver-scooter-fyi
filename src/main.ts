@@ -65,9 +65,13 @@ import { wireRideDeepLink } from "./ride-deeplink.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
+  recoveryForServerConflict,
+  type RideRecoveryDeps,
   type RideRecoveryNote,
+  type RideRecoveryOutcome,
   type RideSessionStore,
 } from "./ride-session.ts";
+import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
 import {
@@ -451,29 +455,62 @@ function getTrackStore(): Promise<TrackStore> {
  *  `wireRidePost` reads `recoveryNote` once at wire time (recovery is a
  *  once-per-page-load reconciliation), so the call site below wires it only
  *  after this promise settles — see that call site's own comment. */
+/** Shared by both recovery triggers (see the module comment above
+ *  `recoverActiveRide` for why one function serves boot recovery AND
+ *  Screen 6's 409): the pieces `recoverRideSession`/`recoveryForServerConflict`
+ *  need to reconcile against the server and local track-store, minus the
+ *  per-call `doc`/`probeWhenNoDoc` fields each caller supplies itself. */
+function baseRecoveryDeps(): Omit<RideRecoveryDeps, "doc" | "probeWhenNoDoc"> {
+  return {
+    getActiveRide: () => getActiveRide(),
+    getTrackedRide: (rideId) => getTrackedRide(rideId),
+    // Lazy on purpose: `readTrackTip` is only ever CALLED when there is a
+    // live/private ride (or a server conflict) to reconcile — a plain
+    // visitor never triggers this, so `getTrackStore()`'s `openTrackStore()`
+    // call — and therefore IndexedDB — stays untouched for them, matching
+    // this module's own "opened lazily on first need" comment above.
+    readTrackTip: async (trackId) => (await getTrackStore()).readTip(trackId),
+    isAuthenticated: () => isAuthenticated(),
+  };
+}
+
+/** Turn a `prompt_resume_or_end` outcome into the rider's actual choice
+ *  (review fix — this used to be silently dropped). Shared by both triggers:
+ *  a reload finding a server ride the local doc didn't expect, and Screen
+ *  6's `POST /tracked-rides` 409 (see `wireRideScreenStart`'s
+ *  `onServerConflict` hook below). */
+function presentResumeOrEnd(outcome: RideRecoveryOutcome): void {
+  showResumeOrEnd(outcome, {
+    session: rideSession,
+    locate,
+    getTrackStore,
+    onResumed: (ride, startedAtMs, recorder) => {
+      rideHud.beginHandoff({ rideId: ride.id, startedAtMs, recorder });
+    },
+  });
+}
+
 async function recoverActiveRide(): Promise<RideRecoveryNote | null> {
   let outcome: Awaited<ReturnType<typeof recoverRideSession>>;
   try {
     outcome = await recoverRideSession({
       doc: rideSession.current(),
-      getActiveRide: () => getActiveRide(),
-      getTrackedRide: (rideId) => getTrackedRide(rideId),
-      // Lazy on purpose: `readTrackTip` is only ever CALLED by
-      // `recoverRideSession`'s internal `resumePlanFor` helper, which itself
-      // only runs for a doc with a live/private ride to reconcile — a plain
-      // visitor with no doc (or an idle/finished one) never triggers this,
-      // so `getTrackStore()`'s `openTrackStore()` call — and therefore
-      // IndexedDB — stays untouched for them, matching this module's own
-      // "opened lazily on first need" comment above.
-      readTrackTip: async (trackId) => (await getTrackStore()).readTip(trackId),
-      isAuthenticated: () => isAuthenticated(),
+      ...baseRecoveryDeps(),
+      // Discover a server-active ride even when THIS device's local doc is
+      // missing/idle/done — the 409 UX reached via a plain reload (review
+      // fix: previously unset, so that case wasn't discovered until the
+      // rider's next failed start).
+      probeWhenNoDoc: true,
     });
   } catch (e) {
     console.error("ride recovery failed", e);
     return null;
   }
 
-  if (outcome.action === "prompt_resume_or_end") return outcome.note;
+  if (outcome.action === "prompt_resume_or_end") {
+    presentResumeOrEnd(outcome);
+    return outcome.note;
+  }
   if (outcome.doc) rideSession.replace(outcome.doc);
   if (outcome.action !== "restore_riding" && outcome.action !== "seal_and_end") {
     return outcome.note;
@@ -692,6 +729,17 @@ map.on("load", async () => {
           // getter so a still-in-flight fetch at wire time is still picked
           // up by the time a rider could ever actually reach Screen 9.
           points: () => rideModePoints,
+          // Review fix: share the SAME TrackStore instance the ride was
+          // recorded into (this module's own lazy singleton, above) rather
+          // than letting Screens 8/9/10 each open an independent
+          // `openTrackStore()` — with IndexedDB unavailable, every
+          // independent call degrades to a brand-new, empty in-memory
+          // adapter that never sees this tab's recorded batches.
+          getTrackStore,
+          // Review fix: Screen 8 prefers the ride's own last fix over a
+          // fresh `Locate.current()` read (see `ride-hud.ts`'s `getLastFix`
+          // doc comment for why).
+          getLastFix: () => rideHud.getLastFix(),
         });
       });
     },
@@ -781,9 +829,7 @@ map.on("load", async () => {
     // so this is the one place that can seed `track-store`. Fire-and-forget —
     // `onComplete` has already shown the HUD by the time this resolves;
     // `attachTrackRecorder` is exactly the seam for wiring one in slightly
-    // late. A private/guest ride never reaches this hook at all (see
-    // `ride-screen-start.ts`'s own SCOPE NOTE) — it starts with no recorder,
-    // matching the pre-F3 legacy HUD's own untracked behavior.
+    // late.
     onRideStarted: (ride) => {
       if (!ride.track_signing) {
         console.error(
@@ -799,6 +845,51 @@ map.on("load", async () => {
           rideHud.attachTrackRecorder(recorder);
         } catch (e) {
           console.error("ride start: opening the local track recorder failed", e);
+        }
+      })();
+    },
+    // Private/guest ride mirror of `onRideStarted` above (review fix): fires
+    // with the SAME `trackKeyId` the session doc already carries, so
+    // `resumeRide` mints its local record under that exact id rather than a
+    // second, unrelated one — see `ride-screen-start.ts`'s doc comment on
+    // this hook and `track-store.ts`'s `resumeRide` doc comment on minting a
+    // brand-new private ride under a caller-supplied id.
+    onPrivateRideStarted: (trackKeyId) => {
+      void (async () => {
+        try {
+          const trackStore = await getTrackStore();
+          const resumed = await trackStore.resumeRide(trackKeyId, {
+            isPrivate: true,
+          });
+          rideHud.attachTrackRecorder(resumed.recorder);
+        } catch (e) {
+          console.error(
+            "ride start: opening the local private track recorder failed",
+            e,
+          );
+        }
+      })();
+    },
+    // Review fix: `startTrackedRide`'s 409 ("an active ride already exists")
+    // used to render a dead-end static message. Fetch the conflicting ride
+    // and show the same resume-or-end prompt boot recovery uses
+    // (`recoveryForServerConflict` + `presentResumeOrEnd`, above) instead.
+    onServerConflict: () => {
+      void (async () => {
+        try {
+          const active = await getActiveRide();
+          if (!active) return; // race: the conflicting ride ended already
+          const outcome = await recoveryForServerConflict(
+            { doc: rideSession.current(), ...baseRecoveryDeps() },
+            active,
+            rideSession.current(),
+          );
+          presentResumeOrEnd(outcome);
+        } catch (e) {
+          console.error(
+            "ride start: fetching the conflicting active ride failed",
+            e,
+          );
         }
       })();
     },
