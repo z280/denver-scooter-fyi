@@ -30,7 +30,7 @@ interface StoredPresets {
 const KEY = "scooter-fyi-filter-presets";
 
 const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
-const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo"];
+const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo", "trike"];
 const QUALITIES: readonly string[] = ["any", "no-risk", "ok-only"];
 
 /** Structural validation — a hand-edited or corrupted blob must not apply

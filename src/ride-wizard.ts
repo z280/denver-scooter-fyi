@@ -61,7 +61,8 @@ function loadRidePrefs(): RidePrefs | null {
     if (
       p.typeChoice !== "astro" &&
       p.typeChoice !== "cosmo" &&
-      p.typeChoice !== "apollo"
+      p.typeChoice !== "apollo" &&
+      p.typeChoice !== "trike"
     ) {
       return null;
     }
@@ -353,7 +354,7 @@ export class RideWizard {
 
     // Model sub-picker, shown only when "Exact device type" is the
     // priority. The same model cards as the Filters drawer: badge art +
-    // name + description (per UAT: pick by Cosmo/Astro/Apollo, not by
+    // name + description (per UAT: pick by Cosmo/Astro/Apollo/Trike, not by
     // abstract posture labels).
     typeRow.append(el("span", "ride-wizard__typerow-label", "Which model?"));
     const typeDefs: {
@@ -365,6 +366,7 @@ export class RideWizard {
       { value: "astro", name: "Astro", desc: "Standing scooter", svg: "/astro.png" },
       { value: "cosmo", name: "Cosmo", desc: "One passenger glider (no pedals)", svg: "/cosmo.png" },
       { value: "apollo", name: "Apollo", desc: "Two passenger e-bike w/ pedals", svg: "/apollo.png" },
+      { value: "trike", name: "Trike", desc: "Three-wheel seated trike w/ cargo basket", svg: "/trike.png" },
     ];
     const typeBtns: HTMLButtonElement[] = [];
     const syncTypes = (): void => {

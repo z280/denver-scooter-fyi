@@ -56,18 +56,23 @@ export type AreaFilter = IndexedFeature[] | null;
  *  server-corrected `vehicle_use_type` with model names as tiebreaker. */
 export type RideType = "sitting" | "standing";
 /** Veo's recognized model line-up (unrecognized models are never filtered). */
-export type ModelKey = "astro" | "cosmo" | "apollo";
+export type ModelKey = "astro" | "cosmo" | "apollo" | "trike";
 export type QualityFilter = "any" | "no-risk" | "ok-only";
 /** What the marker's inner badge depicts. */
 export type IconStyle = "use" | "model" | "data";
 /** How the "Model" icon style draws each badge: illustrated comic art, or a
- *  single model-tinted letter (A / C / P). */
+ *  single model-tinted letter (As / Co / Ap / Tr). */
 export type ModelIcon = "comic" | "letter";
 /** Which signal colors the gauge ring (and the "data" badge). */
 export type DataSource = "battery" | "reliability";
 
 export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
-export const ALL_MODELS: readonly ModelKey[] = ["astro", "cosmo", "apollo"];
+export const ALL_MODELS: readonly ModelKey[] = [
+  "astro",
+  "cosmo",
+  "apollo",
+  "trike",
+];
 
 // ----- Gauge design options ("📐 Design Options" in the Iconography drawer).
 export type GaugeDisplay = "always" | "hover";
@@ -146,6 +151,7 @@ const VEO_MODELS: Record<string, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
   apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
+  trike: { name: "Veo Trike", desc: "Three-wheel seated trike w/ cargo basket" },
 };
 
 function veoModel(
@@ -1672,7 +1678,7 @@ export class Devices {
     } else if (this.iconStyle === "model") {
       const mk = modelKeyOf(p);
       if (this.modelIcon === "letter") {
-        // Model-tinted letter badge (A / C / P); unknown → gray "?".
+        // Model-tinted letter badge (As / Co / Ap / Tr); unknown → gray "?".
         inner = `ml-${mk ?? "unk"}`;
       } else {
         // Badge art once its image has decoded; letter tag until then
@@ -1846,13 +1852,18 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
 
 /** Ride posture for the "Device use" icon style and the ride-type filter:
  *  the server-corrected `vehicle_use_type` decides, with the seated models
- *  (Cosmo, Apollo) as the tiebreaker when it's absent. */
+ *  (Cosmo, Apollo, Trike) as the tiebreaker when it's absent. */
 export function rideTypeOf(p: {
   vehicle_use_type?: string | null;
   vehicle_model_name?: string | null;
 }): RideType {
   const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
-  if (p.vehicle_use_type === "sitting" || model === "cosmo" || model === "apollo") {
+  if (
+    p.vehicle_use_type === "sitting" ||
+    model === "cosmo" ||
+    model === "apollo" ||
+    model === "trike"
+  ) {
     return "sitting";
   }
   return "standing";
@@ -1863,7 +1874,10 @@ export function modelKeyOf(p: {
   vehicle_model_name?: string | null;
 }): ModelKey | null {
   const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
-  return model === "astro" || model === "cosmo" || model === "apollo"
+  return model === "astro" ||
+    model === "cosmo" ||
+    model === "apollo" ||
+    model === "trike"
     ? (model as ModelKey)
     : null;
 }
@@ -1951,6 +1965,7 @@ const MODEL_ICON_URL: Record<ModelKey, string> = {
   astro: "/astro.png",
   cosmo: "/cosmo.png",
   apollo: "/apollo.png",
+  trike: "/trike.png",
 };
 const modelIconImages: Partial<Record<ModelKey, HTMLImageElement>> = {};
 let modelIconsLoading: Promise<void> | null = null;
@@ -2153,16 +2168,19 @@ const MODEL_TAG: Record<string, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
+  trike: "Tr",
   unk: "?",
 };
 
 /** The "letter" Model icon style: a single model-tinted disc. Colors echo
  *  each comic badge's dominant background — Astro's day sky (light blue),
- *  Cosmo's terracotta courtyard (orange), Apollo's night city (purple). */
+ *  Cosmo's terracotta courtyard (orange), Apollo's night city (purple),
+ *  Trike's seaside sunset (pink). */
 const MODEL_COLOR: Record<ModelKey, string> = {
   astro: "#5bb8e6",
   cosmo: "#ee8836",
   apollo: "#8368c4",
+  trike: "#f58aac",
 };
 
 /** Relative luminance (WCAG) of a #rrggbb color, 0 (black) – 1 (white). */
@@ -2176,7 +2194,7 @@ function relLuminance(hex: string): number {
 }
 
 /** Pick a legible glyph color for a tinted badge: a dark ink on light tints
- *  (Astro/Cosmo), white on dark ones (Apollo), so the letter clears WCAG
+ *  (Astro/Cosmo/Trike), white on dark ones (Apollo), so the letter clears WCAG
  *  large-text contrast on every model color rather than washing out. */
 function glyphColorFor(bg: string): { fill: string; halo: string } {
   return relLuminance(bg) >= 0.3
@@ -2187,6 +2205,7 @@ const MODEL_LETTER: Record<ModelKey, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
+  trike: "Tr",
 };
 
 function drawInnerBadge(
@@ -2226,8 +2245,8 @@ function drawInnerBadge(
     ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
   } else if (inner.startsWith("ml-")) {
     // Model-tinted letter badge: colored disc + a glyph whose color is chosen
-    // by the tint's luminance (dark ink on light Astro/Cosmo, white on dark
-    // Apollo) so the letter clears contrast on every model color.
+    // by the tint's luminance (dark ink on light Astro/Cosmo/Trike, white on
+    // dark Apollo) so the letter clears contrast on every model color.
     const mk = inner.slice(3) as ModelKey;
     const bg = MODEL_COLOR[mk] ?? BATTERY_MISSING_COLOR;
     fillCircle(ctx, cx, r, bg, "#ffffff", 2);

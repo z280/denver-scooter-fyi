@@ -3273,7 +3273,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   color: var(--fg-muted);
 }
 
-/* ---------- Model silhouettes (public/{astro,cosmo,apollo}.svg) ---------- */
+/* ------- Model silhouettes (public/{astro,cosmo,apollo,trike}.png) ------- */
 .toggle-card {
   display: flex;
   align-items: center;
