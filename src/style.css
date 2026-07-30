@@ -251,34 +251,19 @@ body::before {
   pointer-events: none;
   user-select: none;
 }
-/* Masthead lockup — one artwork per theme, painted as a background rather
-   than two <img>s so the browser only ever fetches the variant the active
-   theme uses. The aspect-ratio matches the art, so height is the only knob
-   the responsive rules below have to touch. */
-.topbar__masthead {
-  height: 34px;
-  aspect-ratio: 1160 / 280;
-  background: url("/masthead-light.png") center / contain no-repeat;
+.topbar__brand-glyph {
+  font-size: 18px;
 }
-:root[data-theme="dark"] .topbar__masthead {
-  background-image: url("/masthead-dark.png");
+.topbar__brand-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--fg);
 }
-/* Phones: the left cluster (menu + GPS + theme) is ~136px wide, so a
-   lockup straddling the bar's midpoint has only ~2x the smaller side gap
-   to live in — 87px at 375px wide, 32px at 320px. Drop the absolute
-   centering here and let the lockup flow as the middle flex item, which
-   spends the real free space between the clusters instead. Slightly
-   off-centre, but present and uncollided all the way down to 320px. */
+/* Hide the wordmark before it can collide with the side clusters. */
 @media (max-width: 430px) {
-  .topbar__brand {
-    position: static;
-    transform: none;
-    height: auto;
-    min-width: 0;
-    justify-content: center;
-  }
-  .topbar__masthead {
-    height: 28px;
+  .topbar__brand-name {
+    display: none;
   }
 }
 
