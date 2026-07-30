@@ -1354,10 +1354,29 @@ export async function recoverRideSession(
   // reappeared. Seal the final batch and jump to Screen 8 with a note — NOT a
   // local-only end: `PATCH /end` still works after expiry (its sole
   // precondition is an unreported end) and donation requires it.
+  //
+  // INTEGRATION FIX (tracking-integration lane): this branch's own comment
+  // says "seal the final batch", but on a real reload there is no in-memory
+  // recorder left to seal — the caller has to reconstitute one from IDB (or
+  // re-import the key from `ride.track_signing` when IDB was evicted) before
+  // it can call `finish()`/`sealOpenBatch()`. Every other branch that expects
+  // the caller to touch track-store returns a `TrackResumePlan` for exactly
+  // this reason; this one used to return `resume: null`, which left "seal the
+  // final batch" undoable from a cold reload. `resumePlanFor` is the same
+  // helper `recoveryForServerConflict` and the active-match branch already
+  // use, so this is additive — it does not change `action`, `reason`, `doc`,
+  // or `note`, and every existing `toMatchObject` assertion on this outcome
+  // (see ride-session.test.ts) still passes unchanged.
+  const resume = await resumePlanFor(
+    deps,
+    trackIdOf(doc),
+    ride.track_signing ?? null,
+  );
   return outcome({
     action: "seal_and_end",
     reason: "ride_expired",
     doc: withPhase(doc, "ending"),
+    resume,
     ride,
     reconciled: true,
     note: "ride_expired",

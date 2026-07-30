@@ -34,8 +34,10 @@ import {
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
 import { endTrackedRide, type EndRideIn } from "./api.ts";
+import { selectedDevice } from "./ride-session.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
 import type { TrackFix, TrackRecorder } from "./track-store.ts";
+import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
 
 // ---------------------------------------------------------------------------
 // F3: tracked-ride seams (frontend plan, `ride-hud.ts` module-map row + the
@@ -54,14 +56,20 @@ import type { TrackFix, TrackRecorder } from "./track-store.ts";
  *  only has to satisfy what this module actually uses. */
 export type RideHudTrackControl = Pick<TrackRecorder, "addFix" | "finish">;
 
-/** The one ride-session action ride-hud.ts ever dispatches. */
-export type RideHudSessionControl = Pick<RideSessionStore, "dispatch">;
+/** The one ride-session action ride-hud.ts ever dispatches, plus a read of
+ *  the live doc — the integrator's `case "riding"` guard already reads
+ *  `RideSessionStore.current()` directly for `isLiveRideEntry`, and this
+ *  module needs the same read internally to know whether the current ride
+ *  has a `route` to mount the Screen 7 nav overlay against (see
+ *  `mountNavHud` below) — it never WRITES `route`/`dest`, only reads them. */
+export type RideHudSessionControl = Pick<RideSessionStore, "dispatch" | "current">;
 
 export interface RideHudDeps {
   /** Wired once the tracking-integration lane (or the integrator) attaches
    *  the shared `RideSessionStore` — omit it and ride-hud.ts behaves exactly
    *  as it does today (a legacy, session-doc-free HUD): the F3 interim end
-   *  report in `reportTrackedRideEnd` simply has nothing to dispatch to. */
+   *  report in `reportTrackedRideEnd` has nothing to dispatch to, and the
+   *  Screen 7 nav overlay never mounts (no doc to read a `route` off of). */
   session?: RideHudSessionControl;
 }
 
@@ -231,6 +239,20 @@ export class RideHud {
   /** Dispatches the F3 interim End Ride report onto the shared ride-session
    *  doc. Null when the integrator hasn't wired one — see `RideHudDeps`. */
   private readonly session: RideHudSessionControl | null;
+  /** Screen 7 turn-by-turn overlay for the current ride, or null when no
+   *  route is active (out-of-coverage / nav off) or the session isn't wired.
+   *  Fed from the SAME shared watchPosition callback as `trackRecorder` (see
+   *  `onFix`) — the phase's central integration seam. Lives in its own
+   *  persistent child element (`navHudContainer`) rather than inside the
+   *  `renderRiding()` template string, so a BRB resume's full innerHTML
+   *  rebuild can re-parent it without losing its internal route progress
+   *  (matched shape index, current maneuver, off-route timers). */
+  private navHud: NavHud | null = null;
+  private navHudContainer: HTMLElement | null = null;
+  /** A press-and-hold dismiss on the nav overlay's own corner arrow silences
+   *  it for the rest of THIS ride — `mountNavHud` must not resurrect it on
+   *  the next BRB resume's `renderRiding()` call. Reset in `enterRiding`. */
+  private navDismissed = false;
 
   constructor(
     container: HTMLElement,
@@ -750,6 +772,14 @@ export class RideHud {
     this.paused = false;
     this.pausedElapsedMs = 0;
     this.rideModels = new Set(); // every ride starts hiding every scooter
+    // Fresh ride: any nav overlay from a PRIOR ride this HUD instance already
+    // showed (armed → countdown → riding → summary → hidden → armed again)
+    // must not leak into this one — `mountNavHud` (called from `renderRiding`
+    // below) rebuilds it from scratch against the CURRENT session doc's route.
+    this.navHud?.dispose();
+    this.navHud = null;
+    this.navHudContainer = null;
+    this.navDismissed = false;
     this.setState("riding");
     this.renderRiding();
     this.applyRideModels();
@@ -928,6 +958,10 @@ export class RideHud {
         saveRatePlan((e.target as HTMLSelectElement).value as RatePlanKey);
         this.renderTick();
       });
+    // The innerHTML assignment above just discarded any nav overlay DOM from
+    // before this render (fresh ride start, or a BRB resume) — re-mount it.
+    const liveEl = this.root.querySelector<HTMLElement>(".hud-live");
+    if (liveEl) this.mountNavHud(liveEl);
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -943,6 +977,62 @@ export class RideHud {
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn hud-btn--end" data-hud="stop-tracking">Stop tracking</button>
           </div>`;
+  }
+
+  /** Screen 7 turn-by-turn overlay (F3's other central integration seam,
+   *  alongside `onFix`'s shared watchPosition): mount it into `liveEl` — the
+   *  freshly rebuilt `.hud-live` from THIS `renderRiding()` call — whenever
+   *  the current ride has an active route to navigate. Called on every
+   *  `renderRiding()` (fresh ride start AND every BRB resume, since both
+   *  wholesale-replace `this.root.innerHTML`): if a `NavHud` from this same
+   *  ride already exists, its container is simply re-parented into the fresh
+   *  DOM rather than rebuilt, so a resume never loses matched-route progress
+   *  (shape index, current maneuver, off-route timers). A ride with no route
+   *  (nav off, out of coverage, or no session wired) never mounts one at all
+   *  — `ride-nav-hud.ts`'s own contract: only construct it when a route is
+   *  active. */
+  private mountNavHud(liveEl: HTMLElement): void {
+    if (this.navHud) {
+      if (this.navHudContainer) liveEl.appendChild(this.navHudContainer);
+      return;
+    }
+    if (this.navDismissed) return;
+    const doc = this.session?.current();
+    // `state === "riding"` guards against a STALE doc: the legacy armed →
+    // countdown → `startRide()` path (no wizard involved) never touches
+    // `rideSession` at all, so without this check a rider who finishes a
+    // wizard ride (leaving a `done` doc with THAT ride's route still on it)
+    // and later taps the pre-wizard "Start now" button for an unrelated
+    // quick ride would incorrectly inherit the old ride's nav directions.
+    const route = doc?.state === "riding" ? doc.route : null;
+    const dest = doc?.state === "riding" ? doc.dest : null;
+    if (!doc || !route || !dest) return;
+    const overlay = document.createElement("div");
+    liveEl.appendChild(overlay);
+    this.navHudContainer = overlay;
+    this.navHud = createNavHud(overlay, {
+      route,
+      dest: { lat: dest.lat, lon: dest.lon },
+      vehicleModel: selectedDevice(doc.device)?.model ?? null,
+      onDismiss: () => {
+        // Tear-down already happened inside ride-nav-hud.ts itself — just
+        // forget our references so a later BRB resume doesn't try to
+        // re-parent a container nav-hud has already emptied, and so it stays
+        // gone (`navDismissed`) rather than reappearing on the next resume.
+        this.navDismissed = true;
+        this.navHud = null;
+        this.navHudContainer = null;
+      },
+      onCompress: () => {
+        /* No other HUD chrome currently needs to react to the nav panel
+         * opening — the corner readouts and the nav bar/panel occupy
+         * non-overlapping screen regions by design (frontend plan: the nav
+         * bar docks top-center between the TL clock/cost stack and the TR
+         * mph readout). Left as an explicit no-op rather than omitted, so a
+         * future corner that DOES need to yield space has an obvious place
+         * to react from. */
+      },
+    });
   }
 
   private renderTick(): void {
@@ -1012,12 +1102,16 @@ export class RideHud {
     }
     this.lastFix = { pos, t };
 
-    // Shared watchPosition (F3): every fix feeds track-store too, regardless
-    // of follow-cam / BRB state — a backgrounded TRACKED ride keeps recording
-    // (see `pauseRide`'s tracked branch, which deliberately leaves this
-    // watcher running through BRB). This is the only place ride-hud.ts ever
-    // calls into track-store's per-fix API; nothing here posts to the
-    // retired per-waypoint upload endpoint.
+    // Shared watchPosition (F3): every fix feeds track-store AND the Screen 7
+    // nav overlay, regardless of follow-cam / BRB state — a backgrounded
+    // TRACKED ride keeps recording (see `pauseRide`'s tracked branch, which
+    // deliberately leaves this watcher running through BRB), and a nav
+    // overlay's matched-route progress must keep advancing right along with
+    // it. This is the ONE place ride-hud.ts ever calls into either
+    // track-store's per-fix API or ride-nav-hud.ts's; nothing here posts to
+    // the retired per-waypoint upload endpoint, and neither call touches the
+    // network directly (a nav re-route is the sole exception, internal to
+    // ride-nav-hud.ts and rate-limited there).
     if (this.trackRecorder) {
       const trackFix: TrackFix = {
         tMs: fix.timestamp,
@@ -1027,6 +1121,7 @@ export class RideHud {
       };
       void this.trackRecorder.addFix(trackFix);
     }
+    this.navHud?.feedFix(fix.coords.latitude, fix.coords.longitude, fix.coords.accuracy);
 
     // Drive the follow-cam only while it's actually mounted. BRB tears it
     // down (`exitFollowCam`) without necessarily stopping a tracked ride's
@@ -1106,6 +1201,9 @@ export class RideHud {
     const endPos = this.lastFix?.pos ?? null;
     this.stopSensors();
     this.exitFollowCam();
+    this.navHud?.dispose();
+    this.navHud = null;
+    this.navHudContainer = null;
 
     // F3 interim (ride-post.ts / Screen 8 don't exist until F4): a tracked
     // ride's End Ride owns the minimal PATCH /end itself — required so an
@@ -1113,8 +1211,20 @@ export class RideHud {
     // so a slow/offline network never blocks the summary the rider is about
     // to see; failures are logged, not surfaced, and a later reload's
     // recovery table picks the loose end back up (see `reportTrackedRideEnd`).
+    //
+    // A private/guest ride has no `PATCH /end` to send at all (master Part 0
+    // gates Screen 8 on "a Veo device was selected, i.e. not a private
+    // ride") — but the session doc still has to close out to `done`, or it
+    // is left stranded on `riding` forever: `reduceRideSession`'s `open`
+    // guard rejects starting a NEW ride while any doc reads `isRideLive`,
+    // and `isLiveRideEntry` would keep routing the next 🧭 tap back into
+    // `rideHud.open()`'s legacy armed screen instead of the wizard. Nothing
+    // here waits on a network report, so it can — and must — happen right
+    // away rather than only on the tracked-ride branch above.
     if (this.trackedRideId !== null) {
       void this.reportTrackedRideEnd(this.trackedRideId, endPos ?? this.startPos);
+    } else {
+      void this.endPrivateRide();
     }
 
     let endedInZone = false;
@@ -1211,6 +1321,27 @@ export class RideHud {
     } catch (e) {
       console.error("end ride: reporting the minimal /end failed", e);
     }
+  }
+
+  /** Close out a private/guest ride (or a legacy, session-free quick-start
+   *  ride) from `endRide`: seal whatever local recording exists and
+   *  dispatch the session doc straight to `done`. There is no `PATCH /end`
+   *  to send for a private ride (see `endRide`'s comment), so — unlike
+   *  `reportTrackedRideEnd` — nothing here needs to wait on the network;
+   *  this stays `async`/fire-and-forget only because `recorder.finish()`
+   *  itself is. A no-op `dispatch` when there is no live doc at all (the
+   *  legacy armed→countdown→`startRide()` path never touches
+   *  `ride-session.ts`) — `reduceRideSession`'s own "no session"/"nothing
+   *  to end" guards reject it harmlessly. */
+  private async endPrivateRide(): Promise<void> {
+    const recorder = this.trackRecorder;
+    this.trackRecorder = null; // stop feeding fixes into a ride that is over
+    try {
+      await recorder?.finish();
+    } catch (e) {
+      console.error("end ride: sealing the final track batch failed", e);
+    }
+    this.session?.dispatch({ type: "endRide" });
   }
 }
 
