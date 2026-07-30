@@ -2468,6 +2468,18 @@ body:not(.ribbon-open) .drawer-tabs {
   font-weight: 700;
   opacity: 0.75;
 }
+/* With four models the chips no longer fit beside the label on a phone: the
+   row wraps and the odd chip out, being flex: 1 1 0, stretches to fill a
+   line of its own. Break the label onto its own row instead so all four
+   chips share one even row. */
+@media (max-width: 400px) {
+  .hud-devrow__label {
+    flex: 1 0 100%;
+  }
+  .hud-devrow .hud-chip {
+    padding: 8px 6px;
+  }
+}
 .hud-chip {
   appearance: none;
   border: 2px solid var(--border);
