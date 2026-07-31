@@ -310,7 +310,7 @@ export async function loadRideModePoints(
 }
 
 // ---------------------------------------------------------------------------
-// The eight ℹ info modals — owner copy, verbatim, from the master plan's
+// The seven ℹ info modals — owner copy, verbatim, from the master plan's
 // Part 0 "Screen 2" ℹ info-modal section. Markdown-style `*italic*`/
 // `**bold**` markers are kept in the source strings on purpose (so this
 // section can be diffed word-for-word against the master doc) and parsed
@@ -569,7 +569,7 @@ function appendRichParagraph(container: HTMLElement, text: string): void {
   container.append(p);
 }
 
-/** Open one of the eight ℹ modals, reusing the `.ranks-modal` shell that
+/** Open one of the seven ℹ modals, reusing the `.ranks-modal` shell that
  *  `devices.ts`'s `openFloatingModal` (module-private there) and
  *  `ride-modal.ts`'s Escape handling both already know about — the wizard's
  *  own Escape listener explicitly defers to any open `.ranks-modal`, which is
@@ -794,7 +794,7 @@ export interface RideOptionsPanelHandle {
   destroy(): void;
 }
 
-/** Build Screen 2's options panel: the eight rows, the footnote, and the
+/** Build Screen 2's options panel: the seven rows, the footnote, and the
  *  [Usuals] button. Does not touch the DOM outside its own returned
  *  `element` — the caller slots it into a pane via `ctx.setPanes`. */
 export function renderRideOptionsPanel(

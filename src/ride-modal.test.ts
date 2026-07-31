@@ -521,6 +521,37 @@ describe("orientation", () => {
     expect(builds).toBe(1);
   });
 
+  it("re-slotting the SAME primary element does not steal focus from a field inside it", () => {
+    // Regression test for the bug behind Screen 2's dead keypad: a rider
+    // focusing the plate/battery field re-slots the secondary pane (to swap
+    // in the custom keypad) while `primary` never changes. `slot()` used to
+    // unconditionally `replaceChildren()` the primary pane on every call —
+    // removing and reappending a node that already held focus blurs it back
+    // to `<body>` (happy-dom mirrors real browsers here), which Screen 2's
+    // own blur handler reads as "the rider tapped away" and reacts to even
+    // though nothing actually changed.
+    const held: { ctx: RideScreenContext | null } = { ctx: null };
+    const primary = document.createElement("div");
+    const input = document.createElement("input");
+    primary.append(input);
+    const secondaryA = document.createElement("div");
+    const secondaryB = document.createElement("div");
+    registerRideScreen("2", (ctx) => {
+      held.ctx = ctx;
+      return { title: "Screen 2", primary, secondary: secondaryA };
+    });
+    openRideModal({ fastForwardTo: "2" });
+
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    // Same `primary` reference, only the secondary pane changes — exactly
+    // Screen 2's `reslotSecondary()` pattern on a field focus/blur.
+    held.ctx?.setPanes(primary, secondaryB);
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("assumes portrait when matchMedia is unavailable", () => {
     vi.stubGlobal("matchMedia", undefined);
     openRideModal();

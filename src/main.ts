@@ -587,18 +587,29 @@ const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
   // `renderRideOptionsPanel` deliberately never renders [NEXT >>] — that
   // button belongs to ride-screen-select.ts / this integrator seam (see
   // both modules' own module-boundary comments), not to the options-panel
-  // lane. Mirror `buildFallbackOptionsPanel`'s shape so Screen 2 has a
-  // working forward control in the real (non-test-fallback) build too.
-  const actions = document.createElement("div");
-  actions.className = "ride-wizard__actions";
+  // lane. The panel's own `.ride-settings__actions` row already holds
+  // [Usuals] (hidden when unavailable) right-aligned — append NEXT into
+  // THAT same row (rather than a second wrapping div) so the two buttons
+  // share one row exactly like `buildFallbackOptionsPanel`'s reference
+  // shape, instead of rendering as two separately-aligned rows whenever
+  // Usuals happens to be visible. Falls back to a standalone row in the
+  // (should-never-happen) case that row isn't found, so NEXT is never
+  // silently dropped if ride-settings.ts's internal markup changes later.
   const nextBtn = document.createElement("button");
   nextBtn.type = "button";
   nextBtn.className = "login-btn";
   nextBtn.textContent = "NEXT >>";
   nextBtn.disabled = !hooks.canProceed;
   nextBtn.addEventListener("click", hooks.onNext);
-  actions.append(nextBtn);
-  container.append(actions);
+  const usualsRow = panel.element.querySelector<HTMLElement>(".ride-settings__actions");
+  if (usualsRow) {
+    usualsRow.append(nextBtn);
+  } else {
+    const actions = document.createElement("div");
+    actions.className = "ride-wizard__actions";
+    actions.append(nextBtn);
+    container.append(actions);
+  }
 
   return { dispose: () => panel.destroy() };
 };
