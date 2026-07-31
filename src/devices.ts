@@ -198,6 +198,11 @@ export class Devices {
    *  (everything, incl. unrecognized hardware); a set restricts to those
    *  models; an empty set shows none. */
   private rideModelFilter: ReadonlySet<ModelKey> | null = null;
+  /** 🏆 Leaderboard view hide. Independent of `rideModelFilter` — both are
+   *  separate hide reasons that force `filtered()` to `[]`; neither clears
+   *  the other, so closing the leaderboard mid-ride can't un-hide the ride
+   *  HUD's scooters, and ending a ride can't un-hide the leaderboard. */
+  private leaderboardActive = false;
   /** In-flight long-press on a device during a ride (null between presses). */
   private ridePress:
     | { props: PopupProps; coords: [number, number]; longFired: boolean }
@@ -1344,8 +1349,11 @@ export class Devices {
   }
 
   /** Center the map on a device and open its popup — used by the
-   *  worth-the-walk suggestion. */
-  private jumpToDevice(deviceId: string, lng: number, lat: number): void {
+   *  worth-the-walk suggestion, and by the ride wizard's `?ride=` deep-link
+   *  entry (hence public: `ride-deeplink.ts` lands the rider on the scanned
+   *  device). Note the popup only opens for a device the map's display filters
+   *  currently keep — a filtered-out device still gets centered. */
+  jumpToDevice(deviceId: string, lng: number, lat: number): void {
     this.map.easeTo({
       center: [lng, lat],
       zoom: Math.max(this.map.getZoom(), 15.5),
@@ -1489,6 +1497,18 @@ export class Devices {
     this.apply();
   }
 
+  /** 🏆 Leaderboard view open/close. On: zero devices — markers *and*
+   *  clusters vanish through the same `filtered()`/`apply()`/`setData` path
+   *  every other hide reason uses — plus the hover tooltip, so nothing
+   *  floats over the choropleth. Off: `apply()` re-derives visibility from
+   *  whatever other filters (including a ride-mode `rideModelFilter`) are
+   *  still in effect — this flag never touches them. */
+  setLeaderboardActive(on: boolean): void {
+    this.leaderboardActive = on;
+    if (on) hideMapTooltip();
+    this.apply();
+  }
+
   /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
    *  space and only draws it (via the hover overlay) under the pointer. */
   setGaugeDisplay(mode: GaugeDisplay): void {
@@ -1564,8 +1584,22 @@ export class Devices {
     return this.filtered();
   }
 
+  /** Every feature in the last response, ignoring every display filter.
+   *  Read-only view for the ride wizard's Screen 2 disambiguation list and the
+   *  `?ride=plate:` reverse lookup: those answer "which device am I standing
+   *  next to", so a leftover model / battery / quality / area filter must not
+   *  be able to hide the very scooter the rider is holding. Everything that
+   *  paints the map keeps using visibleFeatures(). */
+  allFeatures(): DevicesResponse["features"] {
+    return this.all ? this.all.features.slice() : [];
+  }
+
   private filtered(): DevicesResponse["features"] {
     if (!this.all) return [];
+    // 🏆 Leaderboard view: zero devices while open, independent of every
+    // other filter below (composes with, rather than fights, the ride
+    // HUD's own empty-set `rideModelFilter` hide — see the field comment).
+    if (this.leaderboardActive) return [];
     let feats = this.all.features;
     if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
       feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
@@ -2430,8 +2464,11 @@ function clientPointOf(
  *  actions (and, historically, the Battery Rankings and Ride history).
  *  One at a time; closes on ✕, backdrop click, or Escape. `bodyHtml` must
  *  already be escaped by the caller; `onOpen` lets the caller wire
- *  interactive content (report chips, the range toggle) after insertion. */
-function openFloatingModal(
+ *  interactive content (report chips, the range toggle) after insertion.
+ *  Exported for `leaderboard.ts`'s cell-detail panel (ride-mode F4) — the
+ *  only other caller of this shell; devices.ts is otherwise unchanged by
+ *  that lane. */
+export function openFloatingModal(
   title: string,
   bodyHtml: string,
   onOpen?: (root: HTMLElement | null) => void,

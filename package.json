@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "vectors:check": "node scripts/gen-track-vectors.mjs --check",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -16,7 +18,9 @@
     "pmtiles": "^4.3.0"
   },
   "devDependencies": {
+    "happy-dom": "^20.11.1",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^4.1.10"
   }
 }
