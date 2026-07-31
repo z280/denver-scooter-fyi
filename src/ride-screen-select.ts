@@ -265,6 +265,13 @@ export interface RideOptionsPanelHooks {
    *  express settings" — this screen already fetches the list (it owns
    *  Screen 2.5's data too), so the panel doesn't have to. */
   hasUsuals: boolean;
+  /** Whether [NEXT >>] should be enabled right now — mirrors this screen's
+   *  own private `nextEnabled()` (a real device or "My own Device" picked,
+   *  never the bare "manual entry" placeholder). Exposed so a real
+   *  `buildOptionsPanel` (the integrator's glue in main.ts) can render a
+   *  working forward button without reaching into this screen's private
+   *  state — `buildFallbackOptionsPanel` below is the reference shape. */
+  canProceed: boolean;
 }
 
 /** Renders Screen 2's "Ride Mode Options" content (the eight toggles + the
@@ -669,6 +676,7 @@ function buildSelectScreen(
       onUsuals: () => ctx.go("2.5"),
       onNext: () => ctx.next(),
       hasUsuals: usualsAvailable,
+      canProceed: nextEnabled(),
     };
     if (deps.buildOptionsPanel) {
       optionsPanelHandle = deps.buildOptionsPanel(optionsPanelEl, hooks) ?? undefined;
@@ -698,7 +706,7 @@ function buildSelectScreen(
     }
     const nextBtn = el("button", "login-btn", "NEXT >>");
     nextBtn.type = "button";
-    nextBtn.disabled = !nextEnabled();
+    nextBtn.disabled = !hooks.canProceed;
     nextBtn.addEventListener("click", hooks.onNext);
     actions.append(nextBtn);
     container.append(actions);

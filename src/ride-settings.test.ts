@@ -284,9 +284,12 @@ describe("loadRideModePoints", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The eight ℹ info modals — verbatim copy fidelity. These strings are
+// The seven ℹ info modals — verbatim copy fidelity. These strings are
 // transcribed word-for-word from RIDE_MODE_OVERHAUL_PLAN.md Part 0 "Screen 2"
 // — any future edit to that doc's copy should show up here as a failing test.
+// No "theme" row/modal: removed in favor of the app's two existing live theme
+// fixtures (the map's ThemeControl and the ride HUD's toggle-night button) —
+// see ride-settings.ts's own module header for why.
 // ---------------------------------------------------------------------------
 
 describe("RIDE_OPTION_ROWS — Screen 2 table copy, verbatim", () => {
@@ -294,7 +297,6 @@ describe("RIDE_OPTION_ROWS — Screen 2 table copy, verbatim", () => {
     expect(RIDE_OPTION_ROWS.map((r) => [r.id, r.label, r.trophy])).toEqual([
       ["cost_hud", "Est. Veo Cost HUD", false],
       ["speedometer", "Speedometer", false],
-      ["theme", "Theme", false],
       ["navigation", "Destination Navigation", false],
       ["save_tracks", "Save ride tracks locally", false],
       ["battery_modeling", "Improve battery modeling", true],
@@ -326,13 +328,6 @@ describe("RIDE_INFO_MODAL_COPY — Screen 2 ℹ modal copy, verbatim", () => {
     expect(RIDE_INFO_MODAL_COPY.speedometer.title).toBe("Speedometer");
     expect(RIDE_INFO_MODAL_COPY.speedometer.body(P)).toBe(
       "We've found that the speedometers on the Veo devices are really hard to read, especially in the bright colorado sun. So, we provide ON by default both a classic and digital readout of your speed tracked by GPS. Disable if you don't like fun or convenience. Always keep your eyes on where you're going!",
-    );
-  });
-
-  it("theme", () => {
-    expect(RIDE_INFO_MODAL_COPY.theme.title).toBe("Theme");
-    expect(RIDE_INFO_MODAL_COPY.theme.body(P)).toBe(
-      "Show the map in dark mode, light mode, or auto based on the time of day.",
     );
   });
 
@@ -504,7 +499,7 @@ describe("Ride Usuals CRUD", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderRideOptionsPanel", () => {
-  it("renders all 8 rows in the owner's table order", () => {
+  it("renders all 7 rows in the owner's table order", () => {
     const panel = renderRideOptionsPanel({
       options: BASE_OPTIONS,
       context: ctx(),
@@ -514,7 +509,6 @@ describe("renderRideOptionsPanel", () => {
     expect(rows.map((r) => r.dataset.option)).toEqual([
       "cost_hud",
       "speedometer",
-      "theme",
       "navigation",
       "save_tracks",
       "battery_modeling",
@@ -526,17 +520,13 @@ describe("renderRideOptionsPanel", () => {
 
   it("marks the current value active on each row", () => {
     const panel = renderRideOptionsPanel({
-      options: { ...BASE_OPTIONS, speedometer: "digital", theme: "dark" },
+      options: { ...BASE_OPTIONS, speedometer: "digital" },
       context: ctx(),
       onChange: vi.fn(),
     });
     const speedoRow = panel.element.querySelector('[data-option="speedometer"]')!;
     expect(
       speedoRow.querySelector('[data-value="digital"]')?.classList.contains("is-active"),
-    ).toBe(true);
-    const themeRow = panel.element.querySelector('[data-option="theme"]')!;
-    expect(
-      themeRow.querySelector('[data-value="dark"]')?.classList.contains("is-active"),
     ).toBe(true);
     panel.destroy();
   });
@@ -588,8 +578,8 @@ describe("renderRideOptionsPanel", () => {
       expect(reason.hidden).toBe(false);
       expect(reason.textContent).toMatch(/Sign in/);
     }
-    // The five non-trophy rows stay fully enabled.
-    for (const id of ["cost_hud", "speedometer", "theme", "navigation", "save_tracks"]) {
+    // The four non-trophy rows stay fully enabled.
+    for (const id of ["cost_hud", "speedometer", "navigation", "save_tracks"]) {
       const row = panel.element.querySelector<HTMLElement>(`[data-option="${id}"]`)!;
       expect(row.classList.contains("ride-settings__row--disabled")).toBe(false);
     }
@@ -634,11 +624,11 @@ describe("renderRideOptionsPanel", () => {
   it("ℹ opens the matching info modal, and destroy() closes it", () => {
     const panel = renderRideOptionsPanel({ options: BASE_OPTIONS, context: ctx(), onChange: vi.fn() });
     const infoBtn = panel.element.querySelector<HTMLButtonElement>(
-      '[data-option="theme"] .ride-settings__info',
+      '[data-option="speedometer"] .ride-settings__info',
     )!;
     infoBtn.click();
     const heading = document.querySelector("#ride-info-modal-title");
-    expect(heading?.textContent).toBe("Theme");
+    expect(heading?.textContent).toBe("Speedometer");
     panel.destroy();
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
@@ -663,7 +653,7 @@ describe("openRideInfoModal", () => {
     const root = rideModalRoot();
     expect(root).not.toBeNull();
 
-    const close = openRideInfoModal("theme");
+    const close = openRideInfoModal("navigation");
     const modal = document.querySelector(".ranks-modal");
     expect(modal).not.toBeNull();
     expect(modal!.parentElement).toBe(root);
@@ -690,9 +680,11 @@ describe("openRideInfoModal", () => {
   it("only one modal is open at a time — opening a second closes the first", () => {
     openRideInfoModal("cost_hud");
     expect(document.querySelectorAll(".ranks-modal").length).toBe(1);
-    const close2 = openRideInfoModal("theme");
+    const close2 = openRideInfoModal("navigation");
     expect(document.querySelectorAll(".ranks-modal").length).toBe(1);
-    expect(document.querySelector("#ride-info-modal-title")?.textContent).toBe("Theme");
+    expect(document.querySelector("#ride-info-modal-title")?.textContent).toBe(
+      "Destination Navigation",
+    );
     close2();
   });
 });

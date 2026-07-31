@@ -494,14 +494,31 @@ class RideModal {
     this.grid.dataset.split = split;
   }
 
+  /** Re-slotting is called far more often than the panes actually change —
+   *  e.g. Screen 2 calls `ctx.setPanes(root, currentSecondary())` on every
+   *  focus/blur of its plate/battery fields, with `primary` (`root`) always
+   *  the SAME element. `replaceChildren` on a pane that already contains
+   *  exactly that element still removes-then-reappends it, and removing a
+   *  node that contains focus synchronously blurs it back to `<body>` —
+   *  which a screen watching for a real blur (Screen 2's keypad-detach path)
+   *  reads as "the rider tapped away" and reacts to, even though nothing
+   *  actually changed. Skipping the no-op reassignment keeps focus (and any
+   *  keypad attached to it) intact across a re-slot that isn't swapping
+   *  anything. */
   private slot(primary: HTMLElement, secondary: HTMLElement | null): void {
-    this.primaryPane.replaceChildren(primary);
+    if (this.primaryPane.firstElementChild !== primary || this.primaryPane.childElementCount !== 1) {
+      this.primaryPane.replaceChildren(primary);
+    }
     if (secondary) {
-      this.secondaryPane.replaceChildren(secondary);
+      if (this.secondaryPane.firstElementChild !== secondary || this.secondaryPane.childElementCount !== 1) {
+        this.secondaryPane.replaceChildren(secondary);
+      }
       this.secondaryPane.hidden = false;
       this.grid.dataset.panes = "2";
     } else {
-      this.secondaryPane.replaceChildren();
+      if (this.secondaryPane.childElementCount !== 0) {
+        this.secondaryPane.replaceChildren();
+      }
       this.secondaryPane.hidden = true;
       this.grid.dataset.panes = "1";
     }

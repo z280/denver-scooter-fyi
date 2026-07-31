@@ -1,27 +1,34 @@
 // Screen 2's OPTIONS PANEL (the right pane in landscape / bottom pane in
-// portrait, when the rider isn't mid-plate-entry): the eight Ride Mode
+// portrait, when the rider isn't mid-plate-entry): the seven Ride Mode
 // Options controls, their cross-option cascades, the Usuals (Screen 2.5)
-// CRUD, and all eight (?) info modals — owner copy, verbatim, from
+// CRUD, and all seven (?) info modals — owner copy, verbatim, from
 // `docs/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 2". This module owns no
 // screen registration (`ride-screen-select.ts` registers Screens 2 / 2.5 and
 // owns the device-disambiguation list, the plate/battery confirm fields, and
 // the [NEXT >>] button); it exports a mountable panel plus the pure logic a
 // consumer wires into the ride session.
 //
+// No Theme row: the app already has two live, ambient theme fixtures that
+// cover both surfaces this panel could ever reach — `theme.ts`'s ThemeControl
+// map button (Analysis/regular interface) and `ride-hud.ts`'s `toggle-night`
+// button (once ride mode is actually live). A THIRD "Theme" question here,
+// asked before a rider has even picked a scooter, only ever fed the narrow
+// `RideOptions.theme` field (`ride-screen-routes.ts`'s Screen 4 route-preview
+// basemap flavor) — not the app's actual visible theme — so it looked like a
+// live toggle (☀️/🌘/auto) without ever behaving like one. Removed rather than
+// wired up for real: a redundant, confusing third theme control is worse than
+// none.
+//
 // Ownership boundary, spelled out because Screen 2's spec text runs both
 // halves together:
-//   - MINE: the 8 option rows + their (?) modals, the "🏆 Earns points for
+//   - MINE: the 7 option rows + their (?) modals, the "🏆 Earns points for
 //     leaderboards" footnote, the [Usuals] button (visible only once the
 //     cached list is non-empty — the tap just calls `onOpenUsuals`; actually
 //     navigating to Screen 2.5 needs `RideScreenContext`, which only the
 //     registered screen module holds), defaults, cascades, and the Usuals
 //     CRUD wrappers around `api.ts`.
 //   - NOT MINE: the device list, the plate/battery confirm fields (and their
-//     numeric keypad wiring), [NEXT >>], Screen 2.5's own list UI, and
-//     ride-scoped live theme preview (`theme.ts`'s `applyTheme` — Screen 2's
-//     ☀️/🌘/auto row only reports the new `RideOptions.theme` value here; the
-//     screen module decides whether/when to preview it live and to restore
-//     the durable theme on wizard exit, since only it holds that lifecycle).
+//     numeric keypad wiring), [NEXT >>], and Screen 2.5's own list UI.
 //
 // State contract: `RideOptions` (the wire blob, defined in `api.ts`) is what
 // this module reads and writes. The session doc's `options` field
@@ -55,7 +62,6 @@ import {
   type PointsScheduleResponse,
   type RideModePointsAction,
   type RideOptions,
-  type RideThemeChoice,
   type RideUsual,
   type RideUsualSettings,
   type SpeedometerStyle,
@@ -315,7 +321,6 @@ export async function loadRideModePoints(
 export type InfoModalId =
   | "cost_hud"
   | "speedometer"
-  | "theme"
   | "navigation"
   | "save_tracks"
   | "battery_modeling"
@@ -337,7 +342,6 @@ export interface RideOptionRowMeta {
 export const RIDE_OPTION_ROWS: readonly RideOptionRowMeta[] = [
   { id: "cost_hud", label: "Est. Veo Cost HUD", trophy: false },
   { id: "speedometer", label: "Speedometer", trophy: false },
-  { id: "theme", label: "Theme", trophy: false },
   { id: "navigation", label: "Destination Navigation", trophy: false },
   { id: "save_tracks", label: "Save ride tracks locally", trophy: false },
   { id: "battery_modeling", label: "Improve battery modeling", trophy: true },
@@ -367,11 +371,6 @@ export const RIDE_INFO_MODAL_COPY: Record<InfoModalId, InfoModalCopy> = {
     title: "Speedometer",
     body: () =>
       "We've found that the speedometers on the Veo devices are really hard to read, especially in the bright colorado sun. So, we provide ON by default both a classic and digital readout of your speed tracked by GPS. Disable if you don't like fun or convenience. Always keep your eyes on where you're going!",
-  },
-  theme: {
-    title: "Theme",
-    body: () =>
-      "Show the map in dark mode, light mode, or auto based on the time of day.",
   },
   navigation: {
     title: "Destination Navigation",
@@ -763,12 +762,6 @@ const SPEEDOMETER_CHOICES: readonly Choice<SpeedometerStyle>[] = [
   { value: "none", label: "None" },
 ];
 
-const THEME_CHOICES: readonly Choice<RideThemeChoice>[] = [
-  { value: "light", label: "☀️", ariaLabel: "Day" },
-  { value: "dark", label: "🌘", ariaLabel: "Night" },
-  { value: "auto", label: "auto", ariaLabel: "Auto (sunrise/sunset)" },
-];
-
 export interface RideOptionsPanelDeps {
   options: RideOptions;
   context: RideOptionsContext;
@@ -843,16 +836,8 @@ export function renderRideOptionsPanel(
       () => NOT_DISABLED,
       () => openInfo("speedometer"),
     ),
-    makeChoiceRow<RideThemeChoice>(
-      RIDE_OPTION_ROWS[2],
-      THEME_CHOICES,
-      (o) => o.theme,
-      (v) => setField({ ...current, theme: v }),
-      () => NOT_DISABLED,
-      () => openInfo("theme"),
-    ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[3],
+      RIDE_OPTION_ROWS[2],
       ON_OFF_CHOICES,
       (o) => (o.navigation ? "on" : "off"),
       (v) => setField({ ...current, navigation: v === "on" }),
@@ -860,7 +845,7 @@ export function renderRideOptionsPanel(
       () => openInfo("navigation"),
     ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[4],
+      RIDE_OPTION_ROWS[3],
       ON_OFF_CHOICES,
       (o) => (o.save_tracks ? "on" : "off"),
       (v) => setField({ ...current, save_tracks: v === "on" }),
@@ -868,7 +853,7 @@ export function renderRideOptionsPanel(
       () => openInfo("save_tracks"),
     ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[5],
+      RIDE_OPTION_ROWS[4],
       ON_OFF_CHOICES,
       (o) => (o.battery_modeling ? "on" : "off"),
       (v) => setField({ ...current, battery_modeling: v === "on" }),
@@ -876,7 +861,7 @@ export function renderRideOptionsPanel(
       () => openInfo("battery_modeling"),
     ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[6],
+      RIDE_OPTION_ROWS[5],
       ON_OFF_CHOICES,
       (o) => (o.nav_improvement ? "on" : "off"),
       (v) => setField({ ...current, nav_improvement: v === "on" }),
@@ -884,7 +869,7 @@ export function renderRideOptionsPanel(
       () => openInfo("nav_improvement"),
     ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[7],
+      RIDE_OPTION_ROWS[6],
       ON_OFF_CHOICES,
       (o) => (o.end_survey ? "on" : "off"),
       (v) => setField({ ...current, end_survey: v === "on" }),

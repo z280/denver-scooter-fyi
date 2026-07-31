@@ -583,6 +583,23 @@ const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
     points: rideModePoints,
   });
   container.append(panel.element);
+
+  // `renderRideOptionsPanel` deliberately never renders [NEXT >>] — that
+  // button belongs to ride-screen-select.ts / this integrator seam (see
+  // both modules' own module-boundary comments), not to the options-panel
+  // lane. Mirror `buildFallbackOptionsPanel`'s shape so Screen 2 has a
+  // working forward control in the real (non-test-fallback) build too.
+  const actions = document.createElement("div");
+  actions.className = "ride-wizard__actions";
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "login-btn";
+  nextBtn.textContent = "NEXT >>";
+  nextBtn.disabled = !hooks.canProceed;
+  nextBtn.addEventListener("click", hooks.onNext);
+  actions.append(nextBtn);
+  container.append(actions);
+
   return { dispose: () => panel.destroy() };
 };
 
