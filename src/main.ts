@@ -860,6 +860,7 @@ function wireIconography(): void {
         item(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — Standing scooter"),
         item(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
         item(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
+        item(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Trike — Three-wheel seated trike w/ cargo basket"),
       );
     } else {
       styleDetail.append(
@@ -929,7 +930,7 @@ function wireIconography(): void {
     legendEl.append(head("Icons"));
     if (style === "use") {
       legendEl.append(
-        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider or Apollo e-bike)"),
+        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider, Apollo e-bike or Trike)"),
         icon(k("use-standing", "off"), "Standing scooter (Astro)"),
       );
     } else if (style === "model") {
@@ -938,6 +939,7 @@ function wireIconography(): void {
         icon(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — standing scooter"),
         icon(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
         icon(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
+        icon(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Trike — three-wheel seated trike w/ cargo basket"),
         icon(k(c ? "model-unk" : "ml-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
       );
     } else if (iconData === "battery") {

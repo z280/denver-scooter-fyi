@@ -84,8 +84,9 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
     "Color dots by range" toggle — **on by default**, so dots show battery
     percentage out of the box — and a "Color dots by reliability" toggle.
     Device popups open with a turquoise (Veo-brand) header naming the model
-    — Veo Astro (standing), Cosmo (seated, no pedals), or Apollo (seated,
-    pedals, 2-passenger) — and corrected rider posture (keyed off
+    — Veo Astro (standing), Cosmo (seated, no pedals), Apollo (seated,
+    pedals, 2-passenger), or Trike (seated, three wheels, cargo basket) —
+    and corrected rider posture (keyed off
     `vehicle_use_type`, since Veo mislabels `form_factor`). An unrecognized
     model shows "Veo Unknown — Tell us!" with a one-tap report form
     (description + optional camera photo) that POSTs to the audit API.
