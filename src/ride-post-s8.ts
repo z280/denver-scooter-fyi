@@ -1,15 +1,52 @@
-// Screen 8 — post-ride cost summary + Rush Quit / New Destination / "I ended
-// my ride in Veo" (frontend plan, `ride-post.ts` row's S8 slice; master Part
-// 0 Screen 8; F4 Phase). Owner's copy, verbatim:
-//
-//   "End your ride in the Veo app. Note the cost and battery % of your
-//   scooter after ending, and don't forget to come back here though to
-//   contribute and earn points."
+// Screen 8 — post-ride cost summary + New Destination / "I ended my ride in
+// Veo" (frontend plan, `ride-post.ts` row's S8 slice; master Part 0 Screen 8;
+// F4 Phase, simplified in a later friction-reduction pass — see below).
 //   Ride time: __:__ (stop)
 //   Est Cost: Unlock $ + Per Min $ + Tax $ = Total $
 //   ** The Veo app is your bill **
-//   [Rush Quit] [New Destination] [I ended my ride in Veo]
+//   [New Destination] [I ended my ride in Veo]
 //
+// ---------------------------------------------------------------------------
+// FRICTION-REDUCTION REWRITE — dropped the rider-entered battery%/cost/
+// minutes form and the separate [Rush Quit] shortcut around it.
+//
+// Two real bugs motivated this, both confirmed against a live signed-in ride:
+//
+//  1. The dedicated "I ended my ride in Veo" form (`renderVeoForm`, since
+//     removed) re-ran this module's own `render()` on every keystroke into
+//     any of its three text fields. `render()` did `card.replaceChildren()`
+//     (destroying every existing input, including whichever one currently
+//     held focus) and then unconditionally focused the FIRST focusable
+//     element in the freshly rebuilt DOM — always the battery field, since it
+//     was first in tab order. Typing into the SECOND or THIRD field (cost,
+//     minutes) therefore yanked focus back to the battery field after every
+//     single character: those two fields were, in practice, nearly
+//     impossible to type into. `render()` here now only ever runs off a
+//     state change that isn't "the rider is mid-keystroke" (there are no
+//     more text fields on this screen at all), so this class of bug can't
+//     recur — see the module's remaining `render()` for the surviving
+//     (harmless, button-only) focus-on-render behavior.
+//  2. Because that form could almost never be completed, riders had no way
+//     to reach [Submit] — so `endTrackedRide` never fired, `endReported`
+//     never dispatched, and the ride never progressed to Screen 9/10's
+//     donation flow. [Rush Quit] (the "get me out of this form" escape
+//     hatch) explicitly dispatched `rushQuit` instead of `endReported` — by
+//     design skipping S9/S10 entirely — so even riders who escaped the
+//     broken form that way still never got asked to donate or earn points.
+//
+// The fix: stop asking for battery%/cost/minutes at all. The server already
+// derives its own end-of-ride battery reading from the GBFS feed
+// (`TrackedRide.gbfs_end_battery_percent`) independently of anything a rider
+// types, `total_cost_cents`/`reported_battery_percent`/`reported_minutes`/
+// `reported_plan` are all optional on `EndRideIn` (api.ts), and Screens 9/10
+// already implement exactly the "ask at the end, only if there's data"
+// donation flow this rewrite leans on — they were never the problem, Screen
+// 8's form was. One button now does what both old buttons did combined:
+// send the minimal end report (`buildMinimalEndBody` — same body as the old
+// [Rush Quit]) and ALWAYS dispatch `endReported` with fresh gate facts, so
+// every ride reaches the survey/eligibility check every other button used to
+// skip.
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // ARCHITECTURE — why this is a standalone floating module, not a
 // `registerRideScreen("8", …)` call into `ride-modal.ts`.
@@ -80,11 +117,9 @@ import { openRideModal as defaultOpenRideModal } from "./ride-modal.ts";
 import {
   currentTaxRate,
   estimateWithTax,
-  billableMinutes,
   formatCents,
   planFor,
   savedRatePlan,
-  toApiRatePlan,
   type RideCostBreakdown,
 } from "./ride-cost.ts";
 import {
@@ -94,7 +129,6 @@ import {
   type RideSessionDoc,
   type RideSessionStore,
 } from "./ride-session.ts";
-import { applyNativeNumericInput } from "./ride-keypad.ts";
 import { openTrackStore } from "./track-store.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 
@@ -140,83 +174,18 @@ export function screen8CostBreakdown(
   return estimateWithTax(planFor(planKey ?? "resident"), elapsedMs, taxRate);
 }
 
-/** §10's `reported_minutes` prefill: `billableMinutes` (ride-cost.ts,
- *  per-started-minute ceil), clamped to the field's own `≤1440` bound —
- *  `billableMinutes` alone can't exceed that for any ride inside the 3 h
- *  watch window, but a stalled reload recovering hours later must not hand
- *  the API a value it will 422 on. */
-export function prefillReportedMinutes(elapsedMs: number): number {
-  return Math.min(1440, billableMinutes(elapsedMs));
-}
-
-export function isValidBatteryPercent(n: number): boolean {
-  return Number.isInteger(n) && n >= 0 && n <= 100;
-}
-
-/** §10: "integer minutes, ≤1440" (api.ts's own `EndRideIn.reported_minutes`
- *  doc). Lower-bounded at 1 — a ride that reached Screen 8 was, by
- *  construction, at least momentarily live. */
-export function isValidReportedMinutes(n: number): boolean {
-  return Number.isInteger(n) && n >= 1 && n <= 1440;
-}
-
-const DOLLARS_PATTERN = /^\d{1,6}(\.\d{1,2})?$/;
-
-/** Parse a rider-typed dollar amount ("4", "4.5", "4.50") into integer
- *  cents, or null for anything that isn't a plain non-negative amount with
- *  at most two decimal places (a manually re-typed Veo receipt, not a
- *  calculator expression). */
-export function parseDollarsToCents(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (!DOLLARS_PATTERN.test(trimmed)) return null;
-  const cents = Math.round(Number(trimmed) * 100);
-  return Number.isFinite(cents) && cents >= 0 ? cents : null;
-}
-
-/** The plan label up to the em dash — "Resident w/ VeoPlus Pass" rather than
- *  the full rate-detail string, which the cost breakdown above already
- *  itemizes. */
-export function planDisplayLabel(key: RatePlanKey): string {
-  return planFor(key).label.split(" — ")[0];
-}
-
-/** Rush Quit's minimal `PATCH /end` body — `EndRideIn`'s required fields
- *  only. Byte-for-byte the same shape as `ride-hud.ts`'s `minimalEndReport`
- *  (see the module header's ARCHITECTURE note on why this isn't imported). */
+/** The single end-report body every "I ended my ride in Veo" tap sends —
+ *  `EndRideIn`'s required fields only. No rider-entered battery/cost/minutes
+ *  (see the module header's FRICTION-REDUCTION REWRITE note for why): the
+ *  server derives its own end battery reading from the GBFS feed
+ *  independently, and the rest were optional fields nobody needs to type.
+ *  Byte-for-byte the same shape as `ride-hud.ts`'s `minimalEndReport` (see
+ *  the module header's ARCHITECTURE note on why this isn't imported). */
 export function buildMinimalEndBody(nowMs: number, fix: LngLat): EndRideIn {
   return {
     ended_at: new Date(nowMs).toISOString(),
     end_lat: fix.lat,
     end_lon: fix.lng,
-  };
-}
-
-export interface FullEndFormValues {
-  /** Rider-entered, 0–100. Feeds A2's `soc_end_percent`. */
-  batteryPercent: number;
-  /** Rider-entered, integer cents. Informational/stored — never the bill. */
-  costCents: number;
-  /** §10, prefilled from `prefillReportedMinutes`, rider-editable. */
-  reportedMinutes: number;
-  /** §10 — the rider's CURRENT rate plan, converted via `toApiRatePlan`
-   *  before it reaches the wire (the API vocabulary has no `_plus`
-   *  variants). */
-  planKey: RatePlanKey;
-}
-
-/** "I ended my ride in Veo"'s full `PATCH /end` body: the minimal fields plus
- *  the rider-entered battery/cost and the §10 fields. */
-export function buildFullEndBody(
-  nowMs: number,
-  fix: LngLat,
-  values: FullEndFormValues,
-): EndRideIn {
-  return {
-    ...buildMinimalEndBody(nowMs, fix),
-    reported_battery_percent: values.batteryPercent,
-    total_cost_cents: values.costCents,
-    reported_minutes: values.reportedMinutes,
-    reported_plan: toApiRatePlan(values.planKey),
   };
 }
 
@@ -404,20 +373,16 @@ function mountRideScreen8(
   backdrop.append(card);
 
   let destroyed = false;
-  let mode: "summary" | "veo-form" = "summary";
   let busy = false;
   let error: string | null = null;
-  let batteryRaw = "";
-  let costRaw = "";
-  let minutesRaw = "";
-  let minutesInitialized = false;
   let abortController: AbortController | null = null;
 
   // The clock/cost breakdown stay LIVE (the frontend plan: "the clock keeps
   // running while the rider finishes in Veo") until `stopClock()` freezes
   // them — either the rider's own (stop) press, or an implicit stop the
-  // instant they open/submit the Veo form without having pressed it first.
-  // Review fix: these used to be frozen the instant this modal mounted.
+  // instant they tap "I ended my ride in Veo" without having pressed it
+  // first. Review fix: these used to be frozen the instant this modal
+  // mounted.
   let stoppedElapsedMs: number | null = null;
   let clockTimer: number | undefined;
 
@@ -454,14 +419,8 @@ function mountRideScreen8(
 
   function render(): void {
     card.replaceChildren();
-    if (mode === "summary") {
-      card.append(renderSummary());
-    } else {
-      card.append(renderVeoForm());
-    }
-    const focusTarget = card.querySelector<HTMLElement>(
-      "button:not([disabled]), input:not([disabled])",
-    );
+    card.append(renderSummary());
+    const focusTarget = card.querySelector<HTMLElement>("button:not([disabled])");
     try {
       focusTarget?.focus();
     } catch {
@@ -486,7 +445,7 @@ function mountRideScreen8(
       el(
         "p",
         "ride-modal__hint",
-        "Note the cost and battery % of your scooter after ending, and don't forget to come back here though to contribute and earn points.",
+        "End your ride in the Veo app, then tap below to check in — if you saved your ride tracks, you'll have the chance to donate them for leaderboard points.",
       ),
     );
 
@@ -531,17 +490,14 @@ function mountRideScreen8(
     }
 
     const actions = el("div", "ride-wizard__actions ride-post-s8__actions");
-    const rushBtn = actionButton("Rush Quit", "login-btn--secondary", () =>
-      void onRushQuit(),
-    );
     const newDestBtn = actionButton("New Destination", "login-btn--secondary", () =>
       onNewDestination(),
     );
-    const veoBtn = actionButton("I ended my ride in Veo", "", () =>
-      onOpenVeoForm(),
+    const endBtn = actionButton("I ended my ride in Veo", "", () =>
+      void onEndRide(),
     );
-    for (const btn of [rushBtn, newDestBtn, veoBtn]) btn.disabled = busy;
-    actions.append(rushBtn, newDestBtn, veoBtn);
+    for (const btn of [newDestBtn, endBtn]) btn.disabled = busy;
+    actions.append(newDestBtn, endBtn);
     wrap.append(actions);
 
     return wrap;
@@ -574,10 +530,18 @@ function mountRideScreen8(
     return deps.getLastFix() ?? deps.locate.current();
   }
 
-  // ---------------- Rush Quit ----------------
+  // ---------------- "I ended my ride in Veo" ----------------
 
-  async function onRushQuit(): Promise<void> {
+  /** The single end-of-ride action (formerly split across "Rush Quit" —
+   *  minimal report, explicitly skipping S9/S10 — and a separate "I ended my
+   *  ride in Veo" form that collected battery/cost/minutes before doing the
+   *  same plus `endReported`). See the module header's FRICTION-REDUCTION
+   *  REWRITE note: there is no more form to shortcut past, so there is only
+   *  one action now, and it always checks for donatable data afterward. */
+  async function onEndRide(): Promise<void> {
     if (busy || !rideId) return;
+    // Implicit stop for a rider who never pressed (stop).
+    stopClock();
     const fix = resolveEndFix();
     if (!fix) {
       error =
@@ -608,10 +572,9 @@ function mountRideScreen8(
       // proceed exactly as on success.
     }
     if (destroyed) return;
-    // No S9/S10 — the sealed track stays in IDB, undonated. The `dispatch`
-    // triggers `wireRideScreen8`'s subscribe callback, which unmounts this
-    // screen once the phase leaves `ending(8)`.
-    deps.session.dispatch({ type: "rushQuit" });
+    const facts = await deps.getGateFacts(rideId);
+    if (destroyed) return;
+    deps.session.dispatch({ type: "endReported", facts });
   }
 
   // ---------------- New Destination ----------------
@@ -627,177 +590,20 @@ function mountRideScreen8(
     deps.openRideModal({ fastForwardTo: "3" });
   }
 
-  // ---------------- "I ended my ride in Veo" ----------------
-
-  function onOpenVeoForm(): void {
-    if (busy) return;
-    // Implicit stop for a rider who never pressed (stop) — see the module's
-    // clock review-fix note on `mountRideScreen8`. A no-op once already
-    // stopped.
-    stopClock();
-    if (!minutesInitialized) {
-      minutesRaw = String(prefillReportedMinutes(liveElapsedMs()));
-      minutesInitialized = true;
-    }
-    mode = "veo-form";
-    error = null;
-    render();
-  }
-
-  function onBackToSummary(): void {
-    if (busy) return;
-    mode = "summary";
-    error = null;
-    render();
-  }
-
-  function parsedBattery(): number | null {
-    if (batteryRaw === "") return null;
-    const n = Number.parseInt(batteryRaw, 10);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function parsedMinutes(): number | null {
-    if (minutesRaw === "") return null;
-    const n = Number.parseInt(minutesRaw, 10);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function canSubmitVeoForm(): boolean {
-    const battery = parsedBattery();
-    const minutes = parsedMinutes();
-    const cents = parseDollarsToCents(costRaw);
-    return (
-      battery !== null &&
-      isValidBatteryPercent(battery) &&
-      minutes !== null &&
-      isValidReportedMinutes(minutes) &&
-      cents !== null
-    );
-  }
-
-  function renderVeoForm(): HTMLElement {
-    const wrap = el("div", "ride-post-s8__body ride-post-s8__form");
-    const title = el("h2", "ride-modal__lede", "I ended my ride in Veo");
-    title.id = "ride-post-s8-title";
-    wrap.append(title);
-    wrap.append(
-      el(
-        "p",
-        "ride-modal__hint",
-        `Rate plan: ${planDisplayLabel(planKey)}`,
-      ),
-    );
-
-    const batteryField = numericField(
-      "End battery %",
-      batteryRaw,
-      "0–100, from the Veo app",
-      (value) => {
-        batteryRaw = value.replace(/\D+/g, "").slice(0, 3);
-        render();
-      },
-    );
-    const costField = currencyField(
-      "Actual cost",
-      costRaw,
-      "Total shown in the Veo app receipt",
-      (value) => {
-        costRaw = value;
-        render();
-      },
-    );
-    const minutesField = numericField(
-      "Ride time reported (minutes)",
-      minutesRaw,
-      "Prefilled from this device's clock — edit if the Veo app disagrees",
-      (value) => {
-        minutesRaw = value.replace(/\D+/g, "").slice(0, 4);
-        render();
-      },
-    );
-    wrap.append(batteryField.wrap, costField.wrap, minutesField.wrap);
-
-    if (error) {
-      const err = el("p", "ride-post-s8__error", error);
-      err.setAttribute("role", "status");
-      err.setAttribute("aria-live", "polite");
-      wrap.append(err);
-    }
-    if (busy) {
-      wrap.append(el("p", "ride-modal__hint", "Working…"));
-    }
-
-    const actions = el("div", "ride-wizard__actions ride-post-s8__actions");
-    const backBtn = actionButton("Back", "login-btn--secondary", () =>
-      onBackToSummary(),
-    );
-    backBtn.disabled = busy;
-    const submitBtn = actionButton("Submit", "", () => void onSubmitVeoForm());
-    submitBtn.disabled = busy || !canSubmitVeoForm();
-    actions.append(backBtn, submitBtn);
-    wrap.append(actions);
-
-    return wrap;
-  }
-
-  async function onSubmitVeoForm(): Promise<void> {
-    if (busy || !rideId || !canSubmitVeoForm()) return;
-    const battery = parsedBattery();
-    const minutes = parsedMinutes();
-    const cents = parseDollarsToCents(costRaw);
-    if (battery === null || minutes === null || cents === null) return;
-    const fix = resolveEndFix();
-    if (!fix) {
-      error =
-        "We need a GPS fix to end your ride — check location services and try again.";
-      render();
-      return;
-    }
-    busy = true;
-    error = null;
-    render();
-    abortController = new AbortController();
-    const body = buildFullEndBody(deps.now(), fix, {
-      batteryPercent: battery,
-      costCents: cents,
-      reportedMinutes: minutes,
-      planKey,
-    });
-    try {
-      await deps.endTrackedRide(rideId, body, abortController.signal);
-    } catch (e) {
-      if (destroyed) return;
-      if (!isAlreadyReportedError(e)) {
-        busy = false;
-        error = describeEndReportError(e);
-        render();
-        return;
-      }
-      // Already reported (see onRushQuit's identical branch for why this is
-      // treated as success, not failure).
-    }
-    if (destroyed) return;
-    const facts = await deps.getGateFacts(rideId);
-    if (destroyed) return;
-    deps.session.dispatch({ type: "endReported", facts });
-  }
-
   // Attach BEFORE the first render: `render()`'s own focus-on-mount only
   // works on a connected node — focusing a detached one is a silent no-op.
   deps.mountRoot.append(backdrop);
   render();
-  // Ticks the live clock/cost breakdown while summary mode is showing and
-  // unstopped — cleared by `stopClock()` and by `destroy()`.
+  // Ticks the live clock/cost breakdown while unstopped — cleared by
+  // `stopClock()` and by `destroy()`.
   clockTimer = window.setInterval(() => {
-    if (destroyed || mode !== "summary" || stoppedElapsedMs !== null) return;
+    if (destroyed || stoppedElapsedMs !== null) return;
     render();
   }, 1000);
   const unFix = deps.locate.onFix(() => {
     if (destroyed || busy) return;
-    // A late fix can only ever clear the "we need a GPS fix" error — typed
-    // form values are untouched by a full `render()`, and the cost
-    // breakdown/clock are already live (or already frozen), so this is
+    // A late fix can only ever clear the "we need a GPS fix" error — the
+    // cost breakdown/clock are already live (or already frozen), so this is
     // always safe and cheap.
     if (error && error.startsWith("We need a GPS fix")) {
       error = null;
@@ -845,60 +651,6 @@ function actionButton(
   btn.type = "button";
   btn.addEventListener("click", onClick);
   return btn;
-}
-
-function numericField(
-  label: string,
-  value: string,
-  hint: string,
-  onInput: (value: string) => void,
-): { wrap: HTMLElement; input: HTMLInputElement } {
-  const field = el("label", "ride-post-s8__field");
-  field.append(el("span", "ride-post-s8__field-label", label));
-  const input = el("input", "select") as HTMLInputElement;
-  input.type = "text";
-  input.value = value;
-  input.setAttribute("aria-label", label);
-  applyNativeNumericInput(input, { maxLength: 4 });
-  input.addEventListener("input", () => onInput(input.value));
-  field.append(input, el("span", "ride-post-s8__field-hint", hint));
-  return { wrap: field, input };
-}
-
-/** Digits + at most one decimal point — `sanitizeNumeric` (ride-keypad.ts)
- *  strips ALL non-digits, which would make a dollar amount uneditable, so
- *  this field gets its own light filter instead. */
-function sanitizeCurrencyInput(raw: string): string {
-  const cleaned = raw.replace(/[^\d.]/g, "");
-  const firstDot = cleaned.indexOf(".");
-  if (firstDot === -1) return cleaned;
-  return (
-    cleaned.slice(0, firstDot + 1) +
-    cleaned.slice(firstDot + 1).replace(/\./g, "")
-  );
-}
-
-function currencyField(
-  label: string,
-  value: string,
-  hint: string,
-  onInput: (value: string) => void,
-): { wrap: HTMLElement; input: HTMLInputElement } {
-  const field = el("label", "ride-post-s8__field");
-  field.append(el("span", "ride-post-s8__field-label", label));
-  const input = el("input", "select") as HTMLInputElement;
-  input.type = "text";
-  input.inputMode = "decimal";
-  input.autocomplete = "off";
-  input.placeholder = "0.00";
-  input.value = value;
-  input.setAttribute("aria-label", label);
-  input.addEventListener("input", () => {
-    input.value = sanitizeCurrencyInput(input.value);
-    onInput(input.value);
-  });
-  field.append(input, el("span", "ride-post-s8__field-hint", hint));
-  return { wrap: field, input };
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(

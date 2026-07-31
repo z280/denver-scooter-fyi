@@ -1,15 +1,15 @@
 // @vitest-environment happy-dom
 //
-// Screen 8 — post-ride cost summary + Rush Quit / New Destination / "I ended
-// my ride in Veo". Covers: the cost breakdown renders exactly what
-// `estimateWithTax` returns (every rate plan, including equity's free-minutes
-// credit) rather than re-deriving the math; Rush Quit sends the minimal
-// `PATCH /end` and transitions straight to `done` with no further screens
-// (plus its 409-is-success and GPS-required branches); New Destination sends
-// NO `PATCH /end` and transitions to `wizard:3` with the same rideId; the
-// Veo-ended form's validation (battery 0–100, reported_minutes prefill+edit,
-// reported_plan conversion) and its transition to survey/eligibility/done
-// via `nextAfterEnd`'s own gates.
+// Screen 8 — post-ride cost summary + New Destination / "I ended my ride in
+// Veo". Covers: the cost breakdown renders exactly what `estimateWithTax`
+// returns (every rate plan, including equity's free-minutes credit) rather
+// than re-deriving the math; "I ended my ride in Veo" sends the minimal
+// `PATCH /end` (no rider-entered battery/cost/minutes — see ride-post-s8.ts's
+// FRICTION-REDUCTION REWRITE note) and ALWAYS checks gate facts afterward,
+// transitioning to survey/eligibility/done via the same gates `nextAfterEnd`
+// always used (plus its 409-is-success and GPS-required branches); New
+// Destination sends NO `PATCH /end` and transitions to `wizard:3` with the
+// same rideId.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,17 +25,11 @@ import {
   type RideSessionStore,
 } from "./ride-session.ts";
 import {
-  buildFullEndBody,
   buildMinimalEndBody,
   describeEndReportError,
   formatFrozenClock,
   frozenElapsedMs,
   isAlreadyReportedError,
-  isValidBatteryPercent,
-  isValidReportedMinutes,
-  parseDollarsToCents,
-  planDisplayLabel,
-  prefillReportedMinutes,
   screen8CostBreakdown,
   wireRideScreen8,
   type LocateLike,
@@ -65,7 +59,7 @@ const DEVICE: RideSessionSelectedDevice = {
   vehicleIdentifier: "a1b2c3d4e5f60701",
   plate: "1234567",
   model: "cosmo",
-  batteryConfirmed: 42,
+  batteryConfirmed: null,
 };
 
 const FIX: LngLat = { lng: -104.99, lat: 39.74, accuracy: 5 };
@@ -148,13 +142,20 @@ function fakeTrackedRide(overrides: Partial<TrackedRide> = {}): TrackedRide {
 function wire(
   session: RideSessionStore,
   overrides: Partial<Omit<RideScreen8Deps, "session">> = {},
-): { unwire: () => void; endTrackedRide: ReturnType<typeof vi.fn> } {
+): {
+  unwire: () => void;
+  endTrackedRide: ReturnType<typeof vi.fn>;
+  getGateFacts: ReturnType<typeof vi.fn>;
+} {
   const defaultEndTrackedRide = vi.fn(
     (
       _rideId: string,
       _body: unknown,
       _signal?: AbortSignal,
     ): Promise<TrackedRide> => Promise.resolve(fakeTrackedRide()),
+  );
+  const defaultGetGateFacts = vi.fn(
+    async (): Promise<RideGateFacts> => ({ hasWaypoints: false }),
   );
   // Whichever function actually reaches `wireRideScreen8` below (the
   // override when the caller passes one, the local default otherwise) is
@@ -163,6 +164,9 @@ function wire(
   const endTrackedRide =
     (overrides.endTrackedRide as ReturnType<typeof vi.fn> | undefined) ??
     defaultEndTrackedRide;
+  const getGateFacts =
+    (overrides.getGateFacts as ReturnType<typeof vi.fn> | undefined) ??
+    defaultGetGateFacts;
   const container = document.createElement("div");
   document.body.append(container);
   const unwire = wireRideScreen8({
@@ -170,14 +174,14 @@ function wire(
     locate: fakeLocate(FIX),
     endTrackedRide: defaultEndTrackedRide,
     openRideModal: vi.fn(),
-    getGateFacts: async () => ({ hasWaypoints: false }) as RideGateFacts,
+    getGateFacts: defaultGetGateFacts,
     now: () => STARTED_AT_MS + 125_000, // 2:05 elapsed
     taxRate: () => 0.08,
     ratePlan: () => "resident",
     mountRoot: container,
     ...overrides,
   });
-  return { unwire, endTrackedRide };
+  return { unwire, endTrackedRide, getGateFacts };
 }
 
 function root(): HTMLElement {
@@ -279,71 +283,8 @@ describe("screen8CostBreakdown — reuses estimateWithTax, never re-derives it",
   });
 });
 
-describe("prefillReportedMinutes", () => {
-  it("delegates to billableMinutes (per-started-minute ceil)", () => {
-    expect(prefillReportedMinutes(125_000)).toBe(3);
-    expect(prefillReportedMinutes(1_000)).toBe(1);
-  });
-  it("clamps to the field's 1440 ceiling", () => {
-    expect(prefillReportedMinutes(2_000 * 60_000)).toBe(1440);
-  });
-});
-
-describe("validation", () => {
-  it.each([
-    [0, true],
-    [100, true],
-    [42, true],
-    [-1, false],
-    [101, false],
-    [50.5, false],
-  ])("isValidBatteryPercent(%s) -> %s", (n, expected) => {
-    expect(isValidBatteryPercent(n)).toBe(expected);
-  });
-
-  it.each([
-    [1, true],
-    [1440, true],
-    [3, true],
-    [0, false],
-    [1441, false],
-    [-5, false],
-    [3.5, false],
-  ])("isValidReportedMinutes(%s) -> %s", (n, expected) => {
-    expect(isValidReportedMinutes(n)).toBe(expected);
-  });
-
-  it.each([
-    ["4", 400],
-    ["4.5", 450],
-    ["4.50", 450],
-    ["0", 0],
-    ["0.00", 0],
-    ["  4.25  ", 425],
-  ])("parseDollarsToCents(%s) -> %d", (raw, expectedCents) => {
-    expect(parseDollarsToCents(raw)).toBe(expectedCents);
-  });
-
-  it.each(["", "abc", "-4", "4.999", "4.5.5", "1e5"])(
-    "parseDollarsToCents rejects %s",
-    (raw) => {
-      expect(parseDollarsToCents(raw)).toBeNull();
-    },
-  );
-});
-
-describe("planDisplayLabel", () => {
-  it("trims the rate-detail suffix", () => {
-    expect(planDisplayLabel("resident")).toBe("Resident");
-    expect(planDisplayLabel("resident_plus")).toBe(
-      "Resident w/ VeoPlus Pass",
-    );
-    expect(planDisplayLabel("equity")).toBe("Equity program");
-  });
-});
-
-describe("request body builders", () => {
-  it("buildMinimalEndBody: required fields only", () => {
+describe("buildMinimalEndBody: required fields only", () => {
+  it("carries no rider-entered battery/cost/minutes fields", () => {
     const body = buildMinimalEndBody(Date.parse("2026-07-29T12:30:00Z"), FIX);
     expect(body).toEqual({
       ended_at: "2026-07-29T12:30:00.000Z",
@@ -354,34 +295,6 @@ describe("request body builders", () => {
     expect(body.total_cost_cents).toBeUndefined();
     expect(body.reported_minutes).toBeUndefined();
     expect(body.reported_plan).toBeUndefined();
-  });
-
-  it("buildFullEndBody: minimal fields plus the rider-entered + §10 fields, plan converted", () => {
-    const body = buildFullEndBody(Date.parse("2026-07-29T12:30:00Z"), FIX, {
-      batteryPercent: 55,
-      costCents: 725,
-      reportedMinutes: 22,
-      planKey: "resident_plus",
-    });
-    expect(body).toEqual({
-      ended_at: "2026-07-29T12:30:00.000Z",
-      end_lat: FIX.lat,
-      end_lon: FIX.lng,
-      reported_battery_percent: 55,
-      total_cost_cents: 725,
-      reported_minutes: 22,
-      reported_plan: "resident", // _plus stripped — the API has no _plus variant
-    });
-  });
-
-  it("buildFullEndBody converts equity straight through", () => {
-    const body = buildFullEndBody(0, FIX, {
-      batteryPercent: 10,
-      costCents: 0,
-      reportedMinutes: 5,
-      planKey: "equity",
-    });
-    expect(body.reported_plan).toBe("equity");
   });
 });
 
@@ -443,7 +356,7 @@ describe("wireRideScreen8 — mount/unmount off phaseOf(doc)", () => {
     const session = sessionAtEnding();
     const { unwire } = wire(session);
     expect(queryRoot()).not.toBeNull();
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
     expect(session.current()?.state).toBe("done");
     expect(queryRoot()).toBeNull();
@@ -480,13 +393,21 @@ describe("Screen 8 renders the frozen clock + cost breakdown", () => {
       unwire();
     }
   });
+
+  it("never asks for a plate, battery %, or actual cost — the friction-reduction rewrite dropped rider data entry", () => {
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+    expect(root().querySelectorAll("input").length).toBe(0);
+    expect(root().textContent).not.toMatch(/battery/i);
+    expect(root().textContent).not.toMatch(/Actual cost/);
+    unwire();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // Review fix regression: the clock/cost breakdown used to freeze the instant
 // this modal mounted. The frontend plan is explicit that the clock keeps
-// running while the rider finishes in Veo, and `(stop)` is a real control
-// that freezes the value used to prefill reported minutes — not literal text.
+// running while the rider finishes in Veo, and `(stop)` is a real control.
 // ---------------------------------------------------------------------------
 
 describe("Screen 8's clock stays live until (stop) is pressed", () => {
@@ -528,7 +449,7 @@ describe("Screen 8's clock stays live until (stop) is pressed", () => {
     unwire();
   });
 
-  it("opening the Veo form implicitly stops the clock if the rider never pressed Stop", async () => {
+  it("tapping \"I ended my ride in Veo\" implicitly stops the clock if the rider never pressed Stop", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(STARTED_AT_MS + 125_000);
     const session = sessionAtEnding();
@@ -536,29 +457,22 @@ describe("Screen 8's clock stays live until (stop) is pressed", () => {
 
     await vi.advanceTimersByTimeAsync(60_000); // 3:05 elapsed by the time they tap
     buttonWithText("I ended my ride in Veo").click();
-
-    // §10's minutes prefill reflects the elapsed AT THE MOMENT the form
-    // opened (185_000ms -> 4 billable minutes: ceil(185s / 60) = 4), not a
-    // stale mount-time value.
-    const minutesInput = [...root().querySelectorAll("input")].find(
-      (i) => i.getAttribute("aria-label") === "Ride time reported (minutes)",
-    ) as HTMLInputElement;
-    expect(minutesInput.value).toBe(String(prefillReportedMinutes(185_000)));
+    expect(root().textContent).toContain("Working…");
 
     unwire();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Rush Quit
+// "I ended my ride in Veo" — the single end-of-ride action
 // ---------------------------------------------------------------------------
 
-describe("[Rush Quit]", () => {
-  it("sends the minimal PATCH /end and transitions straight to done, no S9/S10", async () => {
+describe('["I ended my ride in Veo"]', () => {
+  it("sends the minimal PATCH /end and checks gate facts, transitioning to done when there's nothing to survey/donate", async () => {
     const session = sessionAtEnding();
-    const { unwire, endTrackedRide } = wire(session);
+    const { unwire, endTrackedRide, getGateFacts } = wire(session);
 
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
 
     expect(endTrackedRide).toHaveBeenCalledTimes(1);
@@ -569,6 +483,7 @@ describe("[Rush Quit]", () => {
       end_lat: FIX.lat,
       end_lon: FIX.lng,
     });
+    expect(getGateFacts).toHaveBeenCalledWith(RIDE_ID);
 
     const doc = session.current();
     expect(doc?.state).toBe("done");
@@ -577,11 +492,41 @@ describe("[Rush Quit]", () => {
     unwire();
   });
 
+  it("transitions to eligibility(10) when the gate facts report waypoints", async () => {
+    const session = sessionAtEnding(); // end_survey off, no route -> S9 skipped
+    const { unwire } = wire(session, {
+      getGateFacts: vi.fn(async () => ({ hasWaypoints: true })),
+    });
+
+    buttonWithText("I ended my ride in Veo").click();
+    await flush();
+
+    const doc = session.current();
+    expect(doc?.state).toBe("eligibility");
+    expect(doc?.screen).toBe("10");
+    unwire();
+  });
+
+  it("transitions to survey(9) when the scooter-feedback pane gates on", async () => {
+    const session = sessionAtEnding({ end_survey: true });
+    const { unwire } = wire(session, {
+      getGateFacts: vi.fn(async () => ({ hasWaypoints: false })),
+    });
+
+    buttonWithText("I ended my ride in Veo").click();
+    await flush();
+
+    const doc = session.current();
+    expect(doc?.state).toBe("survey");
+    expect(doc?.screen).toBe("9");
+    unwire();
+  });
+
   it("without a GPS fix, shows an error and never calls endTrackedRide", async () => {
     const session = sessionAtEnding();
     const { unwire, endTrackedRide } = wire(session, { locate: fakeLocate(null) });
 
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
 
     expect(endTrackedRide).not.toHaveBeenCalled();
@@ -606,7 +551,7 @@ describe("[Rush Quit]", () => {
       getLastFix,
     });
 
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
 
     expect(getLastFix).toHaveBeenCalled();
@@ -625,7 +570,7 @@ describe("[Rush Quit]", () => {
       ),
     });
 
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
 
     expect(session.current()?.state).toBe("done");
@@ -640,7 +585,7 @@ describe("[Rush Quit]", () => {
       ),
     });
 
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
 
     expect(session.current()?.state).toBe("ending");
@@ -649,7 +594,7 @@ describe("[Rush Quit]", () => {
 
     // Retry works once the transient failure clears.
     endTrackedRide.mockResolvedValueOnce(fakeTrackedRide());
-    buttonWithText("Rush Quit").click();
+    buttonWithText("I ended my ride in Veo").click();
     await flush();
     expect(session.current()?.state).toBe("done");
     unwire();
@@ -688,179 +633,6 @@ describe("[New Destination]", () => {
     const { unwire } = wire(session);
     buttonWithText("New Destination").click();
     expect(session.current()?.dest).toBeNull();
-    unwire();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// "I ended my ride in Veo"
-// ---------------------------------------------------------------------------
-
-describe('["I ended my ride in Veo"]', () => {
-  function openForm(): void {
-    buttonWithText("I ended my ride in Veo").click();
-  }
-
-  function fillField(label: string, value: string): void {
-    const input = [...root().querySelectorAll<HTMLInputElement>("input")].find(
-      (i) => i.getAttribute("aria-label") === label,
-    );
-    if (!input) throw new Error(`field ${JSON.stringify(label)} not found`);
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-
-  it("prefills reported minutes from the frozen clock via billableMinutes", () => {
-    const session = sessionAtEnding();
-    const { unwire } = wire(session);
-    openForm();
-    const minutesInput = [...root().querySelectorAll<HTMLInputElement>("input")].find(
-      (i) => i.getAttribute("aria-label") === "Ride time reported (minutes)",
-    );
-    expect(minutesInput?.value).toBe("3"); // 2:05 elapsed -> billableMinutes = 3
-    unwire();
-  });
-
-  it("Submit stays disabled until battery, cost, and minutes are all valid", () => {
-    const session = sessionAtEnding();
-    const { unwire } = wire(session);
-    openForm();
-    // The form fully rebuilds on every keystroke (`render()` replaces the
-    // card's children), so a cached button reference goes stale the moment
-    // ANY field changes — re-query fresh after each edit.
-    // Minutes is prefilled+valid already; battery/cost start empty.
-    expect(buttonWithText("Submit").disabled).toBe(true);
-
-    fillField("End battery %", "55");
-    expect(buttonWithText("Submit").disabled).toBe(true); // cost still empty
-
-    fillField("Actual cost", "4.25");
-    expect(buttonWithText("Submit").disabled).toBe(false);
-
-    fillField("End battery %", "150"); // out of 0-100 range
-    expect(buttonWithText("Submit").disabled).toBe(true);
-
-    fillField("End battery %", "55");
-    expect(buttonWithText("Submit").disabled).toBe(false);
-
-    fillField("Ride time reported (minutes)", "0"); // below the 1-minute floor
-    expect(buttonWithText("Submit").disabled).toBe(true);
-
-    fillField("Ride time reported (minutes)", "17");
-    expect(buttonWithText("Submit").disabled).toBe(false);
-    unwire();
-  });
-
-  it("rider-editable: changing the prefilled minutes changes what gets submitted", async () => {
-    const session = sessionAtEnding();
-    const { unwire, endTrackedRide } = wire(session);
-    openForm();
-    fillField("End battery %", "60");
-    fillField("Actual cost", "3.50");
-    fillField("Ride time reported (minutes)", "9");
-
-    buttonWithText("Submit").click();
-    await flush();
-
-    const [, body] = endTrackedRide.mock.calls[0];
-    expect(body).toMatchObject({
-      reported_battery_percent: 60,
-      total_cost_cents: 350,
-      reported_minutes: 9,
-    });
-    unwire();
-  });
-
-  it("converts the current rate plan via toApiRatePlan (no _plus vocabulary reaches the wire)", async () => {
-    const session = sessionAtEnding();
-    const { unwire, endTrackedRide } = wire(session, { ratePlan: () => "visitor_plus" });
-    openForm();
-    fillField("End battery %", "40");
-    fillField("Actual cost", "9.00");
-    buttonWithText("Submit").click();
-    await flush();
-
-    const [, body] = endTrackedRide.mock.calls[0];
-    expect(body).toMatchObject({ reported_plan: "visitor" });
-    unwire();
-  });
-
-  it("on submit: calls endTrackedRide with all fields, then transitions to eligibility(10) when waypoints exist", async () => {
-    const session = sessionAtEnding({ end_survey: false }); // scooter pane off, no route -> S9 skipped
-    const { unwire, endTrackedRide } = wire(session, {
-      getGateFacts: async () => ({ hasWaypoints: true }),
-    });
-    openForm();
-    fillField("End battery %", "72");
-    fillField("Actual cost", "5.00");
-    buttonWithText("Submit").click();
-    await flush();
-
-    expect(endTrackedRide).toHaveBeenCalledTimes(1);
-    const doc = session.current();
-    expect(doc?.state).toBe("eligibility");
-    expect(doc?.screen).toBe("10");
-    unwire();
-  });
-
-  it("transitions straight to done when no survey pane gates on and no waypoints exist", async () => {
-    const session = sessionAtEnding({ end_survey: false });
-    const { unwire } = wire(session, {
-      getGateFacts: async () => ({ hasWaypoints: false }),
-    });
-    openForm();
-    fillField("End battery %", "72");
-    fillField("Actual cost", "5.00");
-    buttonWithText("Submit").click();
-    await flush();
-
-    expect(session.current()?.state).toBe("done");
-    unwire();
-  });
-
-  it("transitions to survey(9) when the scooter-feedback pane gates on", async () => {
-    const session = sessionAtEnding({ end_survey: true });
-    const { unwire } = wire(session, {
-      getGateFacts: async () => ({ hasWaypoints: false }),
-    });
-    openForm();
-    fillField("End battery %", "72");
-    fillField("Actual cost", "5.00");
-    buttonWithText("Submit").click();
-    await flush();
-
-    const doc = session.current();
-    expect(doc?.state).toBe("survey");
-    expect(doc?.screen).toBe("9");
-    unwire();
-  });
-
-  it("Back returns to the summary view without submitting anything", () => {
-    const session = sessionAtEnding();
-    const { unwire, endTrackedRide } = wire(session);
-    openForm();
-    fillField("End battery %", "10");
-    buttonWithText("Back").click();
-    expect(endTrackedRide).not.toHaveBeenCalled();
-    expect(root().textContent).toContain("End your ride in the Veo app");
-    unwire();
-  });
-
-  it("a 409 on submit is treated as already-reported and still advances the phase", async () => {
-    const session = sessionAtEnding({ end_survey: false });
-    const { unwire } = wire(session, {
-      getGateFacts: async () => ({ hasWaypoints: false }),
-      endTrackedRide: vi.fn(() =>
-        Promise.reject(new ApiError("already ended", "HTTP_ERROR", { status: 409 })),
-      ),
-    });
-    openForm();
-    fillField("End battery %", "72");
-    fillField("Actual cost", "5.00");
-    buttonWithText("Submit").click();
-    await flush();
-
-    expect(session.current()?.state).toBe("done");
     unwire();
   });
 });

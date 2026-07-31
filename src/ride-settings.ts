@@ -1,12 +1,14 @@
 // Screen 2's OPTIONS PANEL (the right pane in landscape / bottom pane in
-// portrait, when the rider isn't mid-plate-entry): the seven Ride Mode
-// Options controls, their cross-option cascades, the Usuals (Screen 2.5)
-// CRUD, and all seven (?) info modals — owner copy, verbatim, from
+// portrait, when the rider isn't mid-plate-entry): the two Ride Mode Options
+// controls, their cross-option cascades, the Usuals (Screen 2.5) CRUD, and
+// their info modals — owner copy, verbatim, from
 // `docs/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 2". This module owns no
 // screen registration (`ride-screen-select.ts` registers Screens 2 / 2.5 and
-// owns the device-disambiguation list, the plate/battery confirm fields, and
-// the [NEXT >>] button); it exports a mountable panel plus the pure logic a
+// owns the device-disambiguation list, the plate confirm field, and the
+// [NEXT >>] button); it exports a mountable panel plus the pure logic a
 // consumer wires into the ride session.
+//
+// FRICTION-REDUCTION PASS — down from the original eight rows to two.
 //
 // No Theme row: the app already has two live, ambient theme fixtures that
 // cover both surfaces this panel could ever reach — `theme.ts`'s ThemeControl
@@ -19,16 +21,41 @@
 // wired up for real: a redundant, confusing third theme control is worse than
 // none.
 //
+// No Est. Veo Cost HUD / Speedometer rows either: both `RideOptions` fields
+// were never actually read by `ride-hud.ts` — the live HUD's speedometer and
+// cost display are unconditional, driven entirely by `ride-cost.ts`'s own
+// always-on rate-plan preference, completely independent of either toggle.
+// Turning "Est. Veo Cost HUD" off here did nothing; the live HUD showed cost
+// regardless of the ride's private/guest status either way. Pre-ride display
+// preferences that don't even do anything, asked before a rider has picked a
+// scooter, are pure friction — removed rather than wired up, same call as
+// Theme.
+//
+// No Improve battery modeling / Navigation Improvement / End ride survey
+// rows: asking a rider to pre-commit to donating data they don't have yet is
+// backwards. `RideOptions.battery_modeling`/`nav_improvement`/`end_survey`
+// still exist and still default `true` (`defaultRideOptions` below) — the
+// cross-option cascades in this same module still force them `false` for a
+// disqualifying ride (own device, tracking off, guest/private) exactly as
+// before — but nothing in Screen 2 asks about them anymore. Screens 9/10
+// (`ride-post-s9.ts`/`ride-post-s10.ts`) already ask "you have this data, do
+// you want to donate it?" at the END of the ride, which is the only point a
+// rider can actually answer that question honestly; a pre-ride toggle for it
+// was never anything but friction ahead of a decision nobody could make yet.
+//
 // Ownership boundary, spelled out because Screen 2's spec text runs both
 // halves together:
-//   - MINE: the 7 option rows + their (?) modals, the "🏆 Earns points for
-//     leaderboards" footnote, the [Usuals] button (visible only once the
-//     cached list is non-empty — the tap just calls `onOpenUsuals`; actually
-//     navigating to Screen 2.5 needs `RideScreenContext`, which only the
-//     registered screen module holds), defaults, cascades, and the Usuals
-//     CRUD wrappers around `api.ts`.
-//   - NOT MINE: the device list, the plate/battery confirm fields (and their
-//     numeric keypad wiring), [NEXT >>], and Screen 2.5's own list UI.
+//   - MINE: the 2 option rows + their (?) modals, the [Usuals] button
+//     (visible only once the cached list is non-empty — the tap just calls
+//     `onOpenUsuals`; actually navigating to Screen 2.5 needs
+//     `RideScreenContext`, which only the registered screen module holds),
+//     defaults, cascades, and the Usuals CRUD wrappers around `api.ts`. No
+//     more "🏆 Earns points for leaderboards" footnote either — it annotated
+//     the now-removed 🏆 rows specifically; Screens 9/10 carry their own
+//     points copy where it's actually relevant (after the ride, with real
+//     data to donate).
+//   - NOT MINE: the device list, the plate confirm field (and its numeric
+//     keypad wiring), [NEXT >>], and Screen 2.5's own list UI.
 //
 // State contract: `RideOptions` (the wire blob, defined in `api.ts`) is what
 // this module reads and writes. The session doc's `options` field
@@ -64,7 +91,6 @@ import {
   type RideOptions,
   type RideUsual,
   type RideUsualSettings,
-  type SpeedometerStyle,
 } from "./api.ts";
 import { rideModalRoot } from "./ride-modal.ts";
 
@@ -318,14 +344,7 @@ export async function loadRideModePoints(
 // below — never innerHTML.
 // ---------------------------------------------------------------------------
 
-export type InfoModalId =
-  | "cost_hud"
-  | "speedometer"
-  | "navigation"
-  | "save_tracks"
-  | "battery_modeling"
-  | "nav_improvement"
-  | "end_survey";
+export type InfoModalId = "navigation" | "save_tracks";
 
 export interface RideOptionRowMeta {
   id: InfoModalId;
@@ -340,38 +359,22 @@ export interface RideOptionRowMeta {
 /** Screen 2's option rows, in the owner's table order. Single source for the
  *  panel's row order/labels/trophy flags AND for the copy-fidelity tests. */
 export const RIDE_OPTION_ROWS: readonly RideOptionRowMeta[] = [
-  { id: "cost_hud", label: "Est. Veo Cost HUD", trophy: false },
-  { id: "speedometer", label: "Speedometer", trophy: false },
   { id: "navigation", label: "Destination Navigation", trophy: false },
   { id: "save_tracks", label: "Save ride tracks locally", trophy: false },
-  { id: "battery_modeling", label: "Improve battery modeling", trophy: true },
-  { id: "nav_improvement", label: "Navigation Improvement", trophy: true },
-  { id: "end_survey", label: "End ride survey", trophy: true },
 ];
-
-/** "🏆 Earns points for leaderboards" — the footnote under the option rows,
- *  verbatim. */
-export const RIDE_OPTIONS_FOOTNOTE = "🏆 Earns points for leaderboards";
 
 export interface InfoModalCopy {
   /** The ℹ modal's own heading — see the `RideOptionRowMeta.label` doc above
    *  for why this can differ from the row label. */
   title: string;
-  /** `points` is only read by the three 🏆 modals; the other five ignore it. */
+  /** Neither remaining modal reads this — kept on the shape for parity with
+   *  `openRideInfoModal`'s call sites (`ride-post-s9.ts`/`ride-post-s10.ts`
+   *  style "points" params elsewhere in the app), and so a future 🏆 row
+   *  doesn't need the signature to change again. */
   body(points: ResolvedRideModePoints): string;
 }
 
 export const RIDE_INFO_MODAL_COPY: Record<InfoModalId, InfoModalCopy> = {
-  cost_hud: {
-    title: `Estimate ${RIDE_PROVIDER_NAME} Cost HUD`,
-    body: () =>
-      `The app can show a Heads Up Display with your expected ride cost, based on what we know about the duration of your trip and the rate provided. This helps avoid end of ride surprises. Note: The ${RIDE_PROVIDER_NAME} app will always be the authority on ride cost.`,
-  },
-  speedometer: {
-    title: "Speedometer",
-    body: () =>
-      "We've found that the speedometers on the Veo devices are really hard to read, especially in the bright colorado sun. So, we provide ON by default both a classic and digital readout of your speed tracked by GPS. Disable if you don't like fun or convenience. Always keep your eyes on where you're going!",
-  },
   navigation: {
     title: "Destination Navigation",
     body: () =>
@@ -380,22 +383,7 @@ export const RIDE_INFO_MODAL_COPY: Record<InfoModalId, InfoModalCopy> = {
   save_tracks: {
     title: "Save Ride Tracks",
     body: () =>
-      "This option allows you to trace where you've been on the map display, and also save waypoints of your location to your local device. Tracking information is not persisted to Scooter.fyi unless you opt to share.",
-  },
-  battery_modeling: {
-    title: "Improve battery modeling",
-    body: (p) =>
-      `*Why*: Veo's data seems to suggest that every single one of their fleet has the same distance capability on a full charge. We think that's kind of fake, and we want to build a more accurate prediction of device range. *How*: This feature requires association with a specific Veo scooter, and saved ride tracks donated at the end of your trip. You'll need to start the scooter approximately at the location where you started ride mode, and end the scooter ride where you end the ride mode, report the battery percentage showed in the Veo app at the end of your trip, and donate your saved ride tracks (stored waypoints). With all conditions met, you'll earn **${p.batteryBase} pts** for a valid trip + **${p.batteryPerStep} points per ${p.batteryStepKm} kilometer** tracked (rounded up). *Our Usage*: After awarding points, the stored trip data is disassociated from your personal account and used along with the provided start and end percentages to improve our understanding of expected range vs reported battery for Veo devices.`,
-  },
-  nav_improvement: {
-    title: "Improve Navigation",
-    body: (p) =>
-      `We want to provide the BEST navigation for users in Denver, and we need your help. At the end of your ride return to the app to complete a quick survey about your route, and donate your trip data in order to earn points. Earn **${p.navRouteFeedback} points** for following the selected route and providing a rating, **${p.navQualitativeFeedback} pts** for qualitative feedback, plus **${p.navDistancePerStep} points per ${p.navDistanceStepKm} km** of valid trip data (rounded up, so a 1 km trip gets 2 points). After points award, navigation records used for navigation improvement are disassociated with your account.`,
-  },
-  end_survey: {
-    title: "End Survey",
-    body: (p) =>
-      `Collect details about the scooter/glider/bike you just rode in order to help Scooter.fyi users to continue to find the best scooters available. Survey provides **${p.surveyPoints} pts**.`,
+      "This option allows you to trace where you've been on the map display, and also save waypoints of your location to your local device. Tracking information is not persisted to Scooter.fyi unless you opt to share. You may have the opportunity to donate your ride data for leaderboard points at the end of the trip IF you save ride tracks now.",
   },
 };
 
@@ -756,12 +744,6 @@ const ON_OFF_CHOICES: readonly Choice<"on" | "off">[] = [
   { value: "off", label: "Off" },
 ];
 
-const SPEEDOMETER_CHOICES: readonly Choice<SpeedometerStyle>[] = [
-  { value: "classic", label: "Classic" },
-  { value: "digital", label: "Digital HUD" },
-  { value: "none", label: "None" },
-];
-
 export interface RideOptionsPanelDeps {
   options: RideOptions;
   context: RideOptionsContext;
@@ -823,63 +805,21 @@ export function renderRideOptionsPanel(
     makeChoiceRow<"on" | "off">(
       RIDE_OPTION_ROWS[0],
       ON_OFF_CHOICES,
-      (o) => (o.cost_hud ? "on" : "off"),
-      (v) => setField({ ...current, cost_hud: v === "on" }),
-      () => NOT_DISABLED,
-      () => openInfo("cost_hud"),
-    ),
-    makeChoiceRow<SpeedometerStyle>(
-      RIDE_OPTION_ROWS[1],
-      SPEEDOMETER_CHOICES,
-      (o) => o.speedometer,
-      (v) => setField({ ...current, speedometer: v }),
-      () => NOT_DISABLED,
-      () => openInfo("speedometer"),
-    ),
-    makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[2],
-      ON_OFF_CHOICES,
       (o) => (o.navigation ? "on" : "off"),
       (v) => setField({ ...current, navigation: v === "on" }),
       () => NOT_DISABLED,
       () => openInfo("navigation"),
     ),
     makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[3],
+      RIDE_OPTION_ROWS[1],
       ON_OFF_CHOICES,
       (o) => (o.save_tracks ? "on" : "off"),
       (v) => setField({ ...current, save_tracks: v === "on" }),
       () => NOT_DISABLED,
       () => openInfo("save_tracks"),
     ),
-    makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[4],
-      ON_OFF_CHOICES,
-      (o) => (o.battery_modeling ? "on" : "off"),
-      (v) => setField({ ...current, battery_modeling: v === "on" }),
-      (o, ctx) => trophyOptionDisableStates(o, ctx).battery_modeling,
-      () => openInfo("battery_modeling"),
-    ),
-    makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[5],
-      ON_OFF_CHOICES,
-      (o) => (o.nav_improvement ? "on" : "off"),
-      (v) => setField({ ...current, nav_improvement: v === "on" }),
-      (o, ctx) => trophyOptionDisableStates(o, ctx).nav_improvement,
-      () => openInfo("nav_improvement"),
-    ),
-    makeChoiceRow<"on" | "off">(
-      RIDE_OPTION_ROWS[6],
-      ON_OFF_CHOICES,
-      (o) => (o.end_survey ? "on" : "off"),
-      (v) => setField({ ...current, end_survey: v === "on" }),
-      (o, ctx) => trophyOptionDisableStates(o, ctx).end_survey,
-      () => openInfo("end_survey"),
-    ),
   ];
   for (const row of rows) root.append(row.element);
-
-  root.append(el("p", "ride-settings__footnote", RIDE_OPTIONS_FOOTNOTE));
 
   const actions = el("div", "ride-settings__actions");
   const usualsBtn = el("button", "ride-settings__usuals-btn", "Usuals");

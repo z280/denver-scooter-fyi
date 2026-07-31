@@ -33,7 +33,6 @@ import { deleteRideUsual, fetchPointsSchedule, listRideUsuals, putRideUsual } fr
 import {
   FALLBACK_RIDE_MODE_POINTS,
   RIDE_INFO_MODAL_COPY,
-  RIDE_OPTIONS_FOOTNOTE,
   RIDE_OPTION_ROWS,
   RIDE_PROVIDER_NAME,
   applyCascades,
@@ -284,29 +283,28 @@ describe("loadRideModePoints", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The seven ℹ info modals — verbatim copy fidelity. These strings are
-// transcribed word-for-word from RIDE_MODE_OVERHAUL_PLAN.md Part 0 "Screen 2"
-// — any future edit to that doc's copy should show up here as a failing test.
-// No "theme" row/modal: removed in favor of the app's two existing live theme
-// fixtures (the map's ThemeControl and the ride HUD's toggle-night button) —
-// see ride-settings.ts's own module header for why.
+// The two remaining ℹ info modals — verbatim copy fidelity. These strings
+// are transcribed word-for-word from RIDE_MODE_OVERHAUL_PLAN.md Part 0
+// "Screen 2" — any future edit to that doc's copy should show up here as a
+// failing test.
+//
+// FRICTION-REDUCTION PASS: down to two rows. No Theme row (the app has two
+// existing live theme fixtures — the map's ThemeControl and the ride HUD's
+// toggle-night button). No Est. Veo Cost HUD / Speedometer rows (neither
+// `RideOptions` field was ever read by `ride-hud.ts` — both toggles were
+// no-ops). No Improve battery modeling / Navigation Improvement / End ride
+// survey rows (asking a rider to pre-commit to donating data before the ride
+// even starts was backwards — Screens 9/10 already ask at the end, when the
+// rider actually has the data). See ride-settings.ts's own module header for
+// the full rationale on each.
 // ---------------------------------------------------------------------------
 
 describe("RIDE_OPTION_ROWS — Screen 2 table copy, verbatim", () => {
   it("matches the owner's table, in order, with the right 🏆 flags", () => {
     expect(RIDE_OPTION_ROWS.map((r) => [r.id, r.label, r.trophy])).toEqual([
-      ["cost_hud", "Est. Veo Cost HUD", false],
-      ["speedometer", "Speedometer", false],
       ["navigation", "Destination Navigation", false],
       ["save_tracks", "Save ride tracks locally", false],
-      ["battery_modeling", "Improve battery modeling", true],
-      ["nav_improvement", "Navigation Improvement", true],
-      ["end_survey", "End ride survey", true],
     ]);
-  });
-
-  it("carries the exact footnote", () => {
-    expect(RIDE_OPTIONS_FOOTNOTE).toBe("🏆 Earns points for leaderboards");
   });
 
   it("RIDE_PROVIDER_NAME is Veo today", () => {
@@ -317,20 +315,6 @@ describe("RIDE_OPTION_ROWS — Screen 2 table copy, verbatim", () => {
 describe("RIDE_INFO_MODAL_COPY — Screen 2 ℹ modal copy, verbatim", () => {
   const P = FALLBACK_RIDE_MODE_POINTS;
 
-  it("cost_hud", () => {
-    expect(RIDE_INFO_MODAL_COPY.cost_hud.title).toBe("Estimate Veo Cost HUD");
-    expect(RIDE_INFO_MODAL_COPY.cost_hud.body(P)).toBe(
-      "The app can show a Heads Up Display with your expected ride cost, based on what we know about the duration of your trip and the rate provided. This helps avoid end of ride surprises. Note: The Veo app will always be the authority on ride cost.",
-    );
-  });
-
-  it("speedometer", () => {
-    expect(RIDE_INFO_MODAL_COPY.speedometer.title).toBe("Speedometer");
-    expect(RIDE_INFO_MODAL_COPY.speedometer.body(P)).toBe(
-      "We've found that the speedometers on the Veo devices are really hard to read, especially in the bright colorado sun. So, we provide ON by default both a classic and digital readout of your speed tracked by GPS. Disable if you don't like fun or convenience. Always keep your eyes on where you're going!",
-    );
-  });
-
   it("navigation (Destination Navigation)", () => {
     expect(RIDE_INFO_MODAL_COPY.navigation.title).toBe("Destination Navigation");
     expect(RIDE_INFO_MODAL_COPY.navigation.body(P)).toBe(
@@ -338,47 +322,11 @@ describe("RIDE_INFO_MODAL_COPY — Screen 2 ℹ modal copy, verbatim", () => {
     );
   });
 
-  it("save_tracks (Save Ride Tracks)", () => {
+  it("save_tracks (Save Ride Tracks) — includes the end-of-trip donation note", () => {
     expect(RIDE_INFO_MODAL_COPY.save_tracks.title).toBe("Save Ride Tracks");
     expect(RIDE_INFO_MODAL_COPY.save_tracks.body(P)).toBe(
-      "This option allows you to trace where you've been on the map display, and also save waypoints of your location to your local device. Tracking information is not persisted to Scooter.fyi unless you opt to share.",
+      "This option allows you to trace where you've been on the map display, and also save waypoints of your location to your local device. Tracking information is not persisted to Scooter.fyi unless you opt to share. You may have the opportunity to donate your ride data for leaderboard points at the end of the trip IF you save ride tracks now.",
     );
-  });
-
-  it("battery_modeling — 8 pts base + 2 pts/2 km, fallback values", () => {
-    expect(RIDE_INFO_MODAL_COPY.battery_modeling.title).toBe("Improve battery modeling");
-    expect(RIDE_INFO_MODAL_COPY.battery_modeling.body(P)).toBe(
-      "*Why*: Veo's data seems to suggest that every single one of their fleet has the same distance capability on a full charge. We think that's kind of fake, and we want to build a more accurate prediction of device range. *How*: This feature requires association with a specific Veo scooter, and saved ride tracks donated at the end of your trip. You'll need to start the scooter approximately at the location where you started ride mode, and end the scooter ride where you end the ride mode, report the battery percentage showed in the Veo app at the end of your trip, and donate your saved ride tracks (stored waypoints). With all conditions met, you'll earn **8 pts** for a valid trip + **2 points per 2 kilometer** tracked (rounded up). *Our Usage*: After awarding points, the stored trip data is disassociated from your personal account and used along with the provided start and end percentages to improve our understanding of expected range vs reported battery for Veo devices.",
-    );
-  });
-
-  it("nav_improvement — 4 + 6 + 2/3 km, the 5→6 pts qualitative-feedback correction", () => {
-    expect(RIDE_INFO_MODAL_COPY.nav_improvement.title).toBe("Improve Navigation");
-    const body = RIDE_INFO_MODAL_COPY.nav_improvement.body(P);
-    expect(body).toBe(
-      "We want to provide the BEST navigation for users in Denver, and we need your help. At the end of your ride return to the app to complete a quick survey about your route, and donate your trip data in order to earn points. Earn **4 points** for following the selected route and providing a rating, **6 pts** for qualitative feedback, plus **2 points per 3 km** of valid trip data (rounded up, so a 1 km trip gets 2 points). After points award, navigation records used for navigation improvement are disassociated with your account.",
-    );
-    expect(body).toContain("**6 pts**");
-    expect(body).not.toContain("5 pts");
-  });
-
-  it("end_survey (End Survey) — 4 pts", () => {
-    expect(RIDE_INFO_MODAL_COPY.end_survey.title).toBe("End Survey");
-    expect(RIDE_INFO_MODAL_COPY.end_survey.body(P)).toBe(
-      "Collect details about the scooter/glider/bike you just rode in order to help Scooter.fyi users to continue to find the best scooters available. Survey provides **4 pts**.",
-    );
-  });
-
-  it("the 🏆 bodies re-render live schedule numbers, not just the fallback", () => {
-    const live: ResolvedRideModePoints = {
-      ...FALLBACK_RIDE_MODE_POINTS,
-      batteryBase: 10,
-      navQualitativeFeedback: 12,
-      surveyPoints: 6,
-    };
-    expect(RIDE_INFO_MODAL_COPY.battery_modeling.body(live)).toContain("**10 pts**");
-    expect(RIDE_INFO_MODAL_COPY.nav_improvement.body(live)).toContain("**12 pts**");
-    expect(RIDE_INFO_MODAL_COPY.end_survey.body(live)).toContain("**6 pts**");
   });
 
   it("every fallback POINT value is even (Decision 6) — step_km denominators are distances, not points, and are exempt", () => {
@@ -499,35 +447,27 @@ describe("Ride Usuals CRUD", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderRideOptionsPanel", () => {
-  it("renders all 7 rows in the owner's table order", () => {
+  it("renders both rows in the owner's table order", () => {
     const panel = renderRideOptionsPanel({
       options: BASE_OPTIONS,
       context: ctx(),
       onChange: vi.fn(),
     });
     const rows = [...panel.element.querySelectorAll<HTMLElement>(".ride-settings__row")];
-    expect(rows.map((r) => r.dataset.option)).toEqual([
-      "cost_hud",
-      "speedometer",
-      "navigation",
-      "save_tracks",
-      "battery_modeling",
-      "nav_improvement",
-      "end_survey",
-    ]);
+    expect(rows.map((r) => r.dataset.option)).toEqual(["navigation", "save_tracks"]);
     panel.destroy();
   });
 
   it("marks the current value active on each row", () => {
     const panel = renderRideOptionsPanel({
-      options: { ...BASE_OPTIONS, speedometer: "digital" },
+      options: { ...BASE_OPTIONS, navigation: true },
       context: ctx(),
       onChange: vi.fn(),
     });
-    const speedoRow = panel.element.querySelector('[data-option="speedometer"]')!;
-    expect(
-      speedoRow.querySelector('[data-value="digital"]')?.classList.contains("is-active"),
-    ).toBe(true);
+    const navRow = panel.element.querySelector('[data-option="navigation"]')!;
+    expect(navRow.querySelector('[data-value="on"]')?.classList.contains("is-active")).toBe(true);
+    const tracksRow = panel.element.querySelector('[data-option="save_tracks"]')!;
+    expect(tracksRow.querySelector('[data-value="on"]')?.classList.contains("is-active")).toBe(true);
     panel.destroy();
   });
 
@@ -547,54 +487,20 @@ describe("renderRideOptionsPanel", () => {
     panel.destroy();
   });
 
-  it("a disabled row's buttons cannot be clicked into changing anything", () => {
-    const onChange = vi.fn();
-    const panel = renderRideOptionsPanel({
-      options: { ...BASE_OPTIONS, own_device: true },
-      context: ctx({ private: true }),
-      onChange,
-    });
-    const onBtn = panel.element.querySelector<HTMLButtonElement>(
-      '[data-option="battery_modeling"] [data-value="on"]',
-    )!;
-    expect(onBtn.disabled).toBe(true);
-    onBtn.click();
-    expect(onChange).not.toHaveBeenCalled();
-    panel.destroy();
-  });
+  // Neither remaining row (navigation, save_tracks) is ever cascade-disabled
+  // — only the three now-removed 🏆 rows were. That cascade LOGIC is still
+  // fully covered above (`trophyOptionDisableStates`/`applyCascades`), it
+  // just no longer has a DOM row to render disabled through this panel.
 
-  it("disables the three 🏆 rows for a guest/private context, with sign-in copy shown", () => {
-    const panel = renderRideOptionsPanel({
-      options: BASE_OPTIONS,
-      context: ctx({ private: true, authenticated: false }),
-      onChange: vi.fn(),
-    });
-    for (const id of ["battery_modeling", "nav_improvement", "end_survey"]) {
-      const row = panel.element.querySelector<HTMLElement>(`[data-option="${id}"]`)!;
-      expect(row.classList.contains("ride-settings__row--disabled")).toBe(true);
-      const buttons = [...row.querySelectorAll<HTMLButtonElement>(".seg-btn")];
-      expect(buttons.every((b) => b.disabled)).toBe(true);
-      const reason = row.querySelector<HTMLElement>(".ride-settings__reason")!;
-      expect(reason.hidden).toBe(false);
-      expect(reason.textContent).toMatch(/Sign in/);
-    }
-    // The four non-trophy rows stay fully enabled.
-    for (const id of ["cost_hud", "speedometer", "navigation", "save_tracks"]) {
-      const row = panel.element.querySelector<HTMLElement>(`[data-option="${id}"]`)!;
-      expect(row.classList.contains("ride-settings__row--disabled")).toBe(false);
-    }
-    panel.destroy();
-  });
-
-  it("update() re-syncs rows for a new options/context snapshot without rebuilding the DOM", () => {
+  it("update() re-syncs a row's active value for a new options snapshot without rebuilding the DOM", () => {
     const panel = renderRideOptionsPanel({ options: BASE_OPTIONS, context: ctx(), onChange: vi.fn() });
-    const row = panel.element.querySelector('[data-option="battery_modeling"]')!;
-    expect(row.classList.contains("ride-settings__row--disabled")).toBe(false);
+    const row = panel.element.querySelector('[data-option="save_tracks"]')!;
+    expect(row.querySelector('[data-value="on"]')?.classList.contains("is-active")).toBe(true);
 
-    panel.update({ ...BASE_OPTIONS, own_device: true }, ctx({ private: true }));
+    panel.update({ ...BASE_OPTIONS, save_tracks: false }, ctx());
     // Same DOM node — re-synced in place, not replaced.
-    expect(panel.element.querySelector('[data-option="battery_modeling"]')).toBe(row);
-    expect(row.classList.contains("ride-settings__row--disabled")).toBe(true);
+    expect(panel.element.querySelector('[data-option="save_tracks"]')).toBe(row);
+    expect(row.querySelector('[data-value="off"]')?.classList.contains("is-active")).toBe(true);
     panel.destroy();
   });
 
@@ -624,11 +530,11 @@ describe("renderRideOptionsPanel", () => {
   it("ℹ opens the matching info modal, and destroy() closes it", () => {
     const panel = renderRideOptionsPanel({ options: BASE_OPTIONS, context: ctx(), onChange: vi.fn() });
     const infoBtn = panel.element.querySelector<HTMLButtonElement>(
-      '[data-option="speedometer"] .ride-settings__info',
+      '[data-option="navigation"] .ride-settings__info',
     )!;
     infoBtn.click();
     const heading = document.querySelector("#ride-info-modal-title");
-    expect(heading?.textContent).toBe("Speedometer");
+    expect(heading?.textContent).toBe("Destination Navigation");
     panel.destroy();
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
@@ -636,7 +542,7 @@ describe("renderRideOptionsPanel", () => {
 
 describe("openRideInfoModal", () => {
   it("falls back to document.body when no wizard is mounted", () => {
-    const close = openRideInfoModal("cost_hud");
+    const close = openRideInfoModal("navigation");
     const modal = document.querySelector(".ranks-modal");
     expect(modal).not.toBeNull();
     expect(modal!.parentElement).toBe(document.body);
@@ -660,15 +566,6 @@ describe("openRideInfoModal", () => {
     close();
   });
 
-  it("renders bold/italic markers as real elements, not literal asterisks", () => {
-    const close = openRideInfoModal("battery_modeling", FALLBACK_RIDE_MODE_POINTS);
-    const body = document.querySelector(".ride-info-modal__body")!;
-    expect(body.querySelector("strong")?.textContent).toBe("8 pts");
-    expect(body.querySelector("em")?.textContent).toBe("Why");
-    expect(body.textContent).not.toContain("**");
-    close();
-  });
-
   it("Escape closes the modal", () => {
     const close = openRideInfoModal("save_tracks");
     expect(document.querySelector(".ranks-modal")).not.toBeNull();
@@ -678,7 +575,7 @@ describe("openRideInfoModal", () => {
   });
 
   it("only one modal is open at a time — opening a second closes the first", () => {
-    openRideInfoModal("cost_hud");
+    openRideInfoModal("save_tracks");
     expect(document.querySelectorAll(".ranks-modal").length).toBe(1);
     const close2 = openRideInfoModal("navigation");
     expect(document.querySelectorAll(".ranks-modal").length).toBe(1);

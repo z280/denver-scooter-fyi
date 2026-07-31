@@ -462,7 +462,11 @@ describe("Screen 2 — selection and session sync", () => {
     expect(session.current()?.private).toBe(false);
   });
 
-  it("typing a battery percent stores it as batteryConfirmed on the selected device", () => {
+  // FRICTION-REDUCTION PASS: no Battery % field anywhere on this screen
+  // anymore — the server derives its own reading from the GBFS feed
+  // independently, so nothing here ever collects one. `batteryConfirmed`
+  // always dispatches `null`.
+  it("never renders a Battery % field, and always dispatches batteryConfirmed: null", () => {
     const near = feature("near", V1, ORIGIN);
     const devices = fakeDevices([near]);
     const locate = fakeLocate(ORIGIN);
@@ -470,14 +474,62 @@ describe("Screen 2 — selection and session sync", () => {
     wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
     openRideModal({ fastForwardTo: "2" });
 
+    expect(document.querySelector('input[aria-label^="Battery"]')).toBeNull();
+
     const row = document.querySelector("button.ride-option") as HTMLButtonElement;
     row.click();
-    const batteryInput = document.querySelector(
-      'input[aria-label^="Battery"]',
-    ) as HTMLInputElement;
-    batteryInput.value = "87";
-    batteryInput.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(session.current()?.device).toMatchObject({ batteryConfirmed: 87 });
+    expect(session.current()?.device).toMatchObject({ batteryConfirmed: null });
+  });
+
+  // FRICTION-REDUCTION PASS: the plate confirm field used to always show,
+  // even for an already-resolved list/auto-selected candidate (whose plate
+  // the GBFS match already knows). It now only shows for manual entry.
+  describe("the plate confirm field only shows for manual entry", () => {
+    function confirmStripHidden(): boolean {
+      const strip = document.querySelector(".ride-screen-select__confirm") as HTMLElement;
+      return strip.hidden;
+    }
+
+    it("is hidden when a ranked candidate is auto/list-selected", () => {
+      const near = feature("near", V1, ORIGIN);
+      const devices = fakeDevices([near]);
+      const locate = fakeLocate({ ...ORIGIN, accuracy: 10 }); // close + accurate enough to auto-preselect
+      const session = newSession();
+      wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+      openRideModal({ fastForwardTo: "2" });
+
+      expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V1 });
+      expect(confirmStripHidden()).toBe(true);
+    });
+
+    it("is hidden for My own Device", () => {
+      const devices = fakeDevices([]);
+      const locate = fakeLocate(null);
+      const session = newSession();
+      wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+      openRideModal({ fastForwardTo: "2" });
+
+      const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
+        b.textContent?.includes("My own Device"),
+      ) as HTMLButtonElement;
+      ownBtn.click();
+      expect(confirmStripHidden()).toBe(true);
+    });
+
+    it("shows once \"None of these — enter plate manually\" is selected", () => {
+      const devices = fakeDevices([]);
+      const locate = fakeLocate(null);
+      const session = newSession();
+      wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+      openRideModal({ fastForwardTo: "2" });
+
+      expect(confirmStripHidden()).toBe(true);
+      const manualBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
+        b.textContent?.includes("enter plate manually"),
+      ) as HTMLButtonElement;
+      manualBtn.click();
+      expect(confirmStripHidden()).toBe(false);
+    });
   });
 
   it("a typed plate mismatch switches selection to the resolved device", async () => {

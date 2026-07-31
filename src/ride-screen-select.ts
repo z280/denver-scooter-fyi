@@ -362,7 +362,6 @@ function buildSelectScreen(
   let ranked: Candidate[] = [];
   let selection: Selection = null;
   let plateValue = "";
-  let batteryValue = "";
   let platesReady = false;
   let usualsAvailable = false;
   // The handle `deps.buildOptionsPanel` returns — `ride-settings.ts`'s own
@@ -373,6 +372,19 @@ function buildSelectScreen(
   let optionsPanelHandle: { dispose?(): void } | undefined;
 
   // ---------------- confirm strip ----------------
+  // Plate-only now — no Battery % field (see the module's FRICTION-REDUCTION
+  // note below): the server derives its own battery reading from the GBFS
+  // feed independently of anything a rider types. The plate field itself
+  // only ever shows for manual entry (`confirmWrap.hidden`, synced in
+  // `render()`) — a list/auto-selected candidate already carries its plate
+  // from the GBFS match, so there is nothing to confirm or re-type.
+  //
+  // FRICTION-REDUCTION PASS: this screen used to always show both a Plate #
+  // and a Battery % field, regardless of whether the rider had already
+  // picked a ranked candidate (whose plate/battery the feed already knows).
+  // Retyping a plate that's already resolved was pure friction, and asking
+  // for battery % at all was redundant with the GBFS-derived reading the
+  // server keeps independently — removed rather than fixed.
   const plateInput = el("input", "select") as HTMLInputElement;
   plateInput.type = "text"; // stays text even though only digits are accepted
   // today — see ride-keypad.ts's module doc: relax the filter below, not the
@@ -380,12 +392,6 @@ function buildSelectScreen(
   plateInput.placeholder = "1234567";
   plateInput.setAttribute("aria-label", "Plate number, from the scooter's deck");
   applyNativeNumericInput(plateInput, { maxLength: 10 });
-
-  const batteryInput = el("input", "select") as HTMLInputElement;
-  batteryInput.type = "text";
-  batteryInput.placeholder = "%";
-  batteryInput.setAttribute("aria-label", "Battery percent, from the Veo app");
-  applyNativeNumericInput(batteryInput, { maxLength: 3 });
 
   const plateWarning = el("p", "ride-option__warnings");
   plateWarning.hidden = true;
@@ -397,13 +403,8 @@ function buildSelectScreen(
     el("span", "ride-screen-select__field-label", "Plate #"),
     plateInput,
   );
-  const batteryField = el("label", "ride-screen-select__field");
-  batteryField.append(
-    el("span", "ride-screen-select__field-label", "Battery %"),
-    batteryInput,
-  );
   const confirmWrap = el("div", "ride-screen-select__confirm");
-  confirmWrap.append(plateField, batteryField);
+  confirmWrap.append(plateField);
 
   const heading = el("p", "ride-modal__lede", "Select your ride:");
   const listEl = el("ol", "ride-options");
@@ -415,13 +416,9 @@ function buildSelectScreen(
   // ---------------- keypad (landscape only) ----------------
   const keypad: RideKeypadHandle = createRideKeypad({
     label: "Confirm keypad",
-    onDone: (_value, input) => {
-      if (input === plateInput) {
-        batteryInput.focus();
-      } else {
-        keypad.detach();
-        reslotSecondary();
-      }
+    onDone: () => {
+      keypad.detach();
+      reslotSecondary();
     },
   });
 
@@ -449,35 +446,19 @@ function buildSelectScreen(
     }
   };
   plateInput.addEventListener("focus", () => onFieldFocus(plateInput));
-  batteryInput.addEventListener("focus", () => onFieldFocus(batteryInput));
   plateInput.addEventListener("blur", onFieldBlur);
-  batteryInput.addEventListener("blur", onFieldBlur);
 
   plateInput.addEventListener("input", () => {
     plateInput.value = sanitizeNumeric(plateInput.value, 10);
     onPlateChanged();
   });
-  batteryInput.addEventListener("input", () => {
-    batteryInput.value = sanitizeNumeric(batteryInput.value, 3);
-    batteryValue = batteryInput.value;
-    syncSessionDevice();
-  });
 
   // ---------------- state helpers ----------------
-
-  function parsedBattery(): number | null {
-    if (batteryValue === "") return null;
-    const n = Number.parseInt(batteryValue, 10);
-    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
-  }
 
   function nextEnabled(): boolean {
     return selection !== null && selection.kind !== "manual";
   }
 
-  /** Battery% doubles as `reported_start_battery_percent` for the eventual
-   *  `POST /tracked-rides` call — the only place the flow collects it — so
-   *  every relevant change re-syncs the session doc's device selection. */
   function syncSessionDevice(): void {
     if (selection === null) return;
     if (selection.kind === "own") {
@@ -505,7 +486,10 @@ function buildSelectScreen(
         vehicleIdentifier: selection.candidate.vehicleIdentifier,
         plate: selection.candidate.plate,
         model: selection.candidate.model,
-        batteryConfirmed: parsedBattery(),
+        // No rider-entered battery % anymore (see the module's
+        // FRICTION-REDUCTION note above) — the server derives its own
+        // reading from the GBFS feed independently.
+        batteryConfirmed: null,
       },
       private: !isAuthenticated(),
     });
@@ -582,12 +566,13 @@ function buildSelectScreen(
     renderList();
     syncSessionDevice();
     buildOptionsPanel();
-    // "My own Device" has no plate/battery in the session shape
-    // (`RideSessionOwnDevice` is just `{own: true}`) — grey the confirm
-    // strip out rather than let it collect values that go nowhere.
-    const own = selection?.kind === "own";
-    plateInput.disabled = own;
-    batteryInput.disabled = own;
+    // The plate field only ever makes sense for manual entry: a list/auto-
+    // selected candidate's plate already came from the GBFS match (nothing
+    // to confirm), and "My own Device" has no plate at all in the session
+    // shape (`RideSessionOwnDevice` is just `{own: true}`). Hidden rather
+    // than merely disabled in both cases — there is nothing useful to look
+    // at, not just nothing to edit.
+    confirmWrap.hidden = selection?.kind !== "manual";
   }
 
   function renderList(): void {
