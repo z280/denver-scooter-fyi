@@ -30,6 +30,7 @@ import {
   toApiRatePlan,
 } from "./ride-cost.ts";
 import { reverseGeocode } from "./geocode.ts";
+import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 
 /** Where each group of sections mounts when the drawer is tabbed. Omitting
@@ -52,6 +53,12 @@ export interface AccountSignedInDeps {
   onAuthLost(): void;
   /** Tab mount points; absent means the legacy single-body layout. */
   panels?: AccountPanelMounts;
+  /** Let the rider drop a point on the map for home or work. Absent means
+   *  the row offers only "Use my location" and "Clear", as it always has —
+   *  which is also what keeps this module free of any map import. */
+  pickLocation?(kind: "home" | "work"): Promise<{ lat: number; lng: number } | null>;
+  /** Home/work moved (or were cleared): redraw the pins. */
+  onLocationsChanged?(points: HomeWorkPoints): void;
 }
 
 export interface AccountHandle {
@@ -312,9 +319,26 @@ export function renderSignedInAccount(
     if (!disposed && seq === saveSeq) {
       profile = updated;
       refreshHint();
+      publishLocations();
       onProfileSaved?.();
     }
     return updated;
+  };
+
+  /** Keep the map's home/work pins in step with the profile. */
+  const publishLocations = (): void => {
+    if (!deps.onLocationsChanged) return;
+    const p = profile;
+    deps.onLocationsChanged({
+      home:
+        p?.home_lat != null && p.home_lng != null
+          ? { lat: p.home_lat, lng: p.home_lng }
+          : null,
+      work:
+        p?.work_lat != null && p.work_lng != null
+          ? { lat: p.work_lat, lng: p.work_lng }
+          : null,
+    });
   };
 
   // ----- Completion hint (10 one-time points; criteria mirror the API) ----
@@ -395,6 +419,11 @@ export function renderSignedInAccount(
     wrap.append(el("span", "control-label", label));
     const rowEl = el("div", "account-field__row");
     const value = el("span", "account-location__value");
+    const pickBtn = el("button", "text-btn", "Pick on map");
+    pickBtn.type = "button";
+    // Only offered when the drawer was handed a picker — the module stays
+    // free of any map import, and its tests stay free of a map.
+    pickBtn.hidden = !deps.pickLocation;
     const useBtn = el("button", "text-btn", "Use my location");
     useBtn.type = "button";
     const clearBtn = el("button", "text-btn", "Clear");
@@ -472,9 +501,27 @@ export function renderSignedInAccount(
         { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
       );
     });
+    pickBtn.addEventListener("click", () => {
+      const pick = deps.pickLocation;
+      if (!pick) return;
+      rowStatus.set("Tap the map…");
+      void pick(kind).then((point) => {
+        if (disposed) return;
+        if (!point) {
+          rowStatus.clear();
+          return;
+        }
+        // Same 5-decimal store as every other way of setting this (~1 m,
+        // which is finer than any of these sources actually resolve).
+        putPair(
+          Number(point.lat.toFixed(5)),
+          Number(point.lng.toFixed(5)),
+        );
+      });
+    });
     clearBtn.addEventListener("click", () => putPair(null, null));
 
-    rowEl.append(value, useBtn, clearBtn);
+    rowEl.append(value, pickBtn, useBtn, clearBtn);
     wrap.append(rowEl, rowStatus.node);
     renderValue();
     return wrap;
@@ -1742,6 +1789,7 @@ export function renderSignedInAccount(
           );
         }
         registerRateSync();
+        publishLocations();
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -1768,6 +1816,9 @@ export function renderSignedInAccount(
     dispose() {
       disposed = true;
       setRatePlanSyncHook(null);
+      // The pins belong to this session's profile; a signed-out map should
+      // not still be showing where they live.
+      deps.onLocationsChanged?.({ home: null, work: null });
     },
   };
 }

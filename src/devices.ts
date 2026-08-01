@@ -220,6 +220,9 @@ export class Devices {
   /** While riding, a short tap only shows the essentials tooltip; a long
    *  press opens the full popup — so device taps don't clutter the ride. */
   private rideActive = false;
+  /** True while the rider is choosing a point on the map for their profile;
+   *  a tap then means "here", not "tell me about this scooter". */
+  private pickActive = false;
   /** Ride-scoped device visibility (HUD "Show" pills). null = no ride filter
    *  (everything, incl. unrecognized hardware); a set restricts to those
    *  models; an empty set shows none. */
@@ -543,8 +546,9 @@ export class Devices {
 
     map.on("click", POINT_LAYER, (e) => {
       // During a ride the popup opens on long-press instead (a plain tap
-      // just flashes the essentials tooltip), so it never interrupts.
-      if (this.rideActive) return;
+      // just flashes the essentials tooltip), so it never interrupts. While
+      // picking a location, a tap on a scooter is still just a map tap.
+      if (this.rideActive || this.pickActive) return;
       const feature = e.features?.[0];
       if (!feature) return;
       const geom = feature.geometry as GeoJSON.Point;
@@ -1798,6 +1802,13 @@ export class Devices {
       window.clearTimeout(this.tooltipHideTimer);
       hideMapTooltip();
     }
+  }
+
+  /** Enter/leave profile location picking. While active a device tap must
+   *  not open a popup over the point the rider is trying to choose. */
+  setPickActive(on: boolean): void {
+    this.pickActive = on;
+    if (on) hideMapTooltip();
   }
 
   /** Ride-scoped model visibility, driven by the HUD "Show" pills. Pass null

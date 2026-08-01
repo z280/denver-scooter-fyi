@@ -81,6 +81,8 @@ import {
 } from "./ride-settings.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
+import { createMapPick } from "./map-pick.ts";
+import { createHomeWorkPins } from "./home-work-pins.ts";
 import {
   ACCOUNT_TAB_IDS,
   createAccountTabs,
@@ -129,6 +131,17 @@ initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
+// Profile location picking. The drawer gets these as callbacks so account.ts
+// never imports maplibre — and so its tests never need a map.
+const homeWorkPins = createHomeWorkPins(map);
+const mapPick = createMapPick(map, {
+  onModeChange: (active) => {
+    // Slide the drawer out of the way (it covers the map on a phone) and
+    // stop device taps from opening a popup over the chosen point.
+    document.body.classList.toggle("is-map-picking", active);
+    devices.setPickActive(active);
+  },
+});
 // The single ride-mode session doc every Screen 1–6 module (ride-screen-*.ts)
 // reads and writes through — created once here, never inside a screen module,
 // so the wizard has exactly one session, not one per screen. Persists to
@@ -2403,6 +2416,14 @@ function wireAccount(): void {
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
+          pickLocation: (kind) =>
+            mapPick.pick({
+              hint:
+                kind === "home"
+                  ? "Tap the map to set your home"
+                  : "Tap the map to set your work",
+            }),
+          onLocationsChanged: (points) => homeWorkPins.set(points),
           panels: {
             login: tabs.panel("login"),
             profile: tabs.panel("profile"),

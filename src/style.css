@@ -1356,6 +1356,36 @@ body:not(.ribbon-open) .drawer-tabs {
   text-align: center;
 }
 
+/* ---------- Picking a point on the map (map-pick.ts) ---------- */
+/* The drawer covers most of a phone screen, so it gets out of the way while
+   the rider is choosing — it slides back with the value already filled in. */
+body.is-map-picking .drawer--right {
+  transform: translateX(calc(100% + 48px + max(12px, env(safe-area-inset-right))));
+  visibility: hidden;
+}
+.map-pick-bar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(92vw, 460px);
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  font-size: 13px;
+  color: var(--fg);
+}
+.map-pick-bar__cancel {
+  flex: none;
+}
+
 /* ---------- Signed-in profile surface (account.ts) ---------- */
 .account-section {
   margin-top: 14px;
