@@ -1295,6 +1295,21 @@ body:not(.ribbon-open) .drawer-tabs {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* Unfinished profile: the ten points are easy to miss when the hint only
+   lives on a tab you are not looking at. */
+.account-tab.has-flag .account-tab__label::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--pending, var(--accent));
+  vertical-align: 2px;
+}
+.account-tab.is-active.has-flag .account-tab__label::after {
+  background: var(--accent-ink);
+}
 .account-panel[hidden] {
   display: none;
 }
@@ -1509,6 +1524,13 @@ body.is-map-picking .drawer--right {
 }
 .account-field__save {
   flex: none;
+}
+.account-location {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.account-location .account-location__value {
+  flex: 1 0 100%;
 }
 .account-location__value {
   flex: 1;

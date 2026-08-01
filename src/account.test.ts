@@ -256,6 +256,113 @@ describe("community settings disclosure", () => {
   });
 });
 
+// ---------- picking a location ----------
+
+describe("home and work locations", () => {
+  const rowFor = (mounts: AccountPanelMounts, label: string): HTMLElement =>
+    [...mounts.profile.querySelectorAll<HTMLElement>(".account-field")].find(
+      (r) => r.textContent?.includes(label),
+    )!;
+  const button = (row: HTMLElement, text: string) =>
+    [...row.querySelectorAll("button")].find((b) => b.textContent === text);
+
+  it("only offers 'Pick on map' when a picker was supplied", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+    expect(button(rowFor(mounts, "Home location"), "Pick on map")?.hidden).toBe(
+      true,
+    );
+
+    document.body.replaceChildren();
+    const next = makeMounts();
+    const body2 = document.createElement("section");
+    document.body.append(body2);
+    renderSignedInAccount(body2, AUTH, {
+      ...deps(),
+      panels: next,
+      pickLocation: async () => null,
+    });
+    await settle();
+    expect(button(rowFor(next, "Home location"), "Pick on map")?.hidden).toBe(
+      false,
+    );
+  });
+
+  it("saves the picked point as a pair, rounded to five decimals", async () => {
+    const mounts = makeMounts();
+    const pickLocation = vi
+      .fn()
+      .mockResolvedValue({ lat: 39.739215678, lng: -104.987612345 });
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      pickLocation,
+    });
+    await settle();
+
+    api.updateProfile.mockClear();
+    button(rowFor(mounts, "Work location"), "Pick on map")!.click();
+    await settle();
+
+    expect(pickLocation).toHaveBeenCalledWith("work");
+    // Both halves together, per the API contract; ~1 m of precision, which is
+    // finer than any of these sources actually resolve.
+    expect(api.updateProfile).toHaveBeenCalledWith({
+      work_lat: 39.73922,
+      work_lng: -104.98761,
+    });
+  });
+
+  it("writes nothing when the rider cancels the pick", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      pickLocation: async () => null,
+    });
+    await settle();
+
+    api.updateProfile.mockClear();
+    button(rowFor(mounts, "Home location"), "Pick on map")!.click();
+    await settle();
+    expect(api.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it("reports where home and work are so the map can pin them", async () => {
+    const onLocationsChanged = vi.fn();
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      onLocationsChanged,
+    });
+    await settle();
+
+    expect(onLocationsChanged).toHaveBeenLastCalledWith({
+      home: { lat: 39.7392, lng: -104.9876 },
+      work: null,
+    });
+  });
+
+  it("clears the pins when the panel goes away", async () => {
+    const onLocationsChanged = vi.fn();
+    const mounts = makeMounts();
+    const handle = renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      onLocationsChanged,
+    });
+    await settle();
+
+    handle.dispose();
+    expect(onLocationsChanged).toHaveBeenLastCalledWith({
+      home: null,
+      work: null,
+    });
+  });
+});
+
 // ---------- rate plan ----------
 
 describe("rate plan", () => {

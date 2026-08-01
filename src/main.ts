@@ -2438,6 +2438,8 @@ function wireAccount(): void {
                   : "Tap the map to set your work",
             }),
           onLocationsChanged: (points) => homeWorkPins.set(points),
+          onCompletenessChanged: (complete) =>
+            tabs.setFlagged("profile", !complete),
           panels: {
             login: tabs.panel("login"),
             profile: tabs.panel("profile"),

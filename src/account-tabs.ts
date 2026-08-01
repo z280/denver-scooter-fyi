@@ -47,6 +47,8 @@ export interface AccountTabsHandle {
   selected(): AccountTabId;
   setEnabled(id: AccountTabId, on: boolean): void;
   isEnabled(id: AccountTabId): boolean;
+  /** Mark a tab as needing attention (a dot on the label). */
+  setFlagged(id: AccountTabId, on: boolean): void;
   dispose(): void;
 }
 
@@ -213,6 +215,13 @@ export function createAccountTabs(
     },
     isEnabled(id) {
       return enabled.get(id) ?? false;
+    },
+    setFlagged(id, on) {
+      const tab = tabs.get(id)!;
+      tab.classList.toggle("has-flag", on);
+      // Announced, not just drawn: a dot nobody can hear is not a signal.
+      if (on) tab.setAttribute("aria-description", "needs attention");
+      else tab.removeAttribute("aria-description");
     },
     dispose() {
       strip.removeEventListener("click", onClick);

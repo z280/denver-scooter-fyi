@@ -53,6 +53,10 @@ export interface AccountSignedInDeps {
   onAuthLost(): void;
   /** Tab mount points; absent means the legacy single-body layout. */
   panels?: AccountPanelMounts;
+  /** The profile is (in)complete. Lets the tab strip carry the nag, so it is
+   *  visible from Community or Local Data too — the ten points are easy to
+   *  miss when the hint only lives on the tab you are not looking at. */
+  onCompletenessChanged?(complete: boolean): void;
   /** Let the rider drop a point on the map for home or work. Absent means
    *  the row offers only "Use my location" and "Clear", as it always has —
    *  which is also what keeps this module free of any map import. */
@@ -348,7 +352,9 @@ export function renderSignedInAccount(
     "⭐ Complete your profile — email, phone, rate plan, and one location — to earn 10 bonus points.",
   );
   const refreshHint = (): void => {
-    hint.hidden = profile ? isProfileComplete(profile) : true;
+    const complete = profile ? isProfileComplete(profile) : true;
+    hint.hidden = complete;
+    deps.onCompletenessChanged?.(complete);
   };
 
   // ----- Field builders --------------------------------------------------
@@ -417,7 +423,9 @@ export function renderSignedInAccount(
   const locationRow = (kind: "home" | "work", label: string): HTMLElement => {
     const wrap = el("div", "account-field");
     wrap.append(el("span", "control-label", label));
-    const rowEl = el("div", "account-field__row");
+    // The value gets its own line: with three actions beside it, a street
+    // address (or a coordinate pair) would wrap mid-number in a 300px drawer.
+    const rowEl = el("div", "account-field__row account-location");
     const value = el("span", "account-location__value");
     const pickBtn = el("button", "text-btn", "Pick on map");
     pickBtn.type = "button";
