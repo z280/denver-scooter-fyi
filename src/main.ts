@@ -81,6 +81,13 @@ import {
 } from "./ride-settings.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
+import {
+  ACCOUNT_TAB_IDS,
+  createAccountTabs,
+  takeTabHint,
+  writeTabHint,
+  type AccountTabId,
+} from "./account-tabs.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -104,6 +111,12 @@ function need<T extends HTMLElement>(id: string): T {
   if (!node) throw new Error(`Missing #${id}`);
   return node as T;
 }
+
+/** Local ride tracks are recorded without an account (a private ride has no
+ *  server ride id at all), so gating the tab on sign-in also hides a guest's
+ *  own recordings from them — including the only control that deletes one.
+ *  Kept as specified, isolated here so it is a one-line reversal. */
+const GATE_LOCAL_TAB_ON_AUTH = true;
 
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
@@ -1994,7 +2007,12 @@ function wireModes(): void {
       const tab = document.querySelector<HTMLButtonElement>(
         '.drawer-tab[data-drawer="account"]',
       );
-      if (tab && !tab.classList.contains("is-active")) tab.click();
+      if (!tab || tab.classList.contains("is-active")) return;
+      // The hint is asking them to sign in, so open on the doors. Only stamp
+      // it when we are actually about to click, so the hint can't be left
+      // behind to hijack some later, unrelated open.
+      tab.dataset.accountTab = "login";
+      tab.click();
     },
     filterSummary: () => rideEntrySummary,
     // Interview finished: the Recommended Devices drawer takes over as the
@@ -2313,15 +2331,46 @@ function wireAccount(): void {
   // code. Codes are 3/hour per email — wiping one is expensive.
   const signedOutState = { email: "", sentEmail: "", phone: "", sentPhone: "" };
 
+  // Why the gate line is a status region: activating a dimmed tab has to say
+  // something, and a disabled control that silently ignores you is worse than
+  // no control at all.
+  const gateHint = document.createElement("p");
+  gateHint.className = "account-hint account-gate-hint";
+  gateHint.setAttribute("role", "status");
+  gateHint.hidden = true;
+
+  // The strip is built ONCE and never torn down: render() below replaces
+  // panel CONTENTS, so the rider's chosen tab survives both the auth-config
+  // rebuild and a token change, exactly as signedOutState survives them.
+  const tabs = createAccountTabs(body, {
+    initial: takeTabHint() ?? "login",
+    onShow: (id) => {
+      gateHint.hidden = true;
+      // GIS needs a laid-out container, so a Login panel that was hidden at
+      // build time gets its button on first show.
+      if (id === "login") loginPanel?.renderGoogle();
+    },
+    onBlocked: (id) => {
+      const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
+      gateHint.textContent = `Sign in to use ${what}.`;
+      gateHint.hidden = false;
+    },
+  });
+  tabs.panel("login").prepend(gateHint);
+
   const buildSignedOut = (): void => {
-    loginPanel = buildLoginPanel(body, {
+    loginPanel = buildLoginPanel(tabs.panel("login"), {
       cfg: authCfg,
       state: signedOutState,
       // The session is persisted by the door itself; reload so every fetch
-      // picks up the bearer token.
-      onSignedIn: () => location.reload(),
+      // picks up the bearer token — landing on Profile, which is what a
+      // brand-new account most needs filled in.
+      onSignedIn: () => {
+        writeTabHint("profile");
+        location.reload();
+      },
     });
-    loginPanel.renderGoogle();
+    if (tabs.selected() === "login") loginPanel.renderGoogle();
   };
 
   const render = (): void => {
@@ -2338,13 +2387,27 @@ function wireAccount(): void {
       signedIn = null;
       loginPanel?.dispose();
       loginPanel = null;
-      body.replaceChildren();
+      for (const id of ACCOUNT_TAB_IDS) tabs.panel(id).replaceChildren();
+      tabs.panel("login").append(gateHint);
+      gateHint.hidden = true;
+
+      const on = !!auth;
+      tabs.setEnabled("profile", on);
+      tabs.setEnabled("community", on);
+      tabs.setEnabled("local", on || !GATE_LOCAL_TAB_ON_AUTH);
+      if (!tabs.isEnabled(tabs.selected())) tabs.select("login", { force: true });
+
       if (auth) {
-        signedIn = renderSignedInAccount(body, auth, {
-          setAdminSession: (on) => devices.setAdminSession(on),
+        signedIn = renderSignedInAccount(tabs.panel("login"), auth, {
+          setAdminSession: (on2) => devices.setAdminSession(on2),
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
+          panels: {
+            login: tabs.panel("login"),
+            profile: tabs.panel("profile"),
+            community: tabs.panel("community"),
+          },
         });
       } else {
         buildSignedOut();
@@ -2354,6 +2417,36 @@ function wireAccount(): void {
     // and notices local expiry (getAuth() self-clears past `expires`).
     if (auth) countdownTimer = window.setTimeout(render, 60_000);
   };
+
+  // Deep links: whoever opens the drawer can name the tab it should land on
+  // by stamping the trigger first (the leaderboard's "Open profile" wants
+  // Community, the ride wizard's sign-in hint wants Login).
+  const accountBtn = document.querySelector<HTMLElement>(
+    '.topbar__right .drawer-tab[data-drawer="account"]',
+  );
+  accountBtn?.addEventListener("click", () => {
+    const want = accountBtn.dataset.accountTab as AccountTabId | undefined;
+    delete accountBtn.dataset.accountTab;
+    if (want) tabs.select(want);
+  });
+
+  // The strip pins below the drawer's own sticky header, which means it needs
+  // that header's height. Measure it rather than hard-coding a number that
+  // would drift with the font or the breakpoint.
+  const drawer = document.getElementById("drawer-account");
+  const header = drawer?.querySelector<HTMLElement>(".drawer-header");
+  if (drawer && header) {
+    const syncHeaderHeight = (): void => {
+      const h = header.getBoundingClientRect().height;
+      if (h > 0) drawer.style.setProperty("--drawer-header-h", `${Math.round(h)}px`);
+    };
+    syncHeaderHeight();
+    // The height is only measurable once the drawer is actually laid out.
+    accountBtn?.addEventListener("click", () => {
+      window.requestAnimationFrame(syncHeaderHeight);
+    });
+    window.addEventListener("resize", syncHeaderHeight);
+  }
 
   render();
 

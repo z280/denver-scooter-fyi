@@ -50,6 +50,32 @@ export interface AccountTabsHandle {
   dispose(): void;
 }
 
+/** Where the drawer should land after the reload every sign-in door performs.
+ *  sessionStorage, not localStorage: a one-shot view hint, not a preference,
+ *  and it must not outlive the tab. */
+const TAB_HINT_KEY = "scooter_fyi.account_tab";
+
+export function writeTabHint(id: AccountTabId): void {
+  try {
+    sessionStorage.setItem(TAB_HINT_KEY, id);
+  } catch {
+    /* private mode — the drawer just opens on its default tab */
+  }
+}
+
+/** Read the hint and consume it, so it steers exactly one open. */
+export function takeTabHint(): AccountTabId | null {
+  try {
+    const v = sessionStorage.getItem(TAB_HINT_KEY);
+    if (v) sessionStorage.removeItem(TAB_HINT_KEY);
+    return ACCOUNT_TAB_IDS.includes(v as AccountTabId)
+      ? (v as AccountTabId)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,

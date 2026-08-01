@@ -1307,6 +1307,9 @@ body:not(.ribbon-open) .drawer-tabs {
   border-top: 0;
   padding-top: 0;
 }
+.account-gate-hint {
+  margin-top: 10px;
+}
 
 /* ---------- Signed-in profile surface (account.ts) ---------- */
 .account-section {
