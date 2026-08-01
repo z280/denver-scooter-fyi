@@ -82,15 +82,19 @@ const settle = async (): Promise<void> => {
 
 beforeEach(() => {
   document.body.replaceChildren();
-  // Stubbed rather than trusted: the disclosure remembers its state here, and
-  // a real one would leak that between test files.
-  const store = new Map<string, string>();
-  vi.stubGlobal("sessionStorage", {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => void store.set(k, v),
-    removeItem: (k: string) => void store.delete(k),
-    clear: () => store.clear(),
-  });
+  // Stubbed rather than trusted: the disclosure and the rate-plan cache both
+  // write here, and real storage would leak state between tests.
+  const fakeStorage = () => {
+    const store = new Map<string, string>();
+    return {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+  };
+  vi.stubGlobal("sessionStorage", fakeStorage());
+  vi.stubGlobal("localStorage", fakeStorage());
   body = document.createElement("section");
   document.body.append(body);
   api.fetchProfile.mockResolvedValue(PROFILE);
@@ -249,6 +253,78 @@ describe("community settings disclosure", () => {
       .querySelector<HTMLButtonElement>(".community-leaderboard button")!
       .click();
     expect(clicked).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------- rate plan ----------
+
+describe("rate plan", () => {
+  const select = (mounts: AccountPanelMounts) =>
+    [...mounts.profile.querySelectorAll<HTMLSelectElement>("select")].find(
+      (s) => s.getAttribute("aria-label") === "Rate plan",
+    )!;
+
+  it("offers the Pass variants in the same list, no separate control", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    const values = [...select(mounts).options].map((o) => o.value);
+    expect(values).toContain("resident");
+    expect(values).toContain("resident_plus");
+    // Nothing else in Profile is a Pass toggle.
+    expect(mounts.profile.textContent).not.toMatch(/VeoPlus Pass\b.*check/i);
+  });
+
+  it("shows the account's plan, not whatever this device remembers", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: "equity" });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    expect(select(mounts).value).toBe("equity");
+  });
+
+  it("saves a change to the account", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    api.updateProfile.mockClear();
+    const s = select(mounts);
+    s.value = "visitor";
+    s.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    expect(api.updateProfile).toHaveBeenCalledWith({ rate_plan: "visitor" });
+  });
+
+  it("pushes this device's plan up when the account has none yet", async () => {
+    // A rider who picked a plan before signing in, or on this device only.
+    localStorage.setItem("scooter_fyi.rate_plan", "resident_plus");
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: null });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    // The Pass variant is shown (only this device can know it) and the base
+    // plan is sent up, so the two stop disagreeing.
+    expect(select(mounts).value).toBe("resident_plus");
+    expect(api.updateProfile).toHaveBeenCalledWith({ rate_plan: "resident" });
+  });
+
+  it("prompts when neither the account nor the device has a plan", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: null });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    expect(select(mounts).value).toBe("");
+    // Nothing invented on the rider's behalf.
+    const rateWrites = api.updateProfile.mock.calls.filter(
+      (c) => "rate_plan" in (c[0] as object),
+    );
+    expect(rateWrites).toHaveLength(0);
   });
 });
 

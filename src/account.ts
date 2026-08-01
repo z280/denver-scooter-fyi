@@ -27,6 +27,7 @@ import {
   applyServerRatePlan,
   saveRatePlan,
   setRatePlanSyncHook,
+  toApiRatePlan,
 } from "./ride-cost.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
@@ -1385,16 +1386,25 @@ export function renderSignedInAccount(
       phoneVerify.node,
     );
 
-    // Rate plan: one flat list, VeoPlus variants included (per PR #37 — a
-    // single field, not a rate + a separate Pass checkbox). The server
-    // stores only the base plan; saveRatePlan()'s sync hook pushes it.
+    // Rate plan. One flat list: the option labels themselves say whether a
+    // VeoPlus Pass applies, so there is no separate Pass control.
+    //
+    // The account is the source of truth here — a plan chosen on a phone
+    // should price a ride opened on a laptop. The server has one field and
+    // it holds the base plan only; the Pass is a local pricing refinement it
+    // cannot represent. So exactly one local write remains, and it is a
+    // CACHE, never an input: the HUD's cost ticker reads the plan
+    // synchronously while a ride is starting and cannot wait for a profile
+    // GET, and a signed-out rider has no profile to read at all.
     const rateWrap = el("div", "account-field");
     rateWrap.append(el("span", "control-label", "Rate plan"));
     const rateSelect = el("select", "select");
     rateSelect.setAttribute("aria-label", "Rate plan");
     const rateStatus = makeStatus();
-    const localKey = applyServerRatePlan(p.rate_plan);
-    if (!localKey) {
+    // Server wins on the base plan; the local Pass refinement survives when
+    // the two agree, and the cache is refreshed on the way through.
+    const shownKey = applyServerRatePlan(p.rate_plan);
+    if (!shownKey) {
       const opt = el("option", undefined, "Choose your plan…");
       opt.value = "";
       opt.disabled = true;
@@ -1406,16 +1416,24 @@ export function renderSignedInAccount(
       opt.value = plan.key;
       rateSelect.append(opt);
     }
-    if (localKey) rateSelect.value = localKey;
+    if (shownKey) rateSelect.value = shownKey;
+    // This device knows a plan the account does not — push it up so the two
+    // converge instead of silently disagreeing until the next change.
+    if (shownKey && !p.rate_plan) {
+      void savePatch({ rate_plan: toApiRatePlan(shownKey) }).catch(() => {
+        /* the next change retries; the ticker is already correct locally */
+      });
+    }
     rateSelect.addEventListener("change", () => {
       const key = rateSelect.value as RatePlanKey;
       if (!RATE_PLANS.some((pl) => pl.key === key)) return;
-      // saveRatePlan persists locally and fires the sync hook, which owns
-      // the status messaging (PUT vs. local-only). Report a localStorage
-      // failure afterwards so it wins over the hook's optimistic copy.
+      // saveRatePlan refreshes the cache and fires the sync hook, which owns
+      // the PUT and the status messaging. Report a cache-write failure
+      // afterwards so it wins over the hook's optimistic copy — the account
+      // still saved, but this device won't remember the Pass.
       if (!saveRatePlan(key)) {
         rateStatus.set(
-          "Couldn't save on this device (private browsing?) — your account may still sync.",
+          "Saved to your account, but not to this device (private browsing?).",
           true,
         );
       }
