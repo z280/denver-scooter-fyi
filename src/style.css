@@ -1311,6 +1311,51 @@ body:not(.ribbon-open) .drawer-tabs {
   margin-top: 10px;
 }
 
+/* ---------- Community settings disclosure (account.ts) ---------- */
+.community-settings {
+  margin-top: 10px;
+}
+.community-settings__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 0;
+  cursor: pointer;
+  border-radius: 999px;
+}
+/* Collapsed it stops being a heading and becomes a way back in. */
+.community-settings__toggle.is-collapsed {
+  width: auto;
+  padding: 6px 12px;
+  background: var(--accent-soft);
+  color: var(--fg-muted);
+}
+.community-settings__toggle:hover {
+  color: var(--fg);
+}
+.community-settings__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.community-settings__toggle svg {
+  flex: none;
+}
+/* The identity section supplies its own heading and top rule. */
+.community-settings__body > .account-section:first-child {
+  margin-top: 4px;
+}
+.community-leaderboard {
+  text-align: center;
+}
+
 /* ---------- Signed-in profile surface (account.ts) ---------- */
 .account-section {
   margin-top: 14px;

@@ -126,6 +126,55 @@ const BADGE_EMOJI: Record<string, string> = {
 /** Unique-id counter for combobox aria wiring (ids must be document-unique). */
 let comboUid = 0;
 
+/** Feather's `settings` gear, matching the inline-SVG convention used for
+ *  every other icon in the app. */
+function gearIcon(): SVGSVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const circle = document.createElementNS(NS, "circle");
+  circle.setAttribute("cx", "12");
+  circle.setAttribute("cy", "12");
+  circle.setAttribute("r", "3");
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute(
+    "d",
+    "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+  );
+  svg.append(circle, path);
+  return svg;
+}
+
+// Whether the community settings block is expanded. sessionStorage, not
+// localStorage: it is view state, not a preference, and the "keep profile
+// data on the server" rule is about the profile, not about which sections
+// happen to be open.
+const COMMUNITY_OPEN_KEY = "scooter_fyi.community_settings_open";
+
+function communitySettingsOpen(): boolean {
+  try {
+    return sessionStorage.getItem(COMMUNITY_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function rememberCommunitySettingsOpen(open: boolean): void {
+  try {
+    sessionStorage.setItem(COMMUNITY_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* private mode — it just reopens expanded next time */
+  }
+}
+
 /** True once every completion criterion the API scores is met (email AND
  *  rate plan AND phone AND at least one of home/work) — worth 10 points. */
 function isProfileComplete(p: Profile): boolean {
@@ -1588,8 +1637,58 @@ export function renderSignedInAccount(
   // is drawn in, and who gets to see any of it.
 
   const buildCommunitySettings = (p: Profile): HTMLElement => {
-    const wrap = el("div", "community-settings");
-    wrap.append(buildIdentitySection(), ...buildPrivacyToggles(p));
+    const wrap = el("section", "community-settings");
+    const toggle = el("button", "community-settings__toggle");
+    toggle.type = "button";
+    toggle.id = "community-settings-toggle";
+    toggle.setAttribute("aria-controls", "community-settings-body");
+    const gear = gearIcon();
+    const label = el("span", "community-settings__label");
+    toggle.append(gear, label);
+
+    const inner = el("div", "community-settings__body");
+    inner.id = "community-settings-body";
+    inner.append(buildIdentitySection(), ...buildPrivacyToggles(p));
+
+    // Open by default — this is where a new rider names themselves — but it
+    // collapses to a plain gear pill once they are done with it.
+    let open = communitySettingsOpen();
+    const paint = (): void => {
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.classList.toggle("is-collapsed", !open);
+      // Two labels, one control: the full heading while it reads as a
+      // section header, the short one once it is just a way back in.
+      label.textContent = open ? "Community settings" : "Settings";
+      inner.hidden = !open;
+    };
+    toggle.addEventListener("click", () => {
+      open = !open;
+      // Collapsing removes the focused control from the page, so hand focus
+      // back to the toggle rather than dropping it on the body.
+      if (!open && inner.contains(document.activeElement)) toggle.focus();
+      paint();
+      rememberCommunitySettingsOpen(open);
+    });
+    paint();
+
+    wrap.append(toggle, inner);
+    return wrap;
+  };
+
+  /** A way through to the territory map, which is where ruling colours and
+   *  the leaderboard opt-in actually show up. Linked, not embedded: the
+   *  leaderboard owns map layers and pauses the choropleth and hex density
+   *  while it is open, and two owners for that state would fight. */
+  const buildLeaderboardLink = (): HTMLElement => {
+    const wrap = el("div", "account-section community-leaderboard");
+    const btn = el("button", "text-btn", "Open the leaderboard 🏆");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      document
+        .querySelector<HTMLElement>(".topbar__right .leaderboard-toggle")
+        ?.click();
+    });
+    wrap.append(btn);
     return wrap;
   };
 
@@ -1613,6 +1712,7 @@ export function renderSignedInAccount(
             buildCommunitySettings(p),
             buildBadgesSection(p),
             buildPointsSection(),
+            buildLeaderboardLink(),
           );
         } else {
           profileSlot.replaceChildren(

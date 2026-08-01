@@ -82,6 +82,15 @@ const settle = async (): Promise<void> => {
 
 beforeEach(() => {
   document.body.replaceChildren();
+  // Stubbed rather than trusted: the disclosure remembers its state here, and
+  // a real one would leak that between test files.
+  const store = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+  });
   body = document.createElement("section");
   document.body.append(body);
   api.fetchProfile.mockResolvedValue(PROFILE);
@@ -150,6 +159,96 @@ describe("panel mounting", () => {
     expect(text).toContain("Badges");
     expect(text).toContain("Points");
     expect(text).toContain("List me in leaderboards");
+  });
+});
+
+// ---------- community settings disclosure ----------
+
+describe("community settings disclosure", () => {
+  const toggle = (mounts: AccountPanelMounts) =>
+    mounts.community.querySelector<HTMLButtonElement>(
+      ".community-settings__toggle",
+    )!;
+  const inner = (mounts: AccountPanelMounts) =>
+    mounts.community.querySelector<HTMLElement>("#community-settings-body")!;
+
+  it("starts open, labelled as a section heading", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    expect(toggle(mounts).getAttribute("aria-expanded")).toBe("true");
+    expect(toggle(mounts).textContent).toContain("Community settings");
+    expect(inner(mounts).hidden).toBe(false);
+    // The control names what it controls, both ways.
+    expect(toggle(mounts).getAttribute("aria-controls")).toBe(
+      inner(mounts).id,
+    );
+  });
+
+  it("collapses to a short gear pill and back", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    toggle(mounts).click();
+    expect(toggle(mounts).getAttribute("aria-expanded")).toBe("false");
+    expect(toggle(mounts).classList.contains("is-collapsed")).toBe(true);
+    expect(toggle(mounts).textContent).toContain("Settings");
+    expect(inner(mounts).hidden).toBe(true);
+
+    toggle(mounts).click();
+    expect(toggle(mounts).getAttribute("aria-expanded")).toBe("true");
+    expect(inner(mounts).hidden).toBe(false);
+  });
+
+  it("keeps focus on the toggle when collapsing from inside", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    const inside = inner(mounts).querySelector<HTMLElement>("button, input");
+    inside?.focus();
+    expect(inner(mounts).contains(document.activeElement)).toBe(true);
+
+    toggle(mounts).click();
+    expect(document.activeElement).toBe(toggle(mounts));
+  });
+
+  it("remembers the collapsed state for the session", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+    toggle(mounts).click(); // collapse
+
+    // A fresh render (a token change, say) reopens collapsed.
+    document.body.replaceChildren();
+    const next = makeMounts();
+    const body2 = document.createElement("section");
+    document.body.append(body2);
+    renderSignedInAccount(body2, AUTH, { ...deps(), panels: next });
+    await settle();
+    expect(toggle(next).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("links to the leaderboard rather than embedding it", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    const trigger = document.createElement("button");
+    trigger.className = "leaderboard-toggle";
+    const bar = document.createElement("div");
+    bar.className = "topbar__right";
+    bar.append(trigger);
+    document.body.append(bar);
+    const clicked = vi.fn();
+    trigger.addEventListener("click", clicked);
+
+    mounts.community
+      .querySelector<HTMLButtonElement>(".community-leaderboard button")!
+      .click();
+    expect(clicked).toHaveBeenCalledTimes(1);
   });
 });
 
