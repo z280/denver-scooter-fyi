@@ -1233,6 +1233,81 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
 }
 
+/* ---------- Account drawer tabs (account-tabs.ts) ----------
+   The strip pins below the drawer's own sticky header. `.drawer` owns the
+   scrolling (not `.drawer-body`), so both are sticky in the same container:
+   the header at top 0, the strip at the header's height. That height is
+   measured once at runtime and written to --drawer-header-h; the value here
+   is only the pre-measurement fallback. */
+.account-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: var(--drawer-header-h, 45px);
+  z-index: 2;
+  background: var(--bg-panel);
+}
+.account-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.account-tab:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.account-tab.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.account-tab__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Dimmed, but still focusable and still announced — see the aria-disabled
+   note in account-tabs.ts. */
+.account-tab.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.account-tab.is-disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+.account-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.account-panel[hidden] {
+  display: none;
+}
+.account-panel:focus-visible {
+  outline: none;
+}
+/* The tab strip is the drawer's first child now, so the section's own
+   top border would double up on the strip's bottom border. */
+#account-body.control-group {
+  border-top: 0;
+  padding-top: 0;
+}
+
 /* ---------- Signed-in profile surface (account.ts) ---------- */
 .account-section {
   margin-top: 14px;
