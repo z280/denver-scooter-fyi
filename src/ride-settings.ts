@@ -534,8 +534,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
 /** Splits `**bold**` / `*italic*` markers out of an owner-copy string into
  *  real `<strong>`/`<em>` elements inside one `<p>`, via plain string
  *  indexing — no innerHTML, so this is safe regardless of the string's
- *  origin even though every caller today passes a static constant. */
-function appendRichParagraph(container: HTMLElement, text: string): void {
+ *  origin even though every caller today passes a static constant. Exported
+ *  for direct unit testing (review fix): the friction-reduction pass removed
+ *  every 🏆-row info-modal body that used `**`/`*` markers, so nothing left
+ *  in `RIDE_INFO_MODAL_COPY` exercises the markdown-parsing branch below —
+ *  without a direct test, a regression here would only surface the next time
+ *  someone adds a modal body using those markers. */
+export function appendRichParagraph(container: HTMLElement, text: string): void {
   const p = el("p");
   const re = /\*\*(.+?)\*\*|\*(.+?)\*/g;
   let lastIndex = 0;

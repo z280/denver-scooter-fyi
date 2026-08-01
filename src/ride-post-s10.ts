@@ -289,7 +289,12 @@ export function estimateDonationPoints(
   if (eligibility.navDistance) {
     total += points.navDistancePerStep * wholeSteps(km, points.navDistanceStepKm);
   }
-  return total;
+  // A live points schedule could zero out an action's base/per_step without
+  // removing the entry entirely (`resolveRideModePoints`'s `??` fallback only
+  // catches a missing field, not an explicit 0) — degrade to "nothing to
+  // estimate" rather than the hollow "up to 0 pts" this function's callers
+  // are told never to expect (review fix).
+  return total > 0 ? total : null;
 }
 
 /** Screen 10's donation consent disclosure — master `RIDE_MODE_OVERHAUL_PLAN.md`
@@ -740,24 +745,29 @@ function mountRidePostS10(
 
     // The pre-donation points tease: only while donating is still a live,
     // meaningful choice — gone once the real per-action award list is
-    // showing (`donation`/`donated`), and never shown for an already-
-    // decided "ineligible" ride, where a number here would contradict the
-    // sentence above it. `estimateDonationPoints` itself returns `null`
-    // (rendering nothing) whenever the distance isn't known yet or neither
-    // points bucket applies to this rider's options.
-    if (!donated && !donation && validation.status !== "ineligible") {
+    // showing (`donation`/`donated`), never shown for an already-decided
+    // "ineligible" ride (a number there would contradict the sentence above
+    // it), and never alongside a failed-donation `error` (review fix: a
+    // rejected donate attempt — e.g. chain_invalid — leaves `donated`/
+    // `donation` both false, and showing "up to N pts" right next to "failed
+    // integrity verification" is self-contradictory). `estimateDonationPoints`
+    // itself returns `null` (rendering nothing) whenever the distance isn't
+    // known yet, neither points bucket applies to this rider's options, or
+    // the resolved schedule would only ever add up to a hollow 0.
+    if (!donated && !donation && !error && validation.status !== "ineligible") {
       const estimate = estimateDonationPoints(rideDistanceMeters, deps.points(), {
         battery: doc.options.battery_modeling,
         navDistance: doc.options.nav_improvement && doc.route !== null,
       });
       if (estimate !== null) {
-        wrap.append(
-          el(
-            "p",
-            "ride-post-s10__points-tease",
-            `Donating could earn you up to ${commas(estimate)} pts (pending validation).`,
-          ),
+        const tease = el(
+          "p",
+          "ride-post-s10__points-tease",
+          `Donating could earn you up to ${commas(estimate)} pts (pending validation).`,
         );
+        tease.setAttribute("role", "status");
+        tease.setAttribute("aria-live", "polite");
+        wrap.append(tease);
       }
     }
 
@@ -887,8 +897,16 @@ function mountRidePostS10(
     try {
       const ride = await deps.getTrackedRide(rideId);
       if (destroyed) return;
-      validation = ride.validation ?? { status: "pending", reasons: [] };
       rideDistanceMeters = ride.distance_meters;
+      // Review fix: a rider can donate (and get back a fresher, authoritative
+      // `validation` from the donate response) before this initial fetch —
+      // fired at mount — has even resolved. Don't let this late arrival
+      // regress the eligibility sentence back to a stale pre-donation status;
+      // the distance above is still worth taking (it's the same field either
+      // response would carry) but the validation verdict is not.
+      if (!donated) {
+        validation = ride.validation ?? { status: "pending", reasons: [] };
+      }
     } catch {
       if (destroyed) return;
       validationNote =

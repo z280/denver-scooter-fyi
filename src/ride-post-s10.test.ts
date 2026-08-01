@@ -8,7 +8,7 @@
 // a declined-donation path leaves zero `donateTrack` calls; already-donated
 // and chain_invalid error handling; "See recent trips"; and Return to Main
 // App dispatching `eligibilityDone` + unmounting.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
@@ -299,6 +299,34 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+/** A promise plus externally-callable settlers, for racing two async calls
+ *  against each other deterministically. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// Adversarial-review fix: this file had no DOM cleanup between tests, unlike
+// its siblings (ride-post-s8.test.ts, ride-screen-select.ts). Every test here
+// mounts into a detached container it appends to `document.body` (see
+// `wire()` above) and is expected to call its own `unwire()` before finishing
+// — but a test whose assertion throws BEFORE reaching `unwire()` would leave
+// a stale `.ride-post-s10` mount attached, which `root()`/`queryRoot()`
+// (plain `document.querySelector`) would then silently pick up as the
+// FIRST match in every subsequent test, corrupting their assertions instead
+// of failing cleanly. This doesn't fix the underlying "always call unwire()"
+// discipline, but it stops one bad test from cascading into every test after
+// it in the file.
+afterEach(() => {
+  document.body.replaceChildren();
+});
+
 // ---------------------------------------------------------------------------
 // buildEligibilityCopy — every reason (7) x the enumerated statuses
 // ---------------------------------------------------------------------------
@@ -489,7 +517,18 @@ describe("estimateDonationPoints", () => {
     const negativeStep: ResolvedRideModePoints = { ...POINTS, navDistanceStepKm: -1 };
     expect(
       estimateDonationPoints(4300, negativeStep, { battery: false, navDistance: true }),
-    ).toBe(0);
+    ).toBeNull();
+  });
+
+  it("a zeroed-out award (base and per-step both 0) yields null, never a hollow 'up to 0 pts'", () => {
+    const zeroedAward: ResolvedRideModePoints = {
+      ...POINTS,
+      batteryBase: 0,
+      batteryPerStep: 0,
+    };
+    expect(
+      estimateDonationPoints(4300, zeroedAward, { battery: true, navDistance: false }),
+    ).toBeNull();
   });
 });
 
@@ -706,6 +745,36 @@ describe("initial validation load", () => {
     expect(sentenceText()).toBe(buildEligibilityCopy({ status: "pending", reasons: [] }));
     expect(root().textContent).toMatch(/Couldn't check your ride/);
     expect(buttonWithText("Donate This Trip's Data").disabled).toBe(false);
+    unwire();
+  });
+
+  // Adversarial-review fix: a slow initial fetch resolving AFTER a fast
+  // donation used to unconditionally overwrite `validation`, regressing the
+  // eligibility sentence back to the stale pre-donation status right after a
+  // successful donation had already set the authoritative one.
+  it("a late-resolving initial fetch does not regress the sentence after a faster donation already settled it", async () => {
+    const session = sessionAtEligibility();
+    const initial = deferred<TrackedRide>();
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() => initial.promise),
+      donateTrack: vi.fn(() =>
+        Promise.resolve(
+          fakeDonateResponse({ validation: { status: "eligible", reasons: [] } }),
+        ),
+      ),
+    });
+
+    // The initial GET is still in flight when the rider donates.
+    buttonWithText("Donate This Trip's Data").click();
+    await flush();
+    expect(sentenceText()).toBe(buildEligibilityCopy({ status: "eligible", reasons: [] }));
+
+    // The slow initial fetch finally resolves with a stale, pre-donation
+    // verdict — it must NOT clobber the donation's own authoritative one.
+    initial.resolve(fakeTrackedRide({ validation: { status: "pending", reasons: [] } }));
+    await flush();
+
+    expect(sentenceText()).toBe(buildEligibilityCopy({ status: "eligible", reasons: [] }));
     unwire();
   });
 });
@@ -930,6 +999,56 @@ describe("points tease (renderBody)", () => {
     buttonWithText("See recent trips").click();
     await flush();
     expect(teaseText()).toBe("Donating could earn you up to 106 pts (pending validation).");
+    unwire();
+  });
+
+  it("is marked as a polite live region, like the adjacent sentence and error paragraphs", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+    });
+    await flush();
+    const tease = root().querySelector(".ride-post-s10__points-tease");
+    expect(tease?.getAttribute("role")).toBe("status");
+    expect(tease?.getAttribute("aria-live")).toBe("polite");
+    unwire();
+  });
+
+  it("a zeroed-out points schedule (base and per-step both 0) shows no tease at all", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      points: () => ({ ...FALLBACK_RIDE_MODE_POINTS, batteryBase: 0, batteryPerStep: 0 }),
+    });
+    await flush();
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("disappears once a donation attempt FAILS, so it never contradicts the error message beside it", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      donateTrack: vi.fn(() =>
+        Promise.reject(
+          new ApiError("x", "HTTP_ERROR", { status: 422, errorKey: "chain_invalid" }),
+        ),
+      ),
+    });
+    await flush();
+    expect(teaseText()).not.toBeNull();
+
+    buttonWithText("Donate This Trip's Data").click();
+    await flush();
+
+    expect(root().textContent).toMatch(/integrity verification/);
+    expect(teaseText()).toBeNull();
     unwire();
   });
 });

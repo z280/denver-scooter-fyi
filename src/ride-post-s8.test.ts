@@ -217,6 +217,22 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+/** A promise plus externally-callable settlers, for pinning an async call
+ *  mid-flight so a test can tear down the screen before it resolves. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
@@ -598,6 +614,76 @@ describe('["I ended my ride in Veo"]', () => {
     await flush();
     expect(session.current()?.state).toBe("done");
     unwire();
+  });
+
+  // Adversarial-review fix: onEndRide's three `if (destroyed) return;` guards
+  // (ride-post-s8.ts:563, 574, 576) had no test tearing the screen down
+  // mid-request, so a broken/inverted guard would ship silently — the code
+  // would go on to render() a detached node and/or dispatch `endReported`
+  // into a session that has since moved elsewhere. One test per guard.
+  it("tearing down while the PATCH /end is in flight (success arrives after) never calls getGateFacts or dispatches endReported", async () => {
+    const session = sessionAtEnding();
+    const end = deferred<TrackedRide>();
+    const { unwire, endTrackedRide, getGateFacts } = wire(session, {
+      endTrackedRide: vi.fn(() => end.promise),
+    });
+
+    buttonWithText("I ended my ride in Veo").click();
+    expect(endTrackedRide).toHaveBeenCalledTimes(1);
+
+    // ride-post-s8.ts:574 — the guard right after the try/catch, before
+    // getGateFacts is ever called.
+    unwire();
+    expect(queryRoot()).toBeNull();
+
+    end.resolve(fakeTrackedRide());
+    await flush();
+
+    expect(getGateFacts).not.toHaveBeenCalled();
+    expect(session.current()?.state).toBe("ending");
+    expect(queryRoot()).toBeNull();
+  });
+
+  it("tearing down while the PATCH /end is in flight (failure arrives after) swallows the error instead of setting state on a removed screen", async () => {
+    const session = sessionAtEnding();
+    const end = deferred<TrackedRide>();
+    const { unwire } = wire(session, {
+      endTrackedRide: vi.fn(() => end.promise),
+    });
+
+    buttonWithText("I ended my ride in Veo").click();
+
+    // ride-post-s8.ts:563 — the guard inside the catch block, before the
+    // already-reported check even runs.
+    unwire();
+    expect(queryRoot()).toBeNull();
+
+    end.reject(new Error("aborted"));
+    await flush();
+
+    expect(session.current()?.state).toBe("ending");
+    expect(queryRoot()).toBeNull();
+  });
+
+  it("tearing down while getGateFacts is in flight never dispatches endReported into a session that's moved on", async () => {
+    const session = sessionAtEnding();
+    const gate = deferred<RideGateFacts>();
+    const { unwire } = wire(session, {
+      getGateFacts: vi.fn(() => gate.promise),
+    });
+
+    buttonWithText("I ended my ride in Veo").click();
+    await flush(); // let the (immediately-resolving) PATCH /end settle first
+
+    // ride-post-s8.ts:576 — the guard right after getGateFacts resolves,
+    // before the endReported dispatch.
+    unwire();
+    expect(queryRoot()).toBeNull();
+
+    gate.resolve({ hasWaypoints: true });
+    await flush();
+
+    expect(session.current()?.state).toBe("ending");
   });
 });
 

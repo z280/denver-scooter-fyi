@@ -35,6 +35,7 @@ import {
   RIDE_INFO_MODAL_COPY,
   RIDE_OPTION_ROWS,
   RIDE_PROVIDER_NAME,
+  appendRichParagraph,
   applyCascades,
   cachedRideUsuals,
   defaultRideOptions,
@@ -341,6 +342,50 @@ describe("RIDE_INFO_MODAL_COPY — Screen 2 ℹ modal copy, verbatim", () => {
     for (const field of pointFields) {
       expect(FALLBACK_RIDE_MODE_POINTS[field] % 2).toBe(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// appendRichParagraph — direct coverage of the `**bold**`/`*italic*` parser.
+// Adversarial-review fix: the friction-reduction pass removed every 🏆-row
+// info-modal body that used markdown markers, so nothing left in
+// RIDE_INFO_MODAL_COPY (see above — navigation/save_tracks are both plain
+// text) exercises this branch anymore without a direct test.
+// ---------------------------------------------------------------------------
+
+describe("appendRichParagraph", () => {
+  function renderedHTML(text: string): string {
+    const container = document.createElement("div");
+    appendRichParagraph(container, text);
+    return container.innerHTML;
+  }
+
+  it("renders **bold** as <strong>", () => {
+    expect(renderedHTML("plain **bold** plain")).toBe(
+      "<p>plain <strong>bold</strong> plain</p>",
+    );
+  });
+
+  it("renders *italic* as <em>", () => {
+    expect(renderedHTML("plain *italic* plain")).toBe(
+      "<p>plain <em>italic</em> plain</p>",
+    );
+  });
+
+  it("renders multiple markers of both kinds in one string, preserving order and surrounding text", () => {
+    expect(renderedHTML("**A** and *B* and **C**")).toBe(
+      "<p><strong>A</strong> and <em>B</em> and <strong>C</strong></p>",
+    );
+  });
+
+  it("plain text with no markers passes through untouched", () => {
+    expect(renderedHTML("nothing special here")).toBe("<p>nothing special here</p>");
+  });
+
+  it("never uses innerHTML for the source text — a marker-free string containing HTML-special characters renders as literal text, not markup", () => {
+    expect(renderedHTML("<img src=x> & \"quotes\"")).toBe(
+      "<p>&lt;img src=x&gt; &amp; \"quotes\"</p>",
+    );
   });
 });
 
