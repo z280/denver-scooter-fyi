@@ -22,6 +22,7 @@ import { base64UrlEncode, openTrackStore } from "./track-store.ts";
 import {
   createRideSessionStore,
   memoryRideSessionStorage,
+  type RideSessionRoute,
   type RideSessionSelectedDevice,
   type RideSessionStore,
 } from "./ride-session.ts";
@@ -30,6 +31,7 @@ import {
   describeDonateError,
   describeRecentTripsError,
   DONATION_DISCLOSURE_TEXT,
+  estimateDonationPoints,
   formatKm,
   isAlreadyDonatedError,
   joinReasonClauses,
@@ -42,6 +44,10 @@ import {
   wireRidePostS10,
   type RidePostS10Deps,
 } from "./ride-post-s10.ts";
+import {
+  FALLBACK_RIDE_MODE_POINTS,
+  type ResolvedRideModePoints,
+} from "./ride-settings.ts";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -96,6 +102,56 @@ function sessionAtEligibility(
     type: "endReported",
     facts: { hasWaypoints: true },
   });
+  if (!t?.accepted || t.to !== "eligibility(10)") {
+    throw new Error(`fixture failed to reach eligibility(10): landed on ${t?.to}`);
+  }
+  return store;
+}
+
+const ROUTE: RideSessionRoute = {
+  profile: "safe",
+  rideRouteId: "route-1",
+  distanceM: 4300,
+  durationS: 900,
+  polyline: "abc",
+  maneuvers: [],
+};
+
+/** Same shape as `sessionAtEligibility`, but with a Screen 4 route chosen
+ *  before the ride starts — `setRoute` only accepts `wizard`/`riding`, so it
+ *  must land between `open` and `startCountdown`. Needed for the nav-distance
+ *  points-tease bucket, which is gated on `doc.route !== null` in addition to
+ *  `options.nav_improvement`. */
+function sessionAtEligibilityWithRoute(
+  options: Partial<RideOptions> = {},
+  rideId: string = RIDE_ID,
+): RideSessionStore {
+  const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+  store.dispatch({ type: "open", options: baseOptions(options), screen: "6" });
+  store.dispatch({ type: "setDevice", device: DEVICE });
+  store.dispatch({ type: "setRoute", route: ROUTE });
+  store.dispatch({ type: "startCountdown" });
+  store.dispatch({
+    type: "rideStarted",
+    rideId,
+    startedAtMs: STARTED_AT_MS,
+    trackKeyId: rideId,
+    private: false,
+  });
+  store.dispatch({ type: "endRide" });
+  // A chosen route always gates Screen 9's navigation pane open
+  // (`surveyPanes`'s `navigation: tracked && doc.route !== null` — it doesn't
+  // check `nav_improvement`), so `endReported` lands on survey(9) first here;
+  // clear it with `surveyDone` to reach eligibility(10), same as a real rider
+  // finishing Screen 9.
+  const afterEnd = store.dispatch({
+    type: "endReported",
+    facts: { hasWaypoints: true },
+  });
+  const t =
+    afterEnd?.accepted && afterEnd.to === "survey(9)"
+      ? store.dispatch({ type: "surveyDone", facts: { hasWaypoints: true } })
+      : afterEnd;
   if (!t?.accepted || t.to !== "eligibility(10)") {
     throw new Error(`fixture failed to reach eligibility(10): landed on ${t?.to}`);
   }
@@ -361,6 +417,79 @@ describe("reasonClause / joinReasonClauses", () => {
     expect(joinReasonClauses(["trip_too_short", "trip_too_short"])).toBe(
       "your trip was too short",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimateDonationPoints — the pre-donation "up to N pts" tease, pure and
+// directly unit-testable against FALLBACK_RIDE_MODE_POINTS (batteryBase: 8,
+// batteryPerStep: 2, batteryStepKm: 2, navDistancePerStep: 2,
+// navDistanceStepKm: 3).
+// ---------------------------------------------------------------------------
+
+describe("estimateDonationPoints", () => {
+  const POINTS = FALLBACK_RIDE_MODE_POINTS;
+
+  it("null distance yields null", () => {
+    expect(
+      estimateDonationPoints(null, POINTS, { battery: true, navDistance: true }),
+    ).toBeNull();
+  });
+
+  it("zero or negative distance yields null", () => {
+    expect(
+      estimateDonationPoints(0, POINTS, { battery: true, navDistance: true }),
+    ).toBeNull();
+    expect(
+      estimateDonationPoints(-100, POINTS, { battery: true, navDistance: true }),
+    ).toBeNull();
+  });
+
+  it("neither eligibility bucket yields null", () => {
+    expect(
+      estimateDonationPoints(5000, POINTS, { battery: false, navDistance: false }),
+    ).toBeNull();
+  });
+
+  it("battery-only: base + per-step * ceil(km / stepKm)", () => {
+    // 4.3 km / 2 km-per-step -> ceil(2.15) = 3 steps.
+    expect(
+      estimateDonationPoints(4300, POINTS, { battery: true, navDistance: false }),
+    ).toBe(POINTS.batteryBase + POINTS.batteryPerStep * 3);
+  });
+
+  it("navDistance-only: per-step * ceil(km / stepKm)", () => {
+    // 4.3 km / 3 km-per-step -> ceil(1.43) = 2 steps.
+    expect(
+      estimateDonationPoints(4300, POINTS, { battery: false, navDistance: true }),
+    ).toBe(POINTS.navDistancePerStep * 2);
+  });
+
+  it("both buckets combine additively", () => {
+    expect(
+      estimateDonationPoints(4300, POINTS, { battery: true, navDistance: true }),
+    ).toBe(
+      POINTS.batteryBase + POINTS.batteryPerStep * 3 + POINTS.navDistancePerStep * 2,
+    );
+  });
+
+  it("an exact step boundary rounds up to that step, not the next one", () => {
+    // Exactly 2.00 km against a 2 km step is 1 step, not 2.
+    expect(
+      estimateDonationPoints(2000, POINTS, { battery: true, navDistance: false }),
+    ).toBe(POINTS.batteryBase + POINTS.batteryPerStep * 1);
+  });
+
+  it("a non-positive stepKm degrades to the flat base rather than Infinity/NaN", () => {
+    const zeroStep: ResolvedRideModePoints = { ...POINTS, batteryStepKm: 0 };
+    expect(
+      estimateDonationPoints(4300, zeroStep, { battery: true, navDistance: false }),
+    ).toBe(zeroStep.batteryBase);
+
+    const negativeStep: ResolvedRideModePoints = { ...POINTS, navDistanceStepKm: -1 };
+    expect(
+      estimateDonationPoints(4300, negativeStep, { battery: false, navDistance: true }),
+    ).toBe(0);
   });
 });
 
@@ -647,6 +776,160 @@ describe("donation consent disclosure", () => {
     buttonWithText("Donate This Trip's Data").click();
     await flush();
     expect(root().textContent).not.toContain(DONATION_DISCLOSURE_TEXT);
+    unwire();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Points tease — the "up to N pts" estimate shown before donating (renderBody
+// wires estimateDonationPoints, tested in isolation above, to the fetched
+// ride's distance and the doc's own donation-eligibility options).
+// ---------------------------------------------------------------------------
+
+describe("points tease (renderBody)", () => {
+  function teaseText(): string | null {
+    return (
+      root().querySelector<HTMLElement>(".ride-post-s10__points-tease")
+        ?.textContent ?? null
+    );
+  }
+
+  it("shows an estimate before donating when battery_modeling is eligible", async () => {
+    const session = sessionAtEligibility({
+      battery_modeling: true,
+      nav_improvement: false,
+    });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      points: () => FALLBACK_RIDE_MODE_POINTS,
+    });
+    await flush();
+    expect(teaseText()).toBe("Donating could earn you up to 14 pts (pending validation).");
+    unwire();
+  });
+
+  it("adds the nav distance bonus only when a route was chosen AND nav_improvement is on", async () => {
+    const session = sessionAtEligibilityWithRoute({
+      battery_modeling: true,
+      nav_improvement: true,
+    });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      points: () => FALLBACK_RIDE_MODE_POINTS,
+    });
+    await flush();
+    // battery: 8 + 2*3 = 14; nav distance: 2*2 = 4; total 18.
+    expect(teaseText()).toBe("Donating could earn you up to 18 pts (pending validation).");
+    unwire();
+  });
+
+  it("nav_improvement without a chosen route contributes nothing", async () => {
+    const session = sessionAtEligibility({
+      battery_modeling: false,
+      nav_improvement: true,
+    });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      points: () => FALLBACK_RIDE_MODE_POINTS,
+    });
+    await flush();
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("is absent when neither donation-eligible option is on", async () => {
+    const session = sessionAtEligibility({
+      battery_modeling: false,
+      nav_improvement: false,
+    });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+    });
+    await flush();
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("is absent before validation has loaded (distance not known yet)", () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session);
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("is absent once the ride is a decided ineligible verdict", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(
+          fakeTrackedRide({
+            distance_meters: 4300,
+            validation: { status: "ineligible", reasons: ["trip_too_short"] },
+          }),
+        ),
+      ),
+    });
+    await flush();
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("disappears once a donation succeeds, replaced by the real award list", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+    });
+    await flush();
+    expect(teaseText()).not.toBeNull();
+    buttonWithText("Donate This Trip's Data").click();
+    await flush();
+    expect(teaseText()).toBeNull();
+    unwire();
+  });
+
+  it("falls back to FALLBACK_RIDE_MODE_POINTS when no points getter is injected", async () => {
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+    });
+    await flush();
+    expect(teaseText()).toBe("Donating could earn you up to 14 pts (pending validation).");
+    unwire();
+  });
+
+  it("re-reads the points getter fresh on every render rather than caching it at wire time", async () => {
+    let live: ResolvedRideModePoints = FALLBACK_RIDE_MODE_POINTS;
+    const session = sessionAtEligibility({ battery_modeling: true });
+    const { unwire } = wire(session, {
+      getTrackedRide: vi.fn(() =>
+        Promise.resolve(fakeTrackedRide({ distance_meters: 4300 })),
+      ),
+      points: () => live,
+    });
+    await flush();
+    expect(teaseText()).toBe("Donating could earn you up to 14 pts (pending validation).");
+
+    // Simulate loadRideModePoints() resolving AFTER this screen already
+    // mounted — the getter must be re-read on the next render, not the value
+    // frozen from whatever resolved (usually still the fallback) at wire
+    // time. A stale capture here is exactly the bug this getter shape exists
+    // to prevent (see ride-post-s10.ts's own doc comment on `points`).
+    live = { ...FALLBACK_RIDE_MODE_POINTS, batteryBase: 100 };
+    buttonWithText("See recent trips").click();
+    await flush();
+    expect(teaseText()).toBe("Donating could earn you up to 106 pts (pending validation).");
     unwire();
   });
 });

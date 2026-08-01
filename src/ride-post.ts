@@ -235,6 +235,10 @@ export function wireRidePost(deps: RidePostDeps): () => void {
     session: deps.session,
     mountRoot,
     getTrackStore,
+    // Same getter `ride-post.ts`'s barrel hands S9 above — see
+    // ride-post-s10.ts's own doc comment on why this must stay a getter
+    // read fresh per mount, not a value captured once here.
+    points: deps.points,
   } satisfies RidePostS10Deps);
 
   return () => {

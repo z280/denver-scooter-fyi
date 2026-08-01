@@ -132,6 +132,10 @@ import {
 } from "./api.ts";
 import { commas } from "./util.ts";
 import {
+  FALLBACK_RIDE_MODE_POINTS,
+  type ResolvedRideModePoints,
+} from "./ride-settings.ts";
+import {
   phaseOf,
   shouldShowEligibility,
   type RideGateFacts,
@@ -226,6 +230,66 @@ export function buildEligibilityCopy(validation: RideValidation): string {
         `couldn't be determined because there was an internal error.`
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Points tease — an "up to N pts" estimate shown BEFORE donation, so a rider
+// has a concrete reason to bother. Necessarily a client-side guess: the real
+// award depends on server-side validation (chain integrity, GBFS start/end
+// correlation, minimum trip length — the very "ineligible" reasons
+// `buildEligibilityCopy` above renders) this function has no visibility
+// into, so the caller always phrases it as "up to", never a promise, and
+// never shows it once either the real per-action award list is available
+// (after donating) or the ride is already a known "ineligible".
+// ---------------------------------------------------------------------------
+
+export interface DonationPointsEligibility {
+  /** `doc.options.battery_modeling`. Screen 10 is unreachable at all for an
+   *  own-device/private/untracked ride (`shouldShowEligibility`'s own gate
+   *  above), so this reads `true` by construction in every real case that
+   *  gets this far — still threaded through rather than assumed, the same
+   *  way the real server-side award does. */
+  battery: boolean;
+  /** `doc.options.nav_improvement && doc.route !== null` — the distance
+   *  bonus is the NAVIGATION option's own "points per km of valid trip
+   *  data", which presupposes a route existed to navigate and validate
+   *  against. */
+  navDistance: boolean;
+}
+
+/** "Up to N pts" from donating this ride's track, using the same formula
+ *  the (now-removed) Screen 2 ℹ copy for "Improve battery modeling" /
+ *  "Navigation Improvement" described: `batteryBase + batteryPerStep` per
+ *  `batteryStepKm`, plus `navDistancePerStep` per `navDistanceStepKm` — each
+ *  bucket only when the rider's own options make it reachable at all.
+ *  `null` when there is nothing to estimate (unknown distance, a
+ *  non-positive one, or neither bucket applies) — the caller renders
+ *  nothing rather than a hollow "up to 0 pts". */
+/** Whole steps of `stepKm` in `km`, rounded up — 0 (not `Infinity`/`NaN`)
+ *  for a non-positive `stepKm`, so a malformed points schedule degrades the
+ *  tease to its flat base rather than a nonsense number. */
+function wholeSteps(km: number, stepKm: number): number {
+  return stepKm > 0 ? Math.ceil(km / stepKm) : 0;
+}
+
+export function estimateDonationPoints(
+  distanceMeters: number | null,
+  points: ResolvedRideModePoints,
+  eligibility: DonationPointsEligibility,
+): number | null {
+  if (distanceMeters === null || !(distanceMeters > 0)) return null;
+  if (!eligibility.battery && !eligibility.navDistance) return null;
+  const km = distanceMeters / 1000;
+  let total = 0;
+  if (eligibility.battery) {
+    total +=
+      points.batteryBase +
+      points.batteryPerStep * wholeSteps(km, points.batteryStepKm);
+  }
+  if (eligibility.navDistance) {
+    total += points.navDistancePerStep * wholeSteps(km, points.navDistanceStepKm);
+  }
+  return total;
 }
 
 /** Screen 10's donation consent disclosure — master `RIDE_MODE_OVERHAUL_PLAN.md`
@@ -487,6 +551,18 @@ export interface RidePostS10Deps {
   /** Where Screen 10 mounts; defaults to `document.body`. Tests inject a
    *  detached container. */
   mountRoot?: HTMLElement;
+  /** Resolved point values for the pre-donation "up to N pts" tease — same
+   *  "copy/numbers can never drift" discipline as Screen 9's pane headers
+   *  and Screen 2's (removed) ℹ modals, all sourced from
+   *  `ride-settings.ts`'s `loadRideModePoints()`. A GETTER, not a plain
+   *  value, and read fresh inside `mountRidePostS10` rather than once in
+   *  `resolveDeps` — unlike Screen 9 (freshly built by `ride-post.ts` on
+   *  every mount), this module's own `resolveDeps()` runs once at wire
+   *  time, so a plain captured value would freeze on whatever
+   *  `loadRideModePoints()` had resolved (often still the fallback) at
+   *  BOOT and never pick up the live schedule once it lands. Defaults to
+   *  the offline fallback. */
+  points?(): ResolvedRideModePoints | undefined;
 }
 
 interface ResolvedDeps {
@@ -505,6 +581,7 @@ interface ResolvedDeps {
   recentTripsLimit: number;
   onClosed(): void;
   mountRoot: HTMLElement;
+  points(): ResolvedRideModePoints;
 }
 
 function resolveDeps(deps: RidePostS10Deps): ResolvedDeps {
@@ -520,6 +597,7 @@ function resolveDeps(deps: RidePostS10Deps): ResolvedDeps {
     recentTripsLimit: deps.recentTripsLimit ?? 5,
     onClosed: deps.onClosed ?? (() => {}),
     mountRoot: deps.mountRoot ?? document.body,
+    points: () => deps.points?.() ?? FALLBACK_RIDE_MODE_POINTS,
   };
 }
 
@@ -582,6 +660,10 @@ function mountRidePostS10(
   let validation: RideValidation = { status: "pending", reasons: [] };
   let validationLoaded = false;
   let validationNote: string | null = null;
+  // For the pre-donation points tease below — populated alongside
+  // `validation` from the same `getTrackedRide` response, so it needs no
+  // fetch of its own.
+  let rideDistanceMeters: number | null = null;
 
   let donation: DonateTrackResponse | null = null;
   let donated = false;
@@ -654,6 +736,29 @@ function mountRidePostS10(
     }
     if (busy) {
       wrap.append(el("p", "ride-modal__hint", "Working…"));
+    }
+
+    // The pre-donation points tease: only while donating is still a live,
+    // meaningful choice — gone once the real per-action award list is
+    // showing (`donation`/`donated`), and never shown for an already-
+    // decided "ineligible" ride, where a number here would contradict the
+    // sentence above it. `estimateDonationPoints` itself returns `null`
+    // (rendering nothing) whenever the distance isn't known yet or neither
+    // points bucket applies to this rider's options.
+    if (!donated && !donation && validation.status !== "ineligible") {
+      const estimate = estimateDonationPoints(rideDistanceMeters, deps.points(), {
+        battery: doc.options.battery_modeling,
+        navDistance: doc.options.nav_improvement && doc.route !== null,
+      });
+      if (estimate !== null) {
+        wrap.append(
+          el(
+            "p",
+            "ride-post-s10__points-tease",
+            `Donating could earn you up to ${commas(estimate)} pts (pending validation).`,
+          ),
+        );
+      }
     }
 
     // Privacy/completeness review fix: the master plan resolves "no route
@@ -783,6 +888,7 @@ function mountRidePostS10(
       const ride = await deps.getTrackedRide(rideId);
       if (destroyed) return;
       validation = ride.validation ?? { status: "pending", reasons: [] };
+      rideDistanceMeters = ride.distance_meters;
     } catch {
       if (destroyed) return;
       validationNote =
