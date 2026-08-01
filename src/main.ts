@@ -82,6 +82,11 @@ import {
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
+import { createTrackRoute } from "./track-route.ts";
+import {
+  buildLocalDataPanel,
+  type LocalDataHandle,
+} from "./account-local-data.ts";
 import { createHomeWorkPins } from "./home-work-pins.ts";
 import {
   ACCOUNT_TAB_IDS,
@@ -134,6 +139,7 @@ const devices = new Devices(map, locate);
 // Profile location picking. The drawer gets these as callbacks so account.ts
 // never imports maplibre — and so its tests never need a map.
 const homeWorkPins = createHomeWorkPins(map);
+const trackRoute = createTrackRoute(map);
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -2335,6 +2341,8 @@ function wireAccount(): void {
   let signedIn: AccountHandle | null = null;
   // Handle for the sign-in doors (account-login.ts); null while signed in.
   let loginPanel: LoginPanelHandle | null = null;
+  // Handle for the Local Data tab; null until it has been built.
+  let localData: LocalDataHandle | null = null;
   // Key of the state the current DOM was built for. Same key → refresh in
   // place instead of rebuilding, so the minute tick and focus events don't
   // destroy open editors or a half-typed sign-in form.
@@ -2362,6 +2370,10 @@ function wireAccount(): void {
       // GIS needs a laid-out container, so a Login panel that was hidden at
       // build time gets its button on first show.
       if (id === "login") loginPanel?.renderGoogle();
+      // The drawn route belongs to this tab; leaving it should take the line
+      // off the map with it.
+      if (id === "local") void localData?.refresh();
+      else localData?.clearSelection();
     },
     onBlocked: (id) => {
       const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
@@ -2400,6 +2412,8 @@ function wireAccount(): void {
       signedIn = null;
       loginPanel?.dispose();
       loginPanel = null;
+      localData?.dispose();
+      localData = null;
       for (const id of ACCOUNT_TAB_IDS) tabs.panel(id).replaceChildren();
       tabs.panel("login").append(gateHint);
       gateHint.hidden = true;
@@ -2432,6 +2446,17 @@ function wireAccount(): void {
         });
       } else {
         buildSignedOut();
+      }
+
+      if (tabs.isEnabled("local")) {
+        localData = buildLocalDataPanel(tabs.panel("local"), {
+          // main.ts's lazy singleton — never a second openTrackStore(), which
+          // would read an empty in-memory store when IndexedDB is missing.
+          getTrackStore,
+          route: trackRoute,
+          isSignedIn: () => !!getAuth(),
+        });
+        if (tabs.selected() === "local") void localData.refresh();
       }
     }
     // Re-check once a minute while signed in: keeps the countdown current
