@@ -31,12 +31,26 @@ import {
 import { reverseGeocode } from "./geocode.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 
+/** Where each group of sections mounts when the drawer is tabbed. Omitting
+ *  this renders everything into one body, as the drawer did before tabs —
+ *  which keeps this module usable (and testable) on its own. */
+export interface AccountPanelMounts {
+  /** Session status, admin badge, sign out. */
+  login: HTMLElement;
+  /** Contact details, rate plan, home and work. */
+  profile: HTMLElement;
+  /** Public identity, privacy, badges, points. */
+  community: HTMLElement;
+}
+
 export interface AccountSignedInDeps {
   /** Push resolved admin status to the device layer (popup gates). */
   setAdminSession(on: boolean): void;
   /** The server rejected the token mid-use; storage is already cleared —
    *  re-render the drawer so it reflects the signed-out state. */
   onAuthLost(): void;
+  /** Tab mount points; absent means the legacy single-body layout. */
+  panels?: AccountPanelMounts;
 }
 
 export interface AccountHandle {
@@ -169,7 +183,19 @@ export function renderSignedInAccount(
     }
   });
 
-  body.append(status, adminSlot, profileSlot, signoutBtn);
+  // Everything community-shaped renders here: identity, privacy, badges,
+  // points. Empty (and unmounted) in the legacy single-body layout, where
+  // those sections stay in profileSlot with the rest.
+  const communitySlot = el("div", "account-community");
+
+  const mounts = deps.panels;
+  if (mounts) {
+    mounts.login.append(status, adminSlot, signoutBtn);
+    mounts.profile.append(profileSlot);
+    mounts.community.append(communitySlot);
+  } else {
+    body.append(status, adminSlot, profileSlot, signoutBtn);
+  }
 
   // Resolve admin status once per panel build (wireAccount rebuilds only on
   // token change, so this is once per token).
@@ -1356,7 +1382,14 @@ export function renderSignedInAccount(
       locationRow("work", "Work location"),
     );
 
-    // Privacy toggles: immediate PUT, rollback on failure.
+    return sec;
+  };
+
+  // ----- Privacy toggles --------------------------------------------------
+  // These govern what other riders see, so they live beside the identity
+  // editors in Community rather than with the rider's own contact details.
+
+  const buildPrivacyToggles = (p: Profile): HTMLElement[] => {
     const privacyStatus = makeStatus();
     const toggle = (
       label: string,
@@ -1386,13 +1419,11 @@ export function renderSignedInAccount(
       });
       return lab;
     };
-    sec.append(
+    return [
       toggle("Show my username on public photos", "show_public_username"),
       toggle("List me in leaderboards", "show_in_leaderboards"),
       privacyStatus.node,
-    );
-
-    return sec;
+    ];
   };
 
   // ----- Badges section ---------------------------------------------------
@@ -1551,6 +1582,17 @@ export function renderSignedInAccount(
     });
   };
 
+  // ----- Community settings ----------------------------------------------
+  // Everything that decides how this rider appears to everyone else: the
+  // public username, the royalty title, the ruling colours their territory
+  // is drawn in, and who gets to see any of it.
+
+  const buildCommunitySettings = (p: Profile): HTMLElement => {
+    const wrap = el("div", "community-settings");
+    wrap.append(buildIdentitySection(), ...buildPrivacyToggles(p));
+    return wrap;
+  };
+
   // ----- Load & assemble -------------------------------------------------
 
   const loadProfile = (): void => {
@@ -1561,12 +1603,26 @@ export function renderSignedInAccount(
       .then((p) => {
         if (disposed) return;
         profile = p;
-        profileSlot.replaceChildren(
-          buildIdentitySection(),
-          buildProfileSection(p),
-          buildBadgesSection(p),
-          buildPointsSection(),
-        );
+        // Tabbed: contact/rate/location on Profile, everything public-facing
+        // on Community. Untabbed: one stack, as before. Both branches build
+        // in the same synchronous turn, so the Points section's
+        // onProfileSaved subscription is in place before any save can land.
+        if (mounts) {
+          profileSlot.replaceChildren(buildProfileSection(p));
+          communitySlot.replaceChildren(
+            buildCommunitySettings(p),
+            buildBadgesSection(p),
+            buildPointsSection(),
+          );
+        } else {
+          profileSlot.replaceChildren(
+            buildIdentitySection(),
+            buildProfileSection(p),
+            ...buildPrivacyToggles(p),
+            buildBadgesSection(p),
+            buildPointsSection(),
+          );
+        }
         registerRateSync();
       })
       .catch((e: unknown) => {
