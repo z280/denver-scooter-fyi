@@ -46,19 +46,8 @@ import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.t
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
-import {
-  consumePendingMagicLink,
-  requestMagicLink,
-  requestLoginCode,
-  verifyEmailCode,
-  isProbablyEmail,
-  isProbablyCode,
-  AuthSendError,
-} from "./auth-magic-link.ts";
-import {
-  renderGoogleButton,
-  promptGoogleOneTap,
-} from "./auth-google.ts";
+import { consumePendingMagicLink } from "./auth-magic-link.ts";
+import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
@@ -90,8 +79,8 @@ import {
   loadRideModePoints,
   type ResolvedRideModePoints,
 } from "./ride-settings.ts";
-import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
+import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -2313,6 +2302,8 @@ function wireAccount(): void {
   let authCfg: AuthConfig | null = null;
   // Handle for the signed-in panel (account.ts); null while signed out.
   let signedIn: AccountHandle | null = null;
+  // Handle for the sign-in doors (account-login.ts); null while signed in.
+  let loginPanel: LoginPanelHandle | null = null;
   // Key of the state the current DOM was built for. Same key → refresh in
   // place instead of rebuilding, so the minute tick and focus events don't
   // destroy open editors or a half-typed sign-in form.
@@ -2322,223 +2313,15 @@ function wireAccount(): void {
   // code. Codes are 3/hour per email — wiping one is expensive.
   const signedOutState = { email: "", sentEmail: "", phone: "", sentPhone: "" };
 
-  const el = <K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    className?: string,
-    text?: string,
-  ): HTMLElementTagNameMap[K] => {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  };
-
   const buildSignedOut = (): void => {
-    {
-      const intro = el("p", "account-intro");
-      intro.textContent =
-        "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
-      body.append(intro);
-
-      // Sign in with Google — shown only when the backend's /auth/config says
-      // it's enabled and hands back a client id (the single source of truth;
-      // no third-party script loads otherwise). `authCfg` is null until that
-      // fetch resolves, which triggers a re-render.
-      if (authCfg?.googleEnabled && authCfg.googleClientId) {
-        const clientId = authCfg.googleClientId;
-        const gWrap = el("div", "account-google");
-        body.append(gWrap);
-        void renderGoogleButton(gWrap, clientId, {
-          onSignedIn: () => location.reload(),
-          onError: (err) => {
-            const msg = el("p", "account-error", err.message);
-            gWrap.after(msg);
-          },
-        });
-        body.append(el("div", "account-or", "or"));
-      }
-
-      // Email sign-in (Postmark) — the only door for now. Two independent
-      // ways to finish, each its own email (matching the scooter-fyi-api backend):
-      //   • a typed AA000AA code (POST /auth/code → /auth/code/verify), the
-      //     in-tab default; and
-      //   • a magic link (POST /auth/magic-link), redeemed on return by
-      //     consumePendingMagicLink().
-      const emailForm = el("form", "account-magic");
-      const emailInput = el("input", "select");
-      emailInput.type = "email";
-      emailInput.required = true;
-      emailInput.placeholder = "you@email.com";
-      emailInput.autocomplete = "email";
-      emailInput.setAttribute("aria-label", "Email address");
-      const emailSubmit = el("button", "login-btn", "Email me a sign-in code");
-      emailSubmit.type = "submit";
-      // Secondary door: a magic link instead of a typed code.
-      const linkBtn = el("button", "text-btn", "Prefer a link? Email me one instead");
-      linkBtn.type = "button";
-      const emailStatus = el("p", "account-magic-status");
-      emailStatus.setAttribute("role", "status");
-      emailStatus.setAttribute("aria-live", "polite");
-      emailForm.append(emailInput, emailSubmit, linkBtn, emailStatus);
-
-      // Step 2: enter the emailed AA000AA code. Hidden until a code is sent;
-      // the link door never needs it.
-      const codeForm = el("form", "account-code");
-      codeForm.hidden = true;
-      const codeHint = el(
-        "p",
-        "account-magic-status",
-        "📧 Check your inbox and enter the code (like AB123XY, valid 10 minutes):",
-      );
-      const codeInput = el("input", "select");
-      codeInput.type = "text";
-      codeInput.autocomplete = "one-time-code";
-      codeInput.autocapitalize = "characters";
-      codeInput.spellcheck = false;
-      codeInput.maxLength = 9; // AA000AA (7) plus a stray space/hyphen or two
-      codeInput.placeholder = "AB123XY";
-      codeInput.setAttribute("aria-label", "Sign-in code");
-      const codeSubmit = el("button", "login-btn", "Verify code");
-      codeSubmit.type = "submit";
-      const codeStatus = el("p", "account-magic-status");
-      codeStatus.setAttribute("role", "status");
-      codeStatus.setAttribute("aria-live", "polite");
-      codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
-
-      // Restore state from before an auth-config rebuild, if any.
-      emailInput.value = signedOutState.email;
-      let sentEmail = signedOutState.sentEmail;
-      if (sentEmail && emailInput.value.trim() === sentEmail) {
-        codeForm.hidden = false;
-        emailSubmit.textContent = "Resend code";
-      } else {
-        sentEmail = "";
-        signedOutState.sentEmail = "";
-      }
-      const validEmail = (): string | null => {
-        const email = emailInput.value.trim();
-        if (!isProbablyEmail(email)) {
-          emailStatus.textContent = "Enter a valid email address.";
-          return null;
-        }
-        return email;
-      };
-      // A code is bound to the address it was sent to; if the user edits the
-      // email after we revealed the code step, retract it so they can't verify
-      // an old code against a new address (or vice-versa).
-      emailInput.addEventListener("input", () => {
-        signedOutState.email = emailInput.value;
-        if (sentEmail && emailInput.value.trim() !== sentEmail) {
-          sentEmail = "";
-          signedOutState.sentEmail = "";
-          codeForm.hidden = true;
-          codeStatus.textContent = "";
-          emailSubmit.textContent = "Email me a sign-in code";
-        }
-      });
-      // Distinct copy for a rate-limit vs a generic failure — don't tell the
-      // user to retry the exact thing that's being throttled.
-      const sendFailMsg = (err: unknown, noun: string): string =>
-        err instanceof AuthSendError && err.status === 429
-          ? `Too many requests — wait a minute before asking for another ${noun}.`
-          : `Couldn't send the ${noun} right now — please try again.`;
-
-      // Primary: email a typed code, then reveal the code-entry step.
-      emailForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const email = validEmail();
-        if (!email) return;
-        emailSubmit.disabled = true;
-        linkBtn.disabled = true;
-        emailStatus.textContent = "Sending…";
-        requestLoginCode(email)
-          .then(() => {
-            sentEmail = email;
-            signedOutState.sentEmail = email;
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailSubmit.textContent = "Resend code";
-            emailStatus.textContent = "";
-            codeForm.hidden = false;
-            codeInput.focus();
-          })
-          .catch((err: unknown) => {
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailStatus.textContent = sendFailMsg(err, "code");
-          });
-      });
-
-      // Secondary: email a magic link instead (self-contained; redeemed on
-      // return), and tuck the code step away if it was showing.
-      linkBtn.addEventListener("click", () => {
-        const email = validEmail();
-        if (!email) return;
-        emailSubmit.disabled = true;
-        linkBtn.disabled = true;
-        emailStatus.textContent = "Sending…";
-        requestMagicLink(email)
-          .then(() => {
-            // Re-enable so the user can resend or switch back to the code door.
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            sentEmail = "";
-            signedOutState.sentEmail = "";
-            codeForm.hidden = true;
-            emailStatus.textContent =
-              "📧 Check your inbox for a sign-in link (valid 15 minutes).";
-          })
-          .catch((err: unknown) => {
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailStatus.textContent = sendFailMsg(err, "link");
-          });
-      });
-
-      codeForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        // Defensive: the form is hidden until a code is sent, but never verify
-        // against an empty address (it'd be a confusing server-side failure).
-        if (!sentEmail) {
-          codeStatus.textContent = "Request a sign-in code first.";
-          return;
-        }
-        const code = codeInput.value;
-        if (!isProbablyCode(code)) {
-          codeStatus.textContent =
-            "Enter the code from your email (like AB123XY).";
-          return;
-        }
-        codeSubmit.disabled = true;
-        codeStatus.textContent = "Verifying…";
-        // Success persists the session; reload so every fetch is authed.
-        verifyEmailCode(sentEmail, code)
-          .then(() => location.reload())
-          .catch((err: unknown) => {
-            codeSubmit.disabled = false;
-            codeStatus.textContent =
-              err instanceof AuthSendError && err.status === 429
-                ? "Too many tries — request a new code."
-                : "That code didn't work — check it or resend.";
-          });
-      });
-
-      body.append(emailForm, codeForm);
-
-      // Sign in by text — shown only when the backend says z280-comms is
-      // configured (fail-closed in auth-config.ts, so a rider is never
-      // invited to type their phone number into a door that can't work).
-      if (authCfg?.smsEnabled) {
-        body.append(el("div", "account-or", "or"));
-        buildSmsDoor(body, {
-          el,
-          state: signedOutState,
-          // Same as the email door: the session is persisted, so reload to
-          // let every fetch pick up the bearer token.
-          onSignedIn: () => location.reload(),
-        });
-      }
-    }
+    loginPanel = buildLoginPanel(body, {
+      cfg: authCfg,
+      state: signedOutState,
+      // The session is persisted by the door itself; reload so every fetch
+      // picks up the bearer token.
+      onSignedIn: () => location.reload(),
+    });
+    loginPanel.renderGoogle();
   };
 
   const render = (): void => {
@@ -2553,6 +2336,8 @@ function wireAccount(): void {
       renderedKey = key;
       signedIn?.dispose();
       signedIn = null;
+      loginPanel?.dispose();
+      loginPanel = null;
       body.replaceChildren();
       if (auth) {
         signedIn = renderSignedInAccount(body, auth, {
