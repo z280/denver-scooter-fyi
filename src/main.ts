@@ -21,6 +21,7 @@ import {
   hideMapTooltip,
   type RideType,
   type ModelKey,
+  modelKeyOf,
   type QualityFilter,
   type IconStyle,
   type ModelIcon,
@@ -831,6 +832,45 @@ map.on("load", async () => {
         ? applyCascades({ ...base, ...entry.preflight }, context)
         : base;
       rideSession.dispatch({ type: "open", options });
+
+      // The survey path also pre-selects the DEVICE, which is normally
+      // Screen 2's job. It has to be done here rather than left to that
+      // screen, because the whole premise of "Use in Ride Mode" is that the
+      // rider already answered "which scooter?" by opening its popup — so
+      // Screen 2 skips itself for this entry (see its own skip predicate),
+      // and with nothing setting `doc.device` the flow would reach Screen 6,
+      // find no device, skip that too, and run off the end without ever
+      // dispatching `rideStarted`.
+      //
+      // `private` mirrors `ride-screen-select.ts`'s `syncSessionDevice`
+      // exactly: a guest's real-device pick is still a private ride, because
+      // `POST /tracked-rides` is session-authed and there is no account to
+      // attribute a row to.
+      if (entry.preflight && entry.vehicleIdentifier) {
+        const want = entry.vehicleIdentifier.toLowerCase();
+        const feat = devices
+          .allFeatures()
+          .find(
+            (f) =>
+              String(f.properties.vehicle_identifier ?? "").toLowerCase() ===
+              want,
+          );
+        rideSession.dispatch({
+          type: "setDevice",
+          device: {
+            vehicleIdentifier: want,
+            // The popup's own resolved plate is preferred: it is what built
+            // the deep link the rider may already have tapped, and the map
+            // payload carries no plate on the public path.
+            plate: entry.plate ?? null,
+            model: feat ? modelKeyOf(feat.properties) : null,
+            // Same as Screen 2: no rider-entered battery %, the server
+            // derives its own reading from the feed.
+            batteryConfirmed: null,
+          },
+          private: !isAuthenticated(),
+        });
+      }
     },
     // Every screen change — including the first, right after `onOpen` above
     // picks screen "1" — persists the shell's actual current screen onto the

@@ -333,9 +333,21 @@ export function wireRideScreenSelect(deps: RideScreenSelectDeps): () => void {
     // `doc.state === "wizard"`) with no server-side re-validation, and
     // walking the flow onward could re-reach Screen 6 and re-dispatch
     // `rideStarted`/`startTrackedRide` for a ride that is already live.
-    skip: () => {
+    skip: (ctx) => {
       const doc = resolved.session.current();
-      return doc !== null && doc.state === "wizard" && doc.rideId !== null;
+      if (doc !== null && doc.state === "wizard" && doc.rideId !== null) {
+        return true;
+      }
+      // The device card's "Use in Ride Mode" survey (`ride-preflight.ts`)
+      // path. Its whole premise is that the rider already answered "which
+      // scooter?" by opening that scooter's popup, so re-asking here is
+      // exactly the friction the shortcut exists to remove. The integrator
+      // has already dispatched `setDevice` from the entry (main.ts's
+      // `onOpen`), and this is gated on the device actually being there:
+      // if that dispatch somehow didn't land, the rider gets this screen
+      // rather than a flow that reaches Screen 6 with nothing selected and
+      // silently runs off the end.
+      return ctx.entry.preflight !== undefined && doc?.device != null;
     },
     factory: (ctx) => buildSelectScreen(ctx, resolved),
   });
