@@ -23,6 +23,7 @@ import {
   FEATURE_POINTS_FALLBACK,
   FEATURE_STATUS_LABEL,
   asFeatureStatus,
+  describeSubmitError,
   emptyAnswers,
   featurePointsFor,
   openConfirmFeatures,
@@ -34,6 +35,7 @@ import {
   toRequestBody,
   type FeatureAnswerState,
 } from "./device-features.ts";
+import { ReportHttpError } from "./reports.ts";
 
 beforeEach(() => {
   document.body.replaceChildren();
@@ -499,6 +501,67 @@ describe("dismissal", () => {
     open();
     open();
     expect(document.querySelectorAll(".device-features").length).toBe(1);
+  });
+
+  it("TEARS DOWN the previous modal rather than just unhooking its DOM", () => {
+    // Same leak, same reasoning as ride-preflight's: a removed node leaves
+    // the Escape handler and `trapFocusWithin`'s document `focusin` handler
+    // live, and the orphaned trap never stops thinking it is active.
+    const onClose = vi.fn();
+    open({ onClose });
+    expect(onClose).not.toHaveBeenCalled();
+    open();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let an orphaned focus trap steal focus", () => {
+    open();
+    const stale = document.querySelector<HTMLElement>(".device-features__card");
+    open();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    outside.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(document.activeElement).not.toBe(stale);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Failure copy
+// ---------------------------------------------------------------------------
+
+describe("describeSubmitError", () => {
+  it("names a 422 as our bug, not the rider's connection", () => {
+    // Unreachable through the UI (readyToSubmit enforces the same rules the
+    // API validates), which is exactly why "check your connection" would be
+    // the wrong thing to say if it ever fires.
+    const msg = describeSubmitError(new ReportHttpError(422));
+    expect(msg).toContain("bug");
+    expect(msg).not.toContain("connection");
+  });
+
+  it("tells a rate-limited rider to wait rather than retry blindly", () => {
+    expect(describeSubmitError(new ReportHttpError(429))).toContain("break");
+  });
+
+  it("distinguishes an expired session", () => {
+    expect(describeSubmitError(new ReportHttpError(401))).toContain("session");
+  });
+
+  it("distinguishes a scooter that left the fleet", () => {
+    expect(describeSubmitError(new ReportHttpError(404))).toContain("fleet");
+  });
+
+  it("distinguishes a server fault from a client one", () => {
+    expect(describeSubmitError(new ReportHttpError(503))).toContain("server");
+  });
+
+  it("falls back to the connection message when we never heard back", () => {
+    // A genuine network failure has no status — this is the one case the
+    // original blanket message was actually right about.
+    expect(describeSubmitError(new TypeError("fetch failed"))).toContain(
+      "connection",
+    );
   });
 });
 

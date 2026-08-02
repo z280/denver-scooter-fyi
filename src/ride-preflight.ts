@@ -169,6 +169,18 @@ export interface RidePreflightOptions {
 
 const ROOT_CLASS = "ride-preflight";
 
+/** Teardown for the survey that is currently open, if any.
+ *
+ *  "At most one at a time" used to be enforced by removing the previous
+ *  element, which detaches the DOM but runs NO teardown — and this modal
+ *  installs two DOCUMENT-level listeners (the Escape handler here, and
+ *  `trapFocusWithin`'s `focusin` handler). An orphaned trap is worse than a
+ *  leak: its `isActive()` closes over a `closed` flag that never flipped, so
+ *  it stays live forever and keeps yanking focus back onto a node that is no
+ *  longer in the document. Holding the real `close` and calling it is what
+ *  makes the singleton rule actually mean "torn down". */
+let activeClose: (() => void) | null = null;
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -184,6 +196,10 @@ function el<K extends keyof HTMLElementTagNameMap>(
  *  dismiss it without going through the UI. At most one is open at a time —
  *  a second call closes the first, matching `openFloatingModal`'s rule. */
 export function openRidePreflight(options: RidePreflightOptions): () => void {
+  // Tear the previous one DOWN, don't just unhook its DOM.
+  activeClose?.();
+  // Belt and braces: a stray node with no live teardown (hot reload, a test
+  // that hand-injected one) still gets swept.
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
 
   const answers: RidePreflightAnswers = {
@@ -221,6 +237,9 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
   function close(): void {
     if (closed) return;
     closed = true;
+    // Only clear the slot if it is still OURS: a re-entrant open has already
+    // pointed it at the new modal by the time this runs.
+    if (activeClose === close) activeClose = null;
     for (const fn of cleanupFns.splice(0)) fn();
     backdrop.remove();
   }
@@ -350,6 +369,7 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
   renderBody();
   document.body.appendChild(backdrop);
   cleanupFns.push(trapFocusWithin(card, () => !closed));
+  activeClose = close;
   goBtn.focus();
 
   return close;

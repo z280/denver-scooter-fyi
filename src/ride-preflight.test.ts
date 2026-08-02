@@ -315,4 +315,42 @@ describe("dismissal", () => {
     open();
     expect(document.querySelectorAll(".ride-preflight").length).toBe(1);
   });
+
+  it("TEARS DOWN the previous survey rather than just unhooking its DOM", () => {
+    // Counting elements is not enough: removing the node leaves this
+    // modal's document-level Escape handler AND `trapFocusWithin`'s
+    // document `focusin` handler attached. The orphaned trap is the real
+    // damage — its `isActive()` closes over a `closed` flag that never
+    // flipped, so it stays live forever and keeps yanking focus back onto a
+    // node that is no longer in the document.
+    const onCancel = vi.fn();
+    open({ onCancel });
+    open(); // the second open must run the first's teardown
+
+    // One Escape must reach exactly ONE listener — the live modal's. If the
+    // first survey's handler were still attached it would fire too, and its
+    // onCancel would run for a survey the rider already left behind.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("does not let an orphaned focus trap steal focus", () => {
+    // The user-visible symptom of the leak: focus outside the (now removed)
+    // first modal gets snatched back to its detached card.
+    open();
+    const stale = document.querySelector<HTMLElement>(".ride-preflight__card");
+    open();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    outside.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(document.activeElement).not.toBe(stale);
+  });
+
+  it("clears its slot on close so a later open is not a no-op", () => {
+    const first = open();
+    first.close();
+    open();
+    expect(document.querySelectorAll(".ride-preflight").length).toBe(1);
+  });
 });

@@ -41,7 +41,7 @@ import {
   type PointsScheduleResponse,
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
-import { submitDeviceFeatureReport } from "./reports.ts";
+import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -217,6 +217,41 @@ export function toRequestBody(
   };
 }
 
+/** Why a submission failed, in the rider's language.
+ *
+ *  `submitDeviceFeatureReport` throws `ReportHttpError` carrying the status
+ *  precisely so a caller can tell these apart, and collapsing every one of
+ *  them into "check your connection" both lies to the rider whose connection
+ *  is fine and hides a 422 — which is always OUR bug, since the modal's own
+ *  Send gate is supposed to make an invalid body unreachable. Exported so the
+ *  branches are testable without a live modal.
+ *
+ *  Anything without a status (a genuine network failure, a thrown TypeError)
+ *  falls through to the connection message, which is the honest answer when
+ *  we never heard back at all. */
+export function describeSubmitError(err: unknown): string {
+  const status = err instanceof ReportHttpError ? err.status : null;
+  if (status === 401) {
+    return "Your session expired — sign in again and your answers will earn points.";
+  }
+  if (status === 404) {
+    return "We don't have a record of this scooter anymore — it may have left the fleet.";
+  }
+  if (status === 422) {
+    // Unreachable through the UI: `readyToSubmit` enforces the same rules
+    // the API validates. Saying so plainly beats a misleading "check your
+    // connection" if it ever does happen.
+    return "Something about that answer didn't add up on our side — please report this as a bug.";
+  }
+  if (status === 429) {
+    return "That's a lot of scooters in one hour — take a short break and try again.";
+  }
+  if (status !== null && status >= 500) {
+    return "Our server had a problem saving that — try again in a moment.";
+  }
+  return "Couldn't send that — check your connection and try again.";
+}
+
 // ---------------------------------------------------------------------------
 // The modal
 // ---------------------------------------------------------------------------
@@ -242,6 +277,14 @@ export interface ConfirmFeaturesOptions {
 
 const ROOT_CLASS = "device-features";
 
+/** Teardown for the modal that is currently open, if any. Same rule, and the
+ *  same reasoning, as `ride-preflight.ts`'s: removing the previous element
+ *  detaches the DOM but runs no teardown, leaving this modal's document-level
+ *  Escape handler AND `trapFocusWithin`'s document `focusin` handler live —
+ *  and the orphaned trap's `isActive()` reads a `closed` flag that never
+ *  flipped, so it keeps pulling focus onto a detached node forever. */
+let activeClose: (() => void) | null = null;
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -258,6 +301,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export function openConfirmFeatures(
   options: ConfirmFeaturesOptions,
 ): () => void {
+  activeClose?.();
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
 
   const answers = emptyAnswers();
@@ -291,6 +335,7 @@ export function openConfirmFeatures(
   function close(): void {
     if (closed) return;
     closed = true;
+    if (activeClose === close) activeClose = null;
     for (const fn of cleanupFns.splice(0)) fn();
     backdrop.remove();
     options.onClose?.();
@@ -513,10 +558,10 @@ export function openConfirmFeatures(
         plateValid: result.plate_valid,
         pointsAwarded: result.points_awarded,
       });
-    } catch {
+    } catch (err) {
       if (closed) return;
       sending = false;
-      statusLine = "Couldn't send that — check your connection and try again.";
+      statusLine = describeSubmitError(err);
       render();
     }
   }
@@ -534,6 +579,7 @@ export function openConfirmFeatures(
   render();
   document.body.appendChild(backdrop);
   cleanupFns.push(trapFocusWithin(card, () => !closed));
+  activeClose = close;
 
   // Points copy comes from the server so it cannot contradict the ledger.
   // Rendered with the fallback first and upgraded when this lands — a modal
