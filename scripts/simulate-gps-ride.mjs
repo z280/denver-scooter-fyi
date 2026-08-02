@@ -78,10 +78,40 @@ const SHOTS_DIR = join(HERE, ".gps-sim-shots");
 // CLI args
 // ---------------------------------------------------------------------------
 
+function argError(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+/** Reads argv[i + 1] as this flag's value, validated. Review fix: the
+ *  previous version did a bare `Number(argv[++i])` with no checks at all,
+ *  which had three real failure modes — a missing/non-numeric value (e.g.
+ *  `--minutes` as the last arg) silently became `NaN` and produced a
+ *  1-point, no-movement "walk"; a flag placed right before another flag
+ *  (`--lat --auto-guest`) silently ATE the next flag as its own value,
+ *  so `--auto-guest` was never parsed as a mode switch at all; and
+ *  `--step-seconds 0` divided-by-zero into `Infinity` steps, which ran an
+ *  unbounded synchronous loop that OOM-crashed Node — and because that loop
+ *  never yields to the event loop, Ctrl+C stopped working too, leaving a
+ *  hung process only `kill -9` could clear. Failing loudly here, before any
+ *  of that math runs, is cheaper than any of those. */
+function numberArg(flag, argv, i) {
+  const raw = argv[i + 1];
+  if (raw === undefined || raw.startsWith("--")) {
+    argError(
+      `${flag} requires a numeric value (got ${raw === undefined ? "nothing" : JSON.stringify(raw)}).`,
+    );
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) argError(`${flag} expects a number, got ${JSON.stringify(raw)}.`);
+  return n;
+}
+
 function parseArgs(argv) {
   const opts = {
     autoGuest: false,
     local: false,
+    headed: false, // --auto-guest only; interactive mode is always headed.
     minutes: 5,
     stepSeconds: 15,
     lat: 39.7392, // Civic Center Park, downtown Denver — dense in real GBFS
@@ -92,18 +122,29 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--auto-guest") opts.autoGuest = true;
     else if (a === "--local") opts.local = true;
-    else if (a === "--minutes") opts.minutes = Number(argv[++i]);
-    else if (a === "--step-seconds") opts.stepSeconds = Number(argv[++i]);
-    else if (a === "--lat") opts.lat = Number(argv[++i]);
-    else if (a === "--lon") opts.lon = Number(argv[++i]);
-    else if (a === "--bearing") opts.bearingDeg = Number(argv[++i]);
+    else if (a === "--headed") opts.headed = true;
+    else if (a === "--minutes") opts.minutes = numberArg("--minutes", argv, i++);
+    else if (a === "--step-seconds") opts.stepSeconds = numberArg("--step-seconds", argv, i++);
+    else if (a === "--lat") opts.lat = numberArg("--lat", argv, i++);
+    else if (a === "--lon") opts.lon = numberArg("--lon", argv, i++);
+    else if (a === "--bearing") opts.bearingDeg = numberArg("--bearing", argv, i++);
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: node scripts/simulate-gps-ride.mjs [--auto-guest] [--local] " +
+        "Usage: node scripts/simulate-gps-ride.mjs [--auto-guest [--headed]] [--local] " +
           "[--minutes N] [--step-seconds N] [--lat N] [--lon N] [--bearing DEG]",
       );
       process.exit(0);
+    } else {
+      argError(`Unknown argument: ${a} (see --help).`);
     }
+  }
+  if (opts.minutes <= 0) argError(`--minutes must be greater than 0 (got ${opts.minutes}).`);
+  if (opts.stepSeconds <= 0) {
+    argError(`--step-seconds must be greater than 0 (got ${opts.stepSeconds}).`);
+  }
+  if (opts.lat < -90 || opts.lat > 90) argError(`--lat must be between -90 and 90 (got ${opts.lat}).`);
+  if (opts.lon < -180 || opts.lon > 180) {
+    argError(`--lon must be between -180 and 180 (got ${opts.lon}).`);
   }
   return opts;
 }
@@ -267,7 +308,11 @@ async function runAutoGuest(opts) {
   const appUrl = opts.local ? "http://localhost:5173/" : "https://denver.scooter.fyi/";
   mkdirSync(SHOTS_DIR, { recursive: true });
 
-  const browser = await chromium.launch({ headless: false });
+  // Headless by default -- this mode is a hands-off smoke test, so nothing
+  // requires a visible window, and headless also means it works in a
+  // display-less environment (CI, a sandboxed dev container). --headed
+  // opts into watching it run.
+  const browser = await chromium.launch({ headless: !opts.headed });
   const context = await browser.newContext({
     viewport: { width: 480, height: 900 },
     geolocation: { latitude: opts.lat, longitude: opts.lon, accuracy: 8 },
