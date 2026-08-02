@@ -7,3 +7,8 @@ dist
 .idea
 .wrangler
 .claude/worktrees
+
+# scripts/simulate-gps-ride.mjs — persisted signed-in browser profile and
+# --auto-guest screenshot output. Both are local test artifacts.
+/.gps-sim-profile/
+/scripts/.gps-sim-shots/
