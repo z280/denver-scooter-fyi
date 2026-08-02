@@ -3,7 +3,7 @@
 // nudges and the summary allows editing the duration.
 
 import { COMPARATOR, RATE_PLANS, type RatePlan, type RatePlanKey } from "./config.ts";
-import type { ApiRatePlan } from "./api.ts";
+import { fetchPricing as defaultFetchPricing, type ApiRatePlan } from "./api.ts";
 
 const RATE_STORAGE_KEY = "scooter_fyi.rate_plan";
 const VEOPLUS_STORAGE_KEY = "scooter_fyi.veoplus";
@@ -17,7 +17,16 @@ export function billableMinutes(elapsedMs: number): number {
   return Math.max(1, Math.ceil(elapsedMs / 60_000));
 }
 
-export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
+/** The two components `rideCostCents` sums, exposed so `estimateWithTax` can
+ *  build its `{unlock, perMin}` breakdown from the SAME minute-billing logic
+ *  — including the equity plan's 60-free-minutes credit — rather than
+ *  re-deriving (and risking silently bypassing) it. This is the one place
+ *  that logic lives; both `rideCostCents` and `estimateWithTax` are thin
+ *  wrappers around it. */
+function costComponents(
+  plan: RatePlan,
+  elapsedMs: number,
+): { unlockCents: number; perMinCents: number } {
   let minutes = billableMinutes(elapsedMs);
   if (plan.key === "equity") {
     // 60 free minutes/day; the ticker can't know how much of today's hour
@@ -25,7 +34,12 @@ export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
     minutes = Math.max(0, minutes - 60);
   }
   // VeoPlus (free unlocks) is a plan variant now — its unlockCents is 0.
-  return plan.unlockCents + minutes * plan.perMinCents;
+  return { unlockCents: plan.unlockCents, perMinCents: minutes * plan.perMinCents };
+}
+
+export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
+  const { unlockCents, perMinCents } = costComponents(plan, elapsedMs);
+  return unlockCents + perMinCents;
 }
 
 export function comparatorCostCents(elapsedMs: number): number {
@@ -34,6 +48,91 @@ export function comparatorCostCents(elapsedMs: number): number {
 
 export function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tax-aware breakdown (Screen 8's "Unlock $ + Per Min $ + Tax $ = Total $").
+// ---------------------------------------------------------------------------
+
+/** Fractional sales-tax rate baked in for offline / pre-`/meta/pricing`
+ *  estimates — matches the API's own config default per Phase A1. Belongs on
+ *  `config.ts` per the frontend plan's module map ("tax default baked into
+ *  config.ts, refreshed from /meta/pricing"); it lives here instead because
+ *  this lane's file ownership is `ride-cost.ts` only (`config.ts` isn't in
+ *  it) — the identical constant is proposed for `config.ts` in this lane's
+ *  `shared_file_edits` for the integrator to land, at which point this local
+ *  copy should import it instead of redeclaring it. */
+export const DEFAULT_TAX_RATE = 0.0915;
+
+let cachedTaxRate = DEFAULT_TAX_RATE;
+
+/** The tax rate `estimateWithTax` uses when the caller doesn't pass one:
+ *  the last value `refreshTaxRate` fetched, or `DEFAULT_TAX_RATE` before the
+ *  first successful fetch (or forever, offline / pre-A1). */
+export function currentTaxRate(): number {
+  return cachedTaxRate;
+}
+
+/** Refresh the cached tax rate from `GET /meta/pricing` (`fetchPricing` in
+ *  api.ts). Never throws and never blocks a cost estimate on the network —
+ *  call it opportunistically (e.g. on ride-wizard open); a failure or an
+ *  out-of-range value just leaves the last known rate in place. */
+export async function refreshTaxRate(
+  fetcher: (signal?: AbortSignal) => Promise<{ tax_rate: number }> = defaultFetchPricing,
+  signal?: AbortSignal,
+): Promise<number> {
+  try {
+    const res = await fetcher(signal);
+    if (Number.isFinite(res.tax_rate) && res.tax_rate >= 0) {
+      cachedTaxRate = res.tax_rate;
+    }
+  } catch {
+    /* offline, or /meta/pricing not deployed yet — keep the last known rate */
+  }
+  return cachedTaxRate;
+}
+
+/** Test-only reset — `refreshTaxRate`'s cache is module-level state so every
+ *  caller shares one freshly-fetched rate, which means tests must be able to
+ *  put it back the way they found it. */
+export function resetTaxRateForTests(rate: number = DEFAULT_TAX_RATE): void {
+  cachedTaxRate = rate;
+}
+
+export interface RideCostBreakdown {
+  /** Unlock fee, cents (0 for VeoPlus variants and the equity plan). */
+  unlock: number;
+  /** Per-minute charge, cents — already net of the equity plan's 60
+   *  free-minutes credit, via the same `costComponents` `rideCostCents` uses. */
+  perMin: number;
+  /** Sales tax on `unlock + perMin`, cents, rounded to the nearest cent. */
+  tax: number;
+  /** `unlock + perMin + tax`. Additive-true: a `0` unlock/perMin (equity, or
+   *  any VeoPlus variant before the free minutes run out) renders as an
+   *  honest `$0.00` component, never folded away. */
+  total: number;
+}
+
+/** Screen 8's cost breakdown: `{unlock, perMin, tax, total}`, layered on
+ *  `rideCostCents`'s existing minute-billing logic (via `costComponents`) so
+ *  the equity plan's free-minutes credit — and every other per-plan rule —
+ *  keeps applying without being re-implemented here. `taxRate` defaults to
+ *  `currentTaxRate()` (the last `refreshTaxRate` result, or
+ *  `DEFAULT_TAX_RATE`). */
+export function estimateWithTax(
+  plan: RatePlan,
+  elapsedMs: number,
+  taxRate: number = currentTaxRate(),
+): RideCostBreakdown {
+  const { unlockCents, perMinCents } = costComponents(plan, elapsedMs);
+  const subtotal = unlockCents + perMinCents;
+  const tax = Math.round(subtotal * taxRate);
+  return {
+    unlock: unlockCents,
+    perMin: perMinCents,
+    tax,
+    total: subtotal + tax,
+  };
 }
 
 /** The rider's chosen rate plan. Stored locally for now and labeled as an

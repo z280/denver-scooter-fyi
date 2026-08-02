@@ -2241,6 +2241,9 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 .hud-corner {
   position: absolute;
+  z-index: 2; /* above .nav-hud (z-index: 1) — the Exit/End/wrench buttons in
+                 .hud-corner--bl must stay reachable even with the Screen 7
+                 directions panel fully open over that corner. */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2303,6 +2306,177 @@ body:not(.ribbon-open) .drawer-tabs {
   color: #fff;
 }
 .hud-round-btn--stop svg { fill: currentColor; }
+
+/* ride-hud.ts — F3 corner re-layout: the ride clock moves BL -> TL with the
+   cost readout stacked just below it, plus the wrench panel's live clock. */
+.hud-tl-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hud-readout--cost-sub {
+  font-size: clamp(15px, 3.2vh, 20px);
+  opacity: 0.9;
+}
+.hud-adjust-clock {
+  align-self: center;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(22px, 5vh, 32px);
+  color: var(--fg);
+}
+
+/* ride-nav-hud.ts — Screen 7 turn-by-turn navigation overlay. The module
+   adds/removes the `nav-hud` class on the container element it was handed
+   (never a wrapper it creates) and appends/removes its own `.nav-hud__bar` /
+   `.nav-hud__panel` children — the container itself is never removed, so it
+   can be reused across rides. `.nav-hud` is `position: absolute; inset: 0`
+   — the SAME full-bleed-overlay pattern as `.hud-live { position:absolute;
+   inset:0; }` above, and load-bearing, not defensive: `.nav-hud__panel`
+   below sizes itself with `top:0; bottom:0` and no explicit height, so its
+   computed height is literally "the containing block's height minus 0 minus
+   0" — with a `position: relative` container that has zero in-flow content
+   (both children here are themselves `position: absolute`, so neither
+   counts toward the parent's auto height), that containing block resolves
+   to a real, honest ZERO height, and the panel collapses to nothing with it
+   — an invisible directions list, only in a real layout engine, which is
+   exactly why the test suite (happy-dom, no layout) never caught it.
+   `position: absolute; inset: 0` makes `.nav-hud` a sized box in its own
+   right (filling `.hud-live`, its nearest positioned ancestor) regardless of
+   its own children's flow. `z-index: 1` keeps it under the HUD corners (see
+   `.hud-corner`'s `z-index: 2`) so a fully-open directions panel — up to
+   320px wide, full height — never covers the always-must-stay-reachable
+   Exit/End/wrench buttons in `.hud-corner--bl`. */
+.nav-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.nav-hud__bar {
+  position: absolute;
+  top: max(64px, calc(env(safe-area-inset-top) + 54px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 520px);
+  pointer-events: none;
+}
+.nav-hud__arrow {
+  pointer-events: auto;
+  appearance: none;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0d1522;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  touch-action: manipulation;
+}
+:root[data-theme="dark"] .nav-hud__arrow {
+  background: rgba(20, 20, 20, 0.8);
+  color: #fff;
+}
+.nav-hud__arrow[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.nav-hud__arrow svg { width: 22px; height: 22px; }
+.nav-hud__card {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0d1522;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+:root[data-theme="dark"] .nav-hud__card {
+  background: rgba(20, 20, 20, 0.88);
+  color: #fff;
+}
+.nav-hud__icon { flex: none; width: 28px; height: 28px; }
+.nav-hud__icon-arrow { width: 100%; height: 100%; transition: transform 0.25s ease; }
+.nav-hud__text { min-width: 0; }
+.nav-hud__instruction {
+  font-weight: 800;
+  font-size: clamp(14px, 3.4vh, 18px);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-hud__meta {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-hud__panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: min(78vw, 320px);
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0d1522;
+  overflow-y: auto;
+  box-shadow: 0 0 16px rgba(0, 0, 0, 0.35);
+  padding: max(14px, env(safe-area-inset-top)) 14px 14px;
+}
+:root[data-theme="dark"] .nav-hud__panel {
+  background: rgba(18, 18, 22, 0.96);
+  color: #fff;
+}
+.nav-hud__panel--left { left: 0; }
+.nav-hud__panel--right { right: 0; }
+.nav-hud__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+.nav-hud__panel-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.nav-hud__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.nav-hud__step {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+:root[data-theme="dark"] .nav-hud__step { background: rgba(255, 255, 255, 0.06); }
+.nav-hud__step.is-current {
+  background: var(--accent-soft);
+  outline: 1.5px solid var(--accent);
+}
+.nav-hud__step.is-done { opacity: 0.5; }
+.nav-hud__step-text { font-weight: 700; font-size: 13.5px; }
+.nav-hud__step-streets { font-size: 12px; opacity: 0.75; }
 
 /* Equity-zone badge: a small centered pill up top, only while flagged. */
 .hud-zone-badge {
@@ -2905,6 +3079,27 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   }
 }
 
+/* ride-screen-start.ts — Screen 6 "Start in Veo" countdown card. Reuses
+   .ride-wizard__body / .ride-wizard__lede / .ride-wizard__hint / .login-btn
+   for everything else; this is just the big countdown digit, sized for a
+   MODAL PANE — deliberately NOT .hud-card--countdown .hud-countdown's
+   min(48vh,240px), which is sized for the full-screen HUD and would blow out
+   the dialog if reused here. */
+.ride-screen-start__countdown {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  text-align: center;
+}
+.ride-screen-start__countdown-digit {
+  font-size: min(22vh, 96px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+}
+
 /* Interview choices */
 .ride-wizard__choices {
   display: flex;
@@ -3044,6 +3239,56 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ride-wizard__route {
   width: 100%;
+}
+
+/* ride-screen-select.ts — Screen 2's Plate #/Battery % confirm strip. */
+.ride-screen-select__confirm {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.ride-screen-select__field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-screen-select__field-label {
+  font-weight: 600;
+}
+.ride-screen-select__field input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Screen 3 "Where to?" (src/ride-screen-dest.ts) ----------
+   Reuses `.ride-wizard__body`, `.ride-modal__lede`/`.ride-modal__hint`, and
+   `.ride-options`/`.ride-option` verbatim (same as Screen 2's disambiguation
+   list) — these three rules are the screen's only net-new surface: a larger
+   "wide text bar" search input, a plain-text divider label above the Recent
+   Destinations rows, and the in_coverage:false greying (opacity, not hidden —
+   the row stays fully clickable). */
+.ride-screen-dest__input {
+  font-size: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+.ride-screen-dest__section {
+  margin: 6px 2px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.ride-option.is-out-of-coverage {
+  opacity: 0.55;
+}
+.ride-option.is-out-of-coverage .ride-option__desc {
+  font-style: italic;
 }
 
 /* Limited room (mobile): the wizard becomes a right-side panel and the map
@@ -3516,6 +3761,169 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--accent-soft);
   color: var(--fg);
 }
+/* ---------- leaderboard.ts: 🏆 topbar toggle + cell detail panel ---------- */
+.leaderboard-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.leaderboard-detail__leader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.leaderboard-detail__swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  flex: none;
+}
+.leaderboard-detail__leader-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.leaderboard-detail__leader-points {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.leaderboard-detail__runners {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.leaderboard-detail__runner {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.leaderboard-detail__totals {
+  font-size: 12px;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.leaderboard-detail__empty {
+  font-size: 14px;
+  color: var(--fg);
+  margin: 4px 0 8px;
+}
+.leaderboard-detail__hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 0 0 10px;
+}
+/* ---------- ride-settings.ts: Screen 2 "Ride Mode Options" panel ---------- */
+.ride-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ride-settings__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ride-settings__row:last-of-type {
+  border-bottom: none;
+}
+.ride-settings__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-settings__row--disabled .ride-settings__label-text {
+  opacity: 0.55;
+}
+.ride-settings__trophy {
+  font-size: 12px;
+}
+.ride-settings__info {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ride-settings__info:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.ride-settings__control.segmented {
+  width: 100%;
+}
+.ride-settings__row--disabled .seg-btn {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.ride-settings__reason {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+.ride-settings__footnote {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.ride-settings__usuals-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ride-settings__usuals-btn:hover {
+  background: var(--accent-soft);
+}
+/* ---------- ride-settings.ts: ℹ info-modal body (shares the .ranks-modal shell) ---------- */
+.ride-info-modal__body {
+  margin-top: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.ride-info-modal__body p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.ride-info-modal__body p:last-child {
+  margin-bottom: 0;
+}
+.ride-info-modal__body strong {
+  color: var(--fg);
+}
 /* ---------- ✨ Essentials hover tooltip ---------- */
 .map-tooltip {
   position: fixed;
@@ -3815,4 +4223,715 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 .install-modal__glyph svg {
   width: 100%;
   height: 100%;
+}
+
+/* ---------- Ride-mode wizard shell (src/ride-modal.ts) ----------
+   The Screens 1–6 modal: a full-bleed sheet on a phone, a centered card on a
+   desktop. Layout is a two-pane CSS grid — portrait stacks the panes as rows,
+   landscape lays them out as columns (2fr 3fr on Screen 4 for the 40/60 split
+   the plan specifies). The `@media (orientation: landscape)` query is the
+   baseline; ride-modal.ts's matchMedia listener flips `is-landscape` /
+   `is-portrait` on the root, and those class rules deliberately out-specify the
+   media query so JS stays authoritative (and forced-orientation tests work).
+   z-index 52: over the ride HUD (50) so the two can never fight, under the
+   safe-area mask (55) and under the shared floating modals (70) — the eight ℹ
+   info modals open on top of the wizard, not behind it.
+   The scrim is the repo's modal scrim value, matching .ranks-modal and
+   .install-modal (no token exists for it — it is deliberately theme-independent
+   in all three). */
+.ride-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 52;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(13, 27, 42, 0.35);
+}
+.ride-modal__card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  color: var(--fg);
+  border: 0;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.ride-modal__card:focus {
+  outline: none;
+}
+.ride-modal__header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ride-modal__back {
+  justify-self: start;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ride-modal__back:hover {
+  background: var(--accent-soft);
+}
+.ride-modal__back[hidden] {
+  display: none;
+}
+.ride-modal__title {
+  margin: 0;
+  grid-column: 2;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+}
+.ride-modal__close {
+  justify-self: end;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.ride-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* Portrait default: stacked halves (owner's "top half / bottom half"). */
+.ride-modal__grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.ride-modal__grid[data-panes="1"] {
+  grid-template-rows: 1fr;
+}
+/* min-height/min-width 0 is what lets a pane scroll instead of stretching the
+   grid track past the viewport. */
+.ride-modal__pane {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ride-modal__pane[hidden] {
+  display: none;
+}
+.ride-modal__lede {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ride-modal__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-modal__placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+}
+/* Landscape: side-by-side (owner's "left half / right half"), with Screen 4's
+   40/60 split. */
+@media (orientation: landscape) {
+  .ride-modal__grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+  .ride-modal__grid[data-split="40-60"] {
+    grid-template-columns: 2fr 3fr;
+  }
+  .ride-modal__grid[data-panes="1"] {
+    grid-template-columns: 1fr;
+  }
+}
+/* The JS class is authoritative (3 classes / 2 classes + attribute beats the
+   media query's single class), so an orientation flip never depends on the two
+   agreeing about what "landscape" means. */
+.ride-modal.is-portrait .ride-modal__grid {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.ride-modal.is-portrait .ride-modal__grid[data-panes="1"] {
+  grid-template-rows: 1fr;
+}
+.ride-modal.is-landscape .ride-modal__grid {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.ride-modal.is-landscape .ride-modal__grid[data-split="40-60"] {
+  grid-template-columns: 2fr 3fr;
+}
+.ride-modal.is-landscape .ride-modal__grid[data-panes="1"] {
+  grid-template-columns: 1fr;
+}
+/* A landscape phone has almost no vertical room — shrink the chrome, not the
+   panes. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .ride-modal__header {
+    padding: 6px 10px;
+  }
+  .ride-modal__title {
+    font-size: 14px;
+  }
+  .ride-modal__grid {
+    gap: 8px;
+    padding: 8px 10px 10px;
+  }
+}
+/* Desktop: a deliberate card rather than a full-bleed takeover. */
+@media (min-width: 900px) and (min-height: 620px) {
+  .ride-modal {
+    align-items: center;
+    padding: 24px;
+  }
+  .ride-modal__card {
+    flex: 0 1 auto;
+    width: min(1100px, 100%);
+    height: min(760px, 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Screen 4 — route choice (src/ride-screen-routes.ts).
+   --------------------------------------------------------------------- */
+
+/* Primary pane: toggle list + status line + NEXT/Continue control. Reuses
+   .ride-wizard__body (flex column + gap + padding) and .ride-options /
+   .ride-option for the cards themselves — only the additions below are new. */
+.ride-route-list {
+  flex: 1;
+}
+.ride-route-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.ride-route-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* Tombstone loading cards — left-to-right shimmer wipe (master Part 0
+   Screen 4: "four route-option tombstones with a left-to-right
+   border/content shining wipe effect"). Sits on top of .ride-option's own
+   border/background/padding/radius. */
+.ride-route-tombstone {
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-route-tombstone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent-soft),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: ride-route-shimmer 1.4s ease-in-out infinite;
+}
+.ride-route-tombstone__bar {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--border);
+}
+.ride-route-tombstone__bar--title {
+  width: 62%;
+  height: 14px;
+}
+.ride-route-tombstone__bar--meta {
+  width: 40%;
+}
+@keyframes ride-route-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-route-tombstone::after {
+    animation: none;
+  }
+}
+
+/* Secondary pane: the route-preview map (a small standalone MapLibre
+   instance — see ride-screen-routes.ts's DEVIATION 1 comment for why it
+   isn't the app's shared map). */
+.ride-route-overview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 220px;
+}
+.ride-route-map {
+  flex: 1;
+  min-height: 200px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.ride-route-map--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+}
+
+/* Graceful-degrade message (every profile out of coverage / erroring, or no
+   origin/destination to route between at all). Reuses .ride-modal__placeholder
+   for the centered flex-column layout; this just centers the button instead
+   of letting it stretch full-width. */
+.ride-route-degrade .login-btn {
+  align-self: center;
+}
+
+/* ---------- Ride wizard landscape keypad (src/ride-keypad.ts) ----------
+   Only ever rendered in landscape (portrait uses the native keyboard via
+   inputmode="numeric"), so it is sized to fill the pane it is slotted into: the
+   digit rows share the height evenly and Done keeps a fixed band at the bottom.
+   Keys are >=44px, tabular, and `touch-action: manipulation` to skip the
+   double-tap-zoom delay. The bound input carries `inputmode="none"` (never
+   readonly) while the keypad is attached — see the module header. */
+.ride-keypad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  user-select: none;
+}
+.ride-keypad__row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.ride-keypad__row--done {
+  grid-template-columns: 1fr;
+  flex: 0 0 auto;
+}
+.ride-keypad__key {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px;
+  font-family: inherit;
+  font-size: clamp(17px, 3.6vh, 30px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ride-keypad__key:hover {
+  background: var(--accent-soft);
+}
+.ride-keypad__key:active {
+  background: var(--accent-soft);
+  transform: translateY(1px);
+}
+.ride-keypad__key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ride-keypad__key--clear,
+.ride-keypad__key--backspace {
+  font-size: clamp(14px, 2.6vh, 20px);
+  color: var(--fg-muted);
+  background: var(--bg-subtle);
+}
+.ride-keypad__key--done {
+  min-height: 48px;
+  font-size: clamp(15px, 2.8vh, 22px);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: transparent;
+}
+.ride-keypad__key--done:hover,
+.ride-keypad__key--done:active {
+  background: var(--accent);
+  filter: brightness(1.06);
+}
+/* The field the keypad is driving, so it is obvious which one the keys feed. */
+input[data-ride-keypad="on"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-keypad__key:active {
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   ride-post-s8.ts / ride-post-s9.ts / ride-post-s10.ts (via ride-post.ts) —
+   Screens 8/9/10, the post-ride flow. Each renders as its own independent
+   floating overlay (not through ride-modal.ts's chrome — see
+   ride-post-s8.ts's ARCHITECTURE note for why), sharing one backdrop/card
+   shell modeled on .ranks-modal, plus the wizard's existing .ride-modal__lede
+   / .ride-modal__hint / .ride-wizard__actions / .login-btn / .select /
+   .segmented / .seg-btn / .ride-option / .ride-options classes wherever a
+   screen already reuses them (see each module's own DOM). Only what's
+   genuinely new to these three screens gets a new rule below.
+   --------------------------------------------------------------------------- */
+.ride-post-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+}
+.ride-post-modal__card {
+  width: min(440px, 94vw);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px 18px 18px;
+}
+/* Screen 9's two-pane (scooter + navigation) layout needs more room than the
+   single-column summary/form S8 and S10 render. */
+.ride-post-modal__card.ride-post-s9 {
+  width: min(680px, 96vw);
+}
+
+/* ---- Screen 8: cost summary + Rush Quit / New Destination / Veo form ---- */
+.ride-post-s8__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s8__row {
+  margin: 4px 0;
+  font-size: 13.5px;
+  color: var(--fg);
+}
+.ride-post-s8__stop-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ride-post-s8__stop-btn:hover {
+  color: var(--fg);
+}
+.ride-post-s8__stopped {
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.ride-post-s8__cost {
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--bg-subtle);
+}
+.ride-post-s8__cost-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.ride-post-s8__cost-row dt,
+.ride-post-s8__cost-row dd {
+  margin: 0;
+}
+.ride-post-s8__cost-row--total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s8__bill-note {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.ride-post-s8__note {
+  margin: 2px 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ride-post-s8__note--warn {
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-fg);
+  color: var(--fg);
+}
+.ride-post-s8__error {
+  margin: 2px 0;
+  font-size: 12.5px;
+  color: var(--fail);
+}
+.ride-post-s8__actions {
+  margin-top: 8px;
+}
+.ride-post-s8__form.ride-post-s8__body {
+  gap: 10px;
+}
+.ride-post-s8__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.ride-post-s8__field-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-post-s8__field-hint {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* ---- Screen 9: dual survey panes (scooter feedback + nav feedback) ---- */
+.ride-post-s9__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+.ride-post-s9__pane-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s9__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s9__field--bonus {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.ride-post-s9__question {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+/* Overrides .ride-options' vertical full-width stack (built for the device
+   picker's larger rows) with a wrapped tag-chip layout, more legible for a
+   16-item "choose any" checklist. */
+.ride-post-s9__issues {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ride-post-s9__issues li {
+  display: contents;
+}
+.ride-post-s9__issues .ride-option {
+  width: auto;
+  padding: 6px 10px;
+  border-width: 1px;
+  font-size: 12.5px;
+}
+.ride-post-s9__issues .ride-option.is-selected {
+  border-width: 2px;
+  padding: 5px 9px;
+}
+.ride-post-s9__qualitative {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.ride-post-s9__qualitative:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ride-post-s9__char-hint {
+  margin: 0;
+}
+.ride-post-s9__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ride-post-s9__skip,
+.ride-post-s9__submit {
+  appearance: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ride-post-s9__skip {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+.ride-post-s9__skip:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.ride-post-s9__submit {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.ride-post-s9__submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ride-post-s9__skip:disabled,
+.ride-post-s9__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---- Screen 10: eligibility copy + donation + points + recent trips ---- */
+.ride-post-s10__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ride-post-s10__sentence {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.ride-post-s10__points-tease {
+  margin: 4px 0 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--accent);
+}
+.ride-post-s10__disclosure {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+}
+.ride-post-s10__row {
+  margin: 3px 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.ride-post-s10__donation {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+.ride-post-s10__donation h4,
+.ride-post-s10__recent-trips h4 {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.ride-post-s10__verification,
+.ride-post-s10__points,
+.ride-post-s10__trip-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.ride-post-s10__verification li,
+.ride-post-s10__points li,
+.ride-post-s10__trip {
+  margin: 3px 0;
+}
+.ride-post-s10__error {
+  margin: 2px 0;
+  font-size: 12.5px;
+  color: var(--fail);
+}
+.ride-post-s10__actions {
+  margin-top: 8px;
+}
+.ride-post-s10__recent-trips {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }

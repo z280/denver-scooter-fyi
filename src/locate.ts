@@ -19,6 +19,14 @@ const WALK_METERS_PER_MIN = 80.5; // 3 mph
 export interface LngLat {
   lng: number;
   lat: number;
+  /** `coords.accuracy` in metres, when the fix came from `Locate` itself.
+   *  Optional so every existing synthetic `LngLat` literal (walk-line
+   *  targets, cluster centers, popup anchors) keeps typechecking without
+   *  having to invent a number — ride-mode Screen 2's auto-preselect
+   *  threshold is the reason this exists (frontend plan, `ride-screen-select.ts`
+   *  row: "Locate today keeps only lng/lat and drops coords.accuracy, so it
+   *  must be extended to retain the fix accuracy the thresholds below need"). */
+  accuracy?: number | null;
 }
 
 export function distanceMeters(a: LngLat, b: LngLat): number {
@@ -69,7 +77,11 @@ export class Locate {
     private readonly control: GeolocateControl,
   ) {
     control.on("geolocate", (e) => {
-      this.position = { lng: e.coords.longitude, lat: e.coords.latitude };
+      this.position = {
+        lng: e.coords.longitude,
+        lat: e.coords.latitude,
+        accuracy: e.coords.accuracy,
+      };
       this.fixedAt = Date.now();
       for (const cb of this.fixListeners) cb(this.position);
     });

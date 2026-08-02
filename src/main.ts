@@ -3,6 +3,8 @@ import "./style.css";
 
 import {
   fetchDevicesAuto,
+  getActiveRide,
+  getTrackedRide,
   type BoundaryLayer,
   type DeviceInclude,
 } from "./api.ts";
@@ -39,7 +41,7 @@ import {
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import { Locate } from "./locate.ts";
-import { RideHud } from "./ride-hud.ts";
+import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
@@ -57,6 +59,35 @@ import {
   promptGoogleOneTap,
 } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
+import { refreshSessionIfStale } from "./auth-session.ts";
+import { openRideModal, wireRideModal } from "./ride-modal.ts";
+import { wireRideDeepLink } from "./ride-deeplink.ts";
+import {
+  createRideSessionStore,
+  recoverRideSession,
+  recoveryForServerConflict,
+  type RideRecoveryDeps,
+  type RideRecoveryNote,
+  type RideRecoveryOutcome,
+  type RideSessionStore,
+} from "./ride-session.ts";
+import { showResumeOrEnd } from "./ride-resume-prompt.ts";
+import { openTrackStore, type TrackStore } from "./track-store.ts";
+import { wireRideScreenAuth } from "./ride-screen-auth.ts";
+import {
+  wireRideScreenSelect,
+  type RideOptionsPanelBuilder,
+} from "./ride-screen-select.ts";
+import { wireRideScreenDest } from "./ride-screen-dest.ts";
+import { wireRideScreenRoutes } from "./ride-screen-routes.ts";
+import { wireRideScreenStart } from "./ride-screen-start.ts";
+import { wireRidePost } from "./ride-post.ts";
+import {
+  renderRideOptionsPanel,
+  defaultRideOptionsFor,
+  loadRideModePoints,
+  type ResolvedRideModePoints,
+} from "./ride-settings.ts";
 import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { type EquityRank } from "./config.ts";
@@ -71,6 +102,11 @@ import {
   registerPopupCloser,
 } from "./chrome.ts";
 import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
+import {
+  wireLeaderboard,
+  createLayerPause,
+  type LayerPause,
+} from "./leaderboard.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -89,6 +125,32 @@ initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
+// The single ride-mode session doc every Screen 1–6 module (ride-screen-*.ts)
+// reads and writes through — created once here, never inside a screen module,
+// so the wizard has exactly one session, not one per screen. Persists to
+// localStorage on every transition (ride-session.ts's own concern); recovery
+// on load (crash/reload/409) is F3's seat, not wired here.
+// `legacyEndRide: false` (F4): `endRide` (the LIVE "rider taps End Ride
+// mid-ride" action) now lands a tracked ride on `ending(8)` like every other
+// path into it, instead of skipping straight to `done`. This was the F3
+// interim's job while there was no Screen 8 to hand off to — the legacy HUD
+// summary owned the minimal `PATCH /end` itself back then (ride-hud.ts's
+// now-retired `reportTrackedRideEnd`). F4 landed Screen 8 as a real module
+// (`ride-post.ts`, wired below), and ride-hud.ts's `endRide()` now branches
+// on a tracked ride to `handOffTrackedRideEnd()` — sealing the final local
+// batch and dispatching `{type:"endRide"}` WITHOUT sending any `PATCH /end`
+// itself (that invariant belongs to Screen 8's own buttons now — see
+// ride-session.ts's END-REPORT INVARIANT header comment) and WITHOUT
+// rendering the legacy "summary" DOM, which is what makes flipping this flag
+// safe: there is no longer a competing legacy render for `wireRideScreen8`'s
+// reactive mount to double up against. Private/guest rides are untouched —
+// `reduceRideSession`'s `endRide` case already sends them straight to `done`
+// regardless of this flag (master Part 0 gates Screen 8 on "a Veo device was
+// selected, i.e. not a private ride"), and ride-hud.ts keeps their legacy
+// client-only summary permanently.
+const rideSession: RideSessionStore = createRideSessionStore({
+  legacyEndRide: false,
+});
 const overlays = new Overlays(map, need("choropleth-legend"));
 const equity = new EquityRanks(overlays, () => renderEquityMetric());
 const hexDensity = new HexDensity(map, need("hexbin-legend"));
@@ -97,6 +159,19 @@ const hexDensity = new HexDensity(map, need("hexbin-legend"));
 // wire functions.
 let clearChoropleth: () => void = () => {};
 let clearHexDensity: () => void = () => {};
+// 🏆 Leaderboard pause controllers for hex density / the region choropleth
+// (frontend plan's Leaderboard section). Placeholder no-ops until
+// wireHexDensity()/wireChoropleth() run and replace them with the
+// real-backed controllers — same bootstrapping shape as clearHexDensity/
+// clearChoropleth above.
+let hexDensityPause: LayerPause<HexSize | null> = createLayerPause(
+  { getActive: () => null, apply: () => {} },
+  null,
+);
+let choroplethPause: LayerPause<BoundaryLayer | null> = createLayerPause(
+  { getActive: () => null, apply: () => {} },
+  null,
+);
 const freshness = new Freshness(
   need("freshness"),
   need("freshness-text"),
@@ -281,9 +356,27 @@ initInstallPrompt();
 // If the user just followed a magic link (?ml=<token>), redeem it before the
 // account UI settles; on success reload so every fetch goes out authenticated.
 // Inert when no token is present, so it's harmless before the endpoints exist.
-void consumePendingMagicLink().then((ok) => {
-  if (ok) location.reload();
-});
+//
+// The promise is KEPT (rather than `void`ed) because `?ride=` must be consumed
+// AFTER `?ml=`: on success the reload re-enters authenticated with the deep link
+// still in the URL, so wireRideDeepLink (down in the map-load block) stands down
+// until this settles — resolving `true` means "a reload is coming, leave the URL
+// alone", `false` means "the deep link is yours".
+//
+// With no link to redeem, this is also where the silent session refresh runs
+// (ride-mode F1): rider sessions are 30-day sliding, so a token older than a
+// day gets rotated once per load. Every guard lives inside auth-session.ts —
+// stale-only, one attempt per load, compare-and-set on the write, and a 401 that
+// clears nothing another tab has since rotated — so this stays a fire-and-forget
+// line. Sequenced AFTER the redemption decision on purpose: a freshly minted
+// magic-link session must never race a rotation of the token it replaces.
+const magicLinkSettled: Promise<boolean> = consumePendingMagicLink().then(
+  (ok) => {
+    if (ok) location.reload();
+    else void refreshSessionIfStale();
+    return ok;
+  },
+);
 
 // Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
 // dialog on load — but only if the backend's /auth/config says Google is
@@ -318,8 +411,208 @@ function equityZones(): Promise<IndexedFeature[]> {
 // the other two modes — a separate binding here would double-fire once the
 // mode-bar query matches it.
 function wireRideHud(): RideHud {
-  return new RideHud(need("ride-hud"), equityZones, map, devices);
+  return new RideHud(need("ride-hud"), equityZones, map, devices, {
+    session: rideSession,
+  });
 }
+
+// ---------- F3: local track-store (lazy singleton) ----------
+
+// One IndexedDB (or in-memory fallback) connection for the whole app —
+// opened lazily on first need (a ride's start, or a reload's recovery) so a
+// plain map visitor who never rides never touches IndexedDB at all. Shared by
+// `recoverActiveRide` and Screen 6's `onRideStarted` hook below.
+let trackStorePromise: Promise<TrackStore> | null = null;
+function getTrackStore(): Promise<TrackStore> {
+  trackStorePromise ??= openTrackStore();
+  return trackStorePromise;
+}
+
+// ---------- F3: reload / 409 recovery ----------
+
+/** Reconcile the persisted ride-session doc against the server and local
+ *  track-store BEFORE the rider does anything — `wireRideModal`'s `onWired`
+ *  hook, per its own doc comment. This is the phase's other central
+ *  integration seam (alongside the shared watchPosition callback): it is
+ *  what makes "reload mid-ride restores HUD + tracking within ~3 s" actually
+ *  true instead of just a paused-BRB resume.
+ *
+ *  Scope: `restore_riding` (a plain reload mid-ride) and `seal_and_end` (the
+ *  watch expired before an explicit end) are acted on automatically — both
+ *  are unambiguous, no rider decision needed. `prompt_resume_or_end` (a
+ *  genuine doc/server conflict) is left alone entirely: it needs a rider
+ *  choice this phase has no Screen-8-adjacent UI to collect yet (F4's
+ *  territory), so silently picking a side would be worse than doing nothing.
+ *  Every other outcome (`reopen_wizard`, `restore_wizard`, `restore_screen`,
+ *  `local_end`, `none`) still gets its recovered doc persisted, so storage
+ *  stays consistent with what the recovery table decided, but drives no
+ *  further UI — F4 territory.
+ *
+ *  Returns the outcome's `note` (F4): `seal_and_end` can land the recovered
+ *  doc straight on `ending(8)` with `note: "ride_expired"` (the watch elapsed
+ *  before the rider tapped End Ride) — Screen 8 shows that as a "your ride
+ *  expired" banner, but only if it learns about it. `ride-post.ts`'s
+ *  `wireRidePost` reads `recoveryNote` once at wire time (recovery is a
+ *  once-per-page-load reconciliation), so the call site below wires it only
+ *  after this promise settles — see that call site's own comment. */
+/** Shared by both recovery triggers (see the module comment above
+ *  `recoverActiveRide` for why one function serves boot recovery AND
+ *  Screen 6's 409): the pieces `recoverRideSession`/`recoveryForServerConflict`
+ *  need to reconcile against the server and local track-store, minus the
+ *  per-call `doc`/`probeWhenNoDoc` fields each caller supplies itself. */
+function baseRecoveryDeps(): Omit<RideRecoveryDeps, "doc" | "probeWhenNoDoc"> {
+  return {
+    getActiveRide: () => getActiveRide(),
+    getTrackedRide: (rideId) => getTrackedRide(rideId),
+    // Lazy on purpose: `readTrackTip` is only ever CALLED when there is a
+    // live/private ride (or a server conflict) to reconcile — a plain
+    // visitor never triggers this, so `getTrackStore()`'s `openTrackStore()`
+    // call — and therefore IndexedDB — stays untouched for them, matching
+    // this module's own "opened lazily on first need" comment above.
+    readTrackTip: async (trackId) => (await getTrackStore()).readTip(trackId),
+    isAuthenticated: () => isAuthenticated(),
+  };
+}
+
+/** Turn a `prompt_resume_or_end` outcome into the rider's actual choice
+ *  (review fix — this used to be silently dropped). Shared by both triggers:
+ *  a reload finding a server ride the local doc didn't expect, and Screen
+ *  6's `POST /tracked-rides` 409 (see `wireRideScreenStart`'s
+ *  `onServerConflict` hook below). */
+function presentResumeOrEnd(outcome: RideRecoveryOutcome): void {
+  showResumeOrEnd(outcome, {
+    session: rideSession,
+    locate,
+    getTrackStore,
+    onResumed: (ride, startedAtMs, recorder) => {
+      rideHud.beginHandoff({ rideId: ride.id, startedAtMs, recorder });
+    },
+  });
+}
+
+async function recoverActiveRide(): Promise<RideRecoveryNote | null> {
+  let outcome: Awaited<ReturnType<typeof recoverRideSession>>;
+  try {
+    outcome = await recoverRideSession({
+      doc: rideSession.current(),
+      ...baseRecoveryDeps(),
+      // Discover a server-active ride even when THIS device's local doc is
+      // missing/idle/done — the 409 UX reached via a plain reload (review
+      // fix: previously unset, so that case wasn't discovered until the
+      // rider's next failed start).
+      probeWhenNoDoc: true,
+    });
+  } catch (e) {
+    console.error("ride recovery failed", e);
+    return null;
+  }
+
+  if (outcome.action === "prompt_resume_or_end") {
+    presentResumeOrEnd(outcome);
+    return outcome.note;
+  }
+  if (outcome.doc) rideSession.replace(outcome.doc);
+  if (outcome.action !== "restore_riding" && outcome.action !== "seal_and_end") {
+    return outcome.note;
+  }
+
+  let recorder: RideHudTrackControl | null = null;
+  if (outcome.resume) {
+    try {
+      const trackStore = await getTrackStore();
+      const resumed = await trackStore.resumeRide(outcome.resume.trackId, {
+        signing: outcome.resume.signing,
+        isPrivate: outcome.doc?.private ?? false,
+      });
+      recorder = resumed.recorder;
+      // `seal_and_end`'s own promise (ride-session.ts's recovery-table
+      // comment on this branch): seal whatever survived right now, rather
+      // than leaving the chain open indefinitely with no Screen 8 yet to
+      // trigger a seal on the rider's behalf.
+      if (outcome.action === "seal_and_end") await recorder.finish();
+    } catch (e) {
+      console.error("ride recovery: resuming the local track recorder failed", e);
+    }
+  }
+  if (outcome.action === "restore_riding" && outcome.doc) {
+    rideHud.beginHandoff({
+      rideId: outcome.doc.rideId,
+      startedAtMs: outcome.doc.startedAtMs ?? Date.now(),
+      recorder,
+    });
+  }
+  return outcome.note;
+}
+
+// ---------- Ride mode wizard (Screens 1–6) ----------
+
+// Resolved 🏆 point values for ride-settings.ts's three trophy-row ℹ modals.
+// Kicked off once, lazily, the first time the wizard is actually wired (see
+// `warmRideModePoints()` below) rather than unconditionally at boot — the
+// `scooter-fyi-ride-modal` dev flag gates the whole feature, so a plain map
+// visitor should never trigger this fetch. loadRideModePoints() never
+// throws — offline / pre-A1 it resolves to the same baked-in fallback
+// renderRideOptionsPanel already defaults to, so `rideModePoints` staying
+// `undefined` until this settles is harmless.
+let rideModePoints: ResolvedRideModePoints | undefined;
+function warmRideModePoints(): void {
+  void loadRideModePoints().then((points) => {
+    rideModePoints = points;
+  });
+}
+
+/** Bridges ride-settings.ts's `renderRideOptionsPanel` (Screen 2's "Ride Mode
+ *  Options" content) into ride-screen-select.ts's `RideOptionsPanelBuilder`
+ *  seam for Screen 2's secondary pane — the two lanes' own interface
+ *  contracts, glued here since only the integrator can see both. */
+const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
+  const doc = rideSession.current();
+  const context = {
+    private: doc?.private ?? false,
+    authenticated: isAuthenticated(),
+  };
+  const options = doc?.options ?? defaultRideOptionsFor(context);
+  const panel = renderRideOptionsPanel({
+    options,
+    context,
+    onChange: (next) => {
+      rideSession.dispatch({ type: "setOptions", options: next });
+    },
+    onOpenUsuals: hooks.onUsuals,
+    usualsAvailable: hooks.hasUsuals,
+    points: rideModePoints,
+  });
+  container.append(panel.element);
+
+  // `renderRideOptionsPanel` deliberately never renders [NEXT >>] — that
+  // button belongs to ride-screen-select.ts / this integrator seam (see
+  // both modules' own module-boundary comments), not to the options-panel
+  // lane. The panel's own `.ride-settings__actions` row already holds
+  // [Usuals] (hidden when unavailable) right-aligned — append NEXT into
+  // THAT same row (rather than a second wrapping div) so the two buttons
+  // share one row exactly like `buildFallbackOptionsPanel`'s reference
+  // shape, instead of rendering as two separately-aligned rows whenever
+  // Usuals happens to be visible. Falls back to a standalone row in the
+  // (should-never-happen) case that row isn't found, so NEXT is never
+  // silently dropped if ride-settings.ts's internal markup changes later.
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "login-btn";
+  nextBtn.textContent = "NEXT >>";
+  nextBtn.disabled = !hooks.canProceed;
+  nextBtn.addEventListener("click", hooks.onNext);
+  const usualsRow = panel.element.querySelector<HTMLElement>(".ride-settings__actions");
+  if (usualsRow) {
+    usualsRow.append(nextBtn);
+  } else {
+    const actions = document.createElement("div");
+    actions.className = "ride-wizard__actions";
+    actions.append(nextBtn);
+    container.append(actions);
+  }
+
+  return { dispose: () => panel.destroy() };
+};
 
 // ---------- Sun-synced theme ----------
 
@@ -355,6 +648,24 @@ map.on("load", async () => {
   wireRecommended();
   wireChoropleth();
   wireHexDensity();
+  // 🏆 Leaderboard: the single wireX() entry point (frontend plan's
+  // Leaderboard section). Must come after wireChoropleth()/wireHexDensity()
+  // above — that's what replaces choroplethPause/hexDensityPause from their
+  // placeholder no-ops with the real-backed controllers this needs to pause.
+  // The profile button is looked up by its stable selector (index.html gives
+  // it no id); the null-guard is defensive only — it's static markup and
+  // should always be found.
+  const profileBtn = document.querySelector<HTMLButtonElement>(
+    '.topbar__right .drawer-tab[data-drawer="account"]',
+  );
+  if (profileBtn) {
+    wireLeaderboard(map, profileBtn, {
+      devices,
+      closeAllPopups,
+      hexDensityPause,
+      choroplethPause,
+    });
+  }
   wireDrawers();
   const areaFilter = wireAreaFilter();
   applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
@@ -397,6 +708,240 @@ map.on("load", async () => {
   } else {
     freshness.error();
   }
+
+  // ---------- Ride wizard (F1 shell + F2 screens + F3 wiring) ----------
+  // F3 flips the 🧭 Ride button on by default (frontend plan, "Entry") — see
+  // wireModes()'s `case "riding"` (ride-hud.ts's `isLiveRideEntry` guard) —
+  // so this wizard wiring is now unconditional: the button calls
+  // `openRideModal()` whenever no ride is live, which needs a real, registered
+  // screen behind it rather than the `scooter-fyi-ride-modal` dev flag's old
+  // placeholder. `isRideModalEnabled`/`RIDE_MODAL_FLAG_KEY` (ride-modal.ts)
+  // are dead code now — left for ride-modal.ts's own owner to prune.
+  //
+  // Wired after the first device response because a `?ride=plate:` link
+  // reverse-resolves the plate against the UNFILTERED device set — an empty list
+  // would send an otherwise-resolvable plate down the manual path. The
+  // vehicle-identifier form does not need the list, so this still runs when the
+  // fetch failed.
+  wireRideModal({
+    // F3 recovery seat (ride-modal.ts's own doc comment): reconcile the
+    // persisted session doc against the server / local track-store BEFORE
+    // anything renders, and silently resume the HUD + recording when a ride
+    // was already live across the reload — the phase's real acceptance bar
+    // ("reload mid-ride restores HUD + tracking within ~3 s"). Fire-and-forget
+    // for the rest of boot: recovery is async (it may hit the network), and
+    // nothing else should wait on it.
+    //
+    // F4: Screens 8/9/10 (`ride-post.ts`) wire only once this settles, not
+    // alongside the wireRideScreenX calls below, so `wireRidePost`'s
+    // `recoveryNote` dep (read once, at wire time) can carry
+    // `recoverActiveRide`'s resolved note straight through — see that
+    // function's own doc comment. `recoverRideSession` can land a reloaded
+    // doc directly on `ending(8)` (the `seal_and_end` outcome, watch expired
+    // before the rider tapped End Ride) via `rideSession.replace()`, which
+    // bypasses the reducer's `legacyEndRide` gate entirely — so Screen 8
+    // already renders correctly for THAT path regardless of the flag. The
+    // *live* "rider taps End Ride mid-ride" path also reaches `ending(8)`
+    // now (`legacyEndRide: false` above + ride-hud.ts's `handOffTrackedRideEnd`
+    // hand-off), and recovery reliably resolves within a few seconds of load
+    // — long before a rider could organically reach End Ride — so deferring
+    // this wiring until recovery settles still costs nothing in practice.
+    onWired: () => {
+      void recoverActiveRide().then((recoveryNote) => {
+        wireRidePost({
+          session: rideSession,
+          locate,
+          recoveryNote,
+          // Screen 9's pane-header point values — same already-warmed value
+          // Screen 2's ℹ modals use (see `warmRideModePoints()` below); a
+          // getter so a still-in-flight fetch at wire time is still picked
+          // up by the time a rider could ever actually reach Screen 9.
+          points: () => rideModePoints,
+          // Review fix: share the SAME TrackStore instance the ride was
+          // recorded into (this module's own lazy singleton, above) rather
+          // than letting Screens 8/9/10 each open an independent
+          // `openTrackStore()` — with IndexedDB unavailable, every
+          // independent call degrades to a brand-new, empty in-memory
+          // adapter that never sees this tab's recorded batches.
+          getTrackStore,
+          // Review fix: Screen 8 prefers the ride's own last fix over a
+          // fresh `Locate.current()` read (see `ride-hud.ts`'s `getLastFix`
+          // doc comment for why).
+          getLastFix: () => rideHud.getLastFix(),
+        });
+      });
+    },
+    // The entry's id is a 16-hex `vehicle_identifier` on the `?ride=<hex>`
+    // path but a `device_id` on the `?ride=plate:` path (GbfsPlates' reverse
+    // lookup speaks device_id — gbfs.ts's index is keyed on Veo's bike_id).
+    // Accept either and hand jumpToDevice the device_id it matches popups on.
+    jumpToDevice: (id) => {
+      const want = id.toLowerCase();
+      const feat = devices
+        .allFeatures()
+        .find(
+          (f) =>
+            f.properties.device_id === id ||
+            String(f.properties.vehicle_identifier ?? "").toLowerCase() ===
+              want,
+        );
+      if (!feat) return;
+      const [lng, lat] = feat.geometry.coordinates;
+      devices.jumpToDevice(feat.properties.device_id, lng, lat);
+    },
+    // Every open (a deep link, or a later re-entry) starts one fresh session
+    // doc — `reduceRideSession`'s own guard rejects this over a live/post
+    // ride, so a re-entry mid-ride can never clobber it. Guest-vs-private is
+    // NOT decided here: it defaults to `false` and Screen 2's device pick
+    // (own device vs. a real Veo scooter) is what actually derives it.
+    onOpen: () => {
+      rideSession.dispatch({
+        type: "open",
+        options: defaultRideOptionsFor({
+          private: false,
+          authenticated: isAuthenticated(),
+        }),
+      });
+    },
+    // Every screen change — including the first, right after `onOpen` above
+    // picks screen "1" — persists the shell's actual current screen onto the
+    // session doc, so a reload mid-wizard (F3's recovery) knows where the
+    // rider was. `ScreenId` (ride-modal.ts) and `WizardScreenId`
+    // (ride-session.ts) are member-for-member identical unions (see both
+    // files' own comments), so this needs no cast.
+    onScreenChange: (id) => {
+      rideSession.dispatch({ type: "goto", screen: id });
+    },
+    // Screen 6 ran off the end of RIDE_SCREEN_FLOW: the wizard is handing off
+    // to the HUD (frontend plan, "Screen 6 → HUD handoff" — F3's other central
+    // integration seam). `ride-screen-start.ts` already dispatched
+    // `rideStarted` (private and tracked rides both reach here), so the
+    // session doc already carries the ride's identity — read it straight back
+    // rather than threading it through yet another hook. The local track
+    // recorder for a TRACKED ride is attached moments later by
+    // `onRideStarted` below (an unavoidable one-microtask gap: opening
+    // IndexedDB is async and `RideHud.attachTrackRecorder` is built exactly
+    // for filling it in after `beginHandoff` already put the HUD on screen).
+    onComplete: () => {
+      const doc = rideSession.current();
+      if (!doc || doc.state !== "riding") return;
+      rideHud.beginHandoff({
+        rideId: doc.rideId,
+        startedAtMs: doc.startedAtMs ?? Date.now(),
+        recorder: null,
+      });
+    },
+  });
+  // Screens 1–6 (phase F2). Each `wireRideScreenX` call registers its own
+  // screen(s) into ride-modal.ts's registry (`registerRideScreen`) — no
+  // further main.ts wiring needed per screen beyond handing it the shared
+  // `rideSession`/`locate`/`devices` instances every lane's report asked
+  // for. Order doesn't matter (registration is a plain Map keyed by screen
+  // id), but auth is wired first so its GPS-permission priming has the most
+  // lead time before the rider can reach it (ride-screen-auth.ts's own
+  // module note).
+  wireRideScreenAuth({ locate });
+  wireRideScreenSelect({
+    devices,
+    locate,
+    session: rideSession,
+    buildOptionsPanel: buildRideOptionsPanel,
+  });
+  wireRideScreenDest({ session: rideSession, locate });
+  wireRideScreenRoutes({ session: rideSession, locate, devices });
+  wireRideScreenStart({
+    session: rideSession,
+    locate,
+    // F3's other half of the Screen 6 → HUD handoff (see `onComplete` above):
+    // a TRACKED ride's `track_signing` only exists in this hook's argument,
+    // so this is the one place that can seed `track-store`. Fire-and-forget —
+    // `onComplete` has already shown the HUD by the time this resolves;
+    // `attachTrackRecorder` is exactly the seam for wiring one in slightly
+    // late.
+    onRideStarted: (ride) => {
+      if (!ride.track_signing) {
+        console.error(
+          "ride start: server response carried no track_signing — recording cannot start",
+        );
+        return;
+      }
+      const signing = ride.track_signing;
+      void (async () => {
+        try {
+          const trackStore = await getTrackStore();
+          const recorder = await trackStore.startServerRide(signing);
+          rideHud.attachTrackRecorder(recorder);
+        } catch (e) {
+          console.error("ride start: opening the local track recorder failed", e);
+        }
+      })();
+    },
+    // Private/guest ride mirror of `onRideStarted` above (review fix): fires
+    // with the SAME `trackKeyId` the session doc already carries, so
+    // `resumeRide` mints its local record under that exact id rather than a
+    // second, unrelated one — see `ride-screen-start.ts`'s doc comment on
+    // this hook and `track-store.ts`'s `resumeRide` doc comment on minting a
+    // brand-new private ride under a caller-supplied id.
+    onPrivateRideStarted: (trackKeyId) => {
+      void (async () => {
+        try {
+          const trackStore = await getTrackStore();
+          const resumed = await trackStore.resumeRide(trackKeyId, {
+            isPrivate: true,
+          });
+          rideHud.attachTrackRecorder(resumed.recorder);
+        } catch (e) {
+          console.error(
+            "ride start: opening the local private track recorder failed",
+            e,
+          );
+        }
+      })();
+    },
+    // Review fix: `startTrackedRide`'s 409 ("an active ride already exists")
+    // used to render a dead-end static message. Fetch the conflicting ride
+    // and show the same resume-or-end prompt boot recovery uses
+    // (`recoveryForServerConflict` + `presentResumeOrEnd`, above) instead.
+    onServerConflict: () => {
+      void (async () => {
+        try {
+          const active = await getActiveRide();
+          if (!active) return; // race: the conflicting ride ended already
+          const outcome = await recoveryForServerConflict(
+            { doc: rideSession.current(), ...baseRecoveryDeps() },
+            active,
+            rideSession.current(),
+          );
+          presentResumeOrEnd(outcome);
+        } catch (e) {
+          console.error(
+            "ride start: fetching the conflicting active ride failed",
+            e,
+          );
+        }
+      })();
+    },
+  });
+  warmRideModePoints();
+  // `?ride=` is consumed only once `?ml=` has definitively NOT been redeemed.
+  // ride-deeplink.ts carries the same guard, but it can only reach for it
+  // while `?ml=` is still in the URL — and redemption strips the param in a
+  // `finally` just before it reloads, so by the time this runs the param can
+  // already be gone with a reload in flight. Consuming `?ride=` there would
+  // replaceState it away and the reloaded document would land with no deep
+  // link. Gating on the promise covers that window too; the hook below stays
+  // wired so the module's own guard still holds on the other ordering.
+  void magicLinkSettled.then((redeemed) => {
+    if (redeemed) return;
+    wireRideDeepLink({
+      magicLinkSettled,
+      // allFeatures(), never visibleFeatures(): a leftover model / battery /
+      // quality / area filter must not hide the scooter the rider is holding.
+      deviceIds: () =>
+        devices.allFeatures().map((f) => f.properties.device_id),
+    });
+  });
+
   // Warm the default-selected ranks' polygons so the estimate populates.
   void equity.warm();
   startRefreshLoop();
@@ -1131,15 +1676,7 @@ function wireIconography(): void {
 
 function wireChoropleth(): void {
   const select = need<HTMLSelectElement>("choropleth-select");
-  // Reset to Off without re-triggering the change handler's side effects.
-  clearChoropleth = () => {
-    if (!select.value) return;
-    select.value = "";
-    void overlays.setChoropleth(null);
-  };
-  select.addEventListener("change", async () => {
-    const layer = (select.value || null) as BoundaryLayer | null;
-    if (layer) clearHexDensity(); // mutually exclusive with hex density
+  const applyChoropleth = async (layer: BoundaryLayer | null): Promise<void> => {
     select.disabled = true;
     try {
       await overlays.setChoropleth(layer);
@@ -1150,6 +1687,28 @@ function wireChoropleth(): void {
     } finally {
       select.disabled = false;
     }
+  };
+  // 🏆 Leaderboard: while open, a pick here only updates the stored value —
+  // the real overlays.setChoropleth call is deferred to the leaderboard's
+  // close() (leaderboard.ts's LayerPause). Unchanged (applies immediately)
+  // when the leaderboard has never been opened.
+  choroplethPause = createLayerPause<BoundaryLayer | null>(
+    {
+      getActive: () => (select.value || null) as BoundaryLayer | null,
+      apply: applyChoropleth,
+    },
+    null,
+  );
+  // Reset to Off without re-triggering the change handler's side effects.
+  clearChoropleth = () => {
+    if (!select.value) return;
+    select.value = "";
+    choroplethPause.recordChange(null);
+  };
+  select.addEventListener("change", () => {
+    const layer = (select.value || null) as BoundaryLayer | null;
+    if (layer) clearHexDensity(); // mutually exclusive with hex density
+    choroplethPause.recordChange(layer);
   });
 }
 
@@ -1160,6 +1719,18 @@ function wireHexDensity(): void {
   const metricRow = need("hexbin-metric-row");
   const metricSelect = need<HTMLSelectElement>("hexbin-metric-select");
 
+  // 🏆 Leaderboard: see wireChoropleth()'s matching comment — same deferred-
+  // apply-while-open behavior, mirrored for the hex-density seg control.
+  hexDensityPause = createLayerPause<HexSize | null>(
+    {
+      getActive: () =>
+        (btns.find((b) => b.classList.contains("is-active"))?.dataset.hex ||
+          null) as HexSize | null,
+      apply: (size) => void hexDensity.setSize(size),
+    },
+    null,
+  );
+
   const select = (btn: HTMLButtonElement): void => {
     for (const b of btns) {
       const on = b === btn;
@@ -1169,7 +1740,7 @@ function wireHexDensity(): void {
     const size = (btn.dataset.hex || "") as HexSize | "";
     if (size) clearChoropleth(); // mutually exclusive with the choropleth
     metricRow.hidden = !size;
-    void hexDensity.setSize(size || null);
+    hexDensityPause.recordChange(size || null);
   };
   // Reset to Off (used when the choropleth takes over).
   clearHexDensity = () => {
@@ -1438,17 +2009,29 @@ function wireModes(): void {
     btn.addEventListener("click", () => {
       switch (btn.dataset.mode) {
         case "riding":
-          // Third mode: the full-screen HUD. Deliberately does NOT touch
-          // ride/analysis state — opening it mid-Find-wheels must not tear
-          // that mode down (and some popups z-stack above the HUD).
+          // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
+          // "Entry" — F3 flips this on unconditionally; no dev-flag gate
+          // here) UNLESS a tracked ride is already live, in which case a
+          // second tap must resume the HUD (whose paused path resumes
+          // correctly) instead of opening a fresh wizard over a running ride
+          // — `ride-session.ts`'s own `open` reducer guard rejects exactly
+          // that anyway, but the button should never even attempt it.
+          // "Live" (`isLiveRideEntry`) covers both a same-tab BRB'd ride
+          // (the HUD's own `paused` flag) and the session doc still reading
+          // `riding`/`countdown` (e.g. right after a reload, before the
+          // tracking-integration lane's resume flow has re-attached the HUD).
           closeAllPopups();
-          hudReturnMode =
-            btns.find(
-              (b) =>
-                b.classList.contains("is-active") && b.dataset.mode !== "riding",
-            )?.dataset.mode ?? null;
-          setActive("riding");
-          rideHud.open();
+          if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
+            hudReturnMode =
+              btns.find(
+                (b) =>
+                  b.classList.contains("is-active") && b.dataset.mode !== "riding",
+              )?.dataset.mode ?? null;
+            setActive("riding");
+            rideHud.open();
+          } else {
+            openRideModal();
+          }
           break;
         case "ride":
           enterRide();
