@@ -680,3 +680,131 @@ describe("a specific Veo device with cost_hud OFF — Screen 6 is now universal"
     expect(rideModalRoot()).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Auto-start — the device-card "Use in Ride Mode" survey path.
+//
+// `ride-preflight.ts` sets `entry.autoStart` when its survey established that
+// there is nothing left to ask about Veo: the rider said they had already
+// unlocked the scooter, or they turned the cost HUD off (which per spec
+// removes the consideration of starting Veo altogether).
+//
+// Screen 6 still RUNS — it is the reducer's only legal seat for `rideStarted`
+// — it just doesn't ask anything. These tests pin that it takes exactly the
+// "I already started" branch (no second start path to keep in sync), that it
+// waits for a fix like the buttons do, and above all that a failure hands the
+// rider back a fully interactive screen instead of stranding them on a
+// spinner with no control on it.
+// ---------------------------------------------------------------------------
+
+describe("auto-start (entry.autoStart)", () => {
+  it("starts the ride on mount without the rider touching anything", async () => {
+    const session = sessionAt(DEVICE, true);
+    const startTrackedRide = vi.fn().mockResolvedValue(fakeStartedRide());
+    wire(session, { startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => expect(startTrackedRide).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(session.current()?.state).toBe("riding"));
+  });
+
+  it("shows no Veo links, countdown or 'I already started' button", () => {
+    // Every one of those re-asks something the device card already settled.
+    const session = sessionAt(DEVICE, true);
+    wire(session, {
+      locate: fakeLocate(null), // hold it on screen by withholding the fix
+      startTrackedRide: vi.fn().mockResolvedValue(fakeStartedRide()),
+    });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    expect(anchors()).toHaveLength(0);
+    expect(root().querySelectorAll("button")).toHaveLength(0);
+    expect(root().textContent).toContain("Starting ride mode…");
+  });
+
+  it("waits for a late first fix rather than failing on the spot", async () => {
+    // The common case: Screen 1 primed the permission, but the reading lands
+    // after this screen has already mounted.
+    const session = sessionAt(DEVICE, true);
+    const locate = fakeLocate(null);
+    const startTrackedRide = vi.fn().mockResolvedValue(fakeStartedRide());
+    wire(session, { locate, startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(root().textContent).toContain("Waiting for your location");
+
+    locate.emitFix(FIX);
+    await vi.waitFor(() => expect(startTrackedRide).toHaveBeenCalledTimes(1));
+  });
+
+  it("starts exactly once even if several fixes arrive", async () => {
+    const session = sessionAt(DEVICE, true);
+    const locate = fakeLocate(null);
+    const startTrackedRide = vi.fn().mockResolvedValue(fakeStartedRide());
+    wire(session, { locate, startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    locate.emitFix(FIX);
+    locate.emitFix(FIX);
+    locate.emitFix(FIX);
+    await vi.waitFor(() => expect(startTrackedRide).toHaveBeenCalledTimes(1));
+  });
+
+  it("hands the rider back an interactive screen when the start fails", async () => {
+    // The important one: an auto-start that dead-ends on "Starting ride
+    // mode…" with no control on screen would be a trap, and the rider never
+    // asked for a screen with no way forward.
+    const session = sessionAt(DEVICE, true);
+    const startTrackedRide = vi
+      .fn()
+      .mockRejectedValue(new ApiError("nope", "HTTP_ERROR", { status: 500 }));
+    wire(session, { startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => {
+      expect(root().textContent).toContain("Couldn't start the ride");
+    });
+    // The full manual affordance is back: both Veo links and the skip button.
+    expect(anchors()).toHaveLength(2);
+    expect(buttonWithText("I already started").disabled).toBe(false);
+  });
+
+  it("does not retry itself after a failure", async () => {
+    const session = sessionAt(DEVICE, true);
+    const locate = fakeLocate(FIX);
+    const startTrackedRide = vi
+      .fn()
+      .mockRejectedValue(new ApiError("nope", "HTTP_ERROR", { status: 500 }));
+    wire(session, { locate, startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => expect(startTrackedRide).toHaveBeenCalledTimes(1));
+    locate.emitFix(FIX);
+    locate.emitFix(FIX);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(startTrackedRide).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the normal screen when the entry does not ask for auto-start", () => {
+    const session = sessionAt(DEVICE, true);
+    wire(session);
+    openRideModal({ fastForwardTo: "6" });
+
+    expect(anchors()).toHaveLength(2);
+    expect(buttonWithText("I already started")).toBeTruthy();
+  });
+
+  it("auto-starts a private ride locally, same as the manual skip button", async () => {
+    const session = privateSessionAt(DEVICE, true);
+    const startTrackedRide = vi.fn();
+    const onPrivateRideStarted = vi.fn();
+    wire(session, { startTrackedRide, onPrivateRideStarted });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => expect(session.current()?.state).toBe("riding"));
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
+    expect(session.current()?.rideId).toBeNull();
+  });
+});

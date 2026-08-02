@@ -845,3 +845,75 @@ describe("Screen 2.5 — Usuals", () => {
     ).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Screen 2's skip gate — the device-card "Use in Ride Mode" survey path.
+//
+// The survey's whole premise is that the rider already answered "which
+// scooter?" by opening that scooter's popup, so Screen 2 must step aside for
+// it. But stepping aside is only safe once `doc.device` is actually set (the
+// integrator dispatches `setDevice` from the entry in main.ts's `onOpen`):
+// with nothing selected, skipping here would let the flow reach Screen 6,
+// find no device, skip THAT too, and run off the end of the flow without
+// ever dispatching `rideStarted` — a wizard that closes having silently done
+// nothing. These tests pin both halves.
+// ---------------------------------------------------------------------------
+
+describe("Screen 2 — skip gate for the pre-ride survey", () => {
+  function selectedSession() {
+    const session = newSession();
+    session.dispatch({
+      type: "setDevice",
+      device: {
+        vehicleIdentifier: V1,
+        plate: "1234567",
+        model: "astro",
+        batteryConfirmed: null,
+      },
+    });
+    return session;
+  }
+
+  const PREFLIGHT = { navigation: false, save_tracks: true, cost_hud: true };
+
+  it("IS skipped once the survey's device pick has landed", () => {
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    wireRideScreenSelect({
+      devices, locate, session: selectedSession(), plates: fakePlates(),
+    });
+
+    // Lands on the survey's own target — Screens 3/4 aren't registered in
+    // this harness, so the walk steps over them to the fast-forward floor.
+    expect(
+      resolveStartScreen({ fastForwardTo: "6", preflight: PREFLIGHT }),
+    ).toBe("6");
+  });
+
+  it("is NOT skipped when the device pick somehow didn't land", () => {
+    // Fail safe rather than fail silent: showing the rider a device picker
+    // they didn't need is a small annoyance; running the whole flow with no
+    // device and starting no ride is a broken feature.
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    wireRideScreenSelect({
+      devices, locate, session: newSession(), plates: fakePlates(),
+    });
+
+    expect(
+      resolveStartScreen({ fastForwardTo: "6", preflight: PREFLIGHT }),
+    ).toBe("2");
+  });
+
+  it("is NOT skipped for an ordinary deep link that carries no survey answers", () => {
+    // `?ride=<hex>` still lands on Screen 2 to confirm the scooter — only the
+    // survey path has already asked.
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    wireRideScreenSelect({
+      devices, locate, session: selectedSession(), plates: fakePlates(),
+    });
+
+    expect(resolveStartScreen({ vehicleIdentifier: V1 })).toBe("2");
+  });
+});

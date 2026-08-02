@@ -4935,3 +4935,293 @@ input[data-ride-keypad="on"] {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+
+/* ---------- ride-preflight.ts: the "Use in Ride Mode" quick survey -------- */
+/* Shares the .ranks-modal geometry (fixed backdrop, centred elevated card)
+   rather than importing its classes, so the survey can grow its own layout
+   without dragging every floating modal along with it. */
+.ride-preflight,
+.device-features {
+  position: fixed;
+  inset: 0;
+  /* Above .ranks-modal (70): both can be reachable from the same popup, and
+     whichever the rider opened last has to be the one on top. */
+  z-index: 72;
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.ride-preflight__card,
+.device-features__card {
+  width: min(380px, 94vw);
+  /* The features modal can run long on a small phone once the condition
+     follow-up opens; scroll the card rather than the page behind it. */
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.ride-preflight__head,
+.device-features__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ride-preflight__head h3,
+.device-features__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.ride-preflight__close,
+.device-features__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.ride-preflight__close:hover,
+.device-features__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.ride-preflight__lede {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-preflight__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.ride-preflight__labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ride-preflight__label,
+.device-features__q {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ride-preflight__hint,
+.device-features__hint {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.3;
+}
+/* The toggle IS the state, so it has to read unambiguously at a glance:
+   filled accent for ON, plain outline for OFF. Never rely on colour alone —
+   the ON/OFF word is inside the button. */
+.ride-preflight__toggle {
+  flex: 0 0 auto;
+  min-width: 56px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.ride-preflight__toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.ride-preflight__startgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.ride-preflight__startopts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.ride-preflight__startopt {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.ride-preflight__startopt.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+.ride-preflight__next {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ride-preflight__actions,
+.device-features__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ride-preflight__actions .login-btn,
+.device-features__actions .login-btn {
+  flex: 1;
+}
+
+/* ---------- device-features.ts: the "Confirm Features" survey ------------- */
+.device-features__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--hover-neutral);
+}
+/* The needs-review tier is the one worth going out of your way for, so it
+   gets the accent treatment the other two don't. */
+.device-features__status[data-status="needs_review"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.device-features__status-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.device-features__status-points {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.device-features__stem {
+  margin: 12px 0 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.device-features__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.device-features__yesno {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* Unpressed by default and visibly so: both buttons render identically until
+   the rider picks one, because a pre-highlighted answer is an answer they
+   didn't give. */
+.device-features__toggle {
+  min-width: 48px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.device-features__toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.device-features__poor {
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.device-features__poor-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.device-features__poor-opt {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.device-features__poor-opt.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+.device-features__plate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.device-features__plate-input {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px; /* ≥16px stops iOS Safari zooming the page on focus */
+  letter-spacing: 0.08em;
+}
+.device-features__status-line {
+  margin: 10px 0 0;
+  min-height: 1em;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ---------- devices.ts: the two new device-card actions ------------------- */
+/* "Use in Ride Mode" spans the 2-column action grid as the primary CTA —
+   it is what a rider standing at the scooter most often wants. */
+.device-popup__actbtn--ride {
+  grid-column: 1 / -1;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.device-popup__actbtn--ride:hover {
+  filter: brightness(1.08);
+  background: var(--accent);
+}
+.device-popup__actbtn--features {
+  grid-column: 1 / -1;
+}

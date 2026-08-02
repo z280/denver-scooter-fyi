@@ -64,6 +64,77 @@ export async function submitDeviceReport(
   return { deduped: data.deduped === true };
 }
 
+// --- Device features -------------------------------------------------------
+
+/** One "☑️ Confirm Features" submission (POST
+ *  /api/v1/reports/device-features). Field names match the API's
+ *  `DeviceFeatureReportIn` exactly — getting one wrong is a 422, not a soft
+ *  failure. */
+export interface DeviceFeatureReport {
+  /** Stable per-vehicle HMAC — exactly 16 lowercase hex chars. */
+  vehicle_identifier: string;
+  /** The rotating GBFS bike_id we had on screen. Audit trail only. */
+  device_id?: string;
+  /** As typed. NEVER validated or normalized here: the server owns the
+   *  match rule, and a wrong plate is an accepted, unpaid report rather
+   *  than an error — see the header of `device-features.ts` for why the
+   *  client deliberately has no opinion about it. */
+  submitted_plate: string;
+  has_bell: boolean;
+  has_cup_holder: boolean;
+  has_phone_holder: boolean;
+  /** Must equal `poor_condition.length === 0`. The API rejects the
+   *  contradiction with a 422 rather than normalizing it. */
+  all_good_condition: boolean;
+  /** Subset of the features this same report says are present. */
+  poor_condition: string[];
+  lat?: number;
+  lng?: number;
+}
+
+export interface DeviceFeatureReportResult {
+  id: number;
+  /** Did the typed plate match? `false` means stored, graded-out, unpaid. */
+  plate_valid: boolean;
+  points_awarded: number;
+  /** The status the vehicle carried when the report landed — i.e. the one
+   *  that chose the award. Not the status after: that isn't knowable until
+   *  the server's ten-minute grading job runs. */
+  feature_status: string;
+  deduped: boolean;
+}
+
+/** Submit a device-feature confirmation. Anonymous is allowed (the report
+ *  still counts toward the consensus, it just earns nothing); a bearer token
+ *  rides along when signed in, which is what makes it points-eligible.
+ *  Throws `ReportHttpError` on a non-2xx so the modal can distinguish a
+ *  validation bug from a dropped connection. */
+export async function submitDeviceFeatureReport(
+  report: DeviceFeatureReport,
+): Promise<DeviceFeatureReportResult> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const auth = getAuth();
+  if (auth) headers.Authorization = `Bearer ${auth.token}`;
+
+  const res = await fetch(`${API_BASE}/api/v1/reports/device-features`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(report),
+  });
+  if (!res.ok) throw new ReportHttpError(res.status);
+  const data = (await res.json()) as Partial<DeviceFeatureReportResult>;
+  return {
+    id: Number(data.id ?? 0),
+    plate_valid: data.plate_valid === true,
+    points_awarded: Number(data.points_awarded ?? 0),
+    feature_status: String(data.feature_status ?? "needs_features_confirmed"),
+    deduped: data.deduped === true,
+  };
+}
+
 /** A non-2xx response from a report POST. Carries the status so callers can
  *  distinguish "your session expired" (401 — the photo needs a bearer token,
  *  the description doesn't) from a generic failure. */

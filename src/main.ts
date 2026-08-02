@@ -21,6 +21,7 @@ import {
   hideMapTooltip,
   type RideType,
   type ModelKey,
+  modelKeyOf,
   type QualityFilter,
   type IconStyle,
   type ModelIcon,
@@ -84,6 +85,7 @@ import { wireRideScreenStart } from "./ride-screen-start.ts";
 import { wireRidePost } from "./ride-post.ts";
 import {
   renderRideOptionsPanel,
+  applyCascades,
   defaultRideOptionsFor,
   loadRideModePoints,
   type ResolvedRideModePoints,
@@ -474,6 +476,22 @@ function baseRecoveryDeps(): Omit<RideRecoveryDeps, "doc" | "probeWhenNoDoc"> {
   };
 }
 
+/** Push the live session doc's `RideOptions.cost_hud` into the HUD.
+ *
+ *  Called immediately before EVERY `beginHandoff` — the wizard's Screen 6
+ *  hand-off, a reload's `restore_riding`, and a resume-or-end resume — so
+ *  the preference survives every route into the riding view rather than only
+ *  the one a rider happened to be tested on. With no doc (nothing to read a
+ *  preference from) it leaves the HUD's default alone rather than guessing.
+ *
+ *  Runs before the handoff so the first paint already agrees: the device
+ *  card's pre-ride survey promises ride mode "starts without visible HUD
+ *  cost", and a readout that flashes up for one frame is not that. */
+function applyCostHudPreference(): void {
+  const doc = rideSession.current();
+  if (doc) rideHud.setCostHudVisible(doc.options.cost_hud);
+}
+
 /** Turn a `prompt_resume_or_end` outcome into the rider's actual choice
  *  (review fix — this used to be silently dropped). Shared by both triggers:
  *  a reload finding a server ride the local doc didn't expect, and Screen
@@ -485,6 +503,10 @@ function presentResumeOrEnd(outcome: RideRecoveryOutcome): void {
     locate,
     getTrackStore,
     onResumed: (ride, startedAtMs, recorder) => {
+      // Same `cost_hud` application as the Screen 6 handoff below: a rider
+      // who turned the readout off before the ride must not get it back
+      // just because they reloaded or resumed from another tab.
+      applyCostHudPreference();
       rideHud.beginHandoff({ rideId: ride.id, startedAtMs, recorder });
     },
   });
@@ -535,6 +557,7 @@ async function recoverActiveRide(): Promise<RideRecoveryNote | null> {
     }
   }
   if (outcome.action === "restore_riding" && outcome.doc) {
+    applyCostHudPreference();
     rideHud.beginHandoff({
       rideId: outcome.doc.rideId,
       startedAtMs: outcome.doc.startedAtMs ?? Date.now(),
@@ -794,14 +817,60 @@ map.on("load", async () => {
     // ride, so a re-entry mid-ride can never clobber it. Guest-vs-private is
     // NOT decided here: it defaults to `false` and Screen 2's device pick
     // (own device vs. a real Veo scooter) is what actually derives it.
-    onOpen: () => {
-      rideSession.dispatch({
-        type: "open",
-        options: defaultRideOptionsFor({
-          private: false,
-          authenticated: isAuthenticated(),
-        }),
-      });
+    onOpen: (entry) => {
+      const context = { private: false, authenticated: isAuthenticated() };
+      const base = defaultRideOptionsFor(context);
+      // The device card's "Use in Ride Mode" survey (`ride-preflight.ts`)
+      // already asked about navigation / save-tracks / cost-HUD, so its
+      // answers seed the fresh doc instead of the product defaults. Run
+      // through `applyCascades` rather than spreading straight in: turning
+      // save_tracks OFF has to suppress battery_modeling and nav_improvement
+      // exactly as it does when Screen 2's own panel toggles it, and a
+      // shortcut that skipped the cascades would be the one path that can
+      // produce an options blob the wizard itself would call illegal.
+      const options = entry.preflight
+        ? applyCascades({ ...base, ...entry.preflight }, context)
+        : base;
+      rideSession.dispatch({ type: "open", options });
+
+      // The survey path also pre-selects the DEVICE, which is normally
+      // Screen 2's job. It has to be done here rather than left to that
+      // screen, because the whole premise of "Use in Ride Mode" is that the
+      // rider already answered "which scooter?" by opening its popup — so
+      // Screen 2 skips itself for this entry (see its own skip predicate),
+      // and with nothing setting `doc.device` the flow would reach Screen 6,
+      // find no device, skip that too, and run off the end without ever
+      // dispatching `rideStarted`.
+      //
+      // `private` mirrors `ride-screen-select.ts`'s `syncSessionDevice`
+      // exactly: a guest's real-device pick is still a private ride, because
+      // `POST /tracked-rides` is session-authed and there is no account to
+      // attribute a row to.
+      if (entry.preflight && entry.vehicleIdentifier) {
+        const want = entry.vehicleIdentifier.toLowerCase();
+        const feat = devices
+          .allFeatures()
+          .find(
+            (f) =>
+              String(f.properties.vehicle_identifier ?? "").toLowerCase() ===
+              want,
+          );
+        rideSession.dispatch({
+          type: "setDevice",
+          device: {
+            vehicleIdentifier: want,
+            // The popup's own resolved plate is preferred: it is what built
+            // the deep link the rider may already have tapped, and the map
+            // payload carries no plate on the public path.
+            plate: entry.plate ?? null,
+            model: feat ? modelKeyOf(feat.properties) : null,
+            // Same as Screen 2: no rider-entered battery %, the server
+            // derives its own reading from the feed.
+            batteryConfirmed: null,
+          },
+          private: !isAuthenticated(),
+        });
+      }
     },
     // Every screen change — including the first, right after `onOpen` above
     // picks screen "1" — persists the shell's actual current screen onto the
@@ -825,6 +894,7 @@ map.on("load", async () => {
     onComplete: () => {
       const doc = rideSession.current();
       if (!doc || doc.state !== "riding") return;
+      applyCostHudPreference();
       rideHud.beginHandoff({
         rideId: doc.rideId,
         startedAtMs: doc.startedAtMs ?? Date.now(),

@@ -58,6 +58,27 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
   it appears only for a signed-in user with location on who is physically at
   the scooter (~75 m). Plates are never exposed to anonymous users, so the
   map can't be scraped back into a competing feed.
+- **🧭 Use in Ride Mode** (device popup): a one-screen pre-ride survey —
+  navigation directions (off by default), save tracks to this device (on),
+  Veo cost HUD (on), and, while the cost HUD is on, "I started the Veo
+  already" vs "Give me a link to Start". A rider standing at a scooter has
+  already answered "which one?" by opening the popup, so the survey skips
+  every wizard screen its answers make unnecessary and visits every screen
+  they make necessary: navigation on lands on the destination picker, "give
+  me a link" lands on Start-in-Veo, and anything else goes straight into
+  ride mode. Cost HUD off is a real branch — the Veo question disappears
+  entirely, the rate plan is not re-confirmed (that lives in your profile),
+  and ride mode starts with the cost readout hidden.
+- **☑️ Confirm Features**: Veo's feed says nothing about what is bolted to a
+  given scooter, so riders standing next to one tell us — a working bell, a
+  cup holder, a phone holder, and whether they're all in good condition.
+  Neither Yes nor No is pressed by default, because a pre-pressed answer is
+  an answer nobody gave. Confirming needs the plate under the scooter's QR
+  code (you can't do it from your sofa); a wrong plate is still accepted and
+  still recorded, it just earns nothing. Every device starts out labelled
+  "Needs features confirmed"; a later report that disagrees flips it to
+  "Needs review", and three reports settle it by 2/3 consensus. Worth 12
+  points first time, 14 for clearing a review, 6 to reconfirm.
 - **Intent modes** (bottom center): one-tap presets — 🛴 *Find wheels*
   (available devices, reliability coloring, location offer) and 📊 *Analysis*
   (v1 choropleth + compliance gauge). The bar always shows the current
@@ -229,6 +250,12 @@ src/
   config.ts        bounds, refresh cadence, colors, overlays, basemap URL
   map.ts           MapLibre map + Protomaps style
   devices.ts       device source, clustering, popups, type filter
+  ride-preflight.ts  the device popup's "Use in Ride Mode" quick survey —
+                   three toggles, then straight into ride mode past every
+                   wizard screen the answers make unnecessary
+  device-features.ts crowdsourced equipment: the "Confirm Features" survey,
+                   the three-status vocabulary, and reading the map
+                   payload's device_features object
   overlays.ts      boundary layers, choropleth, neighborhood highlight
   compliance.ts    daily SLA gauge
   freshness.ts     "as of …" footer
