@@ -273,10 +273,43 @@ function buildStartScreen(
   let countdownTimer: number | undefined;
   let abortController: AbortController | null = null;
 
+  // ---- Auto-start (the device-card "Use in Ride Mode" survey path).
+  //
+  // `ride-preflight.ts` sets `entry.autoStart` when its survey established
+  // that there is nothing left to ask about Veo: either the rider said they
+  // had already unlocked the scooter, or they turned the cost HUD off, which
+  // per spec removes the consideration of starting Veo altogether.
+  //
+  // This screen still RUNS — it is the reducer's only legal seat for
+  // `rideStarted` (module header), so a path that skipped it could never
+  // reach `riding` — it just doesn't ask anything. It takes exactly the
+  // "I already started" branch, which is the same branch the button would
+  // have taken, so there is no second start path to keep in sync.
+  //
+  // `autoStartSettled` is what stops it being a trap: the moment the attempt
+  // comes back unsuccessfully (a failed start, or the 409 that hands off to
+  // the resume-or-end prompt) the screen falls back to its normal, fully
+  // interactive idle render. A rider is never left staring at "Starting your
+  // ride…" with no control on screen.
+  const autoStart = ctx.entry.autoStart === true;
+  let autoStartSettled = false;
+
   const root = el("div", "ride-wizard__body ride-screen-start");
 
   function canStart(): boolean {
     return !busy && mode === "idle" && fix !== null;
+  }
+
+  /** Fire the auto-start once the preconditions hold. Called at mount and
+   *  again on every location fix — at mount there is very often no fix yet
+   *  (Screen 1 primed the permission; the first reading can lag), and
+   *  auto-start must wait for it exactly as the buttons do rather than
+   *  failing on the spot. */
+  function maybeAutoStart(): void {
+    if (!autoStart || autoStartSettled || destroyed) return;
+    if (!canStart()) return;
+    autoStartSettled = true;
+    onAlreadyStarted();
   }
 
   function render(): void {
@@ -289,7 +322,20 @@ function buildStartScreen(
       renderCounting();
       return;
     }
+    if (autoStart && !autoStartSettled) {
+      renderAutoStart();
+      return;
+    }
     renderIdle();
+  }
+
+  /** The auto-start face: no Veo deep links, no countdown, no "I already
+   *  started" — every one of those re-asks something the device card's
+   *  survey already settled. Just enough to explain the pause while we wait
+   *  on a location fix. */
+  function renderAutoStart(): void {
+    root.append(el("p", "ride-wizard__lede", "Starting ride mode…"));
+    appendWaitingAndError();
   }
 
   /** Shared by both the real-device and own-device idle renders. */
@@ -501,6 +547,9 @@ function buildStartScreen(
     const fixNow = deps.locate.current();
     if (!doc || (!device && !own) || !fixNow) {
       mode = "idle";
+      // An auto-start that cannot proceed hands the screen back to the
+      // rider rather than retrying invisibly — see `autoStartSettled`.
+      autoStartSettled = true;
       errorMessage = "We lost your location or scooter selection — try again.";
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
@@ -544,6 +593,7 @@ function buildStartScreen(
     // this in practice.
     if (!device) {
       mode = "idle";
+      autoStartSettled = true;
       errorMessage = "We lost your location or scooter selection — try again.";
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
@@ -582,6 +632,10 @@ function buildStartScreen(
       if (destroyed) return;
       busy = false;
       mode = "idle";
+      // Whatever went wrong, the rider gets the interactive screen back —
+      // including on the 409 path, where `errorMessage` is deliberately left
+      // null because the resume-or-end prompt is telling the story instead.
+      autoStartSettled = true;
       if (err instanceof ApiError && err.status === 409 && deps.onServerConflict) {
         // The resume-or-end prompt's trigger (see `startTrackedRide`'s own
         // doc comment) — hand off to the caller instead of a dead-end
@@ -602,10 +656,15 @@ function buildStartScreen(
   // ---------------- mount ----------------
 
   render();
+  maybeAutoStart();
   const unFix = deps.locate.onFix((pos) => {
     if (destroyed) return;
     fix = pos;
     if (mode === "idle" && !busy) render();
+    // A late first fix is the common auto-start path: Screen 1 primed the
+    // permission, but the reading itself usually lands after this screen
+    // has already mounted.
+    maybeAutoStart();
   });
   ctx.onCleanup(unFix);
   ctx.onCleanup(() => {

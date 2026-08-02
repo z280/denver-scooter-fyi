@@ -52,6 +52,27 @@ export type RidePaneSplit = "even" | "40-60";
  *  "Entry"). UI-pref key, hence the hyphenated convention. */
 export const RIDE_MODAL_FLAG_KEY = "scooter-fyi-ride-modal";
 
+/** Which face Screen 6 shows for a rider who came in through the device
+ *  card's "Use in Ride Mode" survey (`ride-preflight.ts`). Not a
+ *  `RideOptions` field — it changes nothing about the ride, only whether
+ *  the rider still needs the Start-in-Veo link. */
+export type RideStartIntent = "already-started" | "need-link";
+
+/** The three `RideOptions` fields the pre-ride survey asks about, carried
+ *  on the entry so the integrator can seed the session doc with them at
+ *  `onOpen` time.
+ *
+ *  Structurally typed rather than imported from `api.ts` on purpose: this
+ *  module is the wizard's chrome and deliberately imports no app state (see
+ *  the file header). A three-boolean shape is assignable to the matching
+ *  slice of `RideOptions` either way, so the integrator can spread it
+ *  straight into an options blob with no cast. */
+export interface RidePreflightChoices {
+  navigation: boolean;
+  save_tracks: boolean;
+  cost_hud: boolean;
+}
+
 /** How the wizard was entered. A device deep link (`?ride=`) or a device
  *  popup's "Ride this" fast-forwards the landing screen; it never bypasses
  *  Screen 1's auth/GPS gates (those are Screen 1's own `skip` rules). */
@@ -65,6 +86,20 @@ export interface RideModalEntry {
    *  named, Screen 1 otherwise. Screens registered *before* the target still
    *  run when their `skip()` says they must (Screen 1's gates). */
   fastForwardTo?: ScreenId;
+  /** Pre-ride survey answers (`ride-preflight.ts`). The integrator folds
+   *  these into the fresh session doc's `RideOptions` in `onOpen`; nothing
+   *  in this module reads them. */
+  preflight?: RidePreflightChoices;
+  /** Screen 6 should start the ride the moment it mounts, rather than
+   *  rendering its Start-in-Veo buttons and countdown.
+   *
+   *  Set when the survey established there is nothing left to ask about
+   *  Veo — the rider said they had already unlocked it, or they turned the
+   *  cost HUD off (which per spec removes the consideration of starting Veo
+   *  altogether). Screen 6 stays IN the flow either way because it is the
+   *  reducer's only legal seat for `rideStarted`; this is what keeps it from
+   *  re-asking a question the rider already answered on the device card. */
+  autoStart?: boolean;
 }
 
 export type RideModalCloseReason =

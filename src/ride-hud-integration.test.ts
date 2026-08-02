@@ -490,3 +490,83 @@ describe("RideHud + ride-nav-hud + track-store, fully wired: the shared watchPos
     expect(info.waypointCount).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// `RideOptions.cost_hud`, finally applied.
+//
+// `ride-settings.ts`'s own header records that the pre-ride "Est. Veo Cost
+// HUD" row was REMOVED because the field it wrote was dead — the live HUD's
+// cost readout was unconditional, driven only by ride-cost.ts's always-on
+// rate-plan preference. The device card's pre-ride survey (ride-preflight.ts)
+// asks about it again and promises the ride "starts without visible HUD
+// cost", so it has to actually do something now. These tests are the proof
+// that it does, against the real RideHud with a real riding view mounted.
+// ---------------------------------------------------------------------------
+
+describe("RideHud cost readout (RideOptions.cost_hud)", () => {
+  function mountRiding(): { hud: RideHud; container: HTMLElement } {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const hud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+    );
+    return { hud, container };
+  }
+
+  const costEl = (container: HTMLElement): HTMLElement => {
+    const el = container.querySelector<HTMLElement>("#hud-cost");
+    if (!el) throw new Error("the riding view has no #hud-cost readout");
+    return el;
+  };
+
+  it("shows the readout by default", () => {
+    // Every entry point that does not explicitly say otherwise must get
+    // exactly what it got before this option was wired up.
+    const { hud, container } = mountRiding();
+    hud.beginHandoff({ rideId: "r1", startedAtMs: Date.now(), recorder: null });
+    expect(costEl(container).hidden).toBe(false);
+  });
+
+  it("hides it when the rider turned the cost HUD off before the ride", () => {
+    const { hud, container } = mountRiding();
+    hud.setCostHudVisible(false);
+    hud.beginHandoff({ rideId: "r2", startedAtMs: Date.now(), recorder: null });
+    expect(costEl(container).hidden).toBe(true);
+  });
+
+  it("leaves the ride clock and speed alone", () => {
+    // Only the cost readout is opted out of — a rider who hid the price
+    // still wants to know how long they've been riding and how fast.
+    const { hud, container } = mountRiding();
+    hud.setCostHudVisible(false);
+    hud.beginHandoff({ rideId: "r3", startedAtMs: Date.now(), recorder: null });
+    expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(false);
+    expect(container.querySelector<HTMLElement>("#hud-mph")?.hidden).toBe(false);
+  });
+
+  it("can be flipped back on mid-ride", () => {
+    const { hud, container } = mountRiding();
+    hud.setCostHudVisible(false);
+    hud.beginHandoff({ rideId: "r4", startedAtMs: Date.now(), recorder: null });
+    hud.setCostHudVisible(true);
+    expect(costEl(container).hidden).toBe(false);
+  });
+
+  it("does not write a cost figure into a hidden readout", () => {
+    // Belt and braces: the node is hidden, so a stale price cannot be read
+    // by a screen reader or flash up if something else un-hides it.
+    const { hud, container } = mountRiding();
+    hud.setCostHudVisible(false);
+    hud.beginHandoff({
+      rideId: "r5",
+      startedAtMs: Date.now() - 600_000,
+      recorder: null,
+    });
+    expect(costEl(container).textContent).toBe("");
+  });
+});

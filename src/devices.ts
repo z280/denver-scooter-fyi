@@ -50,6 +50,14 @@ import {
   ReportHttpError,
   type DeviceReportType,
 } from "./reports.ts";
+import {
+  FEATURE_STATUS_LABEL,
+  asFeatureStatus,
+  openConfirmFeatures,
+  readDeviceFeatures,
+  summarizeFeatures,
+} from "./device-features.ts";
+import { openRidePreflight } from "./ride-preflight.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 /** Ride posture, the primary "what am I sitting on" split. Derived from the
@@ -714,6 +722,12 @@ export class Devices {
         .filter(Boolean)
         .join(" · ");
 
+      // Crowdsourced equipment (API sql/055). Read up here because BOTH the
+      // Features stat row and the action row below need it, and the stat
+      // rows are built first.
+      const featureStatus = asFeatureStatus(props.feature_status);
+      const knownFeatures = readDeviceFeatures(props.device_features);
+
       const user = this.locate.current();
 
       // Effective plate: the admin-only field when present, else resolved
@@ -840,6 +854,22 @@ export class Devices {
             ? `${escapeHtml(String(props.vehicle_model_name))}${use}`
             : `${escapeHtml(props.form_factor === "bicycle" ? "E-bike" : "Scooter")}${use}`;
         statRows.push(`<dt>Type</dt><dd>${typeDd}</dd>`);
+      }
+      {
+        // Equipment. Shows what we know when we know it, and the status
+        // label when we don't — "Needs features confirmed" IS the useful
+        // answer for an unreported scooter, because it is also the pitch
+        // for the button below it.
+        const summary = knownFeatures
+          ? summarizeFeatures(knownFeatures)
+          : FEATURE_STATUS_LABEL[featureStatus];
+        const statusHint =
+          knownFeatures && featureStatus !== "up_to_date"
+            ? ` <span class="device-popup__hint">${escapeHtml(FEATURE_STATUS_LABEL[featureStatus])}</span>`
+            : "";
+        statRows.push(
+          `<dt>Features</dt><dd>${escapeHtml(summary)}${statusHint}</dd>`,
+        );
       }
       if (props.vehicle_identifier) {
         statRows.push(
@@ -1016,11 +1046,25 @@ export class Devices {
       // key stats. The report tools hide behind ⚠️ Report; everything else
       // lives in the ℹ️ Details modal — the popup itself stays short. The
       // admin two-column variant is gone; admin extras ride in the modal.
+      // Two more actions. "Use in Ride Mode" spans the row as the primary
+      // CTA — it is the one the rider standing at the scooter most likely
+      // wants, and it is the reason the wizard's "which scooter?" screens
+      // can be skipped at all (they already answered that by opening this
+      // popup). "Confirm Features" needs a stable vehicle_identifier: the
+      // API keys the report on it, and there is nothing useful to send
+      // without one.
+      const rideBtn = `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`;
+      const featuresBtn =
+        vid.length >= 16
+          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
+          : "";
       const actionRow = `
         <div class="device-popup__actionrow">
+          ${rideBtn}
           ${startBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
+          ${featuresBtn}
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
 
@@ -1107,6 +1151,51 @@ export class Devices {
             `<dl class="device-popup__meta">${detailRows.join("")}</dl>`,
             (root) => this.wireRangeToggles(root),
           );
+        });
+      // 🧭 Use in Ride Mode — the device card's shortcut into ride mode.
+      // The rider has already answered "which scooter?" by opening this
+      // popup, so the survey asks the three things the wizard would have,
+      // then jumps past every screen the answers make unnecessary
+      // (`ride-preflight.ts`). Passing the plate matters: it is what lets
+      // Screen 6 build a working Start-in-Veo deep link without a second
+      // GBFS round trip.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="use-in-ride-mode"]')
+        ?.addEventListener("click", () => {
+          openRidePreflight({
+            deviceLabel: effectivePlate
+              ? `${headerName} — plate ${effectivePlate}`
+              : headerName,
+            vehicleIdentifier: props.vehicle_identifier
+              ? String(props.vehicle_identifier)
+              : null,
+            plate: effectivePlate,
+            // The wizard installs its own focus trap and takes over the
+            // screen; leaving a map popup open behind it is the same
+            // clutter every mode switch sweeps.
+            onEntered: () => this.closePopup(),
+          });
+        });
+      // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="confirm-features"]')
+        ?.addEventListener("click", () => {
+          openConfirmFeatures({
+            deviceId: props.device_id,
+            vehicleIdentifier: vid,
+            modelName: model ? model.name : props.vehicle_model_name
+              ? String(props.vehicle_model_name)
+              : null,
+            status: featureStatus,
+            lat: coords[1],
+            lng: coords[0],
+            // The map's own copy of this device won't reflect the report
+            // until the next poll AND the server's ten-minute grading job,
+            // so nothing is refreshed here on purpose — showing an
+            // optimistic "Up to date" that the next poll then reverts would
+            // be worse than the honest lag. The modal's own closing line
+            // tells the rider it takes a few minutes.
+          });
         });
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
@@ -1835,6 +1924,14 @@ interface PopupProps {
   // quality flags
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
+  // crowdsourced equipment (API sql/055). `feature_status` is always on the
+  // wire; `device_features` is null until somebody confirms the vehicle.
+  // MapLibre flattens feature properties, so the nested object arrives as a
+  // JSON STRING through the map click path and as a real object through the
+  // raw-GeoJSON path — `readDeviceFeatures` below is defensive about both,
+  // exactly like the rest of this interface's readers.
+  feature_status?: string | null;
+  device_features?: unknown;
   // dwell-vs-peers context (public since the §1.4 recalibration)
   dwell_percentile_hood?: number | string | null;
   dwell_peer_median_hours?: number | string | null;

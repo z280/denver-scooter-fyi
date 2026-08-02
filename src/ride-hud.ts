@@ -261,6 +261,22 @@ export class RideHud {
    *  the next BRB resume's `renderRiding()` call. Reset in `enterRiding`. */
   private navDismissed = false;
 
+  /** Whether the live HUD shows its ≈ cost readout.
+   *
+   *  This is `RideOptions.cost_hud` finally being READ. It never was before:
+   *  `ride-settings.ts`'s header records that the pre-ride "Est. Veo Cost
+   *  HUD" row was removed precisely because the field it wrote was dead —
+   *  the cost display was unconditional, driven only by `ride-cost.ts`'s
+   *  always-on rate-plan preference. The device card's pre-ride survey asks
+   *  about it again and promises the ride "starts without visible HUD cost",
+   *  so the toggle has to actually do something now.
+   *
+   *  Defaults ON, matching the previous unconditional behaviour: every entry
+   *  point that does not explicitly say otherwise gets exactly what it got
+   *  before. Only the ≈ cost readout is affected — the ride clock, speed and
+   *  the post-ride summary are all separate surfaces and stay put. */
+  private costHudVisible = true;
+
   constructor(
     container: HTMLElement,
     /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
@@ -332,6 +348,25 @@ export class RideHud {
       rideId: handoff.rideId,
       recorder: handoff.recorder,
     });
+  }
+
+  /** Show or hide the live ≈ cost readout (`RideOptions.cost_hud`).
+   *
+   *  Safe to call before, during or after a ride: it stamps the flag and
+   *  re-syncs whatever is currently on screen, so the wizard can set it in
+   *  the same breath as `beginHandoff()` without caring which ran first.
+   *  Hiding uses the `hidden` attribute rather than removing the node, so a
+   *  rider who changes their rate plan mid-ride and flips it back finds the
+   *  readout already up to date. */
+  setCostHudVisible(visible: boolean): void {
+    this.costHudVisible = visible;
+    this.syncCostVisibility();
+    if (this.state === "riding") this.renderTick();
+  }
+
+  private syncCostVisibility(): void {
+    const cost = this.root.querySelector<HTMLElement>("#hud-cost");
+    if (cost) cost.hidden = !this.costHudVisible;
   }
 
   /** Attach (or replace, or clear) the live track-store recorder for the
@@ -1066,10 +1101,17 @@ export class RideHud {
     if (clock) clock.textContent = clockText;
     const adjustClock = this.root.querySelector("#hud-adjust-clock");
     if (adjustClock) adjustClock.textContent = clockText;
-    const cost = this.root.querySelector("#hud-cost");
+    const cost = this.root.querySelector<HTMLElement>("#hud-cost");
     const rate = savedRatePlan();
-    if (cost && rate) {
-      cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
+    if (cost) {
+      // `hidden` is re-asserted on every tick rather than only at handoff:
+      // `renderRiding()` rebuilds this node wholesale (a BRB resume, a theme
+      // flip), and a rebuilt node would come back visible with the flag
+      // still off.
+      cost.hidden = !this.costHudVisible;
+      if (rate && this.costHudVisible) {
+        cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
+      }
     }
     const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
