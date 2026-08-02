@@ -85,7 +85,7 @@ export const FEATURE_STATUS_ACTION: Record<FeatureStatus, string> = {
  *  so the modal never renders "+undefined pts". */
 export const FEATURE_POINTS_FALLBACK: Record<FeatureStatus, number> = {
   needs_features_confirmed: 12,
-  needs_review: 124,
+  needs_review: 14,
   up_to_date: 6,
 };
 

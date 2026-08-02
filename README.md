@@ -78,7 +78,7 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
   still recorded, it just earns nothing. Every device starts out labelled
   "Needs features confirmed"; a later report that disagrees flips it to
   "Needs review", and three reports settle it by 2/3 consensus. Worth 12
-  points first time, 124 for clearing a review, 6 to reconfirm.
+  points first time, 14 for clearing a review, 6 to reconfirm.
 - **Intent modes** (bottom center): one-tap presets — 🛴 *Find wheels*
   (available devices, reliability coloring, location offer) and 📊 *Analysis*
   (v1 choropleth + compliance gauge). The bar always shows the current

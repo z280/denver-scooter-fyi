@@ -15,7 +15,7 @@
 //    treated as an error. The server owns that rule; a client copy of it
 //    would drift and would hand out a free plate oracle.
 //  * Points copy is read from /points/schedule, with a fallback that
-//    matches src/points.py — so "+124 pts" can never promise a number the
+//    matches src/points.py — so "+14 pts" can never promise a number the
 //    ledger doesn't pay.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -68,21 +68,35 @@ describe("status vocabulary", () => {
   });
 
   it("pays the owner's three tiers when offline", () => {
+    // These MUST match src/points.py. The review tier shipped briefly as
+    // 124 before being confirmed a typo for 14; the fallback is the one
+    // place a stale value would survive an API that already moved on.
     expect(FEATURE_POINTS_FALLBACK.needs_features_confirmed).toBe(12);
-    expect(FEATURE_POINTS_FALLBACK.needs_review).toBe(124);
+    expect(FEATURE_POINTS_FALLBACK.needs_review).toBe(14);
     expect(FEATURE_POINTS_FALLBACK.up_to_date).toBe(6);
+  });
+
+  it("ranks clearing a review above a first confirmation above a reconfirm", () => {
+    // The ordering is the product decision the card's copy trades on, and
+    // it survives independently of the exact numbers.
+    expect(FEATURE_POINTS_FALLBACK.needs_review).toBeGreaterThan(
+      FEATURE_POINTS_FALLBACK.needs_features_confirmed,
+    );
+    expect(FEATURE_POINTS_FALLBACK.needs_features_confirmed).toBeGreaterThan(
+      FEATURE_POINTS_FALLBACK.up_to_date,
+    );
   });
 
   it("prefers the server's schedule over the baked-in fallback", () => {
     // The whole point of /points/schedule: a retuned constant reaches the
     // copy on the next deploy without anyone remembering a second place.
-    const schedule = { device_features_review: { points: 24 } };
-    expect(featurePointsFor("needs_review", schedule)).toBe(24);
+    const schedule = { device_features_review: { points: 22 } };
+    expect(featurePointsFor("needs_review", schedule)).toBe(22);
   });
 
   it("falls back when the schedule is missing that action", () => {
-    expect(featurePointsFor("needs_review", {})).toBe(124);
-    expect(featurePointsFor("needs_review", null)).toBe(124);
+    expect(featurePointsFor("needs_review", {})).toBe(14);
+    expect(featurePointsFor("needs_review", null)).toBe(14);
   });
 });
 
@@ -295,17 +309,17 @@ describe("the survey UI", () => {
   it("shows the status and what it pays", () => {
     open({ status: "needs_review" });
     expect(document.body.textContent).toContain("Needs review");
-    expect(document.body.textContent).toContain("+124 pts");
+    expect(document.body.textContent).toContain("+14 pts");
   });
 
   it("upgrades its points copy when the schedule lands", async () => {
     open({
       status: "needs_review",
-      loadSchedule: (async () => ({ device_features_review: { points: 24 } })) as never,
+      loadSchedule: (async () => ({ device_features_review: { points: 22 } })) as never,
     });
-    expect(document.body.textContent).toContain("+124 pts");
+    expect(document.body.textContent).toContain("+14 pts");
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain("+24 pts");
+      expect(document.body.textContent).toContain("+22 pts");
     });
   });
 
@@ -406,13 +420,13 @@ describe("submitting", () => {
   it("reports what the server actually paid", async () => {
     const { submit } = open();
     submit.mockResolvedValue({
-      id: 1, plate_valid: true, points_awarded: 124,
+      id: 1, plate_valid: true, points_awarded: 14,
       feature_status: "needs_review", deduped: false,
     });
     answerEverything();
     sendBtn().click();
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain("+124 pts");
+      expect(document.body.textContent).toContain("+14 pts");
     });
   });
 
