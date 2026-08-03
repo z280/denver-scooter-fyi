@@ -145,13 +145,36 @@ is how Denver's pricing and the server's pricing drift apart:
 |---|---|
 | `OVERLAYS` hardcoded | derived from `GET /api/v1/boundaries?city=` (already returns layers + feature counts + bbox); city config supplies only the colors |
 | `BoundaryLayer` closed union | `string`, validated against the boundaries response |
-| `RATE_PLANS` / `COMPARATOR` | `GET /api/v1/meta/pricing?city=&provider=` (see the API plan §7c) |
+| `RATE_PLANS` / `COMPARATOR` | `GET /api/v1/meta/pricing?city=&provider=` (see the API plan §7e) |
 | `COMPLIANCE_THRESHOLD` | the compliance payload, or omitted entirely for cities with no SLA |
 | Veo deep link / QR / parking-report URL | a provider descriptor from the API, so a new provider is a server-side row |
 
 This is the part that makes the fork question moot: once overlays, pricing
 and provider behavior arrive over the wire, a "city" is a config file and a
 domain.
+
+### 3b-i. `COMPARATOR` can be fixed today
+
+`config.ts:COMPARATOR` is Lime at `$1.00 + $0.30/min`, flagged in its own
+comment as a guess ("Lime's typical mid-market US pricing; update to Lime's
+last-known Denver rates when confirmed").
+
+Lyft's Denver GBFS `system_pricing_plans` feed is still served, frozen at
+their 2024-12-16 shutdown, and carries the real last-known numbers for the
+operator Denver actually lost:
+
+| | unlock | per minute |
+|---|---|---|
+| Lyft scooter (Denver, Dec 2024) | $1.00 | **$0.41** |
+| Lyft e-bike (Denver, Dec 2024) | $1.00 | $0.15 |
+| Veo resident (today) | $1.00 | $0.25 |
+
+Two consequences. The comparator should name **Lyft**, not Lime, since
+that's whose Denver rates these are. And the honest reading is that Veo's
+resident rate undercuts what Lyft charged for a scooter here — so a
+comparator framed as "if Veo had competition, you'd pay less" is not
+supported by the data. Worth getting right before it ships in the ride
+summary. See the API plan §8a.
 
 ### 3c. Provider capabilities drive the UI
 
