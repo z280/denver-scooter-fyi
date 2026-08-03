@@ -4036,12 +4036,19 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--pass);
   filter: brightness(1.08);
 }
-.device-popup__actbtn--start.is-blocked {
+/* Blocked state for any gated action button (Start, Use in Ride Mode) —
+   two classes deep so it also outranks the single-class --start/--ride
+   accent fills regardless of source order. */
+.device-popup__actbtn.is-blocked {
   border-color: var(--border);
   background: var(--bg-subtle);
   color: var(--fg-muted);
   font-weight: 600;
   cursor: not-allowed;
+}
+.device-popup__actbtn.is-blocked:hover {
+  background: var(--bg-subtle);
+  filter: none;
 }
 .device-popup__actionhint {
   margin: 0 0 6px;

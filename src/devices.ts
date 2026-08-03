@@ -782,6 +782,27 @@ export class Devices {
         ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start in Veo</a>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start in Veo</button>`;
 
+      // 🧭 Use in Ride Mode carries the same geographic gate as ▶️ Start:
+      // both rows commit the rider to THIS scooter, and neither means
+      // anything from across town — ride mode's whole premise is that the
+      // rider is standing at the vehicle (it is what lets the preflight skip
+      // the wizard's "which scooter?" screens). Admins bypass proximity, as
+      // they do for Start, so the flows stay testable from a desk. Sign-in
+      // is deliberately NOT required here: ride mode runs client-side, and
+      // Start still enforces its own session gate downstream.
+      const rideAllowed = this.adminSession || nearEnough;
+      let rideHint = "";
+      if (outOfService) {
+        rideHint = "This scooter is marked out of service.";
+      } else if (reserved) {
+        rideHint = "Reserved by another rider right now.";
+      } else if (!rideAllowed) {
+        rideHint = user
+          ? "You're too far away, sorry!"
+          : "Turn on your location to use ride mode with this scooter.";
+      }
+      const rideOk = rideAllowed && !outOfService && !reserved;
+
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
       // alternative so the rider can decide before burning the walk.
@@ -1050,10 +1071,15 @@ export class Devices {
       // CTA — it is the one the rider standing at the scooter most likely
       // wants, and it is the reason the wizard's "which scooter?" screens
       // can be skipped at all (they already answered that by opening this
-      // popup). "Confirm Features" needs a stable vehicle_identifier: the
+      // popup) — which is also why it is proximity-gated above, ALWAYS
+      // visible but blocked with a hint when the rider isn't at the scooter
+      // (admins excepted). "Confirm Features" needs a stable
+      // vehicle_identifier: the
       // API keys the report on it, and there is nothing useful to send
       // without one.
-      const rideBtn = `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`;
+      const rideBtn = rideOk
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🧭 Use in Ride Mode</button>`;
       const featuresBtn =
         vid.length >= 16
           ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
@@ -1119,8 +1145,9 @@ export class Devices {
 
       const popupEl = this.popup.getElement();
 
-      // ---- Action-row wiring. A blocked Start explains itself in the hint
-      // line (mobile has no hover for the title tooltip). Report and Details
+      // ---- Action-row wiring. A blocked Start or Ride Mode explains itself
+      // in the hint line (mobile has no hover for the title tooltip). Both
+      // are proximity-gated, so this is the common case. Report and Details
       // each open their own floating modal — the popup itself never grows
       // or morphs.
       const hintLine = popupEl?.querySelector<HTMLElement>(
@@ -1134,6 +1161,9 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="start-blocked"]')
         ?.addEventListener("click", () => showHint(startHint));
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="ride-blocked"]')
+        ?.addEventListener("click", () => showHint(rideHint));
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
         ?.addEventListener("click", () => {
