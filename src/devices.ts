@@ -779,8 +779,8 @@ export class Devices {
           ? veoDeepLink(effectivePlate)
           : null;
       const startBtn = startHref
-        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start</a>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start</button>`;
+        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start in Veo</a>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start in Veo</button>`;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable

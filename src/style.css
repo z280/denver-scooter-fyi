@@ -4023,6 +4023,10 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--hover-neutral);
 }
 .device-popup__actbtn--start {
+  /* Spans the 2-column action grid: it is the primary CTA, and the full
+     width leaves Report + Details to share the next row instead of
+     stranding one of them beside a blank half-cell. */
+  grid-column: 1 / -1;
   border-color: var(--pass);
   background: var(--pass);
   color: var(--on-status);
