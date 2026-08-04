@@ -2440,6 +2440,9 @@ function wireAccount(): void {
           onLocationsChanged: (points) => homeWorkPins.set(points),
           onCompletenessChanged: (complete) =>
             tabs.setFlagged("profile", !complete),
+          // Null until /auth/config resolves — the row treats unknown as
+          // "don't offer yet" rather than flashing a button that may vanish.
+          smsEnabled: () => authCfg?.smsEnabled ?? null,
           panels: {
             login: tabs.panel("login"),
             profile: tabs.panel("profile"),

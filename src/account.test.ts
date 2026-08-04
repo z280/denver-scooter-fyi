@@ -256,6 +256,142 @@ describe("community settings disclosure", () => {
   });
 });
 
+// ---------- phone verification is gated on the capability ----------
+
+describe("phone verification gating", () => {
+  /** Hidden ancestors count: the row hides itself rather than unmounting. */
+  const isShown = (node: HTMLElement | null | undefined): boolean => {
+    for (let n: HTMLElement | null = node ?? null; n; n = n.parentElement) {
+      if (n.hidden) return false;
+    }
+    return !!node;
+  };
+  const verifyBtn = (mounts: AccountPanelMounts) => {
+    const btn = [...mounts.profile.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Verify by text" || b.textContent === "Resend",
+    );
+    return isShown(btn) ? btn : undefined;
+  };
+  /** Only text the rider can actually see. */
+  const rowText = (mounts: AccountPanelMounts): string =>
+    [...mounts.profile.querySelectorAll<HTMLElement>("p, span")]
+      .filter((n) => isShown(n))
+      .map((n) => n.textContent ?? "")
+      .join(" ");
+
+  it("offers verification when the backend can actually send a text", async () => {
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => true,
+    });
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: false });
+    await settle();
+    document.body.replaceChildren();
+    const m2 = makeMounts();
+    const b2 = document.createElement("section");
+    document.body.append(b2);
+    renderSignedInAccount(b2, AUTH, {
+      ...deps(),
+      panels: m2,
+      smsEnabled: () => true,
+    });
+    await settle();
+
+    expect(verifyBtn(m2)).toBeDefined();
+    expect(rowText(m2)).toContain("isn't verified yet");
+  });
+
+  it("does not offer it when texts are switched off — the button could only 503", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: false });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => false,
+    });
+    await settle();
+
+    expect(verifyBtn(mounts)).toBeUndefined();
+    // And no nag to do a thing that cannot be done.
+    expect(rowText(mounts)).not.toContain("isn't verified yet");
+  });
+
+  it("withholds the offer while the capability is still unknown", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: false });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => null,
+    });
+    await settle();
+    expect(verifyBtn(mounts)).toBeUndefined();
+  });
+
+  it("still states a verified number as fact when texts are off", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: true });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => false,
+    });
+    await settle();
+
+    expect(rowText(mounts)).toContain("is verified");
+    expect(verifyBtn(mounts)).toBeUndefined();
+  });
+
+  it("reveals the offer when the config lands after the panel was built", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: false });
+    let sms: boolean | null = null; // /auth/config still in flight
+    const mounts = makeMounts();
+    const handle = renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => sms,
+    });
+    await settle();
+    expect(verifyBtn(mounts)).toBeUndefined();
+
+    // The signed-in render key is the token alone, so nothing rebuilds when
+    // the answer arrives — refresh() is the whole path.
+    sms = true;
+    handle.refresh();
+    expect(verifyBtn(mounts)).toBeDefined();
+  });
+
+  it("does not wipe a half-entered code on the minute tick", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, phone_verified: false });
+    api.requestPhoneCode.mockResolvedValue({ phone_number: "+13035550123" });
+    const mounts = makeMounts();
+    const handle = renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      smsEnabled: () => true,
+    });
+    await settle();
+
+    verifyBtn(mounts)!.click();
+    await settle();
+    const codeForm = [...mounts.profile.querySelectorAll<HTMLFormElement>("form")].find(
+      (f) => f.querySelector('input[autocomplete="one-time-code"]'),
+    )!;
+    expect(codeForm.hidden).toBe(false);
+    const input = codeForm.querySelector<HTMLInputElement>("input")!;
+    input.value = "AB123XY";
+
+    // The countdown ticks every minute and calls refresh().
+    handle.refresh();
+    handle.refresh();
+
+    expect(codeForm.hidden).toBe(false);
+    expect(input.value).toBe("AB123XY");
+  });
+});
+
 // ---------- picking a location ----------
 
 describe("home and work locations", () => {

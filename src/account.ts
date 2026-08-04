@@ -57,6 +57,11 @@ export interface AccountSignedInDeps {
    *  visible from Community or Local Data too — the ten points are easy to
    *  miss when the hint only lives on the tab you are not looking at. */
   onCompletenessChanged?(complete: boolean): void;
+  /** Whether the backend can actually send a text right now (`sms_enabled`
+   *  from /auth/config), or null while that is still unknown. Read on every
+   *  render rather than captured, because the config resolves independently
+   *  of the profile and may land after this panel is built. */
+  smsEnabled?(): boolean | null;
   /** Let the rider drop a point on the map for home or work. Absent means
    *  the row offers only "Use my location" and "Clear", as it always has —
    *  which is also what keeps this module free of any map import. */
@@ -304,6 +309,9 @@ export function renderSignedInAccount(
       : fallback;
   };
 
+  // The phone verification row, once built — the handle's refresh() nudges
+  // it so a late /auth/config answer reaches it without a rebuild.
+  let phoneVerifyRow: { syncCapability(): void } | null = null;
   // Status line of the rate-plan control, once built — the sync hook below
   // reports there whichever picker (drawer or HUD) triggered it.
   let rateSyncStatus: StatusLine | null = null;
@@ -1265,7 +1273,14 @@ export function renderSignedInAccount(
    *  changing your number drops the verification, by design. */
   const phoneVerificationRow = (
     initial: Profile,
-  ): { node: HTMLElement; update(p: Profile): void } => {
+  ): {
+    node: HTMLElement;
+    update(p: Profile): void;
+    /** Re-evaluate the SMS capability gate. A no-op unless the answer
+     *  actually changed, so the drawer's minute tick can call it without
+     *  wiping a code the rider is halfway through typing. */
+    syncCapability(): void;
+  } => {
     const wrap = el("div", "account-field");
     const line = el("p", "account-magic-status");
     line.setAttribute("role", "status");
@@ -1290,8 +1305,11 @@ export function renderSignedInAccount(
     const status = makeStatus();
 
     let phone = initial.phone_number ?? "";
+    let lastProfile: Profile = initial;
+    let lastSms: boolean | null | undefined;
 
     const render = (p: Profile): void => {
+      lastProfile = p;
       phone = p.phone_number ?? "";
       codeForm.hidden = true;
       status.clear();
@@ -1302,6 +1320,27 @@ export function renderSignedInAccount(
         return;
       }
       wrap.hidden = false;
+
+      // Gate on the CAPABILITY before the data. `phone_verified: false`
+      // describes the record, not whether the server can do anything about
+      // it — and a blank COMMS_TOKEN is a supported configuration, so this
+      // is a steady state, not a deploy blip. Offering "Verify by text"
+      // when no text can be sent produces a button whose only outcome is
+      // a 503. Facts about the number still get stated; only the offer and
+      // the nag to act on it are withheld.
+      const sms = deps.smsEnabled?.() ?? null;
+      lastSms = sms;
+      if (sms !== true) {
+        verifyBtn.hidden = true;
+        if (p.phone_verified) {
+          line.textContent = `✓ ${formatUsPhone(phone)} is verified — you can sign in with it.`;
+          return;
+        }
+        // Nothing true and useful left to say about an unverified number
+        // we cannot offer to verify.
+        wrap.hidden = true;
+        return;
+      }
       if (p.sms_opted_out) {
         // They chose this. It cannot be undone from here — only a text
         // from that handset clears it, because consent belongs to the
@@ -1398,7 +1437,15 @@ export function renderSignedInAccount(
 
     wrap.append(line, verifyBtn, codeForm, status.node);
     render(initial);
-    return { node: wrap, update: render };
+    return {
+      node: wrap,
+      update: render,
+      syncCapability() {
+        // Only when the answer actually moved — a re-render resets the code
+        // form, and this runs on the same minute tick as the countdown.
+        if ((deps.smsEnabled?.() ?? null) !== lastSms) render(lastProfile);
+      },
+    };
   };
 
   // ----- Profile section -------------------------------------------------
@@ -1424,6 +1471,7 @@ export function renderSignedInAccount(
     // belongs to a number, not to an account), so the row below re-reads
     // from the save response rather than assuming it still says "verified".
     const phoneVerify = phoneVerificationRow(p);
+    phoneVerifyRow = phoneVerify;
     sec.append(
       textField({
         label: "Phone",
@@ -1820,6 +1868,10 @@ export function renderSignedInAccount(
   return {
     refresh() {
       expirySpan.textContent = formatRemaining(auth.expires);
+      // /auth/config resolves independently of the profile, and the
+      // signed-in render key is the token alone — so nothing rebuilds when
+      // the answer lands. This is how it gets through.
+      phoneVerifyRow?.syncCapability();
     },
     dispose() {
       disposed = true;
