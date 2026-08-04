@@ -46,19 +46,8 @@ import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.t
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
 import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
-import {
-  consumePendingMagicLink,
-  requestMagicLink,
-  requestLoginCode,
-  verifyEmailCode,
-  isProbablyEmail,
-  isProbablyCode,
-  AuthSendError,
-} from "./auth-magic-link.ts";
-import {
-  renderGoogleButton,
-  promptGoogleOneTap,
-} from "./auth-google.ts";
+import { consumePendingMagicLink } from "./auth-magic-link.ts";
+import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
@@ -90,8 +79,22 @@ import {
   loadRideModePoints,
   type ResolvedRideModePoints,
 } from "./ride-settings.ts";
-import { buildSmsDoor } from "./sms-door.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
+import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
+import { createMapPick } from "./map-pick.ts";
+import { createTrackRoute } from "./track-route.ts";
+import {
+  buildLocalDataPanel,
+  type LocalDataHandle,
+} from "./account-local-data.ts";
+import { createHomeWorkPins } from "./home-work-pins.ts";
+import {
+  ACCOUNT_TAB_IDS,
+  createAccountTabs,
+  takeTabHint,
+  writeTabHint,
+  type AccountTabId,
+} from "./account-tabs.ts";
 import { type EquityRank } from "./config.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -116,6 +119,12 @@ function need<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
+/** Local ride tracks are recorded without an account (a private ride has no
+ *  server ride id at all), so gating the tab on sign-in also hides a guest's
+ *  own recordings from them — including the only control that deletes one.
+ *  Kept as specified, isolated here so it is a one-line reversal. */
+const GATE_LOCAL_TAB_ON_AUTH = true;
+
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
 const { map, geolocate } = createMap("map", theme0);
@@ -127,6 +136,18 @@ initChrome();
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
+// Profile location picking. The drawer gets these as callbacks so account.ts
+// never imports maplibre — and so its tests never need a map.
+const homeWorkPins = createHomeWorkPins(map);
+const trackRoute = createTrackRoute(map);
+const mapPick = createMapPick(map, {
+  onModeChange: (active) => {
+    // Slide the drawer out of the way (it covers the map on a phone) and
+    // stop device taps from opening a popup over the chosen point.
+    document.body.classList.toggle("is-map-picking", active);
+    devices.setPickActive(active);
+  },
+});
 // The single ride-mode session doc every Screen 1–6 module (ride-screen-*.ts)
 // reads and writes through — created once here, never inside a screen module,
 // so the wizard has exactly one session, not one per screen. Persists to
@@ -2005,7 +2026,12 @@ function wireModes(): void {
       const tab = document.querySelector<HTMLButtonElement>(
         '.drawer-tab[data-drawer="account"]',
       );
-      if (tab && !tab.classList.contains("is-active")) tab.click();
+      if (!tab || tab.classList.contains("is-active")) return;
+      // The hint is asking them to sign in, so open on the doors. Only stamp
+      // it when we are actually about to click, so the hint can't be left
+      // behind to hijack some later, unrelated open.
+      tab.dataset.accountTab = "login";
+      tab.click();
     },
     filterSummary: () => rideEntrySummary,
     // Interview finished: the Recommended Devices drawer takes over as the
@@ -2313,6 +2339,10 @@ function wireAccount(): void {
   let authCfg: AuthConfig | null = null;
   // Handle for the signed-in panel (account.ts); null while signed out.
   let signedIn: AccountHandle | null = null;
+  // Handle for the sign-in doors (account-login.ts); null while signed in.
+  let loginPanel: LoginPanelHandle | null = null;
+  // Handle for the Local Data tab; null until it has been built.
+  let localData: LocalDataHandle | null = null;
   // Key of the state the current DOM was built for. Same key → refresh in
   // place instead of rebuilding, so the minute tick and focus events don't
   // destroy open editors or a half-typed sign-in form.
@@ -2322,223 +2352,50 @@ function wireAccount(): void {
   // code. Codes are 3/hour per email — wiping one is expensive.
   const signedOutState = { email: "", sentEmail: "", phone: "", sentPhone: "" };
 
-  const el = <K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    className?: string,
-    text?: string,
-  ): HTMLElementTagNameMap[K] => {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  };
+  // Why the gate line is a status region: activating a dimmed tab has to say
+  // something, and a disabled control that silently ignores you is worse than
+  // no control at all.
+  const gateHint = document.createElement("p");
+  gateHint.className = "account-hint account-gate-hint";
+  gateHint.setAttribute("role", "status");
+  gateHint.hidden = true;
+
+  // The strip is built ONCE and never torn down: render() below replaces
+  // panel CONTENTS, so the rider's chosen tab survives both the auth-config
+  // rebuild and a token change, exactly as signedOutState survives them.
+  const tabs = createAccountTabs(body, {
+    initial: takeTabHint() ?? "login",
+    onShow: (id) => {
+      gateHint.hidden = true;
+      // GIS needs a laid-out container, so a Login panel that was hidden at
+      // build time gets its button on first show.
+      if (id === "login") loginPanel?.renderGoogle();
+      // The drawn route belongs to this tab; leaving it should take the line
+      // off the map with it.
+      if (id === "local") void localData?.refresh();
+      else localData?.clearSelection();
+    },
+    onBlocked: (id) => {
+      const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
+      gateHint.textContent = `Sign in to use ${what}.`;
+      gateHint.hidden = false;
+    },
+  });
+  tabs.panel("login").prepend(gateHint);
 
   const buildSignedOut = (): void => {
-    {
-      const intro = el("p", "account-intro");
-      intro.textContent =
-        "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
-      body.append(intro);
-
-      // Sign in with Google — shown only when the backend's /auth/config says
-      // it's enabled and hands back a client id (the single source of truth;
-      // no third-party script loads otherwise). `authCfg` is null until that
-      // fetch resolves, which triggers a re-render.
-      if (authCfg?.googleEnabled && authCfg.googleClientId) {
-        const clientId = authCfg.googleClientId;
-        const gWrap = el("div", "account-google");
-        body.append(gWrap);
-        void renderGoogleButton(gWrap, clientId, {
-          onSignedIn: () => location.reload(),
-          onError: (err) => {
-            const msg = el("p", "account-error", err.message);
-            gWrap.after(msg);
-          },
-        });
-        body.append(el("div", "account-or", "or"));
-      }
-
-      // Email sign-in (Postmark) — the only door for now. Two independent
-      // ways to finish, each its own email (matching the scooter-fyi-api backend):
-      //   • a typed AA000AA code (POST /auth/code → /auth/code/verify), the
-      //     in-tab default; and
-      //   • a magic link (POST /auth/magic-link), redeemed on return by
-      //     consumePendingMagicLink().
-      const emailForm = el("form", "account-magic");
-      const emailInput = el("input", "select");
-      emailInput.type = "email";
-      emailInput.required = true;
-      emailInput.placeholder = "you@email.com";
-      emailInput.autocomplete = "email";
-      emailInput.setAttribute("aria-label", "Email address");
-      const emailSubmit = el("button", "login-btn", "Email me a sign-in code");
-      emailSubmit.type = "submit";
-      // Secondary door: a magic link instead of a typed code.
-      const linkBtn = el("button", "text-btn", "Prefer a link? Email me one instead");
-      linkBtn.type = "button";
-      const emailStatus = el("p", "account-magic-status");
-      emailStatus.setAttribute("role", "status");
-      emailStatus.setAttribute("aria-live", "polite");
-      emailForm.append(emailInput, emailSubmit, linkBtn, emailStatus);
-
-      // Step 2: enter the emailed AA000AA code. Hidden until a code is sent;
-      // the link door never needs it.
-      const codeForm = el("form", "account-code");
-      codeForm.hidden = true;
-      const codeHint = el(
-        "p",
-        "account-magic-status",
-        "📧 Check your inbox and enter the code (like AB123XY, valid 10 minutes):",
-      );
-      const codeInput = el("input", "select");
-      codeInput.type = "text";
-      codeInput.autocomplete = "one-time-code";
-      codeInput.autocapitalize = "characters";
-      codeInput.spellcheck = false;
-      codeInput.maxLength = 9; // AA000AA (7) plus a stray space/hyphen or two
-      codeInput.placeholder = "AB123XY";
-      codeInput.setAttribute("aria-label", "Sign-in code");
-      const codeSubmit = el("button", "login-btn", "Verify code");
-      codeSubmit.type = "submit";
-      const codeStatus = el("p", "account-magic-status");
-      codeStatus.setAttribute("role", "status");
-      codeStatus.setAttribute("aria-live", "polite");
-      codeForm.append(codeHint, codeInput, codeSubmit, codeStatus);
-
-      // Restore state from before an auth-config rebuild, if any.
-      emailInput.value = signedOutState.email;
-      let sentEmail = signedOutState.sentEmail;
-      if (sentEmail && emailInput.value.trim() === sentEmail) {
-        codeForm.hidden = false;
-        emailSubmit.textContent = "Resend code";
-      } else {
-        sentEmail = "";
-        signedOutState.sentEmail = "";
-      }
-      const validEmail = (): string | null => {
-        const email = emailInput.value.trim();
-        if (!isProbablyEmail(email)) {
-          emailStatus.textContent = "Enter a valid email address.";
-          return null;
-        }
-        return email;
-      };
-      // A code is bound to the address it was sent to; if the user edits the
-      // email after we revealed the code step, retract it so they can't verify
-      // an old code against a new address (or vice-versa).
-      emailInput.addEventListener("input", () => {
-        signedOutState.email = emailInput.value;
-        if (sentEmail && emailInput.value.trim() !== sentEmail) {
-          sentEmail = "";
-          signedOutState.sentEmail = "";
-          codeForm.hidden = true;
-          codeStatus.textContent = "";
-          emailSubmit.textContent = "Email me a sign-in code";
-        }
-      });
-      // Distinct copy for a rate-limit vs a generic failure — don't tell the
-      // user to retry the exact thing that's being throttled.
-      const sendFailMsg = (err: unknown, noun: string): string =>
-        err instanceof AuthSendError && err.status === 429
-          ? `Too many requests — wait a minute before asking for another ${noun}.`
-          : `Couldn't send the ${noun} right now — please try again.`;
-
-      // Primary: email a typed code, then reveal the code-entry step.
-      emailForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const email = validEmail();
-        if (!email) return;
-        emailSubmit.disabled = true;
-        linkBtn.disabled = true;
-        emailStatus.textContent = "Sending…";
-        requestLoginCode(email)
-          .then(() => {
-            sentEmail = email;
-            signedOutState.sentEmail = email;
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailSubmit.textContent = "Resend code";
-            emailStatus.textContent = "";
-            codeForm.hidden = false;
-            codeInput.focus();
-          })
-          .catch((err: unknown) => {
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailStatus.textContent = sendFailMsg(err, "code");
-          });
-      });
-
-      // Secondary: email a magic link instead (self-contained; redeemed on
-      // return), and tuck the code step away if it was showing.
-      linkBtn.addEventListener("click", () => {
-        const email = validEmail();
-        if (!email) return;
-        emailSubmit.disabled = true;
-        linkBtn.disabled = true;
-        emailStatus.textContent = "Sending…";
-        requestMagicLink(email)
-          .then(() => {
-            // Re-enable so the user can resend or switch back to the code door.
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            sentEmail = "";
-            signedOutState.sentEmail = "";
-            codeForm.hidden = true;
-            emailStatus.textContent =
-              "📧 Check your inbox for a sign-in link (valid 15 minutes).";
-          })
-          .catch((err: unknown) => {
-            emailSubmit.disabled = false;
-            linkBtn.disabled = false;
-            emailStatus.textContent = sendFailMsg(err, "link");
-          });
-      });
-
-      codeForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        // Defensive: the form is hidden until a code is sent, but never verify
-        // against an empty address (it'd be a confusing server-side failure).
-        if (!sentEmail) {
-          codeStatus.textContent = "Request a sign-in code first.";
-          return;
-        }
-        const code = codeInput.value;
-        if (!isProbablyCode(code)) {
-          codeStatus.textContent =
-            "Enter the code from your email (like AB123XY).";
-          return;
-        }
-        codeSubmit.disabled = true;
-        codeStatus.textContent = "Verifying…";
-        // Success persists the session; reload so every fetch is authed.
-        verifyEmailCode(sentEmail, code)
-          .then(() => location.reload())
-          .catch((err: unknown) => {
-            codeSubmit.disabled = false;
-            codeStatus.textContent =
-              err instanceof AuthSendError && err.status === 429
-                ? "Too many tries — request a new code."
-                : "That code didn't work — check it or resend.";
-          });
-      });
-
-      body.append(emailForm, codeForm);
-
-      // Sign in by text — shown only when the backend says z280-comms is
-      // configured (fail-closed in auth-config.ts, so a rider is never
-      // invited to type their phone number into a door that can't work).
-      if (authCfg?.smsEnabled) {
-        body.append(el("div", "account-or", "or"));
-        buildSmsDoor(body, {
-          el,
-          state: signedOutState,
-          // Same as the email door: the session is persisted, so reload to
-          // let every fetch pick up the bearer token.
-          onSignedIn: () => location.reload(),
-        });
-      }
-    }
+    loginPanel = buildLoginPanel(tabs.panel("login"), {
+      cfg: authCfg,
+      state: signedOutState,
+      // The session is persisted by the door itself; reload so every fetch
+      // picks up the bearer token — landing on Profile, which is what a
+      // brand-new account most needs filled in.
+      onSignedIn: () => {
+        writeTabHint("profile");
+        location.reload();
+      },
+    });
+    if (tabs.selected() === "login") loginPanel.renderGoogle();
   };
 
   const render = (): void => {
@@ -2553,22 +2410,94 @@ function wireAccount(): void {
       renderedKey = key;
       signedIn?.dispose();
       signedIn = null;
-      body.replaceChildren();
+      loginPanel?.dispose();
+      loginPanel = null;
+      localData?.dispose();
+      localData = null;
+      for (const id of ACCOUNT_TAB_IDS) tabs.panel(id).replaceChildren();
+      tabs.panel("login").append(gateHint);
+      gateHint.hidden = true;
+
+      const on = !!auth;
+      tabs.setEnabled("profile", on);
+      tabs.setEnabled("community", on);
+      tabs.setEnabled("local", on || !GATE_LOCAL_TAB_ON_AUTH);
+      if (!tabs.isEnabled(tabs.selected())) tabs.select("login", { force: true });
+
       if (auth) {
-        signedIn = renderSignedInAccount(body, auth, {
-          setAdminSession: (on) => devices.setAdminSession(on),
+        signedIn = renderSignedInAccount(tabs.panel("login"), auth, {
+          setAdminSession: (on2) => devices.setAdminSession(on2),
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
+          pickLocation: (kind) =>
+            mapPick.pick({
+              hint:
+                kind === "home"
+                  ? "Tap the map to set your home"
+                  : "Tap the map to set your work",
+            }),
+          onLocationsChanged: (points) => homeWorkPins.set(points),
+          onCompletenessChanged: (complete) =>
+            tabs.setFlagged("profile", !complete),
+          // Null until /auth/config resolves — the row treats unknown as
+          // "don't offer yet" rather than flashing a button that may vanish.
+          smsEnabled: () => authCfg?.smsEnabled ?? null,
+          panels: {
+            login: tabs.panel("login"),
+            profile: tabs.panel("profile"),
+            community: tabs.panel("community"),
+          },
         });
       } else {
         buildSignedOut();
+      }
+
+      if (tabs.isEnabled("local")) {
+        localData = buildLocalDataPanel(tabs.panel("local"), {
+          // main.ts's lazy singleton — never a second openTrackStore(), which
+          // would read an empty in-memory store when IndexedDB is missing.
+          getTrackStore,
+          route: trackRoute,
+          isSignedIn: () => !!getAuth(),
+        });
+        if (tabs.selected() === "local") void localData.refresh();
       }
     }
     // Re-check once a minute while signed in: keeps the countdown current
     // and notices local expiry (getAuth() self-clears past `expires`).
     if (auth) countdownTimer = window.setTimeout(render, 60_000);
   };
+
+  // Deep links: whoever opens the drawer can name the tab it should land on
+  // by stamping the trigger first (the leaderboard's "Open profile" wants
+  // Community, the ride wizard's sign-in hint wants Login).
+  const accountBtn = document.querySelector<HTMLElement>(
+    '.topbar__right .drawer-tab[data-drawer="account"]',
+  );
+  accountBtn?.addEventListener("click", () => {
+    const want = accountBtn.dataset.accountTab as AccountTabId | undefined;
+    delete accountBtn.dataset.accountTab;
+    if (want) tabs.select(want);
+  });
+
+  // The strip pins below the drawer's own sticky header, which means it needs
+  // that header's height. Measure it rather than hard-coding a number that
+  // would drift with the font or the breakpoint.
+  const drawer = document.getElementById("drawer-account");
+  const header = drawer?.querySelector<HTMLElement>(".drawer-header");
+  if (drawer && header) {
+    const syncHeaderHeight = (): void => {
+      const h = header.getBoundingClientRect().height;
+      if (h > 0) drawer.style.setProperty("--drawer-header-h", `${Math.round(h)}px`);
+    };
+    syncHeaderHeight();
+    // The height is only measurable once the drawer is actually laid out.
+    accountBtn?.addEventListener("click", () => {
+      window.requestAnimationFrame(syncHeaderHeight);
+    });
+    window.addEventListener("resize", syncHeaderHeight);
+  }
 
   render();
 

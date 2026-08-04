@@ -484,6 +484,9 @@ export class LeaderboardView {
           document
             .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
             ?.click();
+          // Land on Community, where the ruling colours this panel is
+          // inviting them to claim actually live.
+          this.profileButtonEl.dataset.accountTab = "community";
           this.profileButtonEl.click();
         });
     });

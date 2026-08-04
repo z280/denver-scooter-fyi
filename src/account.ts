@@ -28,9 +28,23 @@ import {
   applyServerRatePlan,
   saveRatePlan,
   setRatePlanSyncHook,
+  toApiRatePlan,
 } from "./ride-cost.ts";
 import { reverseGeocode } from "./geocode.ts";
+import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
+
+/** Where each group of sections mounts when the drawer is tabbed. Omitting
+ *  this renders everything into one body, as the drawer did before tabs —
+ *  which keeps this module usable (and testable) on its own. */
+export interface AccountPanelMounts {
+  /** Session status, admin badge, sign out. */
+  login: HTMLElement;
+  /** Contact details, rate plan, home and work. */
+  profile: HTMLElement;
+  /** Public identity, privacy, badges, points. */
+  community: HTMLElement;
+}
 
 export interface AccountSignedInDeps {
   /** Push resolved admin status to the device layer (popup gates). */
@@ -38,6 +52,23 @@ export interface AccountSignedInDeps {
   /** The server rejected the token mid-use; storage is already cleared —
    *  re-render the drawer so it reflects the signed-out state. */
   onAuthLost(): void;
+  /** Tab mount points; absent means the legacy single-body layout. */
+  panels?: AccountPanelMounts;
+  /** The profile is (in)complete. Lets the tab strip carry the nag, so it is
+   *  visible from Community or Local Data too — the ten points are easy to
+   *  miss when the hint only lives on the tab you are not looking at. */
+  onCompletenessChanged?(complete: boolean): void;
+  /** Whether the backend can actually send a text right now (`sms_enabled`
+   *  from /auth/config), or null while that is still unknown. Read on every
+   *  render rather than captured, because the config resolves independently
+   *  of the profile and may land after this panel is built. */
+  smsEnabled?(): boolean | null;
+  /** Let the rider drop a point on the map for home or work. Absent means
+   *  the row offers only "Use my location" and "Clear", as it always has —
+   *  which is also what keeps this module free of any map import. */
+  pickLocation?(kind: "home" | "work"): Promise<{ lat: number; lng: number } | null>;
+  /** Home/work moved (or were cleared): redraw the pins. */
+  onLocationsChanged?(points: HomeWorkPoints): void;
 }
 
 export interface AccountHandle {
@@ -113,6 +144,55 @@ const BADGE_EMOJI: Record<string, string> = {
 /** Unique-id counter for combobox aria wiring (ids must be document-unique). */
 let comboUid = 0;
 
+/** Feather's `settings` gear, matching the inline-SVG convention used for
+ *  every other icon in the app. */
+function gearIcon(): SVGSVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const circle = document.createElementNS(NS, "circle");
+  circle.setAttribute("cx", "12");
+  circle.setAttribute("cy", "12");
+  circle.setAttribute("r", "3");
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute(
+    "d",
+    "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+  );
+  svg.append(circle, path);
+  return svg;
+}
+
+// Whether the community settings block is expanded. sessionStorage, not
+// localStorage: it is view state, not a preference, and the "keep profile
+// data on the server" rule is about the profile, not about which sections
+// happen to be open.
+const COMMUNITY_OPEN_KEY = "scooter_fyi.community_settings_open";
+
+function communitySettingsOpen(): boolean {
+  try {
+    return sessionStorage.getItem(COMMUNITY_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function rememberCommunitySettingsOpen(open: boolean): void {
+  try {
+    sessionStorage.setItem(COMMUNITY_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* private mode — it just reopens expanded next time */
+  }
+}
+
 /** True once every completion criterion the API scores is met (email AND
  *  rate plan AND phone AND at least one of home/work) — worth 10 points. */
 function isProfileComplete(p: Profile): boolean {
@@ -170,7 +250,19 @@ export function renderSignedInAccount(
     }
   });
 
-  body.append(status, adminSlot, profileSlot, signoutBtn);
+  // Everything community-shaped renders here: identity, privacy, badges,
+  // points. Empty (and unmounted) in the legacy single-body layout, where
+  // those sections stay in profileSlot with the rest.
+  const communitySlot = el("div", "account-community");
+
+  const mounts = deps.panels;
+  if (mounts) {
+    mounts.login.append(status, adminSlot, signoutBtn);
+    mounts.profile.append(profileSlot);
+    mounts.community.append(communitySlot);
+  } else {
+    body.append(status, adminSlot, profileSlot, signoutBtn);
+  }
 
   // Resolve admin status once per panel build (wireAccount rebuilds only on
   // token change, so this is once per token).
@@ -242,6 +334,9 @@ export function renderSignedInAccount(
       : fallback;
   };
 
+  // The phone verification row, once built — the handle's refresh() nudges
+  // it so a late /auth/config answer reaches it without a rebuild.
+  let phoneVerifyRow: { syncCapability(): void } | null = null;
   // Status line of the rate-plan control, once built — the sync hook below
   // reports there whichever picker (drawer or HUD) triggered it.
   let rateSyncStatus: StatusLine | null = null;
@@ -261,9 +356,26 @@ export function renderSignedInAccount(
     if (!disposed && seq === saveSeq) {
       profile = updated;
       refreshHint();
+      publishLocations();
       onProfileSaved?.();
     }
     return updated;
+  };
+
+  /** Keep the map's home/work pins in step with the profile. */
+  const publishLocations = (): void => {
+    if (!deps.onLocationsChanged) return;
+    const p = profile;
+    deps.onLocationsChanged({
+      home:
+        p?.home_lat != null && p.home_lng != null
+          ? { lat: p.home_lat, lng: p.home_lng }
+          : null,
+      work:
+        p?.work_lat != null && p.work_lng != null
+          ? { lat: p.work_lat, lng: p.work_lng }
+          : null,
+    });
   };
 
   // ----- Completion hint (10 one-time points; criteria mirror the API) ----
@@ -273,7 +385,9 @@ export function renderSignedInAccount(
     "⭐ Complete your profile — email, phone, rate plan, and one location — to earn 10 bonus points.",
   );
   const refreshHint = (): void => {
-    hint.hidden = profile ? isProfileComplete(profile) : true;
+    const complete = profile ? isProfileComplete(profile) : true;
+    hint.hidden = complete;
+    deps.onCompletenessChanged?.(complete);
   };
 
   // ----- Field builders --------------------------------------------------
@@ -342,8 +456,15 @@ export function renderSignedInAccount(
   const locationRow = (kind: "home" | "work", label: string): HTMLElement => {
     const wrap = el("div", "account-field");
     wrap.append(el("span", "control-label", label));
-    const rowEl = el("div", "account-field__row");
+    // The value gets its own line: with three actions beside it, a street
+    // address (or a coordinate pair) would wrap mid-number in a 300px drawer.
+    const rowEl = el("div", "account-field__row account-location");
     const value = el("span", "account-location__value");
+    const pickBtn = el("button", "text-btn", "Pick on map");
+    pickBtn.type = "button";
+    // Only offered when the drawer was handed a picker — the module stays
+    // free of any map import, and its tests stay free of a map.
+    pickBtn.hidden = !deps.pickLocation;
     const useBtn = el("button", "text-btn", "Use my location");
     useBtn.type = "button";
     const clearBtn = el("button", "text-btn", "Clear");
@@ -421,9 +542,27 @@ export function renderSignedInAccount(
         { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
       );
     });
+    pickBtn.addEventListener("click", () => {
+      const pick = deps.pickLocation;
+      if (!pick) return;
+      rowStatus.set("Tap the map…");
+      void pick(kind).then((point) => {
+        if (disposed) return;
+        if (!point) {
+          rowStatus.clear();
+          return;
+        }
+        // Same 5-decimal store as every other way of setting this (~1 m,
+        // which is finer than any of these sources actually resolve).
+        putPair(
+          Number(point.lat.toFixed(5)),
+          Number(point.lng.toFixed(5)),
+        );
+      });
+    });
     clearBtn.addEventListener("click", () => putPair(null, null));
 
-    rowEl.append(value, useBtn, clearBtn);
+    rowEl.append(value, pickBtn, useBtn, clearBtn);
     wrap.append(rowEl, rowStatus.node);
     renderValue();
     return wrap;
@@ -1159,7 +1298,14 @@ export function renderSignedInAccount(
    *  changing your number drops the verification, by design. */
   const phoneVerificationRow = (
     initial: Profile,
-  ): { node: HTMLElement; update(p: Profile): void } => {
+  ): {
+    node: HTMLElement;
+    update(p: Profile): void;
+    /** Re-evaluate the SMS capability gate. A no-op unless the answer
+     *  actually changed, so the drawer's minute tick can call it without
+     *  wiping a code the rider is halfway through typing. */
+    syncCapability(): void;
+  } => {
     const wrap = el("div", "account-field");
     const line = el("p", "account-magic-status");
     line.setAttribute("role", "status");
@@ -1184,8 +1330,11 @@ export function renderSignedInAccount(
     const status = makeStatus();
 
     let phone = initial.phone_number ?? "";
+    let lastProfile: Profile = initial;
+    let lastSms: boolean | null | undefined;
 
     const render = (p: Profile): void => {
+      lastProfile = p;
       phone = p.phone_number ?? "";
       codeForm.hidden = true;
       status.clear();
@@ -1196,6 +1345,27 @@ export function renderSignedInAccount(
         return;
       }
       wrap.hidden = false;
+
+      // Gate on the CAPABILITY before the data. `phone_verified: false`
+      // describes the record, not whether the server can do anything about
+      // it — and a blank COMMS_TOKEN is a supported configuration, so this
+      // is a steady state, not a deploy blip. Offering "Verify by text"
+      // when no text can be sent produces a button whose only outcome is
+      // a 503. Facts about the number still get stated; only the offer and
+      // the nag to act on it are withheld.
+      const sms = deps.smsEnabled?.() ?? null;
+      lastSms = sms;
+      if (sms !== true) {
+        verifyBtn.hidden = true;
+        if (p.phone_verified) {
+          line.textContent = `✓ ${formatUsPhone(phone)} is verified — you can sign in with it.`;
+          return;
+        }
+        // Nothing true and useful left to say about an unverified number
+        // we cannot offer to verify.
+        wrap.hidden = true;
+        return;
+      }
       if (p.sms_opted_out) {
         // They chose this. It cannot be undone from here — only a text
         // from that handset clears it, because consent belongs to the
@@ -1292,7 +1462,15 @@ export function renderSignedInAccount(
 
     wrap.append(line, verifyBtn, codeForm, status.node);
     render(initial);
-    return { node: wrap, update: render };
+    return {
+      node: wrap,
+      update: render,
+      syncCapability() {
+        // Only when the answer actually moved — a re-render resets the code
+        // form, and this runs on the same minute tick as the countdown.
+        if ((deps.smsEnabled?.() ?? null) !== lastSms) render(lastProfile);
+      },
+    };
   };
 
   // ----- Profile section -------------------------------------------------
@@ -1318,6 +1496,7 @@ export function renderSignedInAccount(
     // belongs to a number, not to an account), so the row below re-reads
     // from the save response rather than assuming it still says "verified".
     const phoneVerify = phoneVerificationRow(p);
+    phoneVerifyRow = phoneVerify;
     sec.append(
       textField({
         label: "Phone",
@@ -1335,16 +1514,25 @@ export function renderSignedInAccount(
       phoneVerify.node,
     );
 
-    // Rate plan: one flat list, VeoPlus variants included (per PR #37 — a
-    // single field, not a rate + a separate Pass checkbox). The server
-    // stores only the base plan; saveRatePlan()'s sync hook pushes it.
+    // Rate plan. One flat list: the option labels themselves say whether a
+    // VeoPlus Pass applies, so there is no separate Pass control.
+    //
+    // The account is the source of truth here — a plan chosen on a phone
+    // should price a ride opened on a laptop. The server has one field and
+    // it holds the base plan only; the Pass is a local pricing refinement it
+    // cannot represent. So exactly one local write remains, and it is a
+    // CACHE, never an input: the HUD's cost ticker reads the plan
+    // synchronously while a ride is starting and cannot wait for a profile
+    // GET, and a signed-out rider has no profile to read at all.
     const rateWrap = el("div", "account-field");
     rateWrap.append(el("span", "control-label", "Rate plan"));
     const rateSelect = el("select", "select");
     rateSelect.setAttribute("aria-label", "Rate plan");
     const rateStatus = makeStatus();
-    const localKey = applyServerRatePlan(p.rate_plan);
-    if (!localKey) {
+    // Server wins on the base plan; the local Pass refinement survives when
+    // the two agree, and the cache is refreshed on the way through.
+    const shownKey = applyServerRatePlan(p.rate_plan);
+    if (!shownKey) {
       const opt = el("option", undefined, "Choose your plan…");
       opt.value = "";
       opt.disabled = true;
@@ -1356,16 +1544,24 @@ export function renderSignedInAccount(
       opt.value = plan.key;
       rateSelect.append(opt);
     }
-    if (localKey) rateSelect.value = localKey;
+    if (shownKey) rateSelect.value = shownKey;
+    // This device knows a plan the account does not — push it up so the two
+    // converge instead of silently disagreeing until the next change.
+    if (shownKey && !p.rate_plan) {
+      void savePatch({ rate_plan: toApiRatePlan(shownKey) }).catch(() => {
+        /* the next change retries; the ticker is already correct locally */
+      });
+    }
     rateSelect.addEventListener("change", () => {
       const key = rateSelect.value as RatePlanKey;
       if (!RATE_PLANS.some((pl) => pl.key === key)) return;
-      // saveRatePlan persists locally and fires the sync hook, which owns
-      // the status messaging (PUT vs. local-only). Report a localStorage
-      // failure afterwards so it wins over the hook's optimistic copy.
+      // saveRatePlan refreshes the cache and fires the sync hook, which owns
+      // the PUT and the status messaging. Report a cache-write failure
+      // afterwards so it wins over the hook's optimistic copy — the account
+      // still saved, but this device won't remember the Pass.
       if (!saveRatePlan(key)) {
         rateStatus.set(
-          "Couldn't save on this device (private browsing?) — your account may still sync.",
+          "Saved to your account, but not to this device (private browsing?).",
           true,
         );
       }
@@ -1381,7 +1577,14 @@ export function renderSignedInAccount(
       locationRow("work", "Work location"),
     );
 
-    // Privacy toggles: immediate PUT, rollback on failure.
+    return sec;
+  };
+
+  // ----- Privacy toggles --------------------------------------------------
+  // These govern what other riders see, so they live beside the identity
+  // editors in Community rather than with the rider's own contact details.
+
+  const buildPrivacyToggles = (p: Profile): HTMLElement[] => {
     const privacyStatus = makeStatus();
     const toggle = (
       label: string,
@@ -1411,13 +1614,11 @@ export function renderSignedInAccount(
       });
       return lab;
     };
-    sec.append(
+    return [
       toggle("Show my username on public photos", "show_public_username"),
       toggle("List me in leaderboards", "show_in_leaderboards"),
       privacyStatus.node,
-    );
-
-    return sec;
+    ];
   };
 
   // ----- Badges section ---------------------------------------------------
@@ -1576,6 +1777,67 @@ export function renderSignedInAccount(
     });
   };
 
+  // ----- Community settings ----------------------------------------------
+  // Everything that decides how this rider appears to everyone else: the
+  // public username, the royalty title, the ruling colours their territory
+  // is drawn in, and who gets to see any of it.
+
+  const buildCommunitySettings = (p: Profile): HTMLElement => {
+    const wrap = el("section", "community-settings");
+    const toggle = el("button", "community-settings__toggle");
+    toggle.type = "button";
+    toggle.id = "community-settings-toggle";
+    toggle.setAttribute("aria-controls", "community-settings-body");
+    const gear = gearIcon();
+    const label = el("span", "community-settings__label");
+    toggle.append(gear, label);
+
+    const inner = el("div", "community-settings__body");
+    inner.id = "community-settings-body";
+    inner.append(buildIdentitySection(), ...buildPrivacyToggles(p));
+
+    // Open by default — this is where a new rider names themselves — but it
+    // collapses to a plain gear pill once they are done with it.
+    let open = communitySettingsOpen();
+    const paint = (): void => {
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.classList.toggle("is-collapsed", !open);
+      // Two labels, one control: the full heading while it reads as a
+      // section header, the short one once it is just a way back in.
+      label.textContent = open ? "Community settings" : "Settings";
+      inner.hidden = !open;
+    };
+    toggle.addEventListener("click", () => {
+      open = !open;
+      // Collapsing removes the focused control from the page, so hand focus
+      // back to the toggle rather than dropping it on the body.
+      if (!open && inner.contains(document.activeElement)) toggle.focus();
+      paint();
+      rememberCommunitySettingsOpen(open);
+    });
+    paint();
+
+    wrap.append(toggle, inner);
+    return wrap;
+  };
+
+  /** A way through to the territory map, which is where ruling colours and
+   *  the leaderboard opt-in actually show up. Linked, not embedded: the
+   *  leaderboard owns map layers and pauses the choropleth and hex density
+   *  while it is open, and two owners for that state would fight. */
+  const buildLeaderboardLink = (): HTMLElement => {
+    const wrap = el("div", "account-section community-leaderboard");
+    const btn = el("button", "text-btn", "Open the leaderboard 🏆");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      document
+        .querySelector<HTMLElement>(".topbar__right .leaderboard-toggle")
+        ?.click();
+    });
+    wrap.append(btn);
+    return wrap;
+  };
+
   // ----- Load & assemble -------------------------------------------------
 
   const loadProfile = (): void => {
@@ -1586,13 +1848,29 @@ export function renderSignedInAccount(
       .then((p) => {
         if (disposed) return;
         profile = p;
-        profileSlot.replaceChildren(
-          buildIdentitySection(),
-          buildProfileSection(p),
-          buildBadgesSection(p),
-          buildPointsSection(),
-        );
+        // Tabbed: contact/rate/location on Profile, everything public-facing
+        // on Community. Untabbed: one stack, as before. Both branches build
+        // in the same synchronous turn, so the Points section's
+        // onProfileSaved subscription is in place before any save can land.
+        if (mounts) {
+          profileSlot.replaceChildren(buildProfileSection(p));
+          communitySlot.replaceChildren(
+            buildCommunitySettings(p),
+            buildBadgesSection(p),
+            buildPointsSection(),
+            buildLeaderboardLink(),
+          );
+        } else {
+          profileSlot.replaceChildren(
+            buildIdentitySection(),
+            buildProfileSection(p),
+            ...buildPrivacyToggles(p),
+            buildBadgesSection(p),
+            buildPointsSection(),
+          );
+        }
         registerRateSync();
+        publishLocations();
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -1615,10 +1893,17 @@ export function renderSignedInAccount(
   return {
     refresh() {
       expirySpan.textContent = formatRemaining(auth.expires);
+      // /auth/config resolves independently of the profile, and the
+      // signed-in render key is the token alone — so nothing rebuilds when
+      // the answer lands. This is how it gets through.
+      phoneVerifyRow?.syncCapability();
     },
     dispose() {
       disposed = true;
       setRatePlanSyncHook(null);
+      // The pins belong to this session's profile; a signed-out map should
+      // not still be showing where they live.
+      deps.onLocationsChanged?.({ home: null, work: null });
     },
   };
 }

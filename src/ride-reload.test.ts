@@ -251,10 +251,11 @@ describe("F1 acceptance: a reload mid-ride restores the doc and resumes the chai
     expect(
       jwsList.map((jws) => decodeTrackBatch(jws).rec).filter(Boolean),
     ).toHaveLength(1);
-    // …and the donation body reports that same root.
+    // …and the donation body carries exactly those batches. The root is not
+    // transmitted — the server recomputes its own from them.
     const donation = await resumed.recorder.buildDonation();
     expect(donation.batches).toEqual(jwsList);
-    expect(donation.chain_root_hash).toBe(finished.chainRootHash);
+    expect(Object.keys(donation)).toEqual(["batches"]);
   });
 
   it("restarts honestly from seq 0 when the reload finds IndexedDB evicted", async () => {

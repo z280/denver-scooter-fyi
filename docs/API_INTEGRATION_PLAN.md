@@ -11,7 +11,7 @@ Last reconciled against the backend on 2026-07-29.
 
 ---
 
-## ⚠️ The verification row is not gated on `sms_enabled`
+## The verification row is gated on `sms_enabled` (fixed)
 
 Both halves of SMS shipped on 2026-07-29 — the frontend in
 [#40](https://github.com/z280/denver-scooter-fyi/pull/40) (17:30 UTC) and
@@ -35,11 +35,26 @@ time, for the same reason Postmark can be.
 | Frontend surface | With `sms_enabled:false` | Why |
 | --- | --- | --- |
 | "Text me a sign-in code" door | **Hidden. Correct.** | `main.ts` renders it only under `authCfg?.smsEnabled`. |
-| Account → Phone → "Verify by text" | **Shown, and 503s on press.** | The row is gated on the `phone_verified` *data field*, never on `smsEnabled`, so it offers verification whether or not the server can send anything. |
+| Account → Phone → "Verify by text" | **Hidden. Correct.** | `account.ts`'s verification row now reads `deps.smsEnabled()` before any data field. |
 
-This is a live defect, not a deploy-ordering artifact: it recurs any time
-SMS is switched off. The fix is one condition — gate the verification row
-on `smsEnabled` as well, exactly as the sign-in door already is.
+Fixed on the tabbed-drawer branch. Two details of the fix are worth
+keeping, because both are easy to get wrong on the next capability gate:
+
+- **The capability is read on every render, not captured once.**
+  `/auth/config` resolves independently of the profile, and the signed-in
+  render key is the bearer token alone — so nothing rebuilds when the
+  answer lands. The row exposes `syncCapability()`, which the panel's
+  `refresh()` (the same minute tick that drives the session countdown)
+  calls. It re-renders **only when the answer actually changed**, because
+  a blind re-render would reset the code form under a rider halfway
+  through typing a texted code.
+- **`null` means "not yet", and is treated as "don't offer".** Rendering
+  the button optimistically and withdrawing it a moment later is worse
+  than showing it a moment late.
+
+With texts off, a verified number still states itself as verified — that
+is a fact about the record. Only the *offer* to verify, and the nag to act
+on it, are withheld.
 
 **The general rule it illustrates.** One surface is gated on a *capability
 flag* and the other on a *data field*. A missing or false flag is

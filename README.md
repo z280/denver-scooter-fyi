@@ -33,7 +33,10 @@ text undoes it.
 
 **On tracking:** the frontend loads no analytics, telemetry, ad tech, or
 third-party scripts, and `localStorage` holds only your own settings (theme,
-rate plan, equity ranks, install-prompt dismissal). That is not the same as
+rate plan, equity ranks, install-prompt dismissal). Recorded ride tracks live
+in IndexedDB on your own device and are uploaded only if you choose to donate
+one; the **Local Data** tab in the Account drawer is where you can look at
+them, hand one over, or delete it. That is not the same as
 "no data is recorded": the API stores a reporter IP and user-agent on submitted
 reports, and the issuing IP and user-agent on sessions. The authoritative,
 machine-readable retention policy is `GET /api/v1/meta/privacy`.
@@ -245,8 +248,16 @@ src/
                    the only door whose failure mode is a deliberate choice
                    rather than an error)
   map-auth.js      the sessionStorage session store the auth doors write to
-  account.ts       signed-in Account panel: profile fields, username +
-                   royalty title + ruling colors, badges, points ledger
+  account-tabs.ts  the Account drawer's tab shell (Login / Profile /
+                   Community / Local Data) — outlives every panel rebuild
+  account-login.ts the signed-out sign-in doors (Google, email, text)
+  account.ts       signed-in Account panel: contact details and rate plan on
+                   Profile; username + royalty title + ruling colors +
+                   privacy, badges and points on Community
+  account-local-data.ts  rides recorded on this device: draw one on the map,
+                   donate it, or delete it
+  map-pick.ts      one-shot "tap the map" point picker (home/work addresses)
+  home-work-pins.ts / track-route.ts   the map layers those two draw into
   config.ts        bounds, refresh cadence, colors, overlays, basemap URL
   map.ts           MapLibre map + Protomaps style
   devices.ts       device source, clustering, popups, type filter

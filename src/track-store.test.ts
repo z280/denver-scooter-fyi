@@ -2,7 +2,7 @@
 // recovery and the resume paths the ride-session recovery table depends on.
 //
 // The load-bearing assertions replay the golden fixture's fix streams through
-// the real recorder and demand the compact JWS strings and chain_root_hash come
+// the real recorder and demand the compact JWS strings and chain root come
 // out BYTE-IDENTICAL to `tests/fixtures/track-chain-vectors.json` — the file the
 // API repo's tests/test_track_verify.py consumes as its own copy. The fixture is
 // produced by scripts/gen-track-vectors.mjs, an independent implementation
@@ -761,7 +761,7 @@ describe("private rides", () => {
 describe("donation payload", () => {
   const ride = vectors.rides.primary;
 
-  it("carries every sealed batch in seq order plus the final chain hash", async () => {
+  it("carries every sealed batch, in seq order, and nothing else", async () => {
     const sc = scenario("valid");
     const { store } = await newStore();
     const recorder = await store.startServerRide(signingFor(ride));
@@ -769,15 +769,20 @@ describe("donation payload", () => {
 
     const body = await recorder.buildDonation();
     expect(body.batches).toEqual(sc.batches);
-    expect(body.chain_root_hash).toBe(sc.chain_root_hash);
+    // The batches ARE the body: the server recomputes the chain root from
+    // them, and a client-supplied one was never read.
+    expect(Object.keys(body)).toEqual(["batches"]);
+    // The recorder still tracks the root locally — it is what continues a
+    // chain across a resume.
+    expect(recorder.chainRootHash).toBe(sc.chain_root_hash);
   });
 
-  it("omits chain_root_hash when nothing was ever sealed", async () => {
+  it("is an empty batch list when nothing was ever sealed", async () => {
     const { store } = await newStore();
     const recorder = await store.startServerRide(signingFor(ride));
     const body = await recorder.buildDonation();
     expect(body.batches).toEqual([]);
-    expect(body.chain_root_hash).toBeUndefined();
+    expect(Object.keys(body)).toEqual(["batches"]);
   });
 
   it("discards a track locally without uploading anything", async () => {
