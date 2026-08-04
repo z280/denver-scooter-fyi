@@ -70,12 +70,25 @@ const OUTLIER_PERCENTILE = 90;
 const OUTLIER_MEDIAN_RATIO = 3;
 const OUTLIER_RISK_HOURS = 48;
 /** Softer, earlier-warning version of the outlier check above: no
- *  percentile or absolute-hour floor, just the raw peer-median ratio —
- *  demotes to "unknown" rather than "risk". The missing floor is
- *  deliberate: with plenty of scooters around, an over-eager "unknown"
- *  costs a rider one extra glance, while a false "ok" costs a walk to a
- *  scooter that doesn't start — asymmetric costs, asymmetric leniency. */
+ *  percentile gate, just the raw peer-median ratio — demotes to "unknown"
+ *  rather than "risk". */
 const UNKNOWN_DWELL_RATIO = 2;
+/** …but not before a *patience floor* of `min(36h, 16 × peer median)`. The
+ *  ratio alone was far too twitchy on a high-turnover block: a 1h median
+ *  demoted a scooter after two idle hours, which is just "parked". The
+ *  floor is relative like the rule it guards, so a 1h-median block still
+ *  gets a short fuse (16h) while anything sleepier than a 2.25h median
+ *  waits the flat 36h. It only ever delays a verdict — it's applied on top
+ *  of the ratio, never instead of it. Failed starts and negative reports
+ *  have their own rules above and are never gated by it. */
+const UNKNOWN_FLOOR_HOURS = 36;
+const UNKNOWN_FLOOR_RATIO = 16;
+
+/** Earliest dwell (hours) at which the peer-median ratio may say "unknown".
+ *  Mirror of `unknown_dwell_floor_hours` in the API's src/quality.py. */
+function unknownDwellFloorHours(peerMedian: number): number {
+  return Math.min(UNKNOWN_FLOOR_HOURS, UNKNOWN_FLOOR_RATIO * peerMedian);
+}
 
 /** Mirror of the API's recalibrated reliability formula (scooter-fyi-api
  *  src/quality.py, compute_reliability_tier) — first-match-wins:
@@ -87,8 +100,9 @@ const UNKNOWN_DWELL_RATIO = 2;
  *  unknown: never state-tracked (no failed-start/dwell inputs); quality
  *  is undefined (disabled / reserved / no range data); exactly 1 failed
  *  start without enough dwell to corroborate it as risk; or dwell ≥2×
- *  the peer median (a softer, earlier-warning version of the risk-tier
- *  outlier check above — just the ratio, no percentile or floor).
+ *  the peer median AND past the min(36h, 16× median) patience floor (a
+ *  softer, earlier-warning version of the risk-tier outlier check above —
+ *  just the ratio, no percentile).
  *  ok: everything else.
  *
  *  Reliability collapses only the FAILURE signals ("will it unlock?");
@@ -171,7 +185,8 @@ export function assessReliability(
     idleHours !== null &&
     peerMedian !== null &&
     peerMedian > 0 &&
-    idleHours >= UNKNOWN_DWELL_RATIO * peerMedian
+    idleHours >= UNKNOWN_DWELL_RATIO * peerMedian &&
+    idleHours >= unknownDwellFloorHours(peerMedian)
   ) {
     const ratio = Math.round(idleHours / peerMedian);
     return {
