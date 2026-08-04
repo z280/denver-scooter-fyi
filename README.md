@@ -73,8 +73,11 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
   entirely, the rate plan is not re-confirmed (that lives in your profile),
   and ride mode starts with the cost readout hidden.
 - **☑️ Confirm Features**: Veo's feed says nothing about what is bolted to a
-  given scooter, so riders standing next to one tell us — a working bell, a
-  cup holder, a phone holder, and whether they're all in good condition.
+  given scooter, so riders standing next to one tell us — a bell, a cup
+  holder, a phone holder, a basket (Cosmos only, which are the ones that
+  carry them), and whether they're all in good condition. The presence
+  questions ask only what is bolted on; whether it *works* is what the
+  condition question right underneath asks.
   Neither Yes nor No is pressed by default, because a pre-pressed answer is
   an answer nobody gave. Confirming needs the plate under the scooter's QR
   code (you can't do it from your sofa); a wrong plate is still accepted and

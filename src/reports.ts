@@ -83,6 +83,11 @@ export interface DeviceFeatureReport {
   has_bell: boolean;
   has_cup_holder: boolean;
   has_phone_holder: boolean;
+  /** Cosmo only — the one model the survey asks about a basket. Omitted
+   *  entirely for every other model rather than sent as `false`, because a
+   *  question nobody was shown has no answer to report; see
+   *  `device-features.ts`'s `toRequestBody`. */
+  has_basket?: boolean;
   /** Must equal `poor_condition.length === 0`. The API rejects the
    *  contradiction with a 422 rather than normalizing it. */
   all_good_condition: boolean;
