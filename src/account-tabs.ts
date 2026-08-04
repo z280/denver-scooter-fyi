@@ -25,6 +25,50 @@ const TAB_LABELS: Record<AccountTabId, string> = {
   local: "Local Data",
 };
 
+/** Feather-style paths, matching the inline-SVG convention used for every
+ *  other icon in the app: log-in, user, users, database. */
+const TAB_ICON_PATHS: Record<AccountTabId, string[]> = {
+  login: [
+    "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
+    "M10 17l5-5-5-5",
+    "M15 12H3",
+  ],
+  profile: ["M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M12 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0"],
+  community: [
+    "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2",
+    "M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0",
+    "M23 21v-2a4 4 0 0 0-3-3.87",
+    "M16 3.13a4 4 0 0 1 0 7.75",
+  ],
+  local: [
+    "M12 5m-9 0a9 3 0 1 0 18 0a9 3 0 1 0-18 0",
+    "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3",
+    "M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5",
+  ],
+};
+
+function tabIcon(id: AccountTabId): SVGSVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "account-tab__icon");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  // Decorative: the label beside it already names the tab.
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of TAB_ICON_PATHS[id]) {
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
 export interface AccountTabsDeps {
   /** Tab shown on construction. Defaults to "login". */
   initial?: AccountTabId;
@@ -111,7 +155,7 @@ export function createAccountTabs(
     tab.setAttribute("aria-controls", `account-panel-${id}`);
     tab.setAttribute("aria-selected", "false");
     tab.tabIndex = -1;
-    tab.append(el("span", "account-tab__label", TAB_LABELS[id]));
+    tab.append(tabIcon(id), el("span", "account-tab__label", TAB_LABELS[id]));
     tabs.set(tab.dataset.tab as AccountTabId, tab);
 
     const panel = el("div", "account-panel");
