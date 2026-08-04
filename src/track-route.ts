@@ -70,22 +70,28 @@ export function createTrackRoute(map: MLMap): TrackRouteHandle {
         write(emptyFC());
         return;
       }
-      const features: GeoJSON.Feature[] = [
-        {
+      const features: GeoJSON.Feature[] = [];
+      // A LineString needs two or more positions (RFC 7946 §3.1.4), so a
+      // ride with a single fix has no line to draw — emitting a one-position
+      // one would be invalid source data, which MapLibre may reject outright
+      // and take the start marker down with it. The point is the whole story
+      // in that case: this is where the ride was, and it never moved.
+      if (coords.length > 1) {
+        features.push({
           type: "Feature",
           geometry: {
             type: "LineString",
             coordinates: coords as [number, number][],
           },
           properties: {},
-        },
-        {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: coords[0] },
-          properties: { end: "start" },
-        },
-      ];
-      // A one-point track has no distinct finish to mark.
+        });
+      }
+      features.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: coords[0] },
+        properties: { end: "start" },
+      });
+      // …and with no line there is no distinct finish to mark either.
       if (coords.length > 1) {
         features.push({
           type: "Feature",
