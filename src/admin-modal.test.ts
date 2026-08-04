@@ -59,10 +59,14 @@ const rows = () => [...(card()?.querySelectorAll(".admin-modal__row") ?? [])];
 const statusText = () =>
   card()?.querySelector(".admin-modal__status")?.textContent ?? "";
 
-async function open(admins: unknown[], fetchMock?: ReturnType<typeof vi.fn>) {
+async function open(
+  admins: unknown[],
+  fetchMock?: ReturnType<typeof vi.fn>,
+  opts?: Parameters<typeof openAdminModal>[0],
+) {
   const mock = fetchMock ?? vi.fn().mockResolvedValue(listing(admins));
   vi.stubGlobal("fetch", mock);
-  openAdminModal();
+  openAdminModal(opts);
   await vi.waitFor(() =>
     expect(card()?.querySelector(".admin-modal__list")?.textContent).not.toContain(
       "Loading",
@@ -183,6 +187,91 @@ describe("admin modal — writes", () => {
     const [url, init] = mock.mock.calls[1] as [string, RequestInit];
     expect(init.method).toBe("DELETE");
     expect(url).toContain(`email=${encodeURIComponent(OTHER)}`);
+  });
+
+  it("revokes this session's admin state when you remove YOURSELF", async () => {
+    // The server's answer is live, the client's copy is not: the admin flag
+    // is pushed into Devices once per token and /auth/session is read once
+    // per panel build. Without a hand-off, the rider keeps the proximity
+    // bypass and the Administrator Mode badge until they reload — which is
+    // exactly what the confirmation promised would not happen.
+    const onAdminRevoked = vi.fn();
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(listing([entry(ME, true), entry(OTHER)]))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            count: 1,
+            admins: [entry(OTHER)],
+            email: ME,
+            removed: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    await open([], mock, { onAdminRevoked });
+    vi.stubGlobal("confirm", () => true);
+    card()
+      ?.querySelector<HTMLButtonElement>(`.admin-modal__remove[data-email="${ME}"]`)
+      ?.click();
+
+    await vi.waitFor(() => expect(onAdminRevoked).toHaveBeenCalledOnce());
+    // …and the modal closes: a list you can no longer read, with buttons
+    // that would now 403, is not a screen worth leaving up.
+    await vi.waitFor(() => expect(document.querySelector(".ranks-modal")).toBeNull());
+  });
+
+  it("does NOT revoke anything when you remove someone else", async () => {
+    const onAdminRevoked = vi.fn();
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(listing([entry(ME, true), entry(OTHER)]))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            count: 1,
+            admins: [entry(ME, true)],
+            email: OTHER,
+            removed: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    await open([], mock, { onAdminRevoked });
+    card()
+      ?.querySelector<HTMLButtonElement>(`.admin-modal__remove[data-email="${OTHER}"]`)
+      ?.click();
+    await vi.waitFor(() => expect(rows()).toHaveLength(1));
+    expect(onAdminRevoked).not.toHaveBeenCalled();
+    expect(document.querySelector(".ranks-modal")).not.toBeNull();
+  });
+
+  it("revokes nothing when the self-removal did not actually happen", async () => {
+    // removed: false — the row was already gone. Nothing changed, so the
+    // session keeps whatever it had.
+    const onAdminRevoked = vi.fn();
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(listing([entry(ME, true), entry(OTHER)]))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            count: 2,
+            admins: [entry(ME, true), entry(OTHER)],
+            email: ME,
+            removed: false,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    await open([], mock, { onAdminRevoked });
+    vi.stubGlobal("confirm", () => true);
+    card()
+      ?.querySelector<HTMLButtonElement>(`.admin-modal__remove[data-email="${ME}"]`)
+      ?.click();
+    await vi.waitFor(() => expect(statusText()).toContain("wasn't on the list"));
+    expect(onAdminRevoked).not.toHaveBeenCalled();
   });
 
   it("adds an admin and reports an idempotent no-op honestly", async () => {

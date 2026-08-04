@@ -198,7 +198,20 @@ export function renderSignedInAccount(
       const manage = el("button", "account-admin__manage", "🛡️ Manage admins");
       manage.type = "button";
       manage.addEventListener("click", () =>
-        openAdminModal({ onAuthLost: () => deps.onAuthLost() }),
+        openAdminModal({
+          onAuthLost: () => deps.onAuthLost(),
+          // Removing your OWN row is the one action here that changes what
+          // this session may do. The server already knows — is_admin_email
+          // is evaluated per request — but the client's copy of "am I admin"
+          // is pushed once per token, so without this the rider keeps the
+          // proximity bypass and this very badge until they reload. Dropping
+          // the flag also re-gates any open device popup (see
+          // Devices.setAdminSession).
+          onAdminRevoked: () => {
+            deps.setAdminSession(false);
+            adminSlot.replaceChildren();
+          },
+        }),
       );
       badge.append(manage);
       adminSlot.append(badge);

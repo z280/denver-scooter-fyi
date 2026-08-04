@@ -92,9 +92,22 @@ function rowHtml(a: AdminEntry, soleAdmin: boolean): string {
     </li>`;
 }
 
-/** Open the modal. `onAuthLost` mirrors the Account drawer's handler so a
- *  rejected token flips the drawer to signed-out here too. */
-export function openAdminModal(opts: { onAuthLost?: () => void } = {}): void {
+/** Open the modal.
+ *
+ *  `onAuthLost` mirrors the Account drawer's handler so a rejected token
+ *  flips the drawer to signed-out here too.
+ *
+ *  `onAdminRevoked` fires when the rider removes THEMSELVES and the server
+ *  confirms it. It has to exist: the server's answer is live (is_admin_email
+ *  is evaluated per request), but the client's copy is not — the admin flag
+ *  is pushed into Devices once per token, and /auth/session is read once per
+ *  panel build. Without this, someone who just revoked their own access
+ *  keeps the proximity bypass and the Administrator Mode surface until they
+ *  reload, which is precisely what the confirmation told them would not
+ *  happen. */
+export function openAdminModal(
+  opts: { onAuthLost?: () => void; onAdminRevoked?: () => void } = {},
+): void {
   openFloatingModal(
     "🛡️ Manage admins",
     `<div class="admin-modal">
@@ -115,7 +128,7 @@ export function openAdminModal(opts: { onAuthLost?: () => void } = {}): void {
 
 function wireAdminModal(
   root: HTMLElement | null,
-  opts: { onAuthLost?: () => void },
+  opts: { onAuthLost?: () => void; onAdminRevoked?: () => void },
 ): void {
   const list = root?.querySelector<HTMLElement>(".admin-modal__list");
   const form = root?.querySelector<HTMLFormElement>(".admin-modal__add");
@@ -128,6 +141,13 @@ function wireAdminModal(
   // Escape) mid-flight, so nothing touches the DOM without checking.
   const setStatus = (text: string): void => {
     if (root.isConnected) status.textContent = text;
+  };
+  /** Close through the shell's own ✕ so its Escape listener detaches too —
+   *  a bare remove() would orphan a document-level handler. */
+  const closeModal = (): void => {
+    document
+      .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
+      ?.click();
   };
   const onError = (err: unknown, action: "load" | "add" | "remove"): void => {
     if (err instanceof ApiError && err.code === "TOKEN_REJECTED") {
@@ -157,10 +177,22 @@ function wireAdminModal(
           ) {
             return;
           }
+          const wasSelf = btn.dataset.self === "1";
           btn.disabled = true;
           setStatus(`Removing ${email}…`);
           removeAdmin(email)
             .then((res) => {
+              if (wasSelf && res.removed) {
+                // Hand the revocation to the session owner BEFORE redrawing:
+                // it drops the admin flag (which re-gates any open device
+                // popup) and takes down the Administrator Mode surface this
+                // modal was opened from. Then close — a list you can no
+                // longer read, with buttons that would now 403, is not a
+                // screen worth leaving up.
+                opts.onAdminRevoked?.();
+                closeModal();
+                return;
+              }
               render(res);
               setStatus(
                 res.removed ? `Removed ${res.email}.` : `${res.email} wasn't on the list.`,
