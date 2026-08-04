@@ -236,6 +236,50 @@ describe("device popup — geographic gate on the two primary rows", () => {
 // 16 lowercase hex — the shape the photo endpoints' path pattern requires.
 const PHOTO_VID = "0123456789abcdef";
 
+describe("device popup — a late admin flag", () => {
+  // /auth/session resolves asynchronously after load, and the flag is pushed
+  // once per token. A popup opened in that window captured adminSession =
+  // false, so without a rebuild it sits there telling an admin they're too
+  // far away with nothing left to correct it.
+  const openFar = () => {
+    const devices = new Devices(
+      fakeMap() as unknown as MLMap,
+      fakeLocate(FAR),
+    );
+    devices.setData(response([feature()]));
+    devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
+    return devices;
+  };
+
+  it("rebuilds an OPEN popup so the gates pick up the bypass", () => {
+    const devices = openFar();
+    expect(rideBlocked(lastPopupHtml)).toBe(true);
+    expect(startEnabled(lastPopupHtml)).toBe(false);
+
+    devices.setAdminSession(true); // /auth/session lands, popup still open
+
+    expect(rideEnabled(lastPopupHtml)).toBe(true);
+    expect(startEnabled(lastPopupHtml)).toBe(true);
+  });
+
+  it("does nothing when the value hasn't changed", () => {
+    const devices = openFar();
+    const before = lastPopupHtml;
+    lastPopupHtml = "";
+    devices.setAdminSession(false); // already false — no rebuild
+    expect(lastPopupHtml).toBe("");
+    expect(before).toContain("device-popup");
+  });
+
+  it("re-gates an open popup when admin is revoked", () => {
+    const devices = openFar();
+    devices.setAdminSession(true);
+    expect(rideEnabled(lastPopupHtml)).toBe(true);
+    devices.setAdminSession(false);
+    expect(rideBlocked(lastPopupHtml)).toBe(true);
+  });
+});
+
 describe("device popup — the photo row", () => {
   it("offers both photo actions to a signed-in rider", () => {
     const html = openPopup({

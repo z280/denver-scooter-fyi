@@ -96,11 +96,18 @@ export async function fetchSessionInfo(): Promise<SessionInfo | null> {
 }
 
 /** Whether the session has administrator rights. Trusts ONLY the server's
- *  admin signal (an `admin` flag or `admin` scope). Admin is Google-exclusive:
- *  the API stamps the scope from the verified allowlisted email and
- *  deliberately withholds it from magic-link sessions even for allowlisted
- *  emails. A client-side email-allowlist fallback would falsely surface
- *  "Administrator Mode" for those magic-link sessions, so there is none. */
+ *  admin signal, and `info.admin` is the one that answers the question:
+ *  the API sets it from `is_admin_email` — the allowlist check `/private/*`
+ *  actually enforces, which accepts EITHER sign-in door.
+ *
+ *  The `admin` SCOPE is kept in the check for older sessions only. It is a
+ *  Google-exclusive marker of which door was used, and it stopped gating
+ *  access on the API side; reading it as "is this an admin" is what left an
+ *  allowlisted operator signed in by magic link admin to every endpoint
+ *  while the map showed them no Administrator Mode and blocked the
+ *  proximity-gated buttons at any distance.
+ *
+ *  Still no client-side email-allowlist fallback: the server decides. */
 export function isAdminSession(info: SessionInfo | null): boolean {
   if (!info) return false;
   return info.admin === true || (info.scopes?.includes("admin") ?? false);

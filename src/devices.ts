@@ -258,13 +258,27 @@ export class Devices {
    *  vehicle number without our own API ever exposing plates. */
   private readonly plates = new GbfsPlates();
   /** Session status, pushed in by wireAccount() once /auth/session
-   *  resolves. admin lifts the Start button's proximity gate (issue #18). */
+   *  resolves. admin lifts the proximity gate on ▶️ Start (issue #18) and on
+   *  🧭 Use in Ride Mode. */
   private adminSession = false;
+  /** What the open popup was built from, so a later admin flip can rebuild
+   *  it. Cleared on close alongside `this.popup`. */
+  private openPopupFor: { props: PopupProps; coords: [number, number] } | null =
+    null;
 
   /** Update the popup-affecting session status (admin proximity bypass).
-   *  Safe to call any time; affects popups opened after. */
+   *  Safe to call any time.
+   *
+   *  Rebuilds an OPEN popup when the value actually changes. `/auth/session`
+   *  resolves asynchronously after load, so a popup opened in that window
+   *  captured `adminSession = false` and would sit there wrongly telling an
+   *  admin they're too far away, with nothing to correct it — the flag is
+   *  pushed once per token, so there is no second chance. */
   setAdminSession(admin: boolean): void {
+    if (this.adminSession === admin) return;
     this.adminSession = admin;
+    const open = this.openPopupFor;
+    if (open) this.openDevicePopup(open.props, open.coords);
   }
 
   constructor(
@@ -1146,10 +1160,16 @@ export class Devices {
         )
         .addTo(map);
       this.popup = popup;
+      // Remembered so setAdminSession can rebuild this popup if the admin
+      // flag lands while it is open — its gates captured the old value.
+      this.openPopupFor = { props, coords };
       // Track open/closed so the ride follow-cam can hold still while it's up
       // (hasOpenPopup). Guard against a stale handler from a replaced popup.
       popup.on("close", () => {
-        if (this.popup === popup) this.popup = null;
+        if (this.popup === popup) {
+          this.popup = null;
+          this.openPopupFor = null;
+        }
       });
 
       // Progressive plate hydration: the plate powers the unlock link and the
