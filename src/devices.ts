@@ -1264,12 +1264,12 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="take-photo"]')
         ?.addEventListener("click", () => {
-          this.openDevicePhotos(vid, headerName, true);
+          this.openDevicePhotos(vid, headerName, true, here);
         });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="show-photos"]')
         ?.addEventListener("click", () => {
-          this.openDevicePhotos(vid, headerName, false);
+          this.openDevicePhotos(vid, headerName, false, here);
         });
       popupEl
         ?.querySelectorAll<HTMLButtonElement>('[data-action="photos-blocked"]')
@@ -1531,6 +1531,9 @@ export class Devices {
     vid: string,
     headerName: string,
     startCapture: boolean,
+    /** The device's own position — sent with the upload so the points row
+     *  (sql/056) has a location to be filed against. */
+    at: LngLat,
   ): void {
     openFloatingModal(
       `📷 Photos — ${headerName}`,
@@ -1545,7 +1548,8 @@ export class Devices {
          <p class="device-photos__status" role="status" aria-live="polite"></p>
          <p class="device-photos__fine">Up to ${MAX_PHOTOS_PER_DEVICE} photos per scooter. Photos are public and credited to your username unless you've hidden it in Account. Each one is re-encoded on upload, so the location data your camera embeds is destroyed.</p>
        </div>`,
-      (root) => this.wireDevicePhotos(root, vid, headerName, startCapture),
+      (root) =>
+        this.wireDevicePhotos(root, vid, headerName, startCapture, at),
     );
   }
 
@@ -1557,6 +1561,7 @@ export class Devices {
     vid: string,
     headerName: string,
     startCapture: boolean,
+    at: LngLat,
   ): void {
     const grid = root?.querySelector<HTMLElement>(".device-photos__grid");
     const input = root?.querySelector<HTMLInputElement>(
@@ -1577,6 +1582,11 @@ export class Devices {
       // listing whose every URL is rejected still says something rather than
       // rendering an empty box.
       const shown = list.photos.filter((p) => /^https?:\/\//i.test(p.photo_url));
+      // Three states, not two: nothing uploaded, something uploaded we won't
+      // render, and photos. Collapsing the middle one into "no photos yet"
+      // would tell a rider their own upload vanished, and invite them to
+      // re-take a photo that is already there.
+      const withheld = list.photos.length > 0 && shown.length === 0;
       grid.innerHTML = shown.length
         ? shown
             .map((p) => {
@@ -1589,7 +1599,9 @@ export class Devices {
                 </figure>`;
             })
             .join("")
-        : `<p class="device-photos__note">No photos of this one yet — yours would be the first.</p>`;
+        : withheld
+          ? `<p class="device-photos__note">${list.photos.length === 1 ? "A photo of this one couldn't" : "Photos of this one couldn't"} be displayed safely, so ${list.photos.length === 1 ? "it's" : "they're"} hidden.</p>`
+          : `<p class="device-photos__note">No photos of this one yet — yours would be the first.</p>`;
       // At the cap the control goes away rather than uploading into a 409.
       // The cap is counted from what the server holds, not from what rendered.
       const full = list.photos.length >= MAX_PHOTOS_PER_DEVICE;
@@ -1616,9 +1628,17 @@ export class Devices {
       if (!file) return;
       addWrap.hidden = true;
       setStatus("Uploading…");
-      uploadDevicePhoto(vid, file)
-        .then(() => {
-          setStatus("🎉 Thanks! Your photo is up.");
+      uploadDevicePhoto(vid, file, at)
+        .then((saved) => {
+          // The awarded value comes from the response, never from a local
+          // copy of the schedule: the server returns 0 when it could not
+          // resolve a location to file the credit against, and a promise of
+          // points nobody received is worse than saying nothing.
+          setStatus(
+            saved.points_awarded > 0
+              ? `🎉 Thanks! Your photo is up. +${saved.points_awarded} pts`
+              : "🎉 Thanks! Your photo is up.",
+          );
           // Re-list rather than appending the upload response: the listing is
           // what carries attribution, and it settles the cap honestly if
           // someone else uploaded while this rider was aiming. The status

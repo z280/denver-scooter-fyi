@@ -395,17 +395,19 @@ describe("device popup — the photo gallery modal", () => {
     expect(imgs).toEqual(["https://cdn.example/2.jpg"]);
   });
 
-  it("says something when EVERY url is rejected, rather than showing a blank box", async () => {
+  it("distinguishes 'nothing uploaded' from 'uploaded but not displayable'", async () => {
     // The mixed case above passes even if the scheme filter runs after the
     // is-it-empty branch; only an all-rejected listing catches that ordering.
+    // And the message matters: telling a rider "no photos yet" when the
+    // server holds two would invite them to re-take one that already exists.
     const card = await openGallery([
       { ...photo(1), photo_url: "javascript:alert(1)" },
       { ...photo(2), photo_url: "" },
     ]);
     expect(card.querySelectorAll("img")).toHaveLength(0);
-    expect(
-      card.querySelector(".device-photos__grid")?.textContent?.trim(),
-    ).toBeTruthy();
+    const note = card.querySelector(".device-photos__grid")?.textContent ?? "";
+    expect(note).toContain("couldn't be displayed safely");
+    expect(note).not.toContain("No photos");
   });
 
   it("uploads a chosen photo and re-lists so the new one appears with attribution", async () => {
@@ -494,6 +496,84 @@ describe("device popup — the photo gallery modal", () => {
     expect(card?.querySelector<HTMLElement>(".device-photos__add")?.hidden).toBe(
       true,
     );
+  });
+
+  it("shows what the ledger actually granted, and stays quiet when it granted nothing", async () => {
+    for (const [awarded, expected] of [
+      [6, "+6 pts"],
+      [0, ""],
+    ] as const) {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(listing([]))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              id: 4,
+              photo_url: "https://cdn.example/4.jpg",
+              points_awarded: awarded,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(listing([photo(4)]));
+      vi.stubGlobal("fetch", fetchMock);
+      openPopup({ fix: NEAR, props: { vehicle_identifier: PHOTO_VID } });
+      lastPopupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="show-photos"]')
+        ?.click();
+      const card = document.querySelector<HTMLElement>(".ranks-modal__card");
+      const input = card?.querySelector<HTMLInputElement>(
+        ".device-photos__add input",
+      );
+      Object.defineProperty(input, "files", {
+        value: [new File([new Uint8Array(4)], "s.jpg", { type: "image/jpeg" })],
+        writable: true,
+      });
+      input?.dispatchEvent(new Event("change"));
+      await vi.waitFor(() =>
+        expect(
+          card?.querySelector(".device-photos__status")?.textContent,
+        ).toContain("Thanks"),
+      );
+      const status = card?.querySelector(".device-photos__status")?.textContent ?? "";
+      if (expected) expect(status).toContain(expected);
+      else expect(status).not.toContain("pts");
+      document.querySelector(".ranks-modal")?.remove();
+    }
+  });
+
+  it("sends the device's coordinates with the upload", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(listing([]))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 5, photo_url: "https://x/5.jpg" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(listing([]));
+    vi.stubGlobal("fetch", fetchMock);
+    openPopup({ fix: NEAR, props: { vehicle_identifier: PHOTO_VID } });
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="show-photos"]')
+      ?.click();
+    const card = document.querySelector<HTMLElement>(".ranks-modal__card");
+    const input = card?.querySelector<HTMLInputElement>(
+      ".device-photos__add input",
+    );
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array(4)], "s.jpg", { type: "image/jpeg" })],
+      writable: true,
+    });
+    input?.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    const body = (fetchMock.mock.calls[1] as [string, RequestInit])[1]
+      .body as FormData;
+    // The DEVICE's position, not the rider's fix — the photo is of the scooter.
+    expect(body.get("lng")).toBe(String(DEVICE[0]));
+    expect(body.get("lat")).toBe(String(DEVICE[1]));
   });
 
   it("reports an upload failure and puts the control back for another try", async () => {

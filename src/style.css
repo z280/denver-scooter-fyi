@@ -1065,8 +1065,15 @@ body:not(.ribbon-open) .drawer-tabs {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
-  /* Clears the ✕ (44px wide — see .maplibregl-popup-close-button) so the
-     device count never runs under it. */
+  /* Clears the ✕ so the device count never runs under it. 34px, not 44:
+     the button is 44px wide but anchored to the popup's BORDER box
+     (position: absolute; right: 0), while this element starts inside
+     .maplibregl-popup-content's 14px padding — so it only overhangs this box
+     by 44 − 14 = 30px, and 34 leaves 4px of slack. Width-independent: both
+     the button and the padding are anchored to the same right edge, so a
+     narrow popup reflows the text rather than closing the gap.
+     (.device-popup__header needs the full 48px instead because it cancels
+     that padding with a negative margin to bleed edge-to-edge.) */
   padding-right: 34px;
 }
 .cluster-popup__count {

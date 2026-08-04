@@ -148,6 +148,39 @@ describe("uploadDevicePhoto", () => {
     expect((init.body as FormData).get("photo")).toBeInstanceOf(File);
   });
 
+  it("sends the rider's coordinates so the points row has a location", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: 1, photo_url: "https://cdn.example/1.jpg", points_awarded: 6 }),
+    );
+    const saved = await uploadDevicePhoto(VID, fakeFile(8), {
+      lng: -104.9876,
+      lat: 39.7392,
+    });
+    const body = (fetchMock.mock.calls[0] as [string, RequestInit])[1]
+      .body as FormData;
+    expect(body.get("lat")).toBe("39.7392");
+    expect(body.get("lng")).toBe("-104.9876");
+    // Reported from the response, never a local copy of the schedule.
+    expect(saved.points_awarded).toBe(6);
+  });
+
+  it("omits the coordinate parts entirely when there are none to send", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 1, photo_url: "https://x/1.jpg" }));
+    await uploadDevicePhoto(VID, fakeFile(8));
+    const body = (fetchMock.mock.calls[0] as [string, RequestInit])[1]
+      .body as FormData;
+    expect(body.has("lat")).toBe(false);
+    expect(body.has("lng")).toBe(false);
+  });
+
+  it("treats a response with no points_awarded as zero, not as an award", async () => {
+    // An API deployed before sql/056 simply doesn't send the field; the UI
+    // must then say nothing about points rather than invent a number.
+    fetchMock.mockResolvedValue(jsonResponse({ id: 1, photo_url: "https://x/1.jpg" }));
+    const saved = await uploadDevicePhoto(VID, fakeFile(8));
+    expect(saved.points_awarded).toBe(0);
+  });
+
   it("rejects an over-10 MB photo locally, without spending the upload", async () => {
     await expect(
       uploadDevicePhoto(VID, fakeFile(MAX_DEVICE_PHOTO_BYTES + 1)),

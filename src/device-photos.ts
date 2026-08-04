@@ -39,6 +39,15 @@ export interface DevicePhoto {
   uploaded_by: string | null;
 }
 
+/** Upload result. `points_awarded` is what the ledger actually granted for
+ *  this photo (sql/056) — read it rather than hardcoding the schedule's
+ *  value, because the server returns 0 when it couldn't resolve a location
+ *  to file the award against, and promising points nobody received is worse
+ *  than saying nothing. */
+export interface DevicePhotoUpload extends DevicePhoto {
+  points_awarded: number;
+}
+
 export interface DevicePhotoList {
   vehicle_identifier: string;
   count: number;
@@ -95,7 +104,11 @@ export async function fetchDevicePhotos(
 export async function uploadDevicePhoto(
   vehicleIdentifier: string,
   photo: File,
-): Promise<DevicePhoto> {
+  /** Where the photo was taken — the location the points row records. The
+   *  API treats these as optional and falls back to the vehicle's last known
+   *  position, so a popup opened without a fix still earns the award. */
+  at?: { lng: number; lat: number } | null,
+): Promise<DevicePhotoUpload> {
   if (photo.size > MAX_DEVICE_PHOTO_BYTES) {
     // Fail before the upload rather than after: the server's own 413 costs
     // the rider the full transfer of a photo it was always going to reject.
@@ -106,6 +119,10 @@ export async function uploadDevicePhoto(
 
   const form = new FormData();
   form.set("photo", photo);
+  if (at) {
+    form.set("lat", String(at.lat));
+    form.set("lng", String(at.lng));
+  }
   const res = await fetch(
     `${API_BASE}/api/v1/devices/${encodeURIComponent(vehicleIdentifier)}/photos`,
     {
@@ -129,12 +146,15 @@ export async function uploadDevicePhoto(
       retryAfter: retryAfterSeconds(res),
     });
   }
-  const data = (await res.json()) as Partial<DevicePhoto>;
+  const data = (await res.json()) as Partial<DevicePhotoUpload>;
   return {
     id: Number(data?.id ?? 0),
     photo_url: String(data?.photo_url ?? ""),
     created_at: String(data?.created_at ?? ""),
     uploaded_by: null, // the upload response doesn't join the username
+    // Absent on an older deployment that predates sql/056 — 0, so the UI
+    // simply says nothing about points rather than inventing a number.
+    points_awarded: Number(data?.points_awarded ?? 0),
   };
 }
 
