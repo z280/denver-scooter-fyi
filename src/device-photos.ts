@@ -5,9 +5,12 @@
 //   GET  /api/v1/devices/{vehicle_identifier}/photos   oldest first
 //
 // Both require a bearer session. The photos themselves are public: `photo_url`
-// points at an unauthenticated R2 object, so a URL keeps working anywhere once
-// you have it — only the *listing* is session-gated, like every other rider
-// endpoint here.
+// carries no credentials of its own, so it drops straight into an <img> —
+// only the *listing* is session-gated, like every other rider endpoint here.
+// Treat that URL as opaque and short-lived, though, and re-read it from the
+// listing rather than storing it: the API serves a permanent object URL only
+// where the bucket has a public origin, and a presigned one (good for an
+// hour) everywhere else. See API.md § Device photos.
 //
 // Uploads are multipart, which is why this doesn't ride on api.ts's
 // `authedFetchJSON` (that helper JSON-serializes its body and sets
