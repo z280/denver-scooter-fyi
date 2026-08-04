@@ -1522,3 +1522,56 @@ export async function deleteRideUsual(
     { method: "DELETE", signal },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Admin allowlist (GET/POST/DELETE /api/v1/private/admins). Admin-only —
+// require_admin on every route, so a non-admin gets ApiError 403 and the UI
+// that calls these is only ever rendered for admins anyway.
+// ---------------------------------------------------------------------------
+
+export interface AdminEntry {
+  email: string;
+  /** Who added them: an acting admin's email, a GitHub login from the
+   *  portal, or "cli". Null for rows predating attribution. */
+  added_by: string | null;
+  added_at: string | null;
+  /** Server-computed against the allowlist's own normalization, so the
+   *  client never reimplements it to decide which row removes YOU. */
+  is_you: boolean;
+}
+
+export interface AdminList {
+  count: number;
+  admins: AdminEntry[];
+}
+
+/** Both writes return the refreshed list alongside their result, so the UI
+ *  redraws from the response instead of chasing it with a GET. */
+export interface AdminWriteResult extends AdminList {
+  email: string;
+  added?: boolean;
+  removed?: boolean;
+}
+
+export async function fetchAdmins(signal?: AbortSignal): Promise<AdminList> {
+  return authedFetchJSON<AdminList>("/api/v1/private/admins", { signal });
+}
+
+/** Idempotent: re-adding an existing admin resolves with `added: false`
+ *  rather than throwing. Throws ApiError 400 for a non-email. */
+export async function addAdmin(email: string): Promise<AdminWriteResult> {
+  return authedFetchJSON<AdminWriteResult>("/api/v1/private/admins", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+/** Throws ApiError 409 when the target is the last admin — the API refuses
+ *  to leave the allowlist empty, because that locks every account out of
+ *  the admin surface including this one. */
+export async function removeAdmin(email: string): Promise<AdminWriteResult> {
+  return authedFetchJSON<AdminWriteResult>(
+    `/api/v1/private/admins?email=${encodeURIComponent(email)}`,
+    { method: "DELETE" },
+  );
+}

@@ -21,6 +21,7 @@ import {
   type ProfileUpdate,
 } from "./api.ts";
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
+import { openAdminModal } from "./admin-modal.ts";
 import { signOut } from "./map-auth.js";
 import { RATE_PLANS, type RatePlanKey } from "./config.ts";
 import {
@@ -189,6 +190,17 @@ export function renderSignedInAccount(
       );
       badge.append(brow);
       if (info?.email) badge.append(el("p", "account-admin__email", info.email));
+      // 🛡️ Manage admins — the allowlist is a database table (API sql/021),
+      // and this is the first way to edit it without the GitHub-gated
+      // portal. Rendered inside the admin branch, so it exists only for
+      // someone the server has already called an admin; the endpoints
+      // behind it are require_admin regardless.
+      const manage = el("button", "account-admin__manage", "🛡️ Manage admins");
+      manage.type = "button";
+      manage.addEventListener("click", () =>
+        openAdminModal({ onAuthLost: () => deps.onAuthLost() }),
+      );
+      badge.append(manage);
       adminSlot.append(badge);
     }
   });
