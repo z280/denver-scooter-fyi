@@ -229,7 +229,7 @@ function wire(
     ): Promise<DonateTrackResponse> => Promise.resolve(fakeDonateResponse()),
   );
   const defaultReadDonationBody = vi.fn((_trackId: string) =>
-    Promise.resolve({ batches: ["jws-0", "jws-1"], chain_root_hash: "abc123" }),
+    Promise.resolve({ batches: ["jws-0", "jws-1"] }),
   );
   const defaultListTrackedRides = vi.fn((_opts: unknown, _signal?: AbortSignal) =>
     Promise.resolve({ count: 0, rides: [] }),
@@ -1117,7 +1117,7 @@ describe("[Donate This Trip's Data]", () => {
     const session = sessionAtEligibility();
     const { unwire, readDonationBody, donateTrack } = wire(session, {
       readDonationBody: vi.fn(() =>
-        Promise.resolve({ batches: ["jws-0", "jws-1", "jws-2"], chain_root_hash: "deadbeef" }),
+        Promise.resolve({ batches: ["jws-0", "jws-1", "jws-2"] }),
       ),
       donateTrack: vi.fn(() =>
         Promise.resolve(
@@ -1140,10 +1140,7 @@ describe("[Donate This Trip's Data]", () => {
     expect(donateTrack).toHaveBeenCalledTimes(1);
     const [rideId, body] = donateTrack.mock.calls[0];
     expect(rideId).toBe(RIDE_ID);
-    expect(body).toEqual({
-      batches: ["jws-0", "jws-1", "jws-2"],
-      chain_root_hash: "deadbeef",
-    });
+    expect(body).toEqual({ batches: ["jws-0", "jws-1", "jws-2"] });
 
     expect(sentenceText()).toBe(buildEligibilityCopy({ status: "eligible", reasons: [] }));
     expect(root().textContent).toContain("Battery contribution: +14 pts");

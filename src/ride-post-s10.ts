@@ -89,8 +89,8 @@
 // batch for a track, already seq-ordered (both `MemoryTrackStorage` and
 // `IdbTrackStorage` sort before returning). That is everything a donation
 // body needs — this module rebuilds `TrackRecorder.buildDonation()`'s exact
-// two-line logic (`batches.map(b => b.jws)`, `chain_root_hash` from the last
-// batch's `chainHash`) directly against that read, rather than going through
+// one-line logic (`batches.map(b => b.jws)`) directly against that read,
+// rather than going through
 // `store.resumeRide(trackId, opts)`. `resumeRide` is the wrong tool here: it
 // requires `TrackSigning` (or `isPrivate`) to reconstruct a chain when the
 // local record is missing, it can WRITE (`putRide`) and even wipe a
@@ -485,10 +485,7 @@ async function defaultReadDonationBody(
 ): Promise<DonateTrackIn> {
   const store = await getTrackStore();
   const batches = await store.storage.getBatches(trackId);
-  const body: DonateTrackIn = { batches: batches.map((b) => b.jws) };
-  const last = batches.length ? batches[batches.length - 1] : null;
-  if (last) body.chain_root_hash = last.chainHash;
-  return body;
+  return { batches: batches.map((b) => b.jws) };
 }
 
 // ---------------------------------------------------------------------------

@@ -773,8 +773,10 @@ export class TrackRecorder {
     return this.storage.durable;
   }
 
-  /** Lowercase hex `H_n`, or null before the first seal — what donation
-   *  reports as `chain_root_hash`. */
+  /** Lowercase hex `H_n`, or null before the first seal. Local only: it is
+   *  what lets a resumed ride continue an existing chain, and what a future
+   *  live-checkpoint endpoint would transmit. Donation does not send it —
+   *  the server recomputes its own from the uploaded batches. */
   get chainRootHash(): string | null {
     return this.batchCount > 0 ? bytesToHex(this.chainHash) : null;
   }
@@ -874,10 +876,7 @@ export class TrackRecorder {
       );
     }
     const batches = await this.batches();
-    const body: DonateTrackIn = { batches: batches.map((b) => b.jws) };
-    const root = batches.length ? batches[batches.length - 1].chainHash : null;
-    if (root) body.chain_root_hash = root;
-    return body;
+    return { batches: batches.map((b) => b.jws) };
   }
 
   /** Wipe this ride's local track. Donation is opt-in; this is the "never

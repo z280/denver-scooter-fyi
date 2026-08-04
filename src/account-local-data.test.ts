@@ -413,10 +413,7 @@ describe("donate", () => {
 
     const [rideId, body] = donateTrack.mock.calls[0];
     expect(rideId).toBe("ride-a");
-    expect(body).toEqual({
-      batches: batches.map((b) => b.jws),
-      chain_root_hash: batches[batches.length - 1].chainHash,
-    });
+    expect(body).toEqual({ batches: batches.map((b) => b.jws) });
     await vi.waitFor(() => expect(rows()[0].textContent).toContain("thank you"));
   });
 

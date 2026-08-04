@@ -1037,12 +1037,12 @@ export interface PointsAward {
 }
 
 export interface DonateTrackIn {
-  /** Every sealed batch as a compact JWS, in `seq` order, `seq 0` first. */
+  /** Every sealed batch as a compact JWS, in `seq` order, `seq 0` first.
+   *  This is the whole body: the server recomputes the chain root from these
+   *  and stores it as its own audit anchor. A client-supplied root was never
+   *  read (it is unverifiable — the client holds the signing key), so it is
+   *  not sent. */
   batches: string[];
-  /** The final rolling chain hash `H_n`, lowercase hex. The server recomputes
-   *  it regardless (it is the stored audit anchor), so this is an optional
-   *  cross-check, not an input to verification. */
-  chain_root_hash?: string;
 }
 
 export interface DonateTrackResponse {

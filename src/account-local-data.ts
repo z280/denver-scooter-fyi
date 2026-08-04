@@ -324,12 +324,11 @@ export function buildLocalDataPanel(
         void store.storage
           .getBatches(summary.trackId)
           .then((batches) => {
-            const body: { batches: string[]; chain_root_hash?: string } = {
-              batches: batches.map((b) => b.jws),
-            };
-            const last = batches[batches.length - 1];
-            if (last) body.chain_root_hash = last.chainHash;
-            return donate(rideId, body, abort.signal);
+            return donate(
+              rideId,
+              { batches: batches.map((b) => b.jws) },
+              abort.signal,
+            );
           })
           .then(() => {
             if (disposed) return;
