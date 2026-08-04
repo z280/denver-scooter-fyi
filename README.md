@@ -74,10 +74,12 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
   and ride mode starts with the cost readout hidden.
 - **☑️ Confirm Features**: Veo's feed says nothing about what is bolted to a
   given scooter, so riders standing next to one tell us — a bell, a cup
-  holder, a phone holder, a basket (Cosmos only, which are the ones that
-  carry them), and whether they're all in good condition. The presence
-  questions ask only what is bolted on; whether it *works* is what the
-  condition question right underneath asks.
+  holder, a phone holder, a basket, and whether they're all in good
+  condition. Every device is asked all four, including the models that
+  rarely carry a basket: a confirmed "no" is what makes the fleet
+  filterable, and the Trike's cargo basket is standard equipment that can
+  still be bent. The presence questions ask only what is bolted on; whether
+  it *works* is what the condition question right underneath asks.
   Neither Yes nor No is pressed by default, because a pre-pressed answer is
   an answer nobody gave. Confirming needs the plate under the scooter's QR
   code (you can't do it from your sofa); a wrong plate is still accepted and

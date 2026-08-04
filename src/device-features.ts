@@ -11,7 +11,7 @@
 //     a bell?                  Yes / No
 //     a cup holder?            Yes / No
 //     a phone holder?          Yes / No
-//     a basket?                Yes / No   ← Cosmo only
+//     a basket?                Yes / No
 //     And they're all in good condition?   Yes / No
 //   [if No] Which are present but not in good condition?  <the present ones>
 //   To confirm, please enter the plate number under the QR code on the device
@@ -23,17 +23,20 @@
 // broken-bell reading is the one that loses: the rider answers No, nothing
 // is present to itemise, and the fault never reaches the API at all.
 //
-// BASKET IS COSMO-ONLY. It is asked for every Cosmo and for nothing else, so
-// the question set is per-model rather than fixed — see `featureQuestionsFor`
-// and `FeatureAnswerState.keys`, which carry the set the rider was actually
-// shown all the way to the request body.
+// BASKET IS ASKED OF EVERY DEVICE, not just the models that ship with one.
+// It briefly wasn't — the question arrived Cosmo-only — and that was wrong
+// on the fleet: the Trike carries a cargo basket as standard equipment
+// (`devices.ts`'s model catalog says so), so a model gate would have made a
+// bent Trike basket permanently unreportable. Asking everyone also keeps
+// this list FIXED, which is what lets a "not asked" answer stay
+// unrepresentable: every rider sees every question, so `null` can only ever
+// mean "hasn't answered yet".
 //
 // NEITHER TOGGLE IS PRESSED BY DEFAULT. That is a real product rule, not a
 // styling detail: a pre-pressed answer is an answer the rider did not give,
 // and this whole feature is only worth anything if the data is what somebody
 // actually looked at. So `null` is a first-class state here, Send stays
-// disabled until every question the rider was shown is answered, and there
-// is no "skip".
+// disabled until all five questions are answered, and there is no "skip".
 //
 // THE PLATE is the anti-abuse story — you cannot read the plate under a
 // scooter's QR code from your sofa. A WRONG plate is deliberately NOT an
@@ -130,44 +133,21 @@ export function featurePointsFor(
  *  `scooter-fyi-api/src/device_features.py`. */
 export type FeatureKey = "bell" | "cup_holder" | "phone_holder" | "basket";
 
-export interface FeatureQuestion {
+/** Every question, in the order the modal asks. One fixed list for every
+ *  device in the fleet — see the header on why the basket is not gated on
+ *  the model. */
+export const FEATURE_QUESTIONS: readonly {
   key: FeatureKey;
   question: string;
   /** How the feature is named in the condition follow-up, where the phrasing
    *  is a list item rather than a question. */
   noun: string;
-  /** Model this question is exclusive to, matched loosely against whatever
-   *  model name the popup had on screen. Absent = asked about every device. */
-  onlyModel?: string;
-}
-
-/** Every question this survey knows how to ask. `featureQuestionsFor` picks
- *  the subset a given device actually gets; nothing else should iterate this
- *  list directly, or a Trike will be asked about a Cosmo's basket. */
-export const FEATURE_QUESTIONS: readonly FeatureQuestion[] = [
+}[] = [
   { key: "bell", question: "a bell?", noun: "Bell" },
   { key: "cup_holder", question: "a cup holder?", noun: "Cup holder" },
   { key: "phone_holder", question: "a phone holder?", noun: "Phone holder" },
-  { key: "basket", question: "a basket?", noun: "Basket", onlyModel: "cosmo" },
+  { key: "basket", question: "a basket?", noun: "Basket" },
 ];
-
-/** The questions to ask about this device.
- *
- *  Matched on a substring rather than an exact name because the caller's
- *  model string is whatever it happened to have: `devices.ts` passes the
- *  catalog's "Veo Cosmo" when it recognizes the model and Veo's raw
- *  `vehicle_model_name` when it doesn't, and both mean the same scooter. An
- *  unknown or missing model gets the universal questions only — asking a
- *  mystery device about a basket would invent a fact about a vehicle we
- *  can't even name. */
-export function featureQuestionsFor(
-  modelName: string | null | undefined,
-): readonly FeatureQuestion[] {
-  const model = (modelName ?? "").trim().toLowerCase();
-  return FEATURE_QUESTIONS.filter(
-    (q) => !q.onlyModel || model.includes(q.onlyModel),
-  );
-}
 
 /** The modal's live state. `null` is "not answered" — the whole reason Send
  *  stays disabled — and is distinct from `false`. */
@@ -181,15 +161,9 @@ export interface FeatureAnswerState {
    *  features answered `true`; `prunePoorCondition` keeps it that way. */
   poor: FeatureKey[];
   plate: string;
-  /** The questions this rider was actually shown, in order. Carried on the
-   *  state rather than recomputed per call so that Send gating, the
-   *  condition follow-up and the request body can never disagree about
-   *  which questions existed — a Cosmo's unanswered basket must block Send,
-   *  and an Astro's must not. */
-  keys: readonly FeatureKey[];
 }
 
-export function emptyAnswers(modelName?: string | null): FeatureAnswerState {
+export function emptyAnswers(): FeatureAnswerState {
   return {
     bell: null,
     cup_holder: null,
@@ -198,14 +172,13 @@ export function emptyAnswers(modelName?: string | null): FeatureAnswerState {
     allGood: null,
     poor: [],
     plate: "",
-    keys: featureQuestionsFor(modelName).map((q) => q.key),
   };
 }
 
 /** Which features the rider has confirmed PRESENT — the options the
  *  condition follow-up offers. */
 export function presentFeatures(a: FeatureAnswerState): FeatureKey[] {
-  return a.keys.filter((k) => a[k] === true);
+  return FEATURE_QUESTIONS.filter((q) => a[q.key] === true).map((q) => q.key);
 }
 
 /** Drop condition selections for features that are no longer marked present.
@@ -220,10 +193,9 @@ export function prunePoorCondition(a: FeatureAnswerState): FeatureKey[] {
 
 /** Is the survey complete enough to send?
  *
- *  Every question the rider was SHOWN answered — three for most devices,
- *  four for a Cosmo, which also gets the basket — plus a plate typed, and,
- *  when the rider said things are NOT all in good condition, at least one
- *  feature named. That last rule mirrors the API's own 422
+ *  All four presence questions answered, a plate typed, and — when the rider
+ *  said things are NOT all in good condition — at least one feature named.
+ *  That last rule mirrors the API's own 422
  *  (`all_good_condition: false` with an empty `poor_condition` is rejected,
  *  because the server stores only the list and an un-itemised complaint
  *  would round-trip as "all good" and ping-pong the vehicle into
@@ -235,7 +207,9 @@ export function prunePoorCondition(a: FeatureAnswerState): FeatureKey[] {
  *  the follow-up cannot be shown at all — `readyToSubmit` treats that as
  *  complete rather than unanswerable. */
 export function readyToSubmit(a: FeatureAnswerState): boolean {
-  if (a.keys.some((k) => a[k] === null)) return false;
+  // Driven off the question list rather than four named checks, so a fifth
+  // feature is gated by adding it to FEATURE_QUESTIONS and nothing else.
+  if (FEATURE_QUESTIONS.some((q) => a[q.key] === null)) return false;
   if (a.allGood === null) return false;
   if (a.allGood === false && presentFeatures(a).length > 0 && a.poor.length === 0) {
     return false;
@@ -249,20 +223,17 @@ export function readyToSubmit(a: FeatureAnswerState): boolean {
  *  present has no itemisable fault, and the honest wire value there is
  *  `true`.
  *
- *  `has_basket` is OMITTED for a device that was never asked, rather than
- *  sent as `false`. The three universal fields can honestly default to
- *  `false` because every rider saw those questions, so an unanswered one is
- *  unreachable through the UI; a basket question an Astro's rider never saw
- *  is different — `false` there would feed the consensus a confirmed absence
- *  nobody looked for. Silence is the only true value for a question that
- *  wasn't asked. */
+ *  All four presence answers are always sent, `has_basket` included. Every
+ *  rider is shown every question, so an unanswered one is unreachable
+ *  through the UI (Send is disabled) and `false` is an honest default rather
+ *  than a claim about something nobody was asked. */
 export function toRequestBody(
   a: FeatureAnswerState,
 ): {
   has_bell: boolean;
   has_cup_holder: boolean;
   has_phone_holder: boolean;
-  has_basket?: boolean;
+  has_basket: boolean;
   all_good_condition: boolean;
   poor_condition: FeatureKey[];
 } {
@@ -271,7 +242,7 @@ export function toRequestBody(
     has_bell: a.bell === true,
     has_cup_holder: a.cup_holder === true,
     has_phone_holder: a.phone_holder === true,
-    ...(a.keys.includes("basket") ? { has_basket: a.basket === true } : {}),
+    has_basket: a.basket === true,
     all_good_condition: poor.length === 0,
     poor_condition: poor,
   };
@@ -364,8 +335,7 @@ export function openConfirmFeatures(
   activeClose?.();
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
 
-  const answers = emptyAnswers(options.modelName);
-  const questions = featureQuestionsFor(options.modelName);
+  const answers = emptyAnswers();
   const cleanupFns: (() => void)[] = [];
   let closed = false;
   let sending = false;
@@ -455,11 +425,11 @@ export function openConfirmFeatures(
       el("p", `${ROOT_CLASS}__hint`, FEATURE_STATUS_HINT[options.status]),
     );
 
-    // ---- the presence questions this model gets
+    // ---- the four presence questions
     body.append(
       el("p", `${ROOT_CLASS}__stem`, `Does this ${modelLabel} have…`),
     );
-    for (const q of questions) {
+    for (const q of FEATURE_QUESTIONS) {
       body.append(
         yesNo(q.question, answers[q.key], (v) => {
           answers[q.key] = v;
@@ -482,9 +452,8 @@ export function openConfirmFeatures(
     );
 
     // ---- the follow-up, only when the rider said No AND there is something
-    // present to name. "No" on a scooter carrying none of the features it
-    // was asked about is an answer about nothing, so we don't ask a question
-    // with no options.
+    // present to name. "No" on a scooter carrying none of the four is an
+    // answer about nothing, so we don't ask a question with no options.
     const present = presentFeatures(answers);
     if (answers.allGood === false && present.length > 0) {
       const wrap = el("div", `${ROOT_CLASS}__poor`);
@@ -700,24 +669,25 @@ export function readDeviceFeatures(raw: unknown): {
     bell: o.bell === true,
     cup_holder: o.cup_holder === true,
     phone_holder: o.phone_holder === true,
-    // Absent for every device confirmed before baskets were asked about,
-    // and for every non-Cosmo — all of which read as "no basket", which is
-    // both true of the fleet and the same answer this returned before the
-    // question existed.
+    // Absent from every consensus confirmed before baskets were asked
+    // about, all of which read as "no basket" — the same answer this
+    // returned before the question existed, and one a reconfirmation
+    // corrects.
     basket: o.basket === true,
     poor_condition: poor,
   };
 }
 
 /** "🔔 Bell · 🥤 Cup holder (worn)" — the confirmed equipment, in one line.
- *  A scooter with none of them reads "None of them" rather than an empty
- *  string: somebody DID look, and that is a different fact from nobody
- *  having looked. (It read "None of the three" until the Cosmo basket made
- *  the count per-model — and this line has no model to count against.) */
+ *  A scooter with none of the four reads "None of the four" rather than an
+ *  empty string: somebody DID look, and that is a different fact from nobody
+ *  having looked. */
 export function summarizeFeatures(f: {
   bell: boolean;
   cup_holder: boolean;
   phone_holder: boolean;
+  /** Optional so a caller holding a pre-basket consensus object still
+   *  type-checks; absent reads the same as `false`. */
   basket?: boolean;
   poor_condition: FeatureKey[];
 }): string {
@@ -731,5 +701,5 @@ export function summarizeFeatures(f: {
   add("cup_holder", "🥤 Cup holder");
   add("phone_holder", "📱 Phone holder");
   add("basket", "🧺 Basket");
-  return parts.length ? parts.join(" · ") : "None of them";
+  return parts.length ? parts.join(" · ") : "None of the four";
 }
