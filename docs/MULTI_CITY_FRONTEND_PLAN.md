@@ -153,28 +153,62 @@ This is the part that makes the fork question moot: once overlays, pricing
 and provider behavior arrive over the wire, a "city" is a config file and a
 domain.
 
-### 3b-i. `COMPARATOR` can be fixed today
+### 3b-i. The comparator is structurally wrong, not just numerically
 
 `config.ts:COMPARATOR` is Lime at `$1.00 + $0.30/min`, flagged in its own
-comment as a guess ("Lime's typical mid-market US pricing; update to Lime's
-last-known Denver rates when confirmed").
+comment as a guess. `ride-hud.ts:1290` renders it as *"With Lime's typical
+pricing: $X"*, plus a *"a $4.99/week pass would cover this in N rides"*
+aside.
 
-Lyft's Denver GBFS `system_pricing_plans` feed is still served, frozen at
-their 2024-12-16 shutdown, and carries the real last-known numbers for the
-operator Denver actually lost:
+Both halves are wrong, and the second one is wrong in the more interesting
+way.
 
-| | unlock | per minute |
-|---|---|---|
-| Lyft scooter (Denver, Dec 2024) | $1.00 | **$0.41** |
-| Lyft e-bike (Denver, Dec 2024) | $1.00 | $0.15 |
-| Veo resident (today) | $1.00 | $0.25 |
+**The rate is a rack rate.** Lyft's frozen Denver GBFS feed publishes
+$1.00 + $0.41/min for a scooter — but almost nobody paid that. Riders
+bought time passes: **$2.99/30 min** and **$4.99/60 min**, unlocks
+included. GBFS `system_pricing_plans` does not publish bundles, so a
+comparison assembled from open data lands on the walk-up price and
+overstates what people paid by 4×.
 
-Two consequences. The comparator should name **Lyft**, not Lime, since
-that's whose Denver rates these are. And the honest reading is that Veo's
-resident rate undercuts what Lyft charged for a scooter here — so a
-comparator framed as "if Veo had competition, you'd pay less" is not
-supported by the data. Worth getting right before it ships in the ride
-summary. See the API plan §8a.
+**The pass is the product, not a footnote.** Today's HUD prices the ride at
+the competitor's per-minute rate and then mentions a pass as a
+hypothetical. That inverts reality: the pass *was* the normal purchase, and
+the per-minute rate was the penalty for not having one.
+
+Corrected picture (see `scooter-fyi-api/data/denver_rate_history.json`):
+
+| | 15 min | 30 min | 60 min |
+|---|---:|---:|---:|
+| Lyft 30-min pass | $2.99 | $2.99 | — |
+| Lyft 60-min pass | $4.99 | $4.99 | $4.99 |
+| Lyft scooter, walk-up *(the GBFS number)* | $7.15 | $13.30 | $25.60 |
+| **Veo resident** | **$4.75** | **$8.50** | **$16.00** |
+| Veo resident + VeoPlus | $3.75 | $7.50 | $15.00 |
+| Veo visitor | $6.85 | $12.70 | $24.40 |
+
+A half-hour was $2.99 and is now $8.50 — **2.8×**. An hour was $4.99 and is
+now $16.00 — **3.2×**.
+
+**What the presentation should become.** Compare like for like: what a
+rider actually pays on each side.
+
+1. `COMPARATOR` grows from one flat rate to a plan list with a
+   `bundle | rack` kind, mirroring `RATE_PLANS`. Best-value plan for the
+   ride's duration wins, same as a rider would pick.
+2. `ride-cost.ts:comparatorCents()` becomes "cheapest comparator plan
+   covering `elapsedMs`" instead of `unlock + minutes × rate`.
+3. The HUD line names the product — *"A 30-minute Lyft pass was $2.99"* —
+   not "typical pricing".
+4. Show the walk-up rate only as a labelled secondary row, if at all, since
+   it is the number that misleads.
+5. Drop the "$4.99/week pass would cover this in N rides" aside; $4.99 was
+   an hour, not a week, and the arithmetic built on it is meaningless.
+
+**Blocking caveat.** The bundle prices are marked `"cited": false` in
+`denver_rate_history.json` — they come from recollection, not a retrievable
+source, while the rack rates cite a live feed. This app's whole claim is
+auditability. Get an archived pricing page or screenshot before the 2.8×
+figure ships in front of a rider.
 
 ### 3c. Provider capabilities drive the UI
 
