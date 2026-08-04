@@ -395,6 +395,19 @@ describe("device popup — the photo gallery modal", () => {
     expect(imgs).toEqual(["https://cdn.example/2.jpg"]);
   });
 
+  it("says something when EVERY url is rejected, rather than showing a blank box", async () => {
+    // The mixed case above passes even if the scheme filter runs after the
+    // is-it-empty branch; only an all-rejected listing catches that ordering.
+    const card = await openGallery([
+      { ...photo(1), photo_url: "javascript:alert(1)" },
+      { ...photo(2), photo_url: "" },
+    ]);
+    expect(card.querySelectorAll("img")).toHaveLength(0);
+    expect(
+      card.querySelector(".device-photos__grid")?.textContent?.trim(),
+    ).toBeTruthy();
+  });
+
   it("uploads a chosen photo and re-lists so the new one appears with attribution", async () => {
     // GET (empty) → POST (upload) → GET (now holds the photo). Re-listing
     // rather than appending is what carries attribution and settles the cap.
@@ -440,6 +453,47 @@ describe("device popup — the photo gallery modal", () => {
     expect(upload[1].body).toBeInstanceOf(FormData);
     // Cleared so re-picking the same file still fires `change`.
     expect(input?.value).toBe("");
+  });
+
+  it("keeps the confirmation when the rider's own photo is the one that fills the device", async () => {
+    // The 3rd uploader does the most work and was the only one never told it
+    // worked: the re-list saw a full device and overwrote "Thanks" with the
+    // cap notice.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(listing([photo(1), photo(2)]))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: 3, photo_url: "https://cdn.example/3.jpg" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(listing([photo(1), photo(2), photo(3)]));
+    vi.stubGlobal("fetch", fetchMock);
+    openPopup({ fix: NEAR, props: { vehicle_identifier: PHOTO_VID } });
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="show-photos"]')
+      ?.click();
+    const card = document.querySelector<HTMLElement>(".ranks-modal__card");
+    const input = card?.querySelector<HTMLInputElement>(
+      ".device-photos__add input",
+    );
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array(4)], "s.jpg", { type: "image/jpeg" })],
+      writable: true,
+    });
+    input?.dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() =>
+      expect(card?.querySelectorAll("img")).toHaveLength(3),
+    );
+    expect(card?.querySelector(".device-photos__status")?.textContent).toContain(
+      "Thanks",
+    );
+    // The cap still takes the control away — only the message is preserved.
+    expect(card?.querySelector<HTMLElement>(".device-photos__add")?.hidden).toBe(
+      true,
+    );
   });
 
   it("reports an upload failure and puts the control back for another try", async () => {

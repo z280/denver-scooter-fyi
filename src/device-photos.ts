@@ -46,6 +46,16 @@ export interface DevicePhotoList {
   photos: DevicePhoto[];
 }
 
+/** Seconds from `Retry-After` on a 429, mirroring api.ts's private
+ *  `parseRetryAfter`: the API sends an integer count of seconds, and anything
+ *  else (an HTTP-date, a missing header) means "unknown, back off on your
+ *  own schedule". */
+function retryAfterSeconds(res: Response): number | undefined {
+  if (res.status !== 429) return undefined;
+  const raw = res.headers.get("Retry-After")?.trim();
+  return raw && /^\d+$/.test(raw) ? Number(raw) : undefined;
+}
+
 /** The API's path parameter is `^[0-9a-f]{16}$` — exactly 16 lowercase hex,
  *  stricter than the ≥16 length check the report endpoints accept. A device
  *  whose identifier doesn't match can't have photos at all, so the UI hides
@@ -112,6 +122,11 @@ export async function uploadDevicePhoto(
   if (!res.ok) {
     throw new ApiError(`HTTP ${res.status}`, "HTTP_ERROR", {
       status: res.status,
+      // Uploads carry the 20/hour limit riders actually reach, so this is
+      // the one path where "try again in N min" earns its keep — and the
+      // one path that doesn't get Retry-After free from api.ts's shared
+      // error handler, since multipart can't go through authedFetchJSON.
+      retryAfter: retryAfterSeconds(res),
     });
   }
   const data = (await res.json()) as Partial<DevicePhoto>;

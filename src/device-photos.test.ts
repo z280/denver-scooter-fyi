@@ -162,6 +162,38 @@ describe("uploadDevicePhoto", () => {
     });
   });
 
+  it("carries Retry-After off a 429 so the rider can be told how long", async () => {
+    // Regression: the multipart path can't use authedFetchJSON, so it doesn't
+    // inherit api.ts's shared Retry-After parsing — and uploads are the one
+    // photo call with a limit (20/hour) riders actually reach.
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ detail: "slow down" }), {
+        status: 429,
+        headers: { "Retry-After": "600" },
+      }),
+    );
+    const err = await uploadDevicePhoto(VID, fakeFile(10)).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ status: 429, retryAfter: 600 });
+    // …and that value has to survive into what the rider reads.
+    expect(photoErrorText(err, "upload")).toContain("10 min");
+  });
+
+  it("leaves retryAfter unset when the header is absent or an HTTP-date", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("{}", {
+        status: 429,
+        headers: { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" },
+      }),
+    );
+    const err = await uploadDevicePhoto(VID, fakeFile(10)).catch(
+      (e: unknown) => e,
+    );
+    expect((err as { retryAfter?: number }).retryAfter).toBeUndefined();
+    expect(photoErrorText(err, "upload")).toContain("Too many");
+  });
+
   it("clears the stale session on 401 and reports TOKEN_REJECTED", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ detail: "nope" }, 401));
     await expect(uploadDevicePhoto(VID, fakeFile(10))).rejects.toMatchObject({

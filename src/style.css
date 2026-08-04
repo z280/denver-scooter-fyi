@@ -1065,6 +1065,9 @@ body:not(.ribbon-open) .drawer-tabs {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+  /* Clears the ✕ (44px wide — see .maplibregl-popup-close-button) so the
+     device count never runs under it. */
+  padding-right: 34px;
 }
 .cluster-popup__count {
   font-weight: 600;
@@ -1703,11 +1706,13 @@ body:not(.ribbon-open) .drawer-tabs {
 .maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: var(--bg-elev);
 }
-/* The device popup's ✕. MapLibre's default is a ~10px glyph in a tiny box —
-   an awkward target on a phone, and it sits ON the turquoise header, where
-   --fg-muted barely reads. Sized to a real 44×44 touch target and given the
-   header's own contrast. (.device-popup__header carries matching right
-   padding so the title never runs under it.) */
+/* Popup ✕. MapLibre's default is a ~10px glyph in a tiny box — an awkward
+   target on a phone. The SIZE applies to every popup (there are two: the
+   device card and clusters.ts's cluster popup); the COLOR must not, because
+   only the device popup puts a turquoise header under its button. An
+   unscoped white here is invisible on the cluster popup, whose content
+   background is --bg-elev. Both popups reserve clearance for the wider
+   button: .device-popup__header's right padding, .cluster-popup's. */
 .maplibregl-popup-close-button {
   display: flex;
   align-items: center;
@@ -1717,10 +1722,24 @@ body:not(.ribbon-open) .drawer-tabs {
   padding: 0;
   font-size: 26px;
   line-height: 1;
-  color: #fff;
+  color: var(--fg-muted);
   border-top-right-radius: 10px;
 }
 .maplibregl-popup-close-button:hover {
+  background: var(--hover-neutral);
+  color: var(--fg);
+}
+/* Only the popup that actually has the turquoise header behind its ✕ gets
+   the header's contrast. :has() is the only way to say "this button, in that
+   popup" — and where it isn't supported the button simply keeps the muted
+   color above, which is legible enough to be a safe fallback rather than a
+   broken one. */
+.maplibregl-popup-content:has(.device-popup__header)
+  .maplibregl-popup-close-button {
+  color: #fff;
+}
+.maplibregl-popup-content:has(.device-popup__header)
+  .maplibregl-popup-close-button:hover {
   background: rgba(255, 255, 255, 0.22);
   color: #fff;
 }

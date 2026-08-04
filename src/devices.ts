@@ -1543,7 +1543,7 @@ export class Devices {
            <span class="device-photos__add-label">📷 Take Photo</span>
          </label>
          <p class="device-photos__status" role="status" aria-live="polite"></p>
-         <p class="device-photos__fine">Up to ${MAX_PHOTOS_PER_DEVICE} photos per scooter. Photos are public, credited to your username, and re-encoded on upload so the location data your camera embeds is destroyed.</p>
+         <p class="device-photos__fine">Up to ${MAX_PHOTOS_PER_DEVICE} photos per scooter. Photos are public and credited to your username unless you've hidden it in Account. Each one is re-encoded on upload, so the location data your camera embeds is destroyed.</p>
        </div>`,
       (root) => this.wireDevicePhotos(root, vid, headerName, startCapture),
     );
@@ -1569,20 +1569,21 @@ export class Devices {
     const setStatus = (text: string): void => {
       if (root.isConnected) status.textContent = text;
     };
-    const render = (list: DevicePhotoList): void => {
+    const render = (list: DevicePhotoList, keepStatus = false): void => {
       if (!root.isConnected) return;
-      grid.innerHTML = list.photos.length
-        ? list.photos
+      // The URLs are built server-side from R2 keys, but they still reach an
+      // href/src — only ever emit one we can see is http(s), never a scheme
+      // the browser would execute. Filtered BEFORE the empty check, so a
+      // listing whose every URL is rejected still says something rather than
+      // rendering an empty box.
+      const shown = list.photos.filter((p) => /^https?:\/\//i.test(p.photo_url));
+      grid.innerHTML = shown.length
+        ? shown
             .map((p) => {
-              // The URL is built server-side from an R2 key, but it still
-              // reaches an href/src — only ever emit one we can see is http(s),
-              // never a scheme the browser would execute.
-              const url = /^https?:\/\//i.test(p.photo_url) ? p.photo_url : "";
-              if (!url) return "";
               const who = p.uploaded_by ? p.uploaded_by : "a rider";
               return `<figure class="device-photos__item">
-                  <a href="${escapeHtml(url)}" target="_blank" rel="noopener">
-                    <img src="${escapeHtml(url)}" alt="Rider photo of ${escapeHtml(headerName)}" loading="lazy" />
+                  <a href="${escapeHtml(p.photo_url)}" target="_blank" rel="noopener">
+                    <img src="${escapeHtml(p.photo_url)}" alt="Rider photo of ${escapeHtml(headerName)}" loading="lazy" />
                   </a>
                   <figcaption>${escapeHtml(who)} · ${escapeHtml(formatDate(p.created_at))}</figcaption>
                 </figure>`;
@@ -1590,17 +1591,21 @@ export class Devices {
             .join("")
         : `<p class="device-photos__note">No photos of this one yet — yours would be the first.</p>`;
       // At the cap the control goes away rather than uploading into a 409.
+      // The cap is counted from what the server holds, not from what rendered.
       const full = list.photos.length >= MAX_PHOTOS_PER_DEVICE;
       addWrap.hidden = full;
-      if (full) {
+      // `keepStatus` is the re-list after an upload: the rider whose photo
+      // was the one that filled the device would otherwise have their "it
+      // worked" replaced by the cap notice and never learn it landed.
+      if (full && !keepStatus) {
         setStatus(
           `This scooter has all ${MAX_PHOTOS_PER_DEVICE} photos it can hold.`,
         );
       }
     };
-    const load = (): Promise<void> =>
+    const load = (keepStatus = false): Promise<void> =>
       fetchDevicePhotos(vid)
-        .then(render)
+        .then((list) => render(list, keepStatus))
         .catch((err: unknown) => {
           if (!root.isConnected) return;
           grid.innerHTML = `<p class="device-photos__note">${escapeHtml(photoErrorText(err, "list"))}</p>`;
@@ -1616,8 +1621,9 @@ export class Devices {
           setStatus("🎉 Thanks! Your photo is up.");
           // Re-list rather than appending the upload response: the listing is
           // what carries attribution, and it settles the cap honestly if
-          // someone else uploaded while this rider was aiming.
-          return load();
+          // someone else uploaded while this rider was aiming. The status
+          // line is left alone so the confirmation survives the re-render.
+          return load(true);
         })
         .catch((err: unknown) => {
           setStatus(photoErrorText(err, "upload"));
