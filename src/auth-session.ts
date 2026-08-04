@@ -96,14 +96,32 @@ export async function fetchSessionInfo(): Promise<SessionInfo | null> {
 }
 
 /** Whether the session has administrator rights. Trusts ONLY the server's
- *  admin signal (an `admin` flag or `admin` scope). Admin is Google-exclusive:
- *  the API stamps the scope from the verified allowlisted email and
- *  deliberately withholds it from magic-link sessions even for allowlisted
- *  emails. A client-side email-allowlist fallback would falsely surface
- *  "Administrator Mode" for those magic-link sessions, so there is none. */
+ *  admin signal, and `info.admin` is the one that answers the question:
+ *  the API sets it from `is_admin_email` — the allowlist check `/private/*`
+ *  actually enforces, which accepts EITHER sign-in door.
+ *
+ *  `info.admin` is therefore authoritative in BOTH directions: a present
+ *  boolean is the answer, and the scope is not consulted. Reading `false`
+ *  as anything other than "not an admin" is what the scope fallback used to
+ *  do, and it mattered most in the one case where the two disagree — a
+ *  Google session whose token still carries the marker after the account
+ *  left the allowlist (including by removing itself). That rider would have
+ *  kept Administrator Mode and the proximity bypass until their token
+ *  rotated, on a `false` the server was reporting correctly.
+ *
+ *  The `admin` SCOPE is consulted only when the field is ABSENT — an older
+ *  session, or an API predating the live signal. It is a Google-exclusive
+ *  marker of which door was used, and it stopped gating access on the API
+ *  side; reading it as "is this an admin" is what left an allowlisted
+ *  operator signed in by magic link admin to every endpoint while the map
+ *  showed them no Administrator Mode and blocked the proximity-gated
+ *  buttons at any distance.
+ *
+ *  Still no client-side email-allowlist fallback: the server decides. */
 export function isAdminSession(info: SessionInfo | null): boolean {
   if (!info) return false;
-  return info.admin === true || (info.scopes?.includes("admin") ?? false);
+  if (typeof info.admin === "boolean") return info.admin;
+  return info.scopes?.includes("admin") ?? false;
 }
 
 // ---------------------------------------------------------------------------
