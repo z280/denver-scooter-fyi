@@ -163,25 +163,27 @@ aside.
 Both halves are wrong, and the second one is wrong in the more interesting
 way.
 
-**The rate is a rack rate.** Lyft's frozen Denver GBFS feed publishes
-$1.00 + $0.41/min for a scooter — but almost nobody paid that. Riders
-bought time passes: **$2.99/30 min** and **$4.99/60 min**, unlocks
-included. GBFS `system_pricing_plans` does not publish bundles, so a
-comparison assembled from open data lands on the walk-up price and
-overstates what people paid by 4×.
+**`COMPARATOR.name` was right — Lime is the comparator.** What's wrong is
+the shape of the rate under it. Lime's Denver pricing was **$2.99/30 min**
+and **$4.99/60 min**, unlocks included — time passes, not a per-minute
+meter. The constant models a $1.00 unlock + $0.30/min meter that never
+existed.
+
+**`weekPassCents: 499` is the tell.** That number is real — it is the
+60-minute pass — but it is labelled a *week* pass and rendered as one. The
+price was right and the unit was off by a factor of 168.
 
 **The pass is the product, not a footnote.** Today's HUD prices the ride at
-the competitor's per-minute rate and then mentions a pass as a
-hypothetical. That inverts reality: the pass *was* the normal purchase, and
-the per-minute rate was the penalty for not having one.
+an invented per-minute rate and then mentions a pass as a hypothetical.
+That inverts reality: the pass *was* the normal purchase, and per-minute
+was the penalty for not having one.
 
 Corrected picture (see `scooter-fyi-api/data/denver_rate_history.json`):
 
 | | 15 min | 30 min | 60 min |
 |---|---:|---:|---:|
-| Lyft 30-min pass | $2.99 | $2.99 | — |
-| Lyft 60-min pass | $4.99 | $4.99 | $4.99 |
-| Lyft scooter, walk-up *(the GBFS number)* | $7.15 | $13.30 | $25.60 |
+| **Lime 30-min pass** | $2.99 | $2.99 | — |
+| **Lime 60-min pass** | $4.99 | $4.99 | $4.99 |
 | **Veo resident** | **$4.75** | **$8.50** | **$16.00** |
 | Veo resident + VeoPlus | $3.75 | $7.50 | $15.00 |
 | Veo visitor | $6.85 | $12.70 | $24.40 |
@@ -189,26 +191,34 @@ Corrected picture (see `scooter-fyi-api/data/denver_rate_history.json`):
 A half-hour was $2.99 and is now $8.50 — **2.8×**. An hour was $4.99 and is
 now $16.00 — **3.2×**.
 
+Lyft's numbers are deliberately **not** in that table. Their abandoned feed
+publishes walk-up rates only, and it cannot be dated — Lyft left Denver
+long before the feed froze. It is a parser fixture, not a price source.
+
 **What the presentation should become.** Compare like for like: what a
 rider actually pays on each side.
 
 1. `COMPARATOR` grows from one flat rate to a plan list with a
-   `bundle | rack` kind, mirroring `RATE_PLANS`. Best-value plan for the
+   `bundle | rack` kind, mirroring `RATE_PLANS`. Cheapest plan covering the
    ride's duration wins, same as a rider would pick.
 2. `ride-cost.ts:comparatorCents()` becomes "cheapest comparator plan
-   covering `elapsedMs`" instead of `unlock + minutes × rate`.
-3. The HUD line names the product — *"A 30-minute Lyft pass was $2.99"* —
+   covering `elapsedMs`" instead of `unlock + minutes × rate`. Rides longer
+   than the largest bundle have no defined price — Lime's overage rate is
+   unknown — so return null and render nothing rather than extrapolating.
+3. The HUD line names the product — *"A 30-minute Lime pass was $2.99"* —
    not "typical pricing".
-4. Show the walk-up rate only as a labelled secondary row, if at all, since
-   it is the number that misleads.
-5. Drop the "$4.99/week pass would cover this in N rides" aside; $4.99 was
-   an hour, not a week, and the arithmetic built on it is meaningless.
+4. Delete `weekPassCents` and the "would cover this in N rides" aside. The
+   $4.99 it holds is a 60-minute pass; every sentence built on it is wrong.
+5. Source all of it from `GET /api/v1/meta/pricing` once that exists, so the
+   comparison stops being a frontend constant nobody re-checks.
 
-**Blocking caveat.** The bundle prices are marked `"cited": false` in
-`denver_rate_history.json` — they come from recollection, not a retrievable
-source, while the rack rates cite a live feed. This app's whole claim is
-auditability. Get an archived pricing page or screenshot before the 2.8×
-figure ships in front of a rider.
+**Blocking caveat.** Lime's pass prices are marked `"cited": false` in
+`denver_rate_history.json`. They come from recollection, and Lime publishes
+no pricing feed at all — `system_pricing_plans` 404s and is absent from
+their GBFS discovery document — so there is no open-data route to
+corroborating them. This app's whole claim is auditability, and 2.8× is
+exactly the number an operator would contest. Get an archived pricing page
+or screenshot before it ships in front of a rider.
 
 ### 3c. Provider capabilities drive the UI
 
