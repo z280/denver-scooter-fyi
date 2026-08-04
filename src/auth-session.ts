@@ -100,17 +100,28 @@ export async function fetchSessionInfo(): Promise<SessionInfo | null> {
  *  the API sets it from `is_admin_email` — the allowlist check `/private/*`
  *  actually enforces, which accepts EITHER sign-in door.
  *
- *  The `admin` SCOPE is kept in the check for older sessions only. It is a
- *  Google-exclusive marker of which door was used, and it stopped gating
- *  access on the API side; reading it as "is this an admin" is what left an
- *  allowlisted operator signed in by magic link admin to every endpoint
- *  while the map showed them no Administrator Mode and blocked the
- *  proximity-gated buttons at any distance.
+ *  `info.admin` is therefore authoritative in BOTH directions: a present
+ *  boolean is the answer, and the scope is not consulted. Reading `false`
+ *  as anything other than "not an admin" is what the scope fallback used to
+ *  do, and it mattered most in the one case where the two disagree — a
+ *  Google session whose token still carries the marker after the account
+ *  left the allowlist (including by removing itself). That rider would have
+ *  kept Administrator Mode and the proximity bypass until their token
+ *  rotated, on a `false` the server was reporting correctly.
+ *
+ *  The `admin` SCOPE is consulted only when the field is ABSENT — an older
+ *  session, or an API predating the live signal. It is a Google-exclusive
+ *  marker of which door was used, and it stopped gating access on the API
+ *  side; reading it as "is this an admin" is what left an allowlisted
+ *  operator signed in by magic link admin to every endpoint while the map
+ *  showed them no Administrator Mode and blocked the proximity-gated
+ *  buttons at any distance.
  *
  *  Still no client-side email-allowlist fallback: the server decides. */
 export function isAdminSession(info: SessionInfo | null): boolean {
   if (!info) return false;
-  return info.admin === true || (info.scopes?.includes("admin") ?? false);
+  if (typeof info.admin === "boolean") return info.admin;
+  return info.scopes?.includes("admin") ?? false;
 }
 
 // ---------------------------------------------------------------------------

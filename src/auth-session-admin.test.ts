@@ -39,6 +39,23 @@ describe("isAdminSession", () => {
     ).toBe(false);
   });
 
+  it("takes admin: false at its word even when the token still carries the scope", () => {
+    // The case the two signals actually disagree, and the reason `admin`
+    // has to win rather than be OR'd with the scope: a Google token minted
+    // while this account WAS allowlisted still says `admin` in its scopes
+    // after the account leaves the list — including by removing itself in
+    // the manage-admins modal. The server reports the truth live; believing
+    // the stale marker would hand back Administrator Mode and the proximity
+    // bypass until the token happened to rotate.
+    expect(
+      isAdminSession({
+        email: "was-admin@example.com",
+        scopes: ["rider", "admin"],
+        admin: false,
+      }),
+    ).toBe(false);
+  });
+
   it("is false with no session at all", () => {
     expect(isAdminSession(null)).toBe(false);
   });
