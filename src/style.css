@@ -1703,8 +1703,26 @@ body:not(.ribbon-open) .drawer-tabs {
 .maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: var(--bg-elev);
 }
+/* The device popup's ✕. MapLibre's default is a ~10px glyph in a tiny box —
+   an awkward target on a phone, and it sits ON the turquoise header, where
+   --fg-muted barely reads. Sized to a real 44×44 touch target and given the
+   header's own contrast. (.device-popup__header carries matching right
+   padding so the title never runs under it.) */
 .maplibregl-popup-close-button {
-  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 26px;
+  line-height: 1;
+  color: #fff;
+  border-top-right-radius: 10px;
+}
+.maplibregl-popup-close-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
 }
 .maplibregl-ctrl-group {
   background: var(--bg-elev);
@@ -1877,9 +1895,10 @@ body:not(.ribbon-open) .drawer-tabs {
 /* ---------- Popup Veo-brand header ---------- */
 .device-popup__header {
   /* Cancel the popup content's padding so the turquoise bleeds to the edges;
-     extra right padding clears the × close button. */
+     extra right padding clears the × close button (44px wide — see
+     .maplibregl-popup-close-button). */
   margin: -12px -14px 10px;
-  padding: 12px 34px 12px 14px;
+  padding: 12px 48px 12px 14px;
   background: #17b9ab; /* Veo turquoise */
   color: #fff;
   border-top-left-radius: 10px;
@@ -3741,21 +3760,32 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .ranks-modal__head h3 {
   margin: 0;
   font-size: 15px;
 }
+/* Same treatment as the map popup's ✕: a 44×44 target rather than a glyph
+   with a few px of padding. This is the ✕ on ℹ️ Details, ⚠️ Report, the
+   photo gallery — every modal launched from a device popup. */
 .ranks-modal__close {
   appearance: none;
   border: 0;
   background: transparent;
-  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -8px -8px -8px 0;
+  font-size: 28px;
   line-height: 1;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
+  padding: 0;
+  border-radius: 10px;
 }
 .ranks-modal__close:hover {
   background: var(--accent-soft);
@@ -5235,4 +5265,80 @@ input[data-ride-keypad="on"] {
 }
 .device-popup__actbtn--features {
   grid-column: 1 / -1;
+}
+
+/* ---------- devices.ts: device photos (API.md § Device photos) ------------ */
+.device-photos__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.device-photos__item {
+  margin: 0;
+}
+.device-photos__item img {
+  display: block;
+  width: 100%;
+  /* Rider photos arrive in whatever aspect their phone shot — a fixed box
+     with object-fit keeps the grid from going ragged. Full frame is one tap
+     away via the link. */
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+.device-photos__item figcaption {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.device-photos__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+/* The real <input type="file"> is hidden inside the label, so the label IS
+   the button — clicking it opens the camera/picker with no extra JS. */
+.device-photos__add input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.device-photos__add {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.device-photos__add:hover {
+  filter: brightness(1.08);
+}
+.device-photos__add[hidden] {
+  display: none;
+}
+.device-photos__status {
+  margin: 8px 0 0;
+  min-height: 1em;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.device-photos__fine {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
 }
