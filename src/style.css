@@ -1065,6 +1065,16 @@ body:not(.ribbon-open) .drawer-tabs {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+  /* Clears the ✕ so the device count never runs under it. 34px, not 44:
+     the button is 44px wide but anchored to the popup's BORDER box
+     (position: absolute; right: 0), while this element starts inside
+     .maplibregl-popup-content's 14px padding — so it only overhangs this box
+     by 44 − 14 = 30px, and 34 leaves 4px of slack. Width-independent: both
+     the button and the padding are anchored to the same right edge, so a
+     narrow popup reflows the text rather than closing the gap.
+     (.device-popup__header needs the full 48px instead because it cancels
+     that padding with a negative margin to bleed edge-to-edge.) */
+  padding-right: 34px;
 }
 .cluster-popup__count {
   font-weight: 600;
@@ -1703,8 +1713,42 @@ body:not(.ribbon-open) .drawer-tabs {
 .maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: var(--bg-elev);
 }
+/* Popup ✕. MapLibre's default is a ~10px glyph in a tiny box — an awkward
+   target on a phone. The SIZE applies to every popup (there are two: the
+   device card and clusters.ts's cluster popup); the COLOR must not, because
+   only the device popup puts a turquoise header under its button. An
+   unscoped white here is invisible on the cluster popup, whose content
+   background is --bg-elev. Both popups reserve clearance for the wider
+   button: .device-popup__header's right padding, .cluster-popup's. */
 .maplibregl-popup-close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 26px;
+  line-height: 1;
   color: var(--fg-muted);
+  border-top-right-radius: 10px;
+}
+.maplibregl-popup-close-button:hover {
+  background: var(--hover-neutral);
+  color: var(--fg);
+}
+/* Only the popup that actually has the turquoise header behind its ✕ gets
+   the header's contrast. :has() is the only way to say "this button, in that
+   popup" — and where it isn't supported the button simply keeps the muted
+   color above, which is legible enough to be a safe fallback rather than a
+   broken one. */
+.maplibregl-popup-content:has(.device-popup__header)
+  .maplibregl-popup-close-button {
+  color: #fff;
+}
+.maplibregl-popup-content:has(.device-popup__header)
+  .maplibregl-popup-close-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
 }
 .maplibregl-ctrl-group {
   background: var(--bg-elev);
@@ -1877,9 +1921,10 @@ body:not(.ribbon-open) .drawer-tabs {
 /* ---------- Popup Veo-brand header ---------- */
 .device-popup__header {
   /* Cancel the popup content's padding so the turquoise bleeds to the edges;
-     extra right padding clears the × close button. */
+     extra right padding clears the × close button (44px wide — see
+     .maplibregl-popup-close-button). */
   margin: -12px -14px 10px;
-  padding: 12px 34px 12px 14px;
+  padding: 12px 48px 12px 14px;
   background: #17b9ab; /* Veo turquoise */
   color: #fff;
   border-top-left-radius: 10px;
@@ -3741,21 +3786,32 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .ranks-modal__head h3 {
   margin: 0;
   font-size: 15px;
 }
+/* Same treatment as the map popup's ✕: a 44×44 target rather than a glyph
+   with a few px of padding. This is the ✕ on ℹ️ Details, ⚠️ Report, the
+   photo gallery — every modal launched from a device popup. */
 .ranks-modal__close {
   appearance: none;
   border: 0;
   background: transparent;
-  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -8px -8px -8px 0;
+  font-size: 28px;
   line-height: 1;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
+  padding: 0;
+  border-radius: 10px;
 }
 .ranks-modal__close:hover {
   background: var(--accent-soft);
@@ -4023,6 +4079,10 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--hover-neutral);
 }
 .device-popup__actbtn--start {
+  /* Spans the 2-column action grid: it is the primary CTA, and the full
+     width leaves Report + Details to share the next row instead of
+     stranding one of them beside a blank half-cell. */
+  grid-column: 1 / -1;
   border-color: var(--pass);
   background: var(--pass);
   color: var(--on-status);
@@ -4032,12 +4092,19 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--pass);
   filter: brightness(1.08);
 }
-.device-popup__actbtn--start.is-blocked {
+/* Blocked state for any gated action button (Start, Use in Ride Mode) —
+   two classes deep so it also outranks the single-class --start/--ride
+   accent fills regardless of source order. */
+.device-popup__actbtn.is-blocked {
   border-color: var(--border);
   background: var(--bg-subtle);
   color: var(--fg-muted);
   font-weight: 600;
   cursor: not-allowed;
+}
+.device-popup__actbtn.is-blocked:hover {
+  background: var(--bg-subtle);
+  filter: none;
 }
 .device-popup__actionhint {
   margin: 0 0 6px;
@@ -5224,4 +5291,80 @@ input[data-ride-keypad="on"] {
 }
 .device-popup__actbtn--features {
   grid-column: 1 / -1;
+}
+
+/* ---------- devices.ts: device photos (API.md § Device photos) ------------ */
+.device-photos__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.device-photos__item {
+  margin: 0;
+}
+.device-photos__item img {
+  display: block;
+  width: 100%;
+  /* Rider photos arrive in whatever aspect their phone shot — a fixed box
+     with object-fit keeps the grid from going ragged. Full frame is one tap
+     away via the link. */
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+.device-photos__item figcaption {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.device-photos__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+/* The real <input type="file"> is hidden inside the label, so the label IS
+   the button — clicking it opens the camera/picker with no extra JS. */
+.device-photos__add input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.device-photos__add {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.device-photos__add:hover {
+  filter: brightness(1.08);
+}
+.device-photos__add[hidden] {
+  display: none;
+}
+.device-photos__status {
+  margin: 8px 0 0;
+  min-height: 1em;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.device-photos__fine {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
 }

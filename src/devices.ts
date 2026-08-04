@@ -58,6 +58,14 @@ import {
   summarizeFeatures,
 } from "./device-features.ts";
 import { openRidePreflight } from "./ride-preflight.ts";
+import {
+  MAX_PHOTOS_PER_DEVICE,
+  type DevicePhotoList,
+  fetchDevicePhotos,
+  photoErrorText,
+  supportsPhotos,
+  uploadDevicePhoto,
+} from "./device-photos.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 /** Ride posture, the primary "what am I sitting on" split. Derived from the
@@ -105,6 +113,10 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
  *  tight enough that the button means "you're at this scooter." */
 const UNLOCK_PROXIMITY_M = 75;
+
+/** Both device-photo endpoints require a bearer session — uploading AND
+ *  listing — so a signed-out rider gets the same hint from either button. */
+const PHOTO_SIGNIN_HINT = "Sign in (Account tab) to add or view photos.";
 
 /** Active-ride device taps: hold this long to open the full popup; a shorter
  *  tap only flashes the essentials tooltip (auto-hidden after that). */
@@ -779,8 +791,29 @@ export class Devices {
           ? veoDeepLink(effectivePlate)
           : null;
       const startBtn = startHref
-        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start</a>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start</button>`;
+        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start in Veo</a>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start in Veo</button>`;
+
+      // 🧭 Use in Ride Mode carries the same geographic gate as ▶️ Start:
+      // both rows commit the rider to THIS scooter, and neither means
+      // anything from across town — ride mode's whole premise is that the
+      // rider is standing at the vehicle (it is what lets the preflight skip
+      // the wizard's "which scooter?" screens). Admins bypass proximity, as
+      // they do for Start, so the flows stay testable from a desk. Sign-in
+      // is deliberately NOT required here: ride mode runs client-side, and
+      // Start still enforces its own session gate downstream.
+      const rideAllowed = this.adminSession || nearEnough;
+      let rideHint = "";
+      if (outOfService) {
+        rideHint = "This scooter is marked out of service.";
+      } else if (reserved) {
+        rideHint = "Reserved by another rider right now.";
+      } else if (!rideAllowed) {
+        rideHint = user
+          ? "You're too far away, sorry!"
+          : "Turn on your location to use ride mode with this scooter.";
+      }
+      const rideOk = rideAllowed && !outOfService && !reserved;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
@@ -1050,14 +1083,36 @@ export class Devices {
       // CTA — it is the one the rider standing at the scooter most likely
       // wants, and it is the reason the wizard's "which scooter?" screens
       // can be skipped at all (they already answered that by opening this
-      // popup). "Confirm Features" needs a stable vehicle_identifier: the
+      // popup) — which is also why it is proximity-gated above, ALWAYS
+      // visible but blocked with a hint when the rider isn't at the scooter
+      // (admins excepted). "Confirm Features" needs a stable
+      // vehicle_identifier: the
       // API keys the report on it, and there is nothing useful to send
       // without one.
-      const rideBtn = `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`;
+      const rideBtn = rideOk
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🧭 Use in Ride Mode</button>`;
       const featuresBtn =
         vid.length >= 16
           ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
           : "";
+      // Final row: rider-contributed photos of THIS scooter (API.md § Device
+      // photos). Both endpoints need a bearer session — listing included, even
+      // though the photos themselves are public objects — so signed out, both
+      // buttons render blocked with the usual hint rather than disappearing:
+      // "sign in and you get this" is the useful message. Hidden entirely when
+      // the vehicle_identifier isn't the API's exact 16-hex shape, since no
+      // request could ever succeed. No proximity gate: an older photo of a
+      // scooter is worth looking at from anywhere, and that is much of the
+      // point of having them.
+      const photosOk = supportsPhotos(vid);
+      const photoRow = !photosOk
+        ? ""
+        : signedIn
+          ? `<button type="button" class="device-popup__actbtn" data-action="take-photo" aria-haspopup="dialog">📷 Take Photo</button>
+             <button type="button" class="device-popup__actbtn" data-action="show-photos" aria-haspopup="dialog">🖼️ Show Photos</button>`
+          : `<button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">📷 Take Photo</button>
+             <button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">🖼️ Show Photos</button>`;
       const actionRow = `
         <div class="device-popup__actionrow">
           ${rideBtn}
@@ -1065,6 +1120,7 @@ export class Devices {
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
           ${featuresBtn}
+          ${photoRow}
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
 
@@ -1119,8 +1175,9 @@ export class Devices {
 
       const popupEl = this.popup.getElement();
 
-      // ---- Action-row wiring. A blocked Start explains itself in the hint
-      // line (mobile has no hover for the title tooltip). Report and Details
+      // ---- Action-row wiring. A blocked Start or Ride Mode explains itself
+      // in the hint line (mobile has no hover for the title tooltip). Both
+      // are proximity-gated, so this is the common case. Report and Details
       // each open their own floating modal — the popup itself never grows
       // or morphs.
       const hintLine = popupEl?.querySelector<HTMLElement>(
@@ -1134,6 +1191,9 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="start-blocked"]')
         ?.addEventListener("click", () => showHint(startHint));
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="ride-blocked"]')
+        ?.addEventListener("click", () => showHint(rideHint));
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
         ?.addEventListener("click", () => {
@@ -1197,6 +1257,25 @@ export class Devices {
             // tells the rider it takes a few minutes.
           });
         });
+      // 📷 / 🖼️ — device photos. Both open the same gallery modal; Take Photo
+      // just arrives there with the file picker already firing, so the upload
+      // lands in a view that shows what the scooter already has (and the
+      // 3-photo cap) rather than a bare success line.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="take-photo"]')
+        ?.addEventListener("click", () => {
+          this.openDevicePhotos(vid, headerName, true, here);
+        });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="show-photos"]')
+        ?.addEventListener("click", () => {
+          this.openDevicePhotos(vid, headerName, false, here);
+        });
+      popupEl
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="photos-blocked"]')
+        .forEach((btn) =>
+          btn.addEventListener("click", () => showHint(PHOTO_SIGNIN_HINT)),
+        );
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
       // vehicle.
@@ -1441,6 +1520,143 @@ export class Devices {
           }
         });
       });
+  }
+
+  /** 📷 / 🖼️ — the device-photos modal: the scooter's existing photos plus
+   *  the control that adds one. `startCapture` fires the file picker on open,
+   *  which is what makes 📷 Take Photo a one-tap action; it must stay
+   *  synchronous inside the button's click handler, or the browser drops the
+   *  picker as un-gestured. */
+  private openDevicePhotos(
+    vid: string,
+    headerName: string,
+    startCapture: boolean,
+    /** The device's own position — sent with the upload so the points row
+     *  (sql/056) has a location to be filed against. */
+    at: LngLat,
+  ): void {
+    openFloatingModal(
+      `📷 Photos — ${headerName}`,
+      `<div class="device-photos">
+         <div class="device-photos__grid" aria-live="polite">
+           <p class="device-photos__note">Loading photos…</p>
+         </div>
+         <label class="device-photos__add">
+           <input type="file" accept="image/*" capture="environment" />
+           <span class="device-photos__add-label">📷 Take Photo</span>
+         </label>
+         <p class="device-photos__status" role="status" aria-live="polite"></p>
+         <p class="device-photos__fine">Up to ${MAX_PHOTOS_PER_DEVICE} photos per scooter. Photos are public and credited to your username unless you've hidden it in Account. Each one is re-encoded on upload, so the location data your camera embeds is destroyed.</p>
+       </div>`,
+      (root) =>
+        this.wireDevicePhotos(root, vid, headerName, startCapture, at),
+    );
+  }
+
+  /** Loads the gallery, then owns the upload round-trip. Every DOM touch is
+   *  guarded on `root.isConnected`: both paths are async, and the rider can
+   *  close the modal (✕, backdrop, Escape) while one is still in flight. */
+  private wireDevicePhotos(
+    root: HTMLElement | null,
+    vid: string,
+    headerName: string,
+    startCapture: boolean,
+    at: LngLat,
+  ): void {
+    const grid = root?.querySelector<HTMLElement>(".device-photos__grid");
+    const input = root?.querySelector<HTMLInputElement>(
+      ".device-photos__add input",
+    );
+    const addWrap = root?.querySelector<HTMLElement>(".device-photos__add");
+    const status = root?.querySelector<HTMLElement>(".device-photos__status");
+    if (!root || !grid || !input || !addWrap || !status) return;
+
+    const setStatus = (text: string): void => {
+      if (root.isConnected) status.textContent = text;
+    };
+    const render = (list: DevicePhotoList, keepStatus = false): void => {
+      if (!root.isConnected) return;
+      // The URLs are built server-side from R2 keys, but they still reach an
+      // href/src — only ever emit one we can see is http(s), never a scheme
+      // the browser would execute. Filtered BEFORE the empty check, so a
+      // listing whose every URL is rejected still says something rather than
+      // rendering an empty box.
+      const shown = list.photos.filter((p) => /^https?:\/\//i.test(p.photo_url));
+      // Three states, not two: nothing uploaded, something uploaded we won't
+      // render, and photos. Collapsing the middle one into "no photos yet"
+      // would tell a rider their own upload vanished, and invite them to
+      // re-take a photo that is already there.
+      const withheld = list.photos.length > 0 && shown.length === 0;
+      grid.innerHTML = shown.length
+        ? shown
+            .map((p) => {
+              const who = p.uploaded_by ? p.uploaded_by : "a rider";
+              return `<figure class="device-photos__item">
+                  <a href="${escapeHtml(p.photo_url)}" target="_blank" rel="noopener">
+                    <img src="${escapeHtml(p.photo_url)}" alt="Rider photo of ${escapeHtml(headerName)}" loading="lazy" />
+                  </a>
+                  <figcaption>${escapeHtml(who)} · ${escapeHtml(formatDate(p.created_at))}</figcaption>
+                </figure>`;
+            })
+            .join("")
+        : withheld
+          ? `<p class="device-photos__note">${list.photos.length === 1 ? "A photo of this one couldn't" : "Photos of this one couldn't"} be displayed safely, so ${list.photos.length === 1 ? "it's" : "they're"} hidden.</p>`
+          : `<p class="device-photos__note">No photos of this one yet — yours would be the first.</p>`;
+      // At the cap the control goes away rather than uploading into a 409.
+      // The cap is counted from what the server holds, not from what rendered.
+      const full = list.photos.length >= MAX_PHOTOS_PER_DEVICE;
+      addWrap.hidden = full;
+      // `keepStatus` is the re-list after an upload: the rider whose photo
+      // was the one that filled the device would otherwise have their "it
+      // worked" replaced by the cap notice and never learn it landed.
+      if (full && !keepStatus) {
+        setStatus(
+          `This scooter has all ${MAX_PHOTOS_PER_DEVICE} photos it can hold.`,
+        );
+      }
+    };
+    const load = (keepStatus = false): Promise<void> =>
+      fetchDevicePhotos(vid)
+        .then((list) => render(list, keepStatus))
+        .catch((err: unknown) => {
+          if (!root.isConnected) return;
+          grid.innerHTML = `<p class="device-photos__note">${escapeHtml(photoErrorText(err, "list"))}</p>`;
+        });
+
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      addWrap.hidden = true;
+      setStatus("Uploading…");
+      uploadDevicePhoto(vid, file, at)
+        .then((saved) => {
+          // The awarded value comes from the response, never from a local
+          // copy of the schedule: the server returns 0 when it could not
+          // resolve a location to file the credit against, and a promise of
+          // points nobody received is worse than saying nothing.
+          setStatus(
+            saved.points_awarded > 0
+              ? `🎉 Thanks! Your photo is up. +${saved.points_awarded} pts`
+              : "🎉 Thanks! Your photo is up.",
+          );
+          // Re-list rather than appending the upload response: the listing is
+          // what carries attribution, and it settles the cap honestly if
+          // someone else uploaded while this rider was aiming. The status
+          // line is left alone so the confirmation survives the re-render.
+          return load(true);
+        })
+        .catch((err: unknown) => {
+          setStatus(photoErrorText(err, "upload"));
+          if (root.isConnected) addWrap.hidden = false;
+        })
+        .finally(() => {
+          // Clear the picker so re-choosing the same file still fires change.
+          input.value = "";
+        });
+    });
+
+    void load();
+    if (startCapture) input.click();
   }
 
   /** Center the map on a device and open its popup — used by the
