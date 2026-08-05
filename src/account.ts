@@ -1802,17 +1802,25 @@ export function renderSignedInAccount(
     return wrap;
   };
 
-  /** A way through to the territory map, which is where ruling colours and
-   *  the leaderboard opt-in actually show up. Linked, not embedded: the
-   *  leaderboard owns map layers and pauses the choropleth and hex density
-   *  while it is open, and two owners for that state would fight. */
+  /** A way through to the leaderboard, which is where the ruling colours
+   *  picked above and the leaderboard opt-in actually show up. Linked, not
+   *  embedded: the Leaderboard panel owns the live tally and the territory
+   *  switch, and a second copy of either here would be a second thing to
+   *  keep in sync.
+   *
+   *  Targets the main-menu tab by its `data-drawer` id, the same way
+   *  `main.ts` reaches the account drawer from the territory readout. This
+   *  used to click a `.leaderboard-toggle` button in `.topbar__right`; that
+   *  button was removed when the leaderboard stopped being a map mode, and
+   *  because `?.click()` swallows a miss, this link silently did nothing
+   *  instead of failing loudly. */
   const buildLeaderboardLink = (): HTMLElement => {
     const wrap = el("div", "account-section community-leaderboard");
     const btn = el("button", "text-btn", "Open the leaderboard 🏆");
     btn.type = "button";
     btn.addEventListener("click", () => {
       document
-        .querySelector<HTMLElement>(".topbar__right .leaderboard-toggle")
+        .querySelector<HTMLElement>('.drawer-tab[data-drawer="leaderboard"]')
         ?.click();
     });
     wrap.append(btn);
