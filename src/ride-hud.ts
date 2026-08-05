@@ -437,10 +437,17 @@ export class RideHud {
     void recorder
       .batches()
       .then((batches) => {
-        // The ride this seed belongs to has since ended (or another has
-        // begun) — drawing it now would put one ride's history under
-        // another's.
+        // Another ride has since begun — drawing this now would put one
+        // ride's history under another's.
         if (generation !== this.rideGeneration) return;
+        // …or THIS ride ended while the read was in flight, in which case
+        // `endRide` has already wiped the trail and a late prepend would
+        // paint it back onto a map with no ride on it. `trailOn` is the same
+        // flag `onFix` checks and for the same reason; deliberately NOT a
+        // `state === "riding"` check, because BRB leaves the riding state
+        // with the ride (and its recording) still going — a seed that lands
+        // mid-BRB must still be there when the rider resumes.
+        if (!this.trailOn) return;
         this.trail?.prepend(trailCoordsFromBatches(batches));
       })
       .catch((e) => {
@@ -1283,10 +1290,14 @@ export class RideHud {
       // monotonicity check) and an out-of-range coordinate, and it resolves
       // only after the write actually lands — so drawing on `accepted` is
       // what keeps the line an honest picture of the local track rather than
-      // of the raw GPS feed. `Promise.resolve` because this recorder is a
-      // structural type: a caller's fake need only be call-compatible, and a
-      // synchronous stub returning nothing should cost the trail a point,
-      // not throw inside the shared watchPosition callback.
+      // of the raw GPS feed. `Promise.resolve` normalizes the return value,
+      // because this recorder is a structural type: a caller's fake need only
+      // be call-compatible, and a synchronous stub returning nothing would
+      // otherwise make `.then` throw inside the shared watchPosition
+      // callback. It does NOT catch a stub that throws synchronously — the
+      // call is evaluated first either way — which is the same exposure this
+      // line has always had, and which the real `TrackRecorder.addFix` (a
+      // promise chain from its first statement) cannot produce.
       void Promise.resolve(recorder.addFix(trackFix)).then(
         (result: TrackAddResult | undefined) => {
           if (!result?.accepted) return;

@@ -50,9 +50,12 @@ export interface RideTrailHandle {
   setVisible(visible: boolean): void;
   /** Forget the trail and wipe it off the map: the ride is over. */
   clear(): void;
-  /** What is currently drawn — for tests and for callers that need to know
-   *  whether anything was recorded at all. */
-  coords(): readonly TrailCoord[];
+  /** A copy of what is currently drawn — for tests and for callers that need
+   *  to know whether anything was recorded at all. A copy because this is the
+   *  live array the next `push` extends: handing it out directly would let a
+   *  caller mutate the drawn trail behind the handle's back, and `readonly`
+   *  only says so at compile time. */
+  coords(): TrailCoord[];
 }
 
 /** Flatten sealed batches to coordinates, in chain order.
@@ -201,7 +204,7 @@ export function createRideTrail(map: MLMap): RideTrailHandle {
       draw();
     },
     coords() {
-      return coords;
+      return [...coords];
     },
   };
 }

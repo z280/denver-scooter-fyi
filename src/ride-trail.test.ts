@@ -38,7 +38,11 @@ vi.mock("maplibre-gl", () => {
 });
 
 import { createRideTrail, trailCoordsFromBatches } from "./ride-trail.ts";
-import { RideHud, type RideDeviceControl } from "./ride-hud.ts";
+import {
+  RideHud,
+  type RideDeviceControl,
+  type RideHudTrackControl,
+} from "./ride-hud.ts";
 import {
   MemoryTrackStorage,
   base64UrlEncode,
@@ -333,6 +337,9 @@ describe("createRideTrail", () => {
     trail.setVisible(false);
     expect(rig.visibility()).toBe("none");
     expect(trail.coords().length).toBe(2);
+    // `coords()` hands out a copy, not the live array the next push extends.
+    trail.coords().push([0, 0]);
+    expect(trail.coords().length).toBe(2);
     expect(rig.line().length).toBe(2);
 
     trail.setVisible(true);
@@ -372,7 +379,7 @@ describe("RideHud draws the track it is recording (the reported bug)", () => {
 
   function mountHud(opts: {
     doc: RideSessionDoc | null;
-    recorder: TrackRecorder | null;
+    recorder: RideHudTrackControl | null;
   }): {
     hud: RideHud;
     container: HTMLElement;
@@ -479,6 +486,54 @@ describe("RideHud draws the track it is recording (the reported bug)", () => {
     expect(rig.line().length).toBe(26);
     expect(rig.line()[0]).toEqual([Number(LNG0.toFixed(6)), LAT]);
     expect(rig.line()[25]).toEqual([LNG0 + 25 * STEP, LAT]);
+  });
+
+  it("a resume seed that lands AFTER End Ride does not repaint the trail", async () => {
+    // Review catch: the seed read is async, and guarding it on "has another
+    // ride started?" alone left the window where THIS ride ends first — the
+    // late `prepend` would then paint a finished ride's history back onto a
+    // map with no ride on it.
+    const startedAtMs = Date.parse("2026-08-05T18:00:00.000Z");
+    const storage = new MemoryTrackStorage();
+    const before = await openTrackStore({ storage });
+    const first = await before.startServerRide(await genSigning("ride-late-seed"));
+    for (let i = 0; i < 25; i += 1) {
+      await first.addFix({
+        tMs: startedAtMs + 1000 + i * 1000,
+        lat: LAT,
+        lon: LNG0 + i * STEP,
+      });
+    }
+    const after = await openTrackStore({ storage });
+    const resumed = await after.resumeRide("ride-late-seed");
+
+    // Hold the seed read open until the ride is over.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slowRecorder: RideHudTrackControl = {
+      addFix: (f) => resumed.recorder.addFix(f),
+      finish: () => resumed.recorder.finish(),
+      batches: async () => {
+        await gate;
+        return resumed.recorder.batches();
+      },
+    };
+
+    const { container } = mountHud({
+      doc: buildDoc("ride-late-seed", startedAtMs),
+      recorder: slowRecorder,
+    });
+
+    container.querySelector<HTMLButtonElement>('[data-hud="exit"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    await flush();
+    expect(rig.data()?.features).toEqual([]);
+
+    release();
+    await flush();
+    expect(rig.data()?.features).toEqual([]);
   });
 
   it("draws nothing when the rider turned Save Ride Tracks off", async () => {
