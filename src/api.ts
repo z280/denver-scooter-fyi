@@ -453,8 +453,11 @@ export interface Profile {
    *  across every application sharing the sender, so this is a local echo
    *  for honest UI; only an UNSTOP text can clear it. */
   sms_opted_out: boolean;
-  /** Server-computed adjective+emoji-noun pair; change via the username
-   *  endpoints, never via PUT /profile (it is ignored there). */
+  /** Server-computed adjective+emoji-noun pair, already presented as
+   *  "Brave 🦉" — the capital and the space are the server's, so render
+   *  it as received rather than re-composing it from the lexicon values
+   *  (which stay lowercase). Change via the username endpoints, never
+   *  via PUT /profile (it is ignored there). */
   public_username: string | null;
   show_public_username: boolean;
   show_in_leaderboards: boolean;
