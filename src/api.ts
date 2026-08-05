@@ -1446,10 +1446,16 @@ export interface LeaderboardMapResponse {
 }
 
 /** The whole choropleth plus every cell's click-through detail in one fetch.
- *  Plain GET on every open by design: the endpoint's ETag +
- *  `Cache-Control: public, max-age=600` make a reopen within 10 minutes free
- *  and revalidate transparently after, so there is deliberately no
- *  conditional-request code here. */
+ *  **Live**: the API aggregates the points ledger per request rather than
+ *  serving a nightly snapshot, so a hexagon changes hands within the minute
+ *  someone takes it — which is what makes `hexdensity.ts`'s 90-second
+ *  refresh tick worth having.
+ *
+ *  Plain GET on every call by design: the endpoint's ETag +
+ *  `Cache-Control: public, max-age=30` collapse a burst of opens into one
+ *  aggregate and revalidate transparently after, so there is deliberately no
+ *  conditional-request code here. Never 503s — there is no scheduled run
+ *  behind it that could be missing. */
 export function fetchLeaderboardMap(
   signal?: AbortSignal,
 ): Promise<LeaderboardMapResponse> {
@@ -1468,21 +1474,21 @@ export interface LeaderboardRegionalResponse {
   window_start: string;
   window_end: string;
   /** At most 25, and often fewer — the API caps eligible entries, not raw
-   *  ones. Empty on a database with no points in the window. */
+   *  ones. Empty when nobody has earned points in the window. */
   leaders: LeaderboardRegionalEntry[];
 }
 
-/** `GET /leaderboard/regional/live` — the ledger aggregated at request time,
- *  NOT the nightly `regional_leaders` snapshot its `/regional` sibling reads.
- *  That's the whole point of the panel's "(live)" label: points earned today
- *  are in this payload, and unlike `/regional` it never 503s before the first
- *  recompute. `Cache-Control: max-age=30` keeps a burst of opens to one
- *  aggregate. */
+/** `GET /leaderboard/regional` — the ledger aggregated at request time, which
+ *  is what the panel's "(live)" label promises: points earned today are in
+ *  this payload. It briefly lived at `/regional/live` while a stored nightly
+ *  version still occupied `/regional`; nothing is stored any more, so the
+ *  live one took the plain URL back. Same `max-age=30` and same
+ *  never-503 guarantee as the map. */
 export function fetchLeaderboardRegionalLive(
   signal?: AbortSignal,
 ): Promise<LeaderboardRegionalResponse> {
   return getJSON<LeaderboardRegionalResponse>(
-    "/api/v1/leaderboard/regional/live",
+    "/api/v1/leaderboard/regional",
     signal,
   );
 }
