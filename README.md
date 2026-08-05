@@ -271,11 +271,11 @@ src/
                    wizard screen the answers make unnecessary
   ios-shake-undo.ts  keeps iOS's "shake to undo" alert off the HUD: WebKit's
                    undo queue is page-wide and survives a blurred, deleted
-                   field, so anything typed in the wizard would otherwise get
+                   field, so anything typed before a ride would otherwise get
                    an "Undo Typing" prompt on every bump in the road. The
-                   ride flow's fields apply their own edits instead, which
-                   registers nothing to undo. On-device check:
-                   public/shake-undo-probe.html
+                   ride flow's fields apply their own edits (which registers
+                   nothing to undo), and entering the riding view empties the
+                   queue for whatever was typed elsewhere
   device-features.ts crowdsourced equipment: the "Confirm Features" survey,
                    the three-status vocabulary, and reading the map
                    payload's device_features object

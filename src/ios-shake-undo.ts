@@ -4,41 +4,47 @@
 // over and over, for the whole ride. A scooter deck is a continuous shake
 // generator, so anything that arms the shake gesture fires constantly.
 //
-// THE CAUSE (best reading of WebKit's behaviour — see the on-device probe at
-// `public/shake-undo-probe.html`): it is NOT that we leave a text field
-// focused. The HUD has no text inputs at all, and the wizard screens are torn
-// out of the DOM (`RideModal` calls `replaceChildren()`) before the HUD comes
-// up. What survives is the UNDO STACK. WebKit keeps one undo queue per web
-// view — shared across every text field, and deliberately not cleared when a
-// field is blurred or tabbed out of (that is what makes ⌘Z keep working after
-// you leave a field). We never navigate: the whole app is one document for
-// the life of the session. So the handful of characters a rider types into
-// the plate field / sign-in code / destination search before they start
-// rolling leaves undo entries sitting in that queue, and iOS offers to undo
-// them on every bump in the road, long after the field itself is gone.
+// THE CAUSE, confirmed on an iPhone with a throwaway probe page (both fixes
+// below were verified against it before this shipped): it is NOT that we leave
+// a text field focused. The HUD has no text inputs at all, and the wizard
+// screens are torn out of the DOM (`RideModal` calls `replaceChildren()`)
+// before the HUD comes up. What survives is the UNDO STACK. WebKit keeps one
+// undo queue per web view — shared across every text field, and not cleared
+// when a field is blurred or tabbed out of (that is what makes ⌘Z keep
+// working after you leave one). We never navigate: the whole app is one
+// document for the life of the session. So the handful of characters a rider
+// types into the plate field / sign-in code / destination search before they
+// start rolling leaves undo entries sitting in that queue, and iOS offers to
+// undo them on every bump in the road, long after the field itself is gone.
 //
 // There is no web API to turn the gesture off (`applicationSupportsShakeToEdit`
 // is UIKit-only, and we are a PWA, not a native shell), and Settings →
 // Accessibility → Touch → Shake to Undo is the rider's switch, not ours. What
 // we CAN control is whether there is ever anything in the queue to undo:
 //
-//   1. PREVENTION (`installUndoFreeTyping` + `markUndoFree`) — the real fix.
-//      WebKit only registers an undo entry for an edit IT performs. A value
-//      written by script (`field.value = …`) registers nothing; this is
-//      already why the landscape keypad in `ride-keypad.ts` never provokes the
-//      alert. So on the ride flow's text fields we cancel `beforeinput` and
-//      apply the same edit ourselves. The rider still gets the native
-//      keyboard and types normally — the edit just never enters the undo
-//      queue. The trade is that ⌘Z/shake no longer undoes typing in those
-//      fields, which is exactly what we want here.
+//   1. PREVENTION (`installUndoFreeTyping` + `markUndoFree`) — the fix that
+//      rests on documented behaviour. WebKit only registers an undo entry for
+//      an edit IT performs. A value written by script (`field.value = …`)
+//      registers nothing; this is already why the landscape keypad in
+//      `ride-keypad.ts` never provoked the alert. So on the ride flow's text
+//      fields we cancel `beforeinput` and apply the same edit ourselves. The
+//      rider still gets the native keyboard and types normally — the edit just
+//      never enters the undo queue. The trade is that ⌘Z/shake no longer undoes
+//      typing in those fields, which is exactly what we want here. Probed: a
+//      field typed into this way draws no alert, focused or blurred.
 //
-//   2. CLEARING (`dropNativeUndoHistory`) — belt to prevention's braces, run
-//      when the HUD goes live. Anything typed before the guard was installed,
-//      or via an edit we deliberately left to WebKit (see `planEdit`'s bail
-//      cases), is already in the queue and cannot be popped from script.
-//      Tearing down a subframe makes WebKit clear the page's edit commands,
-//      which empties it. This one leans on WebKit internals rather than a
-//      spec, so it is strictly best-effort and wrapped accordingly.
+//   2. CLEARING (`dropNativeUndoHistory`), run when the HUD goes live.
+//      Anything typed before the guard was installed, or via an edit we
+//      deliberately left to WebKit (see `planEdit`'s bail cases), or in a
+//      field nowhere near ride mode — the area-filter search, an address in
+//      Account, a report description — is already in the queue and cannot be
+//      popped from script. Tearing down a subframe makes WebKit clear the
+//      page's registered edit commands, which empties it. Probed: an alert
+//      armed by ordinary typing stops firing after this runs. It leans on
+//      WebKit internals rather than a spec, so it stays wrapped and
+//      failure-tolerant — but it is what makes the fix hold for typing the
+//      ride flow never sees, which is why those other fields are left
+//      unguarded and keep their autocorrect.
 //
 // Deliberately not UA-gated. The behaviour is harmless everywhere else (a
 // plate field does not need an undo history on any platform), and a
@@ -340,8 +346,8 @@ function isTextField(node: EventTarget | null): node is TextField {
   return false;
 }
 
-/** Best-effort emptying of WebKit's undo queue, plus the obvious hygiene of
- *  not leaving a field focused when the HUD takes the screen.
+/** Empty WebKit's undo queue, and drop focus while we are at it — the HUD is
+ *  taking the screen and nothing behind it should still be editable.
  *
  *  The queue itself is unreachable from script — there is no API to pop it,
  *  and draining it with `execCommand("undo")` would only refill the redo side
@@ -349,10 +355,11 @@ function isTextField(node: EventTarget | null): node is TextField {
  *  going away: WebKit clears the page's registered edit commands when a
  *  frame's editor is torn down. So we mount a throwaway subframe and drop it.
  *
- *  Unverified against a device from here, cheap enough to be worth trying
- *  anyway, and entirely contained: if WebKit ever stops behaving this way,
- *  the cost is one empty iframe that lived for a frame or two. Prevention
- *  above is what the fix actually rests on. */
+ *  Confirmed on-device (an armed "Undo Typing" alert stops firing after this
+ *  runs), but it rests on WebKit internals rather than anything specified, so
+ *  every step stays guarded: if a future iOS stops behaving this way the cost
+ *  is one empty iframe that lived for a frame or two, and the marked fields
+ *  still keep the ride flow's own typing out of the queue. */
 export function dropNativeUndoHistory(): void {
   try {
     const active = document.activeElement;
