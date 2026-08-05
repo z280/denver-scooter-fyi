@@ -42,6 +42,7 @@ import {
 } from "./ride-modal.ts";
 import type { Locate } from "./locate.ts";
 import { isAuthenticated } from "./map-auth.js";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import {
   loadAuthConfig as defaultLoadAuthConfig,
   type AuthConfig,
@@ -336,6 +337,10 @@ function buildEmailDoor(container: HTMLElement, onSignedIn: () => void): void {
   emailInput.placeholder = "you@email.com";
   emailInput.autocomplete = "email";
   emailInput.setAttribute("aria-label", "Email address");
+  // Both sign-in fields keep their edits out of WebKit's undo queue: a rider
+  // who signs in mid-wizard would otherwise carry an "Undo Typing" prompt
+  // into the ride on every bump (ios-shake-undo.ts).
+  markUndoFree(emailInput);
   const emailSubmit = el("button", "login-btn", "Email me a sign-in code");
   emailSubmit.type = "submit";
   const linkBtn = el(
@@ -364,6 +369,7 @@ function buildEmailDoor(container: HTMLElement, onSignedIn: () => void): void {
   codeInput.maxLength = 9; // AA000AA (7) plus a stray space/hyphen or two
   codeInput.placeholder = "AB123XY";
   codeInput.setAttribute("aria-label", "Sign-in code");
+  markUndoFree(codeInput);
   const codeSubmit = el("button", "login-btn", "Verify code");
   codeSubmit.type = "submit";
   const codeStatus = el("p", "account-magic-status");

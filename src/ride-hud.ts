@@ -33,6 +33,7 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
+import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
 // `handOffTrackedRideEnd` below). `EndRideIn` stays imported for
@@ -422,6 +423,7 @@ export class RideHud {
 
   private setState(state: HudState): void {
     const wasHidden = this.state === "hidden";
+    const wasRiding = this.state === "riding";
     this.state = state;
     this.root.hidden = state === "hidden";
     // Only the riding state is a transparent frame over the live map; the
@@ -435,6 +437,12 @@ export class RideHud {
     this.deviceCtl.setRideActive(riding);
     if (!riding) this.deviceCtl.setRideModelFilter(null);
     if (state === "armed") this.renderArmed();
+    // Crossing into the riding view is the last quiet moment before the deck
+    // starts shaking: drop focus and take our one shot at emptying WebKit's
+    // undo queue, so an "Undo Typing" alert can't ride along (see
+    // ios-shake-undo.ts — the wizard's fields avoid filling it in the first
+    // place; this catches anything typed before that guard applied).
+    if (riding && !wasRiding) dropNativeUndoHistory();
     if (state === "hidden" && !wasHidden) this.onHidden?.();
   }
 

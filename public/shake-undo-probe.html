@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Shake-to-undo probe</title>
+    <style>
+      :root { color-scheme: light dark; font: 16px/1.45 -apple-system, system-ui, sans-serif; }
+      body { margin: 0; padding: 1rem 1rem 4rem; max-width: 40rem; }
+      h1 { font-size: 1.2rem; }
+      section { border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+                border-radius: .6rem; padding: .8rem; margin: 0 0 1rem; }
+      h2 { font-size: 1rem; margin: 0 0 .4rem; }
+      p { margin: .4rem 0; }
+      input { font-size: 1rem; padding: .5rem; width: 100%; box-sizing: border-box; }
+      button { font-size: 1rem; padding: .55rem .9rem; margin-top: .5rem; }
+      .verdict { font-weight: 600; }
+      ol { padding-left: 1.2rem; }
+    </style>
+  </head>
+  <body>
+    <h1>iOS shake-to-undo probe</h1>
+    <p>
+      Open this on the iPhone that gets the alerts, with
+      <em>Settings → Accessibility → Touch → Shake to Undo</em> <strong>on</strong>.
+      Shake means a firm wrist flick, twice. Work down the sections in order and
+      note which ones produce “Undo Typing”.
+    </p>
+
+    <section>
+      <h2>0. Baseline — nothing typed</h2>
+      <p>Shake now, having touched nothing on this page.</p>
+      <p class="verdict">Expected: no alert. If you get one, the undo queue survives page loads and none of the app-side fixes can help.</p>
+    </section>
+
+    <section>
+      <h2>1. Native typing, field still focused</h2>
+      <input id="native" type="text" inputmode="numeric" placeholder="type a few digits" />
+      <p>Type 3–4 digits, then shake without dismissing the keyboard.</p>
+      <p class="verdict">Expected: “Undo Typing”. This is the ordinary case.</p>
+    </section>
+
+    <section>
+      <h2>2. Native typing, blurred and removed</h2>
+      <div id="slot2"></div>
+      <button id="teardown">Blur + delete that field</button>
+      <p>
+        Type into the field above, tap the button (which blurs it and removes it
+        from the DOM, exactly like the wizard tearing down a screen), then shake.
+      </p>
+      <p class="verdict">
+        The key question. An alert here confirms the diagnosis: the undo queue is
+        page-wide and outlives the field, which is why the HUD gets alerts with no
+        text input anywhere on screen.
+      </p>
+    </section>
+
+    <section>
+      <h2>3. Script-applied typing (the fix)</h2>
+      <input id="guarded" type="text" inputmode="numeric" placeholder="type a few digits" />
+      <p>
+        Same keyboard, but every keystroke is applied by script with
+        <code>beforeinput</code> cancelled — the shipped guard. Type, then shake
+        (focused and after blurring).
+      </p>
+      <p class="verdict">Expected: no alert. If you get one, prevention is not enough on this iOS version.</p>
+    </section>
+
+    <section>
+      <h2>4. Subframe teardown (the best-effort clear)</h2>
+      <button id="clear">Clear undo history</button>
+      <p>
+        Redo section 1 or 2 to arm an alert, confirm you get one, then tap this and
+        shake again. It mounts a throwaway iframe and drops it, which should make
+        WebKit discard the page’s registered edit commands.
+      </p>
+      <p class="verdict">
+        No alert after tapping = the clear works and is worth keeping. Alert
+        anyway = drop <code>dropNativeUndoHistory</code>’s iframe half; prevention
+        is doing all the work.
+      </p>
+    </section>
+
+    <script type="module">
+      // Section 2: a field we can tear down on demand.
+      const slot2 = document.getElementById("slot2");
+      const spawn = () => {
+        const f = document.createElement("input");
+        f.type = "text";
+        f.inputMode = "numeric";
+        f.placeholder = "type a few digits";
+        slot2.replaceChildren(f);
+        return f;
+      };
+      let victim = spawn();
+      document.getElementById("teardown").addEventListener("click", () => {
+        victim.blur();
+        victim.remove();
+        setTimeout(() => { victim = spawn(); }, 1500);
+      });
+
+      // Section 3: the shipped guard, inlined so the probe stays standalone.
+      // Keep in sync with src/ios-shake-undo.ts if that grows cases.
+      const guarded = document.getElementById("guarded");
+      guarded.addEventListener("beforeinput", (e) => {
+        if (e.isComposing || !e.cancelable) return;
+        const start = guarded.selectionStart ?? 0;
+        const end = guarded.selectionEnd ?? start;
+        const v = guarded.value;
+        let next = null;
+        let caret = start;
+        if (e.inputType === "insertText" && e.data !== null) {
+          next = v.slice(0, start) + e.data + v.slice(end);
+          caret = start + e.data.length;
+        } else if (e.inputType === "deleteContentBackward") {
+          if (start !== end) { next = v.slice(0, start) + v.slice(end); caret = start; }
+          else if (start > 0) { next = v.slice(0, start - 1) + v.slice(start); caret = start - 1; }
+        }
+        if (next === null) return;
+        e.preventDefault();
+        guarded.value = next;
+        guarded.setSelectionRange(caret, caret);
+      });
+
+      // Section 4: the best-effort clear.
+      document.getElementById("clear").addEventListener("click", () => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
+        const frame = document.createElement("iframe");
+        frame.src = "about:blank";
+        frame.style.cssText = "position:absolute;left:-9999px;width:0;height:0;border:0";
+        document.body.append(frame);
+        requestAnimationFrame(() => frame.remove());
+      });
+    </script>
+  </body>
+</html>

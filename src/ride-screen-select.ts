@@ -61,6 +61,7 @@ import {
   type RideKeypadHandle,
 } from "./ride-keypad.ts";
 import { isAuthenticated } from "./map-auth.js";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import {
   listRideUsuals as defaultListRideUsuals,
   type DeviceProperties,
@@ -404,6 +405,12 @@ function buildSelectScreen(
   plateInput.placeholder = "1234567";
   plateInput.setAttribute("aria-label", "Plate number, from the scooter's deck");
   applyNativeNumericInput(plateInput, { maxLength: 10 });
+  // Typed here, shaken loose for the rest of the ride: a plate typed on the
+  // native portrait keyboard leaves entries in WebKit's page-wide undo queue,
+  // and every jolt of the deck then offers to undo them over the HUD. Script
+  // -applied edits register nothing — see ios-shake-undo.ts. (The landscape
+  // keypad was already safe for the same reason.)
+  markUndoFree(plateInput);
 
   const plateWarning = el("p", "ride-option__warnings");
   plateWarning.hidden = true;

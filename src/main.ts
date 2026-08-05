@@ -100,6 +100,7 @@ import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
+import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
   setRibbonOpen,
@@ -711,6 +712,12 @@ map.on("load", async () => {
     });
   }
   wireDrawers();
+  // Ride-flow text fields apply their own edits so nothing lands in WebKit's
+  // undo queue — see ios-shake-undo.ts for why a queue left non-empty means
+  // an "Undo Typing" alert on every bump for the rest of the ride. One
+  // delegated listener, installed for the life of the page: the wizard
+  // rebuilds its screens constantly, and marked fields opt in as they mount.
+  installUndoFreeTyping(document);
   const areaFilter = wireAreaFilter();
   applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
   wireModes();

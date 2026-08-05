@@ -37,6 +37,7 @@ import {
   type RideScreenContext,
 } from "./ride-modal.ts";
 import type { LngLat, Locate } from "./locate.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import type { GeocodeKind, GeocodeResult } from "./api.ts";
 import type { RideSessionDest, RideSessionStore } from "./ride-session.ts";
 import {
@@ -214,6 +215,11 @@ function buildDestScreen(
   input.autocapitalize = "off";
   input.spellcheck = false;
   input.setAttribute("aria-label", "Destination address");
+  // Longest bout of typing anywhere in the wizard, and it happens moments
+  // before the rider starts rolling — exactly the undo entries that would
+  // haunt the HUD. Autocorrect is already off here, so nothing is lost by
+  // applying the edits ourselves (ios-shake-undo.ts).
+  markUndoFree(input);
 
   const statusEl = el("p", "ride-modal__hint");
   statusEl.setAttribute("role", "status");
