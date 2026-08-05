@@ -41,7 +41,7 @@ const PROFILE: Profile = {
   phone_number: "+13035550123",
   phone_verified: true,
   sms_opted_out: false,
-  public_username: "brave🦉owl",
+  public_username: "Brave 🦉",
   show_public_username: true,
   show_in_leaderboards: false,
   rate_plan: "resident",
@@ -52,7 +52,7 @@ const PROFILE: Profile = {
   work_lat: null,
   work_lng: null,
   royalty_title: "Queen",
-  display_name: "Queen brave🦉owl",
+  display_name: "Queen Brave 🦉",
   ruling_color: null,
   ruling_border_color: null,
   ruling_alpha: null,
@@ -253,6 +253,56 @@ describe("community settings disclosure", () => {
       .querySelector<HTMLButtonElement>(".community-leaderboard button")!
       .click();
     expect(clicked).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------- the username picker's two vocabularies ----------
+
+describe("username picker", () => {
+  const chooseBtn = (mounts: AccountPanelMounts) =>
+    [...mounts.community.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Choose…",
+    )!;
+  const applyBtn = (mounts: AccountPanelMounts) =>
+    [...mounts.community.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Apply",
+    )!;
+
+  /** The list reads like the name will ("Brave 🦉"); the PUT carries the
+   *  curated lowercase word the API validates against. */
+  it("lists adjectives capitalized but sends the lowercase value", async () => {
+    api.setUsername.mockResolvedValue({ public_username: "Brave 🦉" });
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    chooseBtn(mounts).click();
+    await settle();
+
+    const adjInput = mounts.community.querySelector<HTMLInputElement>(
+      'input[aria-label="Adjective"]',
+    )!;
+    adjInput.dispatchEvent(new Event("focus"));
+    const options = [
+      ...adjInput
+        .closest(".combo")!
+        .querySelectorAll<HTMLElement>(".combo__option"),
+    ].map((li) => li.textContent);
+    expect(options).toEqual(["Brave"]);
+
+    // Typing the lowercase word still matches — the filter is case-blind.
+    adjInput.value = "brave";
+    adjInput.dispatchEvent(new Event("input"));
+    expect(
+      adjInput.closest(".combo")!.querySelectorAll(".combo__option").length,
+    ).toBe(1);
+
+    applyBtn(mounts).click();
+    await settle();
+    expect(api.setUsername).toHaveBeenCalledWith({
+      adjective: "brave",
+      emoji: undefined,
+    });
   });
 });
 

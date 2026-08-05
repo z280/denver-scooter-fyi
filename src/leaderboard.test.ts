@@ -52,7 +52,7 @@ const CLAIMED_CELL: LeaderboardCell = {
   total_points: 144,
   distinct_earners: 4,
   leader: {
-    display_name: "Duke swift🦦",
+    display_name: "Duke Swift 🦦",
     points: 88,
     ruling_color: "#7c54cd",
     ruling_border_color: "#382264",
@@ -60,7 +60,7 @@ const CLAIMED_CELL: LeaderboardCell = {
   },
   runners_up: [
     {
-      display_name: "Rider2🦊",
+      display_name: "Rider2 🦊",
       points: 30,
       ruling_color: null,
       ruling_border_color: null,
@@ -110,7 +110,7 @@ describe("leaderboardMapToFeatureCollection", () => {
         [CELL_UNCLAIMED_COLORS]: {
           ...EMPTY_CELL,
           leader: {
-            display_name: "Rider2🦊",
+            display_name: "Rider2 🦊",
             points: 12,
             ruling_color: null,
             ruling_border_color: null,
@@ -208,9 +208,9 @@ describe("buildLeaderboardDetailHtml", () => {
 
   it("renders the leader, the runners-up and the cell totals", () => {
     const html = buildLeaderboardDetailHtml({ ...base, cell: CLAIMED_CELL });
-    expect(html).toContain("Duke swift🦦");
+    expect(html).toContain("Duke Swift 🦦");
     expect(html).toContain("88 pts");
-    expect(html).toContain("Rider2🦊");
+    expect(html).toContain("Rider2 🦊");
     expect(html).toContain("30 pts");
     expect(html).toContain("144 total pts");
     expect(html).toContain("4 distinct earners");

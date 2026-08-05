@@ -27,7 +27,7 @@ const TALLY: LeaderboardRegionalResponse = {
   leaders: [
     {
       rank: 1,
-      display_name: "Duke swift🦦",
+      display_name: "Duke Swift 🦦",
       points: 1312,
       ruling_color: "#7c54cd",
       ruling_border_color: "#382264",
@@ -35,7 +35,7 @@ const TALLY: LeaderboardRegionalResponse = {
     },
     {
       rank: 2,
-      display_name: "Rider2🦊",
+      display_name: "Rider2 🦊",
       points: 210,
       ruling_color: null,
       ruling_border_color: null,
@@ -56,9 +56,9 @@ const SCHEDULE: PointsScheduleResponse = {
 describe("buildRegionalTallyHtml", () => {
   it("ranks riders with their points", () => {
     const html = buildRegionalTallyHtml(TALLY);
-    expect(html).toContain("Duke swift🦦");
+    expect(html).toContain("Duke Swift 🦦");
     expect(html).toContain("1,312");
-    expect(html).toContain("Rider2🦊");
+    expect(html).toContain("Rider2 🦊");
     expect(html).toContain("210");
   });
 
@@ -236,7 +236,7 @@ describe("wireLeaderboardPanel", () => {
     await settle();
     expect(fetchRegional).toHaveBeenCalledTimes(1);
     expect(fetchSchedule).toHaveBeenCalledTimes(1);
-    expect(els.regionalBody.innerHTML).toContain("Duke swift🦦");
+    expect(els.regionalBody.innerHTML).toContain("Duke Swift 🦦");
     expect(els.scheduleBody.innerHTML).toContain("100 pts");
   });
 
@@ -284,6 +284,6 @@ describe("wireLeaderboardPanel", () => {
     handle.close();
     release(TALLY);
     await settle();
-    expect(els.regionalBody.innerHTML).not.toContain("Duke swift🦦");
+    expect(els.regionalBody.innerHTML).not.toContain("Duke Swift 🦦");
   });
 });

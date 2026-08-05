@@ -805,7 +805,14 @@ export function renderSignedInAccount(
       if (disposed) return;
       const adjCombo = makeCombo(
         "Adjective",
-        adj.adjectives.map((a) => ({ value: a, label: a })),
+        // Listed the way the name renders (capitalized) while `value`
+        // stays the curated lowercase word the API validates against.
+        // Matching is case-insensitive both ways, so typing "brave"
+        // still finds it.
+        adj.adjectives.map((a) => ({
+          value: a,
+          label: a[0].toUpperCase() + a.slice(1),
+        })),
       );
       const nounCombo = makeCombo(
         "Emoji noun",

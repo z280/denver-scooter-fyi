@@ -67,7 +67,7 @@ function territoryPayload(): LeaderboardMapResponse {
         total_points: 144,
         distinct_earners: 4,
         leader: {
-          display_name: "Duke swift🦦",
+          display_name: "Duke Swift 🦦",
           points: 88,
           ruling_color: "#7c54cd",
           ruling_border_color: "#382264",
@@ -250,7 +250,7 @@ describe("triple-click readout", () => {
     const modal = document.querySelector(".ranks-modal");
     expect(modal).not.toBeNull();
     expect(modal!.textContent).toContain(LEADERBOARD_DETAIL_TITLE);
-    expect(modal!.textContent).toContain("Duke swift🦦");
+    expect(modal!.textContent).toContain("Duke Swift 🦦");
   });
 
   it("three clicks on a ramp-metric cell open its exact value", async () => {
