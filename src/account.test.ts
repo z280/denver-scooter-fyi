@@ -5,6 +5,9 @@
 // untabbed layout still renders everything in one body — rather than
 // re-testing each editor, which the sections own.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -235,17 +238,42 @@ describe("community settings disclosure", () => {
     expect(toggle(next).getAttribute("aria-expanded")).toBe("false");
   });
 
+  /** The selector this link fires at, read out of `account.ts` itself. The
+   *  previous version of this test hand-built its own target
+   *  (`document.createElement("button")` with the class it expected), which
+   *  meant it kept passing after the real element was deleted from
+   *  `index.html` — `?.click()` swallows a miss, so the link silently did
+   *  nothing and nothing failed. Reading the selector from the source and
+   *  resolving it against the real markup is what actually holds the two
+   *  files together. Same `process.cwd()` idiom, and same reason, as
+   *  `ride-screen-start.test.ts`'s source-contract test. */
+  function leaderboardLinkSelector(): string {
+    const src = readFileSync(join(process.cwd(), "src", "account.ts"), "utf8");
+    const m = src.match(
+      /buildLeaderboardLink[\s\S]*?querySelector<HTMLElement>\(\s*['"`](.+?)['"`]\s*\)/,
+    );
+    if (!m) {
+      throw new Error(
+        "couldn't find buildLeaderboardLink's querySelector — did it change shape?",
+      );
+    }
+    return m[1];
+  }
+
   it("links to the leaderboard rather than embedding it", async () => {
     const mounts = makeMounts();
     renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
     await settle();
 
+    const selector = leaderboardLinkSelector();
     const trigger = document.createElement("button");
-    trigger.className = "leaderboard-toggle";
-    const bar = document.createElement("div");
-    bar.className = "topbar__right";
-    bar.append(trigger);
-    document.body.append(bar);
+    // Build the target FROM the selector the code actually uses, so a
+    // renamed target can't be papered over by a hand-written stand-in.
+    const m = /^\.drawer-tab\[data-drawer="(.+)"\]$/.exec(selector);
+    expect(m, `unexpected link target shape: ${selector}`).toBeTruthy();
+    trigger.className = "drawer-tab";
+    trigger.dataset.drawer = m![1];
+    document.body.append(trigger);
     const clicked = vi.fn();
     trigger.addEventListener("click", clicked);
 
@@ -253,6 +281,33 @@ describe("community settings disclosure", () => {
       .querySelector<HTMLButtonElement>(".community-leaderboard button")!
       .click();
     expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals the tab strip before clicking, so the drawer has a visible origin", async () => {
+    // A synthetic click lands on a hidden tab just fine, so on a collapsed
+    // ribbon this would otherwise open a drawer out of nowhere — the same
+    // reason main.ts's setDrawer() opens the ribbon before clicking a tab.
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    document.body.classList.remove("ribbon-open");
+    mounts.community
+      .querySelector<HTMLButtonElement>(".community-leaderboard button")!
+      .click();
+    expect(document.body.classList.contains("ribbon-open")).toBe(true);
+  });
+
+  it("points at a tab that actually exists in index.html", () => {
+    // The bug the fabricated-target version of the test above could never
+    // catch: the link kept pointing at `.topbar__right .leaderboard-toggle`
+    // after that button was deleted with the old leaderboard map mode.
+    const html = readFileSync(join(process.cwd(), "index.html"), "utf8");
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(
+      doc.querySelector(leaderboardLinkSelector()),
+      `account.ts's leaderboard link targets "${leaderboardLinkSelector()}", which matches nothing in index.html`,
+    ).not.toBeNull();
   });
 });
 
