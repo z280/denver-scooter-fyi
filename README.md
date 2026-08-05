@@ -280,6 +280,22 @@ src/
                    the three-status vocabulary, and reading the map
                    payload's device_features object
   overlays.ts      boundary layers, choropleth, neighborhood highlight
+  hexdensity.ts    the Areas drawer's H3 hexagon shading: six live per-cell
+                   metrics off one aggregates fetch, plus Territory Control
+                   (who leads each hexagon), which is pinned to r8 because
+                   that is the only resolution the area-leader report exists
+                   at. Triple-click any shaded hexagon for its cell id and
+                   exact value
+  leaderboard.ts   the pure half of territory control — payload to GeoJSON,
+                   the cell-detail panel, and the one fill opacity every
+                   claimed hexagon renders at (it is deliberately NOT a
+                   per-rider setting; see the constant's comment)
+  leaderboard-panel.ts  the Leaderboard menu drawer: the Show Territory
+                   Control switch, the live regional tally, and the points
+                   ledger read from the API so the copy cannot promise a
+                   number the server does not pay
+  triple-click.ts  the "three clicks means tell me exactly what this is" map
+                   gesture, on its own so the timing is testable
   compliance.ts    daily SLA gauge
   freshness.ts     "as of …" footer
   main.ts          wiring: load, controls, 90s refresh loop

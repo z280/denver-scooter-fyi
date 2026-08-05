@@ -1416,10 +1416,14 @@ export interface LeaderboardEntry {
   display_name: string;
   points: number;
   /** Null when the account hasn't claimed colors. The API never invents a
-   *  default — neutral fills are the frontend's decision — and `ruling_alpha`
-   *  is nulled alongside the pair. */
+   *  default — neutral fills are the frontend's decision. */
   ruling_color: string | null;
   ruling_border_color: string | null;
+  /** Still on the wire, and deliberately UNREAD by this client: territory
+   *  fills render at `leaderboard.ts`'s single `TERRITORY_FILL_OPACITY`, so
+   *  every hexagon on the map is equally legible regardless of what any one
+   *  rider once picked. The field stays typed because the API still sends
+   *  it; nothing here should start honoring it again. */
   ruling_alpha: number | null;
 }
 
@@ -1450,6 +1454,37 @@ export function fetchLeaderboardMap(
   signal?: AbortSignal,
 ): Promise<LeaderboardMapResponse> {
   return getJSON<LeaderboardMapResponse>("/api/v1/leaderboard/map", signal);
+}
+
+/** One row of the whole-region ranking. `rank` is display position among
+ *  eligible entries (opted-out riders are dropped, not left as gaps), so it
+ *  is always contiguous from 1. */
+export interface LeaderboardRegionalEntry extends LeaderboardEntry {
+  rank: number;
+}
+
+export interface LeaderboardRegionalResponse {
+  computed_at: string;
+  window_start: string;
+  window_end: string;
+  /** At most 25, and often fewer — the API caps eligible entries, not raw
+   *  ones. Empty on a database with no points in the window. */
+  leaders: LeaderboardRegionalEntry[];
+}
+
+/** `GET /leaderboard/regional/live` — the ledger aggregated at request time,
+ *  NOT the nightly `regional_leaders` snapshot its `/regional` sibling reads.
+ *  That's the whole point of the panel's "(live)" label: points earned today
+ *  are in this payload, and unlike `/regional` it never 503s before the first
+ *  recompute. `Cache-Control: max-age=30` keeps a burst of opens to one
+ *  aggregate. */
+export function fetchLeaderboardRegionalLive(
+  signal?: AbortSignal,
+): Promise<LeaderboardRegionalResponse> {
+  return getJSON<LeaderboardRegionalResponse>(
+    "/api/v1/leaderboard/regional/live",
+    signal,
+  );
 }
 
 // --- Ride Usuals (Screen 2.5) --------------------------------------------

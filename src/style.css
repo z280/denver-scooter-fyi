@@ -594,6 +594,10 @@ body:not(.ribbon-open) .drawer-tabs {
   flex: 1 1 0;
   min-width: 0;
 }
+.seg-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
 .seg-btn.is-active {
   background: var(--bg-elev);
   color: var(--fg);
@@ -601,6 +605,18 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 .hexbin-metric-row {
   margin-top: 10px;
+}
+.hexbin-size-locked {
+  margin-top: 6px;
+  font-style: italic;
+}
+/* Territory control's legend is prose, not a ramp — the colors are the
+   riders' own, so there is no scale to label. */
+.legend__note {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+  margin: 0 0 4px;
 }
 
 /* ---------- Battery quartile filter ---------- */
@@ -1821,16 +1837,6 @@ body.is-map-picking .drawer--right {
   align-items: center;
   gap: 10px;
   margin: 10px 0;
-}
-.alpha-row input[type="range"] {
-  flex: 1;
-  min-width: 0;
-}
-.alpha-row__value {
-  font-size: 12.5px;
-  color: var(--fg-muted);
-  min-width: 4ch;
-  text-align: right;
 }
 .badge-row {
   display: flex;
@@ -4244,11 +4250,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   background: var(--accent-soft);
   color: var(--fg);
 }
-/* ---------- leaderboard.ts: 🏆 topbar toggle + cell detail panel ---------- */
-.leaderboard-toggle[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
+/* ---------- leaderboard.ts: 🏆 territory cell detail panel ---------- */
 .leaderboard-detail__leader {
   display: flex;
   align-items: center;
@@ -4304,6 +4306,184 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   color: var(--fg-muted);
   margin: 0 0 10px;
 }
+/* ---------- hexdensity.ts: triple-click cell readout ---------- */
+.hex-inspect__cell {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 0 0 10px;
+}
+.hex-inspect__cell code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  /* The 15-character H3 id must never push the modal wide on a phone. */
+  word-break: break-all;
+}
+.hex-inspect__rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.hex-inspect__rows dt {
+  color: var(--fg-muted);
+}
+.hex-inspect__rows dd {
+  margin: 0;
+  color: var(--fg);
+}
+
+/* ---------- Leaderboard drawer ---------- */
+/* Native <details>, so the accordions keep their keyboard behavior and open
+   state for free. */
+.accordion {
+  border-top: 1px solid var(--border);
+}
+.accordion:last-child {
+  border-bottom: 1px solid var(--border);
+}
+.accordion__summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 11px 22px 11px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  position: relative;
+  user-select: none;
+}
+.accordion__summary::-webkit-details-marker {
+  display: none;
+}
+/* Chevron, rotated by the open state — drawn here rather than shipped as the
+   platform marker so it matches the rest of the drawer's line art. */
+.accordion__summary::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--fg-muted);
+  border-bottom: 2px solid var(--fg-muted);
+  transform: translateY(-70%) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.accordion[open] > .accordion__summary::after {
+  transform: translateY(-25%) rotate(225deg);
+}
+.accordion__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.accordion__body {
+  padding: 0 0 14px;
+}
+
+.leaderboard-panel__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.leaderboard-panel__row {
+  display: grid;
+  grid-template-columns: 2.4ch 18px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 2px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.leaderboard-panel__row:nth-child(odd) {
+  background: var(--bg-elev);
+}
+.leaderboard-panel__rank {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.leaderboard-panel__swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+}
+/* A rider who hasn't claimed colors — outline only, the same "held but
+   uncolored" reading the map gives their hexagons. */
+.leaderboard-panel__swatch--none {
+  border-color: var(--border);
+  background: transparent;
+}
+.leaderboard-panel__name {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leaderboard-panel__points {
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.leaderboard-panel__meta,
+.leaderboard-panel__empty {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 10px 0 0;
+}
+.leaderboard-panel__empty {
+  margin: 4px 0;
+}
+.leaderboard-about p {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 10px;
+}
+.leaderboard-about p:last-child {
+  margin-bottom: 0;
+}
+.leaderboard-about strong {
+  color: var(--fg);
+}
+
+.ledger__group + .ledger__group {
+  margin-top: 14px;
+}
+.ledger__title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin: 0 0 5px;
+}
+.ledger__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.ledger__pts {
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- ride-settings.ts: Screen 2 "Ride Mode Options" panel ---------- */
 .ride-settings {
   display: flex;

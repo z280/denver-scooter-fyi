@@ -227,11 +227,6 @@ export class Devices {
    *  (everything, incl. unrecognized hardware); a set restricts to those
    *  models; an empty set shows none. */
   private rideModelFilter: ReadonlySet<ModelKey> | null = null;
-  /** 🏆 Leaderboard view hide. Independent of `rideModelFilter` — both are
-   *  separate hide reasons that force `filtered()` to `[]`; neither clears
-   *  the other, so closing the leaderboard mid-ride can't un-hide the ride
-   *  HUD's scooters, and ending a ride can't un-hide the leaderboard. */
-  private leaderboardActive = false;
   /** In-flight long-press on a device during a ride (null between presses). */
   private ridePress:
     | { props: PopupProps; coords: [number, number]; longFired: boolean }
@@ -1839,18 +1834,6 @@ export class Devices {
     this.apply();
   }
 
-  /** 🏆 Leaderboard view open/close. On: zero devices — markers *and*
-   *  clusters vanish through the same `filtered()`/`apply()`/`setData` path
-   *  every other hide reason uses — plus the hover tooltip, so nothing
-   *  floats over the choropleth. Off: `apply()` re-derives visibility from
-   *  whatever other filters (including a ride-mode `rideModelFilter`) are
-   *  still in effect — this flag never touches them. */
-  setLeaderboardActive(on: boolean): void {
-    this.leaderboardActive = on;
-    if (on) hideMapTooltip();
-    this.apply();
-  }
-
   /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
    *  space and only draws it (via the hover overlay) under the pointer. */
   setGaugeDisplay(mode: GaugeDisplay): void {
@@ -1938,10 +1921,6 @@ export class Devices {
 
   private filtered(): DevicesResponse["features"] {
     if (!this.all) return [];
-    // 🏆 Leaderboard view: zero devices while open, independent of every
-    // other filter below (composes with, rather than fights, the ride
-    // HUD's own empty-set `rideModelFilter` hide — see the field comment).
-    if (this.leaderboardActive) return [];
     let feats = this.all.features;
     if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
       feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
