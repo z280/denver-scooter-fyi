@@ -1,110 +1,30 @@
-// 🏆 Leaderboard view (frontend plan `docs/PLAN_RIDE_MODE_FRONTEND.md`,
-// "Leaderboard view" section; master plan Part 0's "owner addition, rough
-// bang out" and §1.2 Decision 5). A choropleth of H3 r8 cells colored by
-// each cell's leading account's ruling colors, opened from a 🏆 topbar
-// button left of the profile button. Zero devices while open (via
-// `devices.ts`'s `setLeaderboardActive`); click a cell for a detail panel
-// built from the SAME `/leaderboard/map` fetch (leader + runners_up +
-// totals — no second request). Rough-cut scope, owner-approved — see the
-// frontend plan's "Independence" bullet: this module touches no
-// ride-session/track/wizard code, and its only API dependency is A4.
+// 🏆 Territory control — the pure half of the leaderboard: the
+// `/leaderboard/map` payload → GeoJSON transform, and the per-cell detail
+// panel's content.
 //
-// House pattern: a small injected-`deps` seam (mirrors `ride-screen-dest.ts`)
-// rather than importing `main.ts` state directly, so `open()`/`close()`'s
-// side effects (hiding devices, closing popups, pausing hex density/the
-// region choropleth) are unit-testable without a real MapLibre map.
+// This module used to own a whole map view of its own, opened from a 🏆
+// topbar button, which hid every device and paused hex density and the
+// region choropleth so its fills had the map to themselves. That view is
+// gone. Territory control is now one more entry in the Areas drawer's
+// "Shade by" list (`hexdensity.ts`'s `territory_control` metric), which
+// means it composes with the rest of the map the same way every other hex
+// metric does — nothing to pause, nothing to hide, one fill layer instead
+// of two. The 🏆 lives in the main menu now (`leaderboard-panel.ts`) and
+// opens a panel of rankings, not a map mode.
+//
+// What's left here is deliberately map-free and DOM-free so it stays
+// unit-testable without a MapLibre instance: `hexdensity.ts` calls
+// `leaderboardMapToFeatureCollection` to paint, and calls
+// `buildLeaderboardDetailHtml` when a triple-click asks a cell who holds
+// it.
 
-import maplibregl, {
-  type Map as MLMap,
-  type GeoJSONSource,
-} from "maplibre-gl";
-import {
-  fetchLeaderboardMap,
-  type LeaderboardCell,
-  type LeaderboardEntry,
-  type LeaderboardMapResponse,
+import type {
+  LeaderboardCell,
+  LeaderboardEntry,
+  LeaderboardMapResponse,
 } from "./api.ts";
-import { FIRST_DEVICE_LAYER, openFloatingModal } from "./devices.ts";
-import { closeAllPopups as defaultCloseAllPopups } from "./chrome.ts";
-import { isAuthenticated as defaultIsAuthenticated } from "./map-auth.js";
-import { commas, emptyFC } from "./util.ts";
+import { commas } from "./util.ts";
 import { cellToBoundary, isValidCell } from "h3-js";
-
-// ---------------------------------------------------------------------------
-// Generic "pause a live-applying control while the leaderboard is open"
-// helper. Hex density and the region choropleth both shade the map by a
-// fill, colliding with the leaderboard's own choropleth; `main.ts` already
-// keeps the two mutually exclusive with each other, so at most one of these
-// two pause instances is ever actually paused-with-a-non-null value. The
-// generic form covers both without duplicating the pause/resume/intercept
-// bookkeeping (`HexSize | null` for hex density, `BoundaryLayer | null` for
-// the region choropleth) — `main.ts` (which owns both controls' DOM and the
-// real `apply` calls) instantiates one of these per control; this lane only
-// owns the pure state machine.
-// ---------------------------------------------------------------------------
-
-/** The narrow shape `LeaderboardView` needs — just enough to pause/resume on
- *  open/close, deliberately blind to what's being paused. */
-export interface Pausable {
-  pause(): void;
-  resume(): void;
-}
-
-export interface LayerPauseHooks<T> {
-  /** Read whatever the control currently reports as "active" — used to seed
-   *  (and, defensively, re-seed at `pause()` time) the stored value, so a
-   *  pause/resume with no intervening `recordChange()` is a no-op round trip
-   *  even if the control's value moved by some path other than
-   *  `recordChange` (e.g. hex density and the choropleth turning each other
-   *  off). */
-  getActive(): T;
-  /** Push a value through to the real layer (`hexDensity.setSize` /
-   *  `overlays.setChoropleth`). May be async; the pause controller doesn't
-   *  await it — every existing call site already fires and forgets. */
-  apply(value: T): void | Promise<void>;
-}
-
-export interface LayerPause<T> extends Pausable {
-  isPaused(): boolean;
-  /** The control's own change handler calls this on every user pick.
-   *  Applies immediately when not paused (today's behavior, unchanged);
-   *  while paused, only updates the stored value — the layer call is
-   *  deferred to `resume()`, so a mid-open pick can't paint hexes under the
-   *  leaderboard fills. */
-  recordChange(value: T): void;
-  /** The value `resume()` would apply right now. Exposed mainly for tests. */
-  storedValue(): T;
-}
-
-/** Build a pause controller for one live-applying control. `offValue` is
- *  what `pause()` forces the layer to (`null` for both hex density and the
- *  choropleth — their shared "off" representation). */
-export function createLayerPause<T>(
-  hooks: LayerPauseHooks<T>,
-  offValue: T,
-): LayerPause<T> {
-  let stored = hooks.getActive();
-  let paused = false;
-  return {
-    isPaused: () => paused,
-    storedValue: () => stored,
-    pause(): void {
-      if (paused) return;
-      stored = hooks.getActive();
-      paused = true;
-      void hooks.apply(offValue);
-    },
-    resume(): void {
-      if (!paused) return;
-      paused = false;
-      void hooks.apply(stored);
-    },
-    recordChange(value: T): void {
-      stored = value;
-      if (!paused) void hooks.apply(value);
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Payload → FeatureCollection transform.
@@ -113,15 +33,26 @@ export function createLayerPause<T>(
 /** Neutral defaults are a FRONTEND decision — the API sends null colors on
  *  an unclaimed cell or an un-colored leader; it never invents a default. */
 export const LEADERBOARD_NEUTRAL_COLOR = "#8a8f98";
+
+/** THE fill opacity for every claimed territory hexagon, everywhere.
+ *
+ *  Riders used to set this themselves, per account, through a slider next
+ *  to their ruling colors (`ruling_alpha`, still on the wire). That made
+ *  the map's legibility a per-rider setting: one territory at 0.10 and its
+ *  neighbor at 1.00 read as "empty" versus "solid" rather than as two
+ *  claims of equal weight, and a rider could make their own hexes shout by
+ *  turning theirs up. A single constant is the fix — the shade of a cell
+ *  now says who holds it and nothing else. The slider is gone from the
+ *  profile and `ruling_alpha` is not read anywhere in this app. */
+export const TERRITORY_FILL_OPACITY = 0.55;
+
 const NO_LEADER_LINE_OPACITY = 0.15;
+/** A cell whose leader hasn't claimed a color pair. Not a user setting —
+ *  a distinct state, drawn as a ghost of a claim so it reads as "held, but
+ *  uncolored" rather than as a dimmer version of someone's territory. */
 const UNCLAIMED_FILL_OPACITY = 0.22;
-/** account.ts:794's documented convention: the border always renders
- *  opaque, matching the leaderboard map — regardless of `ruling_alpha`. */
+/** The border always renders opaque, regardless of the fill. */
 const OPAQUE = 1;
-/** account.ts's own fallback when `ruling_alpha` is unexpectedly absent
- *  alongside a present `ruling_color` (the API nulls them together, but a
- *  skewed/partial payload shouldn't render an invisible fill). */
-const DEFAULT_RULING_ALPHA = 0.6;
 
 export interface LeaderboardCellProperties {
   cell: string;
@@ -162,7 +93,8 @@ function cellPaint(
   return {
     hasLeader: true,
     fillColor: leader.ruling_color,
-    fillOpacity: leader.ruling_alpha ?? DEFAULT_RULING_ALPHA,
+    // Not `leader.ruling_alpha` — see TERRITORY_FILL_OPACITY.
+    fillOpacity: TERRITORY_FILL_OPACITY,
     lineColor: leader.ruling_border_color,
     lineOpacity: OPAQUE,
   };
@@ -226,7 +158,7 @@ export const LEADERBOARD_DETAIL_TITLE = "🏆 Territory rankings";
  *  `bodyHtml`. Duplicated from devices.ts's module-private helper (same
  *  behavior) rather than exported — a 6-line pure function isn't worth a
  *  second shared-file touchpoint on top of `openFloatingModal`. */
-function escapeHtml(s: unknown): string {
+export function escapeHtml(s: unknown): string {
   return String(s).replace(
     /[&<>"']/g,
     (c) =>
@@ -236,10 +168,9 @@ function escapeHtml(s: unknown): string {
   );
 }
 
-/** #rrggbb + alpha → rgba() string, matching account.ts's own swatch
- *  preview helper (~line 794) so the detail panel's leader swatch renders
- *  identically to the profile pane's. */
-function hexWithAlpha(hex: string, alpha: number): string {
+/** #rrggbb + alpha → rgba() string, so a swatch previews the same fill the
+ *  map paints. */
+export function hexWithAlpha(hex: string, alpha: number): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex);
   if (!m) return hex;
   const n = parseInt(m[1], 16);
@@ -251,10 +182,12 @@ function formatWindowDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
-function leaderSwatchHtml(entry: LeaderboardEntry): string {
+/** The rider's colors as a small square — the same fill the map paints for
+ *  their territory, so the swatch and the hexagons agree by construction. */
+export function leaderSwatchHtml(entry: LeaderboardEntry): string {
   if (!entry.ruling_color) return "";
   const border = entry.ruling_border_color ?? entry.ruling_color;
-  const bg = hexWithAlpha(entry.ruling_color, entry.ruling_alpha ?? DEFAULT_RULING_ALPHA);
+  const bg = hexWithAlpha(entry.ruling_color, TERRITORY_FILL_OPACITY);
   return `<span class="leaderboard-detail__swatch" style="background:${escapeHtml(bg)};border-color:${escapeHtml(border)}"></span>`;
 }
 
@@ -267,19 +200,24 @@ export interface LeaderboardDetailInput {
   cell: LeaderboardCell | null;
   windowStart: string;
   windowEnd: string;
-  /** Gates the "claim your colors" hint — shown only when signed in (master
-   *  Part 0 / frontend plan: "Empty cell → 'Unclaimed territory' +
-   *  (signed-in) a hint pointing at the profile ruling-colors section"). */
+  /** Gates the "claim your colors" hint — shown only when signed in. */
   signedIn: boolean;
 }
 
 /** Build the detail panel's `bodyHtml` — the three fixture cases the test
  *  suite exercises are: a claimed cell (leader + runners-up + totals), an
  *  unclaimed cell (`leader: null`), and a leader with unclaimed colors
- *  (`ruling_color: null`, folded into the leader-section render). */
-export function buildLeaderboardDetailHtml(input: LeaderboardDetailInput): string {
-  const { cell, windowStart, windowEnd, signedIn } = input;
+ *  (`ruling_color: null`, folded into the leader-section render).
+ *
+ *  The cell id is shown here for the same reason the non-territory hex
+ *  inspector shows one: a triple-click is a "tell me exactly what this
+ *  hexagon is" gesture, and the H3 id is the only stable name it has. */
+export function buildLeaderboardDetailHtml(
+  input: LeaderboardDetailInput,
+): string {
+  const { cellId, cell, windowStart, windowEnd, signedIn } = input;
   const windowLine = `Window: ${escapeHtml(formatWindowDate(windowStart))} – ${escapeHtml(formatWindowDate(windowEnd))}`;
+  const cellLine = `<p class="hex-inspect__cell">H3 cell <code>${escapeHtml(cellId)}</code></p>`;
 
   if (!cell || !cell.leader) {
     const hint = signedIn
@@ -289,6 +227,7 @@ export function buildLeaderboardDetailHtml(input: LeaderboardDetailInput): strin
       `<div class="leaderboard-detail">`,
       `<p class="leaderboard-detail__empty">🏳️ Unclaimed territory</p>`,
       hint,
+      cellLine,
       `<p class="leaderboard-detail__totals">${windowLine}</p>`,
       `</div>`,
     ].join("");
@@ -319,218 +258,8 @@ export function buildLeaderboardDetailHtml(input: LeaderboardDetailInput): strin
     `<div class="leaderboard-detail">`,
     leaderHtml,
     runnersHtml,
+    cellLine,
     `<p class="leaderboard-detail__totals">${commas(cell.total_points)} total pts · ${commas(cell.distinct_earners)} distinct earners<br>${windowLine}</p>`,
     `</div>`,
   ].join("");
-}
-
-// ---------------------------------------------------------------------------
-// The view: map layers, fetch, open/close orchestration.
-// ---------------------------------------------------------------------------
-
-const SRC = "leaderboard-map";
-const FILL = "leaderboard-fill";
-const LINE = "leaderboard-line";
-
-export interface LeaderboardDevicesLike {
-  setLeaderboardActive(on: boolean): void;
-}
-
-export interface LeaderboardDeps {
-  devices: LeaderboardDevicesLike;
-  /** Defaults to `chrome.ts`'s `closeAllPopups`; injectable for tests. */
-  closeAllPopups?: () => void;
-  /** Owned by `main.ts` (it owns the hex-density seg control) — see the
-   *  frontend plan's Leaderboard section. Absent = nothing to pause (tests,
-   *  or a future caller with no hex-density wiring yet). */
-  hexDensityPause?: Pausable;
-  /** Same, for the region choropleth's `<select>`. */
-  choroplethPause?: Pausable;
-  /** Defaults to `api.ts`'s `fetchLeaderboardMap`; injectable for tests. */
-  fetchMap?: (signal?: AbortSignal) => Promise<LeaderboardMapResponse>;
-  /** Defaults to `map-auth.js`'s `isAuthenticated`; injectable for tests. */
-  isAuthenticated?: () => boolean;
-}
-
-export class LeaderboardView {
-  private isOpen_ = false;
-  private layersReady = false;
-  private fetchController: AbortController | null = null;
-  private lastResponse: LeaderboardMapResponse | null = null;
-
-  constructor(
-    private readonly map: MLMap,
-    private readonly deps: LeaderboardDeps,
-    private readonly button: HTMLButtonElement,
-    private readonly profileButtonEl: HTMLElement,
-  ) {}
-
-  isOpen(): boolean {
-    return this.isOpen_;
-  }
-
-  toggle(): void {
-    if (this.isOpen_) this.close();
-    else this.open();
-  }
-
-  open(): void {
-    if (this.isOpen_) return;
-    this.isOpen_ = true;
-    this.button.setAttribute("aria-pressed", "true");
-    this.deps.devices.setLeaderboardActive(true);
-    (this.deps.closeAllPopups ?? defaultCloseAllPopups)();
-    this.deps.hexDensityPause?.pause();
-    this.deps.choroplethPause?.pause();
-    this.ensureLayers();
-    void this.load();
-  }
-
-  close(): void {
-    if (!this.isOpen_) return;
-    this.isOpen_ = false;
-    this.button.setAttribute("aria-pressed", "false");
-    this.fetchController?.abort();
-    this.fetchController = null;
-    this.deps.devices.setLeaderboardActive(false);
-    this.deps.hexDensityPause?.resume();
-    this.deps.choroplethPause?.resume();
-    const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
-    src?.setData(emptyFC());
-    // Close the cell-detail panel too, through its own ✕ so its Escape
-    // listener detaches (a bare .remove() would orphan it) — same
-    // discipline as chrome.ts's closeAllPopups.
-    document
-      .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
-      ?.click();
-  }
-
-  private ensureLayers(): void {
-    if (this.layersReady) return;
-    this.layersReady = true;
-    this.map.addSource(SRC, { type: "geojson", data: emptyFC() });
-    const before = this.map.getLayer(FIRST_DEVICE_LAYER)
-      ? FIRST_DEVICE_LAYER
-      : undefined;
-    this.map.addLayer(
-      {
-        id: FILL,
-        type: "fill",
-        source: SRC,
-        paint: {
-          "fill-color": ["get", "fillColor"],
-          "fill-opacity": ["get", "fillOpacity"],
-        },
-      },
-      before,
-    );
-    this.map.addLayer(
-      {
-        id: LINE,
-        type: "line",
-        source: SRC,
-        paint: {
-          "line-color": ["get", "lineColor"],
-          "line-opacity": ["get", "lineOpacity"],
-          "line-width": 1.2,
-        },
-      },
-      before,
-    );
-    this.map.on("click", FILL, (e) => this.handleClick(e));
-    this.map.on("mouseenter", FILL, () => {
-      this.map.getCanvas().style.cursor = "pointer";
-    });
-    this.map.on("mouseleave", FILL, () => {
-      this.map.getCanvas().style.cursor = "";
-    });
-  }
-
-  private async load(): Promise<void> {
-    this.fetchController?.abort();
-    const controller = new AbortController();
-    this.fetchController = controller;
-    try {
-      const fetchMap = this.deps.fetchMap ?? fetchLeaderboardMap;
-      const resp = await fetchMap(controller.signal);
-      if (this.fetchController !== controller) return; // superseded by a newer open
-      this.lastResponse = resp;
-      const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
-      src?.setData(leaderboardMapToFeatureCollection(resp));
-    } catch (e) {
-      if ((e as Error).name === "AbortError") return;
-      console.error("leaderboard map fetch failed", e);
-    }
-  }
-
-  private handleClick(e: maplibregl.MapLayerMouseEvent): void {
-    const f = e.features?.[0];
-    if (!f || !this.lastResponse) return;
-    const cellId = String((f.properties as { cell?: unknown })?.cell ?? "");
-    if (!cellId) return;
-    const cell = this.lastResponse.cells[cellId] ?? null;
-    const signedIn = (this.deps.isAuthenticated ?? defaultIsAuthenticated)();
-    const html = buildLeaderboardDetailHtml({
-      cellId,
-      cell,
-      windowStart: this.lastResponse.window_start,
-      windowEnd: this.lastResponse.window_end,
-      signedIn,
-    });
-    openFloatingModal(LEADERBOARD_DETAIL_TITLE, html, (root) => {
-      root
-        ?.querySelector<HTMLButtonElement>('[data-action="open-profile"]')
-        ?.addEventListener("click", () => {
-          document
-            .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
-            ?.click();
-          // Land on Community, where the ruling colours this panel is
-          // inviting them to claim actually live.
-          this.profileButtonEl.dataset.accountTab = "community";
-          this.profileButtonEl.click();
-        });
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Entry point.
-// ---------------------------------------------------------------------------
-
-export interface LeaderboardHandle {
-  toggle(): void;
-  open(): void;
-  close(): void;
-  isOpen(): boolean;
-}
-
-/** Wire the 🏆 topbar button + the choropleth view. Call once from
- *  `main.ts`, after `createMap()` — a plain `insertBefore`, immediately
- *  left of the profile button in `.topbar__right`; NOT the chrome.ts
- *  IControl-adoption pattern (that's for MapLibre controls stuck in the
- *  map's stacking context — the profile button is a plain topbar button,
- *  and the 🏆 is just its sibling). */
-export function wireLeaderboard(
-  map: MLMap,
-  profileButtonEl: HTMLElement,
-  deps: LeaderboardDeps,
-): LeaderboardHandle {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "topbar__btn leaderboard-toggle";
-  button.setAttribute("aria-pressed", "false");
-  button.setAttribute("aria-label", "Leaderboard");
-  button.title = "Leaderboard";
-  button.textContent = "🏆";
-  profileButtonEl.parentElement?.insertBefore(button, profileButtonEl);
-
-  const view = new LeaderboardView(map, deps, button, profileButtonEl);
-  button.addEventListener("click", () => view.toggle());
-
-  return {
-    toggle: () => view.toggle(),
-    open: () => view.open(),
-    close: () => view.close(),
-    isOpen: () => view.isOpen(),
-  };
 }

@@ -33,6 +33,7 @@ import {
 import { reverseGeocode } from "./geocode.ts";
 import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
+import { TERRITORY_FILL_OPACITY, hexWithAlpha } from "./leaderboard.ts";
 
 /** Where each group of sections mounts when the drawer is tabbed. Omitting
  *  this renders everything into one body, as the drawer did before tabs —
@@ -957,14 +958,6 @@ export function renderSignedInAccount(
 
   // ----- Ruling colors ----------------------------------------------------
 
-  /** #rrggbb + alpha → rgba() string for the fill preview (the border
-   *  always renders opaque, matching the leaderboard map). */
-  const hexWithAlpha = (hex: string, alpha: number): string => {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
-    if (!m) return hex;
-    const n = parseInt(m[1], 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-  };
 
   const buildColorsBlock = (): HTMLElement => {
     const wrap = el("div", "account-field");
@@ -979,10 +972,9 @@ export function renderSignedInAccount(
     const renderPreview = (): void => {
       const f = profile?.ruling_color;
       const b = profile?.ruling_border_color;
-      const a = profile?.ruling_alpha ?? 0.6;
       if (f && b) {
         preview.hidden = false;
-        preview.style.background = hexWithAlpha(f, a);
+        preview.style.background = hexWithAlpha(f, TERRITORY_FILL_OPACITY);
         preview.style.borderColor = b;
         editBtn.textContent = "Edit";
       } else {
@@ -1006,7 +998,7 @@ export function renderSignedInAccount(
 
     /** The claimed-pair set, with our own current claim carved out so the
      *  grids never grey the user out of the pair they already hold (e.g.
-     *  when only changing alpha). */
+     *  when only re-opening the editor). */
     const toPalette = (res: {
       ruling_colors: { hex: string; name: string }[];
       taken_pairs: { fill: string; border: string }[];
@@ -1024,7 +1016,6 @@ export function renderSignedInAccount(
       let { taken } = palette;
       let fill = profile?.ruling_color ?? null;
       let border = profile?.ruling_border_color ?? null;
-      let alpha = profile?.ruling_alpha ?? 0.6;
 
       const editor = el("div", "color-editor");
       const livePreview = el("span", "color-preview color-preview--live");
@@ -1125,15 +1116,14 @@ export function renderSignedInAccount(
       const fillGrid = makeGrid("fill");
       const borderGrid = makeGrid("border");
 
-      const alphaRow = el("div", "alpha-row");
-      const alphaInput = el("input");
-      alphaInput.type = "range";
-      alphaInput.min = "0.10";
-      alphaInput.max = "1.00";
-      alphaInput.step = "0.01";
-      alphaInput.value = String(alpha);
-      alphaInput.setAttribute("aria-label", "Fill opacity");
-      const alphaOut = el("span", "alpha-row__value");
+      // No fill-opacity slider. It used to live here, writing
+      // `ruling_alpha`, which made the map's legibility a per-rider
+      // setting: one territory at 10% next to one at 100% read as "empty"
+      // versus "solid" rather than as two equal claims, and turning yours
+      // up was a way to shout. Every territory now renders at
+      // TERRITORY_FILL_OPACITY, so a hexagon's shade says who holds it and
+      // nothing else. The preview below shows exactly that.
+      const previewRow = el("div", "alpha-row");
 
       const applyBtn = el("button", "login-btn", "Apply");
       applyBtn.type = "button";
@@ -1145,9 +1135,8 @@ export function renderSignedInAccount(
       const updateAll = (): void => {
         fillGrid.update();
         borderGrid.update();
-        alphaOut.textContent = `${Math.round(alpha * 100)}%`;
         livePreview.style.background = fill
-          ? hexWithAlpha(fill, alpha)
+          ? hexWithAlpha(fill, TERRITORY_FILL_OPACITY)
           : "transparent";
         livePreview.style.borderColor = border ?? "transparent";
         applyBtn.disabled = !(
@@ -1161,20 +1150,13 @@ export function renderSignedInAccount(
         );
       };
 
-      alphaInput.addEventListener("input", () => {
-        alpha = Number(alphaInput.value);
-        updateAll();
-      });
-
       applyBtn.addEventListener("click", () => {
         if (!fill || !border) return;
         applyBtn.disabled = true;
         colorsStatus.set("Claiming…");
-        savePatch({
-          ruling_color: fill,
-          ruling_border_color: border,
-          ruling_alpha: Math.min(1, Math.max(0.1, Number(alpha.toFixed(2)))),
-        })
+        // `ruling_alpha` is deliberately NOT sent: nothing reads it any
+        // more, and writing it would keep a dead setting looking alive.
+        savePatch({ ruling_color: fill, ruling_border_color: border })
           .then(() => {
             colorsStatus.set("Saved — this pair is yours.");
             renderPreview();
@@ -1215,8 +1197,7 @@ export function renderSignedInAccount(
       clearBtn.addEventListener("click", () => {
         clearBtn.disabled = true;
         colorsStatus.set("Releasing…");
-        // Both null together releases the claim; alpha keeps its server
-        // default for the next claim.
+        // Both null together releases the claim.
         savePatch({ ruling_color: null, ruling_border_color: null })
           .then(() => {
             colorsStatus.set("Colors cleared — the pair is released.");
@@ -1237,7 +1218,7 @@ export function renderSignedInAccount(
         closeEditor();
       });
 
-      alphaRow.append(alphaInput, alphaOut, livePreview);
+      previewRow.append(livePreview);
       const buttonRow = el("div", "account-field__row");
       buttonRow.append(applyBtn, clearBtn, cancelBtn);
       editor.append(
@@ -1245,7 +1226,7 @@ export function renderSignedInAccount(
         fillGrid.node,
         el("p", "control-label", "Border"),
         borderGrid.node,
-        alphaRow,
+        previewRow,
         buttonRow,
       );
       editorSlot.replaceChildren(editor);

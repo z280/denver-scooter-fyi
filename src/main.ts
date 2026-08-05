@@ -45,7 +45,13 @@ import { Locate } from "./locate.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityRanks } from "./equity.ts";
-import { HexDensity, type HexSize, type HexMetric } from "./hexdensity.ts";
+import {
+  HexDensity,
+  TERRITORY_HEX_SIZE,
+  TERRITORY_METRIC,
+  type HexSize,
+  type HexMetric,
+} from "./hexdensity.ts";
 import { consumePendingMagicLink } from "./auth-magic-link.ts";
 import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
@@ -110,10 +116,9 @@ import {
 } from "./chrome.ts";
 import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
 import {
-  wireLeaderboard,
-  createLayerPause,
-  type LayerPause,
-} from "./leaderboard.ts";
+  wireLeaderboardPanel,
+  type LeaderboardPanelHandle,
+} from "./leaderboard-panel.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -184,25 +189,30 @@ const rideSession: RideSessionStore = createRideSessionStore({
 });
 const overlays = new Overlays(map, need("choropleth-legend"));
 const equity = new EquityRanks(overlays, () => renderEquityMetric());
-const hexDensity = new HexDensity(map, need("hexbin-legend"));
+const hexDensity = new HexDensity(map, need("hexbin-legend"), {
+  // The territory readout's "claim your colors" hint lands on Community,
+  // where the ruling colors it's pointing at actually live.
+  openProfile: () => {
+    const btn = document.querySelector<HTMLElement>(
+      '.topbar__right .drawer-tab[data-drawer="account"]',
+    );
+    if (!btn) return;
+    btn.dataset.accountTab = "community";
+    btn.click();
+  },
+});
 // Hex density and the region choropleth both shade the map by count, so only
 // one runs at a time — turning one on clears the other. Assigned by their
 // wire functions.
 let clearChoropleth: () => void = () => {};
 let clearHexDensity: () => void = () => {};
-// 🏆 Leaderboard pause controllers for hex density / the region choropleth
-// (frontend plan's Leaderboard section). Placeholder no-ops until
-// wireHexDensity()/wireChoropleth() run and replace them with the
-// real-backed controllers — same bootstrapping shape as clearHexDensity/
-// clearChoropleth above.
-let hexDensityPause: LayerPause<HexSize | null> = createLayerPause(
-  { getActive: () => null, apply: () => {} },
-  null,
-);
-let choroplethPause: LayerPause<BoundaryLayer | null> = createLayerPause(
-  { getActive: () => null, apply: () => {} },
-  null,
-);
+// 🏆 Set Territory Control on or off from outside the Areas drawer (the
+// Leaderboard panel's switch). Assigned by wireHexDensity() — the seg
+// buttons and the metric <select> are its state, so it has to drive them
+// rather than the HexDensity instance directly, or the two controls would
+// disagree about what the map is showing.
+let setTerritoryShading: (on: boolean) => void = () => {};
+let leaderboardPanel: LeaderboardPanelHandle | null = null;
 const freshness = new Freshness(
   need("freshness"),
   need("freshness-text"),
@@ -701,24 +711,17 @@ map.on("load", async () => {
   wireRecommended();
   wireChoropleth();
   wireHexDensity();
-  // 🏆 Leaderboard: the single wireX() entry point (frontend plan's
-  // Leaderboard section). Must come after wireChoropleth()/wireHexDensity()
-  // above — that's what replaces choroplethPause/hexDensityPause from their
-  // placeholder no-ops with the real-backed controllers this needs to pause.
-  // The profile button is looked up by its stable selector (index.html gives
-  // it no id); the null-guard is defensive only — it's static markup and
-  // should always be found.
-  const profileBtn = document.querySelector<HTMLButtonElement>(
-    '.topbar__right .drawer-tab[data-drawer="account"]',
+  // 🏆 Leaderboard panel. Must come after wireHexDensity() — that's what
+  // assigns `setTerritoryShading`, which the panel's switch drives.
+  leaderboardPanel = wireLeaderboardPanel(
+    {
+      toggle: need<HTMLInputElement>("leaderboard-territory-toggle"),
+      regionalBody: need("leaderboard-regional-body"),
+      aboutBody: need("leaderboard-about-body"),
+      scheduleBody: need("leaderboard-schedule-body"),
+    },
+    { setTerritory: (on) => setTerritoryShading(on) },
   );
-  if (profileBtn) {
-    wireLeaderboard(map, profileBtn, {
-      devices,
-      closeAllPopups,
-      hexDensityPause,
-      choroplethPause,
-    });
-  }
   wireDrawers();
   // Ride-flow text fields apply their own edits so nothing lands in WebKit's
   // undo queue — see ios-shake-undo.ts for why a queue left non-empty means
@@ -1794,29 +1797,23 @@ function wireChoropleth(): void {
       select.disabled = false;
     }
   };
-  // 🏆 Leaderboard: while open, a pick here only updates the stored value —
-  // the real overlays.setChoropleth call is deferred to the leaderboard's
-  // close() (leaderboard.ts's LayerPause). Unchanged (applies immediately)
-  // when the leaderboard has never been opened.
-  choroplethPause = createLayerPause<BoundaryLayer | null>(
-    {
-      getActive: () => (select.value || null) as BoundaryLayer | null,
-      apply: applyChoropleth,
-    },
-    null,
-  );
   // Reset to Off without re-triggering the change handler's side effects.
   clearChoropleth = () => {
     if (!select.value) return;
     select.value = "";
-    choroplethPause.recordChange(null);
+    void applyChoropleth(null);
   };
   select.addEventListener("change", () => {
     const layer = (select.value || null) as BoundaryLayer | null;
     if (layer) clearHexDensity(); // mutually exclusive with hex density
-    choroplethPause.recordChange(layer);
+    void applyChoropleth(layer);
   });
 }
+
+/** What "Shade by" falls back to when Territory Control is switched off from
+ *  the Leaderboard panel — leaving the select on a metric whose data is no
+ *  longer showing would keep the size buttons locked for no visible reason. */
+const DEFAULT_HEX_METRIC: HexMetric = "device_count";
 
 function wireHexDensity(): void {
   const btns = Array.from(
@@ -1824,54 +1821,99 @@ function wireHexDensity(): void {
   );
   const metricRow = need("hexbin-metric-row");
   const metricSelect = need<HTMLSelectElement>("hexbin-metric-select");
+  const sizeLockedHint = need("hexbin-size-locked");
 
-  // 🏆 Leaderboard: see wireChoropleth()'s matching comment — same deferred-
-  // apply-while-open behavior, mirrored for the hex-density seg control.
-  hexDensityPause = createLayerPause<HexSize | null>(
-    {
-      getActive: () =>
-        (btns.find((b) => b.classList.contains("is-active"))?.dataset.hex ||
-          null) as HexSize | null,
-      apply: (size) => void hexDensity.setSize(size),
-    },
-    null,
-  );
+  const activeSize = (): HexSize | "" =>
+    (btns.find((b) => b.classList.contains("is-active"))?.dataset.hex ||
+      "") as HexSize | "";
 
-  const select = (btn: HTMLButtonElement): void => {
+  /** Territory control is computed per H3 r8 cell and nowhere else, so the
+   *  other two sizes are disabled rather than left to redraw the same
+   *  hexagons under a different label. "Off" stays live — turning the
+   *  shading off is how you get back out — and picking any other metric
+   *  unlocks everything again. */
+  const applySizeLock = (locked: boolean): void => {
     for (const b of btns) {
-      const on = b === btn;
+      const size = b.dataset.hex || "";
+      const disabled = locked && size !== "" && size !== TERRITORY_HEX_SIZE;
+      b.disabled = disabled;
+      b.classList.toggle("seg-btn--locked", disabled);
+    }
+    sizeLockedHint.hidden = !locked;
+  };
+
+  /** The single path that changes what the hexagon layer shows. Everything
+   *  — the seg buttons, the "Shade by" select, the choropleth takeover, the
+   *  Leaderboard panel's switch — routes through here, so the two controls
+   *  and the map can never disagree about the current view. */
+  const apply = (size: HexSize | "", metric: HexMetric): void => {
+    const territory = metric === TERRITORY_METRIC;
+    // Snap: there is no medium/small answer for this metric to show.
+    if (territory && size) size = TERRITORY_HEX_SIZE;
+    for (const b of btns) {
+      const on = (b.dataset.hex || "") === size;
       b.classList.toggle("is-active", on);
       b.setAttribute("aria-checked", String(on));
     }
-    const size = (btn.dataset.hex || "") as HexSize | "";
-    if (size) clearChoropleth(); // mutually exclusive with the choropleth
+    metricSelect.value = metric;
     metricRow.hidden = !size;
-    hexDensityPause.recordChange(size || null);
+    applySizeLock(territory);
+    if (size) clearChoropleth(); // mutually exclusive with the choropleth
+    void hexDensity.setView(size || null, metric);
+    leaderboardPanel?.syncTerritory(!!size && territory);
   };
-  // Reset to Off (used when the choropleth takes over).
+
+  // Reset to Off (used when the choropleth takes over). Keeps the metric
+  // pick, so turning hexagons back on shows what was showing before.
   clearHexDensity = () => {
-    const off = btns.find((b) => b.dataset.hex === "");
-    if (off && !off.classList.contains("is-active")) select(off);
+    if (activeSize()) apply("", metricSelect.value as HexMetric);
   };
+
+  // The Leaderboard panel's Show Territory Control switch. Turning it off
+  // also drops back to the default metric, which is what unlocks the size
+  // buttons.
+  setTerritoryShading = (on: boolean) => {
+    if (on) apply(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    else if (metricSelect.value === TERRITORY_METRIC) {
+      apply("", DEFAULT_HEX_METRIC);
+    }
+  };
+
+  /** Arrow-key neighbor, wrapping, skipping whatever the current metric
+   *  locked out — a disabled button must not be landable, or the roving
+   *  focus dead-ends on it. */
+  const step = (from: number, dir: 1 | -1): HTMLButtonElement | null => {
+    const n = btns.length;
+    for (let hop = 1; hop <= n; hop++) {
+      const b = btns[(((from + dir * hop) % n) + n) % n];
+      if (!b.disabled) return b;
+    }
+    return null;
+  };
+
   btns.forEach((btn, i) => {
-    btn.addEventListener("click", () => select(btn));
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      apply((btn.dataset.hex || "") as HexSize | "", metricSelect.value as HexMetric);
+    });
     btn.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = btns[(i + 1) % btns.length];
-        next.focus();
-        select(next);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = btns[(i - 1 + btns.length) % btns.length];
-        prev.focus();
-        select(prev);
-      }
+      const dir =
+        e.key === "ArrowRight" || e.key === "ArrowDown"
+          ? 1
+          : e.key === "ArrowLeft" || e.key === "ArrowUp"
+            ? -1
+            : 0;
+      if (!dir) return;
+      e.preventDefault();
+      const next = step(i, dir);
+      if (!next) return;
+      next.focus();
+      apply((next.dataset.hex || "") as HexSize | "", metricSelect.value as HexMetric);
     });
   });
 
   metricSelect.addEventListener("change", () => {
-    hexDensity.setMetric(metricSelect.value as HexMetric);
+    apply(activeSize(), metricSelect.value as HexMetric);
   });
 }
 
@@ -2261,6 +2303,11 @@ function wireDrawers(): void {
       drawer.classList.toggle("is-open", open);
       drawer.setAttribute("aria-hidden", String(!open));
     }
+    // "(live)" has to mean it: re-fetch the tally every time the panel is
+    // shown rather than once at boot, and drop the in-flight fetch when it
+    // is hidden again.
+    if (id === "leaderboard") leaderboardPanel?.open();
+    else leaderboardPanel?.close();
   };
 
   for (const tab of tabs) {

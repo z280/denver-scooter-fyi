@@ -48,10 +48,10 @@ House rules that bind every phase:
 | `ride-nav-hud.ts` | Screen 7 navigation overlay: route GeoJSON + maneuvers; center instruction card; corner arrow insignia — left press opens a step-by-step list panel on the left, right press on the right (compresses the HUD via a class on the ride root); press-and-hold (800 ms) dismisses guidance (deliberately longer than devices.ts's 450 ms `RIDE_LONGPRESS_MS` popup hold — dismissal should be harder to trigger than a peek); maneuver advance by **monotonic** shape-index progression — match the nearest shape point only within a forward window from the last matched index, never regressing, so out-and-back / self-crossing routes and a GPS jump landing across a switchback can't snap the instruction backward (the unconstrained nearest-point distance serves only the off-route test); off-route (>50 m from the line for 10 s) → re-route: a new `/route` call (≤1/min, the budget A1's `route_ip` 30/min limit explicitly reserves) from the current fix to the session doc's retained `dest`, requesting the **selected profile only** — a re-route never re-POSTs `/ride-routes` (the S4 choice pinned in `rideRouteId` stays the survey / nav-points subject; deviation is what S9's questions capture, not replacement rows). |
 | `ride-post.ts` | Screens 8–10. **S8** end summary with tax line (`Unlock $ + Per Min $ + Tax $ = Total $`, "** The Veo app is your bill **") rendered from `estimateWithTax`'s `{unlock, perMin, tax, total}` breakdown, never recomputed from raw minutes — so the equity plan (0¢ unlock, 60 free min/day) and the `_plus` plans (0¢ unlock) show honest `$0.00` components and the line stays additive-true. Buttons: **[Rush Quit]** = end now, skip everything — immediate `PATCH /end` with only the required `EndRideIn` fields (`ended_at`, last-fix `end_lat`/`end_lon`; battery/cost omitted, no §10 fields), then straight to `done`, no S9/S10; the sealed track stays in IDB, undonated (nothing uploads; contribution points forfeited). **[New Destination]** loops to Screen 3 keeping the session — no `PATCH /end`, per the state machine. **[I ended my ride in Veo]** = `PATCH /end` with the existing fields — `reported_battery_percent` and `total_cost_cents` are **rider-entered on S8** (new inputs; the legacy HUD summary is client-only and never collected either — the vision's "Note the cost and battery %" is this entry, and A2's battery ingestion reads `soc_end_percent` straight from the battery field) — plus §10 `reported_minutes`/`reported_plan`: minutes prefilled from S8's ride clock (the vision's `Ride time: __:__ (stop)` line — the clock keeps running while the rider finishes in the Veo app, and (stop) freezes the value the prefill reads) via `billableMinutes` (per-started-minute ceil) but rider-editable — §10 stores what the Veo app *reported*, deliberately never reconciled (integer, ≤1440); plan passes through `toApiRatePlan` first — the API vocabulary is `resident`/`visitor`/`equity`, so a raw `_plus` key would 422. **S9**: left pane (scooter feedback; rendered only when `RideOptions.end_survey` is on — that Screen 2 toggle exists to control exactly this pane, and A3's `ride_survey` award gates on the same option) with per-model bonus questions keyed to A3's `model_bonus` vocabulary (`cosmo_front_basket` bool / `apollo_top_speed_mph` numeric / `astro_landscape_holder` bool); right pane (navigation feedback) renders **only when the session holds a selected route** — "How was the `${selectedRoute}`?" is unanswerable without one, and the API awards `nav_route_feedback` only when `ride_route_id` resolves; with both panes gated off S9 is skipped entirely (straight to S10's own waypoint gate); [Skip] and [Submit] both proceed to S10 when waypoints exist, else `done` (the vision's "proceed if there is collected trip data to manage"). **S10** eligibility copy generated from `validation.status/reasons` — the copy table covers the full reason vocabulary (`start_mismatch`, `end_mismatch`, `tracking_not_opted`, `too_few_waypoints`, `trip_too_short`, `chain_invalid`, `internal_error`) plus the `pending_feed` status, mapped onto the owner's Part 0 sentence skeleton; `chain_invalid` is the one reason the skeleton has no phrase for and needs a new clause in the owner's voice (e.g. "your saved track failed integrity verification"). Donation = one `POST /tracked-rides/{id}/track` carrying every sealed batch from IDB — single request, no chunking: the longest points-eligible ride is the 3 h watch window, ≤~432 batches ≈ 650 KB, well inside the API's 2 MB / 600-batch caps; points display renders the response `points` array (distance-dependent points show as held while `pending_feed`); "See recent trips" is backed by the existing `GET /tracked-rides` list endpoint. |
 | `geocode-search.ts` | Thin typed client for `/geocode/search` (debounce, abort, small cache). |
-| `leaderboard.ts` | The 🏆 Leaderboard view (spec below). Depends on `GET /leaderboard/map` + existing map/theme/h3-js, plus one shared touchpoint: the new `devices.setLeaderboardActive` (see the `devices.ts` row — it exists for this lane alone, so this lane lands it) — zero coupling to ride-session/track/wizard work. |
+| `leaderboard.ts` + `leaderboard-panel.ts` | 🏆 Territory control and the Leaderboard panel (spec below). `leaderboard.ts` is the pure half — payload → FeatureCollection, cell-detail HTML, the one fill-opacity constant — and `leaderboard-panel.ts` is the main-menu drawer. Depends on `GET /leaderboard/map`, `GET /leaderboard/regional/live` and `GET /points/schedule`, plus existing map/theme/h3-js. **Superseded the original shape:** there is no 🏆 topbar button and no leaderboard map mode; the choropleth is `hexdensity.ts`'s `territory_control` metric, and `devices.setLeaderboardActive` was removed with the mode it served. |
 | `api.ts` (modified) | Typed additions: `TrackedRide`, `TrackSigning`, `RideOptions` (the wire blob type — F1's `ride-session` tests need it; `ride-settings.ts` owns defaults/rules), `startTrackedRide`, `getActiveRide`, `getTrackedRide` (GET `/{id}` — S10 reads `validation` from it, and recovery uses it to tell "ended" from "gone"), `endTrackedRide` (the `HttpMethod` union gains `"PATCH"` — today it's GET/PUT/POST/DELETE only), `donateTrack`, `postSurvey`, `postRideRoute`, `fetchRoute`, `fetchRouteProfiles`, `fetchPricing`, `fetchPointsSchedule`, `fetchLeaderboardMap` (plain `getJSON`; the ETag/304 reuse is the browser HTTP cache's — see the Leaderboard section — not new conditional-request code), geocode search, ride-usuals CRUD; shared 429 handler honoring `retryAfter` — extended to the **public** `getJSON` path too (geocode 20/min and route 30/min are IP-limited public endpoints; today only `authedFetchJSON` parses `Retry-After`). |
 | `ride-hud.ts` (modified) | Corner re-layout — a relocation, not a swap. Today `renderRiding` puts ≈cost top-left, mph top-right, the ride clock bottom-left (sharing that corner with the exit/End/wrench round buttons), speedo bottom-right; after: the **ride clock moves BL → TL with ≈cost just below it**, the bottom-left keeps only the three round buttons, and the right corners are untouched (nothing moves into BL). Wrench panel gains a clock above the adjustment buttons and a "Stop tracking" button — behind a **confirm**: it seals the final partial batch and halts `track-store` recording while the ride and HUD continue, and the confirm copy must say contribution points are effectively forfeited (the chain's last waypoint won't correlate with the GBFS end — `end_mismatch` at A2 validation, an **ineligible** verdict paying zero awards, not shrunken ones; only a stop already inside the end check's 150 m / ±10 min of the actual drop stays eligible, and then only on the tracked distance; this is *not* `tracking_not_opted`, which means save-tracks was off from the start). On ride start hide all scooters — `startRide` initializes `rideModels` **empty** instead of `ALL_MODELS` **and pushes it** (today `startRide` never calls `applyRideModels()` — all-selected ≡ null filter made that omission invisible — and `resumeRide` needs the same re-push, since leaving the riding state clears the filter to null), taking `setRideModelFilter`'s documented empty-set "show none" path, so the existing Show pills re-show models on demand — and close popups/tooltips via `chrome.ts` `closeAllPopups()`. A single shared `watchPosition` (replacing `startSensors`' private watcher; `Locate`'s `GeolocateControl` watcher stays separate) feeds both the existing `onFix` speed-EMA/follow-cam path and `track-store`. The `summary` state is replaced by a handoff to `ride-post.ts` (lands in **F4** with that module — F3 keeps the legacy summary) — for **tracked** rides only: private/guest rides keep the legacy client-only summary permanently (the master gates S8 on a Veo device, and the state machine sends private rides `riding → done`), so the handoff branches on `session.private`. |
-| `devices.ts` (modified, minimally) | `setRideActive(on)` has **no hide behavior to generalize** — today it only switches tap semantics (short tap flashes the essentials tooltip, long press opens the popup) and it stays exactly as is. Hiding is **new**, and split so the two features can't fight: the **ride** hide reuses the existing `setRideModelFilter` machinery (an empty set is the documented "show none"; the HUD passes it at ride start — zero devices.ts change); the **leaderboard** gets a new `setLeaderboardActive(on)` — an internal flag that short-circuits `filtered()` to `[]` (markers *and* clusters vanish through the same `apply()`/`setData` path) and calls `hideMapTooltip()`. Also exposes `jumpToDevice` (today `private`, ~line 1348) for the deep-link entry, and adds a read-only `allFeatures()` accessor beside `visibleFeatures()` — Screen 2's disambiguation list must ignore map display filters (see the `ride-screen-select.ts` row). |
+| `devices.ts` (modified, minimally) | `setRideActive(on)` has **no hide behavior to generalize** — today it only switches tap semantics (short tap flashes the essentials tooltip, long press opens the popup) and it stays exactly as is. Hiding is **new**, and split so the two features can't fight: the **ride** hide reuses the existing `setRideModelFilter` machinery (an empty set is the documented "show none"; the HUD passes it at ride start — zero devices.ts change); the **leaderboard** briefly got a `setLeaderboardActive(on)` flag that short-circuited `filtered()` to `[]`; it was removed along with the map mode it served, since territory control is now an ordinary hex metric that composes with the devices on top of it. Also exposes `jumpToDevice` (today `private`, ~line 1348) for the deep-link entry, and adds a read-only `allFeatures()` accessor beside `visibleFeatures()` — Screen 2's disambiguation list must ignore map display filters (see the `ride-screen-select.ts` row). |
 | `ride-cost.ts` (modified) | `estimateWithTax(plan, elapsedMs, taxRate)` → `{unlock, perMin, tax, total}`, layered on the existing `rideCostCents(plan, elapsedMs)` so the equity plan's 60-free-minutes credit keeps applying (a raw `minutes` parameter would have to re-implement — and would silently bypass — that logic); tax default baked into `config.ts`, refreshed from `/meta/pricing`. Rate plans unchanged. |
 
 `ride-wizard.ts` ("Find wheels") is untouched by this program; consolidation is a named follow-up.
@@ -148,56 +148,58 @@ Recovery on load (in `wireRideModal()`, before first render):
   instead of directly arming the HUD — behind a dev flag `localStorage "scooter-fyi-ride-modal"`
   until F3 completes, then default-on.
 
-## Leaderboard view (`leaderboard.ts`) — rough-cut scope, owner-approved
+## Territory control + the Leaderboard panel
 
-- **Topbar button**: a 🏆 `.topbar__btn` inserted immediately **left of the Person/profile
-  button** in `.topbar__right` — a plain `insertBefore`, nothing more. (The GPS/theme icons need
-  `chrome.ts`'s corner-container adoption only because they are MapLibre IControls stuck in the
-  map's stacking context; the profile button is a plain topbar button in `index.html`, and the 🏆
-  is just its sibling — do not copy the adoption machinery.) `wireLeaderboard()` from `main.ts`
-  receives the map + the profile button element to anchor insertion. Toggles the view;
-  `aria-pressed` tracks state.
-- **Open**: `devices.setLeaderboardActive(true)` — **zero devices**: markers, clusters, tooltips
-  all hidden — plus `closeAllPopups()` (`chrome.ts`) so nothing floats over the choropleth.
-  Hex density (and the region choropleth — the same fill-collision; `main.ts` already keeps the
-  two mutually exclusive, so at most one pause applies) pause while active, but `HexDensity` has
-  **no suspend surface** (its public surface is `setSize`/`setMetric`/`isActive`/`refresh`; `size`
-  is private with no getter): the pause/resume hooks live beside `wireHexDensity()` in `main.ts`,
-  whose seg control (the choropleth's `<select>` for that arm) stays the state of record — pause =
-  `setSize(null)` / `overlays.setChoropleth(null)` leaving the controls untouched, resume =
-  re-apply the control's active value (the existing `clearHexDensity`/`clearChoropleth` *reset* to
-  Off and cannot restore; the paused state is refresh-safe — `refresh()` no-ops at null size).
-  While the view is open the hooks must also intercept a rider's seg/select change — record it in
-  the control only, deferring the layer call to close — or a mid-open pick would paint hexes under
-  the leaderboard fills. Everything restored exactly on close.
-- **Choropleth**: fetch `/leaderboard/map` through plain `getJSON` on every open — "ETag-aware"
-  means the browser HTTP cache, not new code: `api.ts` has no conditional-request plumbing and
-  needs none, since the endpoint's `ETag` + `Cache-Control: public, max-age=600` serve a reopen
-  within 10 min for free and revalidate with a transparent 304 after. Build one GeoJSON
-  FeatureCollection: per cell `cellToBoundary(h3String)` — h3-js already ships, and the payload's
-  cell keys are already canonical h3 strings (`h3.int_to_str` server-side), so `hexdensity.ts`'s
-  `h3ToHex` decimal-id shim does **not** apply; flip `[lat,lng]→[lng,lat]` and close the ring,
-  copying the flip-and-close pattern at `hexdensity.ts` (~line 247). Two layers: fill = leader's `ruling_color` at `ruling_alpha`; line =
-  `ruling_border_color` at **opacity 1.0** — the documented convention at `account.ts:794` ("the
-  border always renders opaque, matching the leaderboard map"). **Neutral defaults are a frontend
-  decision** (the API sends null): no leader → no fill + hairline `#8a8f98` @ 0.15 outline; leader
-  with unclaimed colors → `#8a8f98` @ 0.22 fill + opaque `#8a8f98` border. Theme-safe as chosen.
-- **Cell click → detail**: an `openFloatingModal`-pattern panel — **export it first**: it is
-  module-private in `devices.ts` today (~line 2434), and its `bodyHtml` contract is
-  caller-escaped innerHTML, so escape every interpolated payload string — fed entirely from the
-  already-fetched
-  payload (no second request — the `runners_up` response extension exists precisely for this): a
-  **generous leader section** — composed display name incl. `royalty_title`, points, a swatch of
-  their ruling colors — then runners-up rows (name, points), then cell totals
-  (`total_points`, `distinct_earners`) and the window dates. Empty cell → "Unclaimed territory" +
-  (signed-in) a "claim your colors" hint pointing at the profile ruling-colors section.
-- **Independence**: touches no ride-session/track/wizard code; its only API dependency is phase A4.
-  Its shared-file touchpoints are two: `devices.ts` — this lane lands `setLeaderboardActive` itself
-  (per the `devices.ts` row the ride-side hide needs zero `devices.ts` change, so there is no F3
-  ordering dependency; just coordinate the small diff if another lane's `jumpToDevice` exposure is
-  in flight) — and the `main.ts` pause/resume hooks above, which reach into `wireHexDensity()`'s
-  domain beyond the one `wireLeaderboard()` line every lane gets. Scheduled inside F4 for bookkeeping but assignable the day A4 deploys — even while
-  F2/F3 are mid-flight. The ideal parallel-agent work item.
+**Revised after the rough cut shipped.** The first version was a map *mode*: a 🏆 button in
+`.topbar__right` that hid every device, paused hex density and the region choropleth, and painted
+its own choropleth. That conflated two things riders want separately — "shade the map by who holds
+what" and "show me the rankings" — and cost a `devices.setLeaderboardActive` hide plus a
+pause/resume controller for each colliding layer to keep the two fills apart. Both are gone. The
+shading is one more hex metric, so it shares the one fill layer and needs nothing paused; the
+rankings are a panel, so the map keeps working while you read them.
+
+- **Menu tab**: `Leaderboard` in `#drawer-tabs`, between Areas and Tools, with a monochrome trophy
+  in the same stroke-only line art as every other tab (`fill="none" stroke="currentColor"`). It
+  opens `#drawer-leaderboard` through the existing `wireDrawers()` machinery — no bespoke
+  open/close code, and `setActive` calls the panel's `open()`/`close()` so the live tally refetches
+  on every open.
+- **Territory control as a hex metric** (`hexdensity.ts`): `territory_control` joins the six
+  `H3CellMetrics` fields in the Areas drawer's "Shade by" select. It is the one metric that fetches
+  a different endpoint (`/leaderboard/map`) and paints per-feature rather than off a ramp — fill
+  `["get","fillColor"]`, line `["get","lineColor"]` — so `render()` branches and each branch
+  restores the paint properties the other overrode. The report exists only at r8, so picking it
+  snaps the size control to **Large** and disables Medium/Small (Off stays live); picking any other
+  metric unlocks them. `setView(size, metric)` is the single entry point both setters go through,
+  so that snap costs one fetch rather than two and never paints an empty intermediate frame.
+- **Fill opacity is a constant** (`TERRITORY_FILL_OPACITY`, 0.55). It used to be per-rider
+  (`ruling_alpha`, set by a slider beside the ruling colors), which made map legibility a personal
+  setting and let a rider make their own hexes shout. The slider is gone from the profile, the
+  field is no longer sent on save, and nothing in this app reads it. Neutral defaults are still a
+  frontend decision (the API sends null): no leader → no fill + hairline `#8a8f98` @ 0.15 outline;
+  leader with unclaimed colors → `#8a8f98` @ 0.22 fill + opaque border.
+- **Triple-click** (`triple-click.ts`): three clicks on the same cell inside 600 ms — measured
+  between consecutive clicks, so a steady-but-slow triple counts and an idle pause ends the run.
+  One click stays free (the choropleth and area filter act on it) and two are the map's zoom, which
+  is why the gesture is three. On a territory cell it opens that cell's rankings from the already
+  fetched payload (no second request — `runners_up` exists for this); on any other metric it opens
+  the H3 cell id, the metric's name, and the **exact** stored value, un-rounded, since seeing the
+  number behind a color is the whole point. The map's double-click zoom is held for one window
+  after a click lands on a hexagon and released as soon as the run finishes or lapses — narrow
+  enough that normal navigation keeps it, wide enough that the second click of a triple can't yank
+  the target away.
+- **Panel contents** (`leaderboard-panel.ts`): a **Show Territory Control** switch (a second entry
+  point to the same hex control — the panel asks `main.ts` via `setTerritory`, and `main.ts` pushes
+  state back via `syncTerritory`, so the two controls can never disagree), then three native
+  `<details>` accordions: **Total Regional Points (live)** from `GET /leaderboard/regional/live`
+  (the request-time aggregate, not the nightly `regional_leaders` snapshot — that is what "(live)"
+  buys), **What's this?**, and **Earning Points** rendered from `GET /points/schedule`. Not one
+  point value is written in the frontend: the schedule endpoint exists precisely so this copy
+  cannot promise a number the server does not pay, and an action this build has never heard of is
+  humanized and rendered rather than dropped.
+- **Cell detail**: the `openFloatingModal` panel (exported from `devices.ts`) — leader section with
+  composed display name, points and a swatch, then runners-up rows, then the cell id, totals and
+  window dates. `bodyHtml` is caller-escaped innerHTML, so every interpolated payload string is
+  escaped.
 
 ## Vitest introduction
 
@@ -322,7 +324,7 @@ out-and-back segment (the monotonic-advance case); reload mid-ride restores HUD 
 "I ended my ride in Veo" feeding §10 fields; S9 survey panes (right pane only with a selected
 route, left pane only with the end-survey option on — module map) incl. model-bonus questions
 (COSMO basket / APOLLO top speed / ASTRO landscape holder); S10 eligibility copy + donation upload
-+ points display + recent trips. **`leaderboard.ts` + topbar wiring + `devices.setLeaderboardActive`**
++ points display + recent trips. **`leaderboard.ts` + `leaderboard-panel.ts` + the `territory_control` hex metric**
 (independent lane). Profile-pane trip-data explainer page (optional follow-up, per owner).
 
 **Acceptance:** every `validation_reasons` combination — all seven reasons plus the `pending_feed`
