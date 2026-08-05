@@ -283,6 +283,21 @@ describe("community settings disclosure", () => {
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 
+  it("reveals the tab strip before clicking, so the drawer has a visible origin", async () => {
+    // A synthetic click lands on a hidden tab just fine, so on a collapsed
+    // ribbon this would otherwise open a drawer out of nowhere — the same
+    // reason main.ts's setDrawer() opens the ribbon before clicking a tab.
+    const mounts = makeMounts();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    await settle();
+
+    document.body.classList.remove("ribbon-open");
+    mounts.community
+      .querySelector<HTMLButtonElement>(".community-leaderboard button")!
+      .click();
+    expect(document.body.classList.contains("ribbon-open")).toBe(true);
+  });
+
   it("points at a tab that actually exists in index.html", () => {
     // The bug the fabricated-target version of the test above could never
     // catch: the link kept pointing at `.topbar__right .leaderboard-toggle`

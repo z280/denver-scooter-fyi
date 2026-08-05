@@ -34,6 +34,7 @@ import { reverseGeocode } from "./geocode.ts";
 import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 import { TERRITORY_FILL_OPACITY, hexWithAlpha } from "./leaderboard.ts";
+import { setRibbonOpen } from "./chrome.ts";
 
 /** Where each group of sections mounts when the drawer is tabbed. Omitting
  *  this renders everything into one body, as the drawer did before tabs —
@@ -1819,6 +1820,11 @@ export function renderSignedInAccount(
     const btn = el("button", "text-btn", "Open the leaderboard 🏆");
     btn.type = "button";
     btn.addEventListener("click", () => {
+      // Reveal the tab strip first. A synthetic click lands on a hidden tab
+      // just fine, so with the ribbon collapsed this would open a drawer
+      // with no visible origin — the same reason main.ts's own setDrawer()
+      // calls this before clicking a tab.
+      setRibbonOpen(true);
       document
         .querySelector<HTMLElement>('.drawer-tab[data-drawer="leaderboard"]')
         ?.click();
