@@ -2,6 +2,7 @@ import type { BoundaryLayer, BoundaryProperties } from "./api.ts";
 import type { Overlays } from "./overlays.ts";
 import { indexFeature, type IndexedFeature } from "./geo.ts";
 import { prettyRegion } from "./util.ts";
+import { track } from "./telemetry.ts";
 
 export interface AreaFilterElements {
   enable: HTMLInputElement; // checkbox
@@ -246,10 +247,12 @@ export class AreaFilter {
   private onOptionToggle(name: string, on: boolean): void {
     if (on) this.selected.add(name);
     else this.selected.delete(name);
+    track("area_filter", { action: "set" });
     this.recomputeAndEmit();
   }
 
   private clearSelection(): void {
+    track("area_filter", { action: "clear" });
     this.selected.clear();
     for (const cb of this.el.options.querySelectorAll<HTMLInputElement>(
       "input[type=checkbox]:checked",

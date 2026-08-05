@@ -1,3 +1,5 @@
+import { track } from "./telemetry.ts";
+
 // The Account drawer's tab shell: four tabs over four panels, and nothing
 // else. This module knows no app state — it hands out mount points and
 // reports which one is showing, so the drawer's contents can be rebuilt on
@@ -209,6 +211,7 @@ export function createAccountTabs(
       ".account-tab",
     );
     if (!btn?.dataset.tab) return;
+    track("account_tab", { tab: btn.dataset.tab });
     select(btn.dataset.tab as AccountTabId);
   };
 

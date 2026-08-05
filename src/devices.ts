@@ -66,6 +66,7 @@ import {
   supportsPhotos,
   uploadDevicePhoto,
 } from "./device-photos.ts";
+import { track } from "./telemetry.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 /** Ride posture, the primary "what am I sitting on" split. Derived from the
@@ -1193,6 +1194,33 @@ export class Devices {
       }
 
       const popupEl = this.popup.getElement();
+
+      // Telemetry: one open event per fresh popup (the plate-hydration
+      // re-render passes retry=true and is the same popup to the rider),
+      // and a delegated action listener so each button/link below stays
+      // untouched. Only recognized actions map to a bounded vocabulary.
+      if (!retry) track("popup_open");
+      const ACTION_TRACK: Record<string, string> = {
+        "use-in-ride-mode": "preflight",
+        "confirm-features": "confirm_features",
+        "take-photo": "photos",
+        "show-photos": "photos",
+        "report-model": "model_report",
+        "open-report": "parking_report",
+      };
+      popupEl?.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement | null;
+        const actEl = target?.closest<HTMLElement>("[data-action], a[href]");
+        if (!actEl) return;
+        const da = actEl.dataset.action;
+        if (da && ACTION_TRACK[da]) {
+          track("popup_action", { action: ACTION_TRACK[da] });
+        } else if (actEl.matches(".device-popup__actbtn--start[href]")) {
+          track("popup_action", { action: "unlock" });
+        } else if (actEl.matches(".device-popup__action[href]")) {
+          track("popup_action", { action: "walk_handoff" });
+        }
+      });
 
       // ---- Action-row wiring. A blocked Start or Ride Mode explains itself
       // in the hint line (mobile has no hover for the title tooltip). Both

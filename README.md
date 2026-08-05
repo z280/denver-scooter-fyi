@@ -31,15 +31,27 @@ STOP stops all of them, not only scooter.fyi — worth knowing before you send
 it. The app will tell you plainly when that has happened, and only an UNSTOP
 text undoes it.
 
-**On tracking:** the frontend loads no analytics, telemetry, ad tech, or
-third-party scripts, and `localStorage` holds only your own settings (theme,
-rate plan, equity ranks, install-prompt dismissal). Recorded ride tracks live
-in IndexedDB on your own device and are uploaded only if you choose to donate
-one; the **Local Data** tab in the Account drawer is where you can look at
-them, hand one over, or delete it. That is not the same as
-"no data is recorded": the API stores a reporter IP and user-agent on submitted
-reports, and the issuing IP and user-agent on sessions. The authoritative,
-machine-readable retention policy is `GET /api/v1/meta/privacy`.
+**On tracking:** the frontend loads no ad tech and no third-party scripts.
+The only measurement is **private, first-party analytics** we run ourselves
+([src/telemetry.ts](src/telemetry.ts) → the API's `/api/v1/telemetry/events`):
+cookieless, with **no persistent identifier of any kind** — events carry a
+per-tab session id (`sessionStorage`, dies with the tab), and daily-unique
+counting happens server-side with a salted hash whose salt is destroyed
+after two days. Event names come from a fixed allowlist; no free text,
+search queries, coordinates, ride content, or preference values are ever
+sent, and no account id is ever attached (only a signed-in yes/no flag).
+The **About** drawer has an "Allow private analytics" switch that turns the
+whole thing off for your browser (stored locally, works signed out), and
+Global Privacy Control is honored automatically. `localStorage` otherwise
+holds only your own settings (theme, rate plan, equity ranks,
+install-prompt dismissal, the analytics opt-out, and a same-day-visit date
+stamp). Recorded ride tracks live in IndexedDB on your own device and are
+uploaded only if you choose to donate one; the **Local Data** tab in the
+Account drawer is where you can look at them, hand one over, or delete it.
+That is not the same as "no data is recorded": the API stores a reporter IP
+and user-agent on submitted reports, and the issuing IP and user-agent on
+sessions. The authoritative, machine-readable retention policy is
+`GET /api/v1/meta/privacy`.
 
 - **Live site:** https://denver.scooter.fyi
 - **Data API contract:** https://github.com/z280/scooter-fyi-api/blob/main/API.md
@@ -129,6 +141,9 @@ machine-readable retention policy is `GET /api/v1/meta/privacy`.
     in…" area filter. With an area type chosen, clicking a region directly
     on the map adds or removes it from the filter.
   - **Tools** — dense-cluster finder.
+  - **About Scooter.fyi** — who runs this and why, the beta disclaimer,
+    the non-commercial and pro-consumer commitments, links to the privacy
+    policy and terms, and the "Allow private analytics" switch.
   - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
     the 30% threshold), or PENDING before the daily window is computed. Also
     hosts the **equity-rank estimate**: the city ranked equity areas 1–6 but

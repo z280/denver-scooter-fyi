@@ -21,6 +21,7 @@
 
 import { API_BASE } from "./api.ts";
 import { isSession, persistSession } from "./auth-session.ts";
+import { track } from "./telemetry.ts";
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 
@@ -105,9 +106,16 @@ async function ensureInit(
       // as third-party-cookie One Tap is deprecated.
       use_fedcm_for_prompt: true,
       callback: (response) => {
+        track("auth_start", { method: "google" });
         exchangeCredential(response.credential)
-          .then(() => handlers?.onSignedIn())
-          .catch((e) => handlers?.onError?.(e as Error));
+          .then(() => {
+            track("auth_success", { method: "google" });
+            handlers?.onSignedIn();
+          })
+          .catch((e) => {
+            track("auth_error", { method: "google", key: "exchange" });
+            handlers?.onError?.(e as Error);
+          });
       },
     });
     initialized = true;

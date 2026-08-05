@@ -9,6 +9,7 @@
 
 import type maplibregl from "maplibre-gl";
 import { setBasemapFlavor, type Flavor } from "./map.ts";
+import { track } from "./telemetry.ts";
 
 export type Theme = "light" | "dark";
 
@@ -309,9 +310,16 @@ export class ThemeControl implements maplibregl.IControl {
     btn.addEventListener("click", () => {
       // Cycle Day → Night → Auto → Day.
       const mode = this.mode();
-      if (mode === "light") setManualTheme("dark");
-      else if (mode === "dark") setSunSync(true);
-      else setManualTheme("light");
+      if (mode === "light") {
+        track("theme_change", { theme: "dark" });
+        setManualTheme("dark");
+      } else if (mode === "dark") {
+        track("theme_change", { theme: "sunsync" });
+        setSunSync(true);
+      } else {
+        track("theme_change", { theme: "light" });
+        setManualTheme("light");
+      }
     });
     container.appendChild(btn);
     this.container = container;

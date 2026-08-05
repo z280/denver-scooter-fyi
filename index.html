@@ -235,6 +235,22 @@
         </svg>
         <span class="drawer-tab__label">Compliance</span>
       </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="about"
+        aria-pressed="false"
+        aria-controls="drawer-about"
+        title="About Scooter.fyi"
+      >
+        <!-- Info circle -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4" />
+          <path d="M12 8h.01" />
+        </svg>
+        <span class="drawer-tab__label">About</span>
+      </button>
     </nav>
 
     <!-- ---------- Filters drawer (internal id "devices") ---------- -->
@@ -688,6 +704,81 @@
           <label class="switch equity-overlay-switch">
             <input type="checkbox" id="equity-selected-overlay-mirror" />
             <span>Show selected ranks on map</span>
+          </label>
+        </section>
+      </div>
+    </aside>
+
+    <!-- ---------- About drawer ---------- -->
+    <aside class="drawer" id="drawer-about" aria-labelledby="drawer-about-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-about-h">About Scooter.fyi</h2>
+        <button class="drawer-close" type="button" aria-label="Close About Scooter.fyi">&times;</button>
+      </header>
+      <div class="drawer-body drawer-body--prose">
+        <p>
+          Hey there! I'm <a href="https://zneill.com" target="_blank" rel="noopener">Zeke Neill</a>,
+          the Denverite responsible for Scooter.fyi. This project originally
+          grew out of a desire to track and monitor the contractual SLA
+          performance of our new City of Denver micromobility monopoly, Veo.
+          I set out just to collect data and watch the metrics — but between
+          the portrait-mode-only clunkiness of the Veo app (in sharp contrast
+          to the landscape phone holders on the Cosmo, Apollo, and Trike) and
+          the fact that Apollo e-bikes are just plain more fun than the other
+          options (personal opinion!), it turned out there's a lot a web app
+          can do that's complementary to the Veo app itself. So I built the
+          app I found useful, and I hope you get something out of it too. If
+          you do — or there's a feature you'd like to see — please don't
+          hesitate to reach out.
+        </p>
+
+        <h3>A few things worth knowing</h3>
+        <p>
+          <strong>This is a beta, experimental project.</strong> Features may
+          appear out of thin air, get removed, or break. Don't get too
+          invested in any data in this app.
+        </p>
+        <p>
+          <strong>I'm not making any money off this</strong> — none, and I
+          don't intend to anytime in the near future. I can't promise that as
+          a permanent policy, but we're nowhere near it even being a
+          discussion, and if this ever were to become a for-profit endeavor,
+          that change would be clearly publicized. The goal is simple: build
+          something people genuinely enjoy using. If you want to support the
+          operational costs, the best things you can do are share this app
+          with others and check out my advocacy sites,
+          <a href="https://weseeyouveo.com" target="_blank" rel="noopener">WeSeeYouVeo.com</a>
+          and
+          <a href="https://keepdenverfair.com" target="_blank" rel="noopener">KeepDenverFair.com</a>.
+        </p>
+        <p>
+          <strong>Scooter.fyi will always be pro-consumer.</strong> We won't
+          do things that hurt the people using this site. There will never be
+          any sale of data, sketchy third-party analytics, or anything else
+          that harms users — the only measurement here is private,
+          first-party, cookieless analytics we run ourselves, with no
+          third parties involved, ever, and you can switch it off right
+          below. For those of you who have created accounts: thank you for
+          your trust. I take your privacy and data security extremely
+          seriously. The governing documents are here:
+        </p>
+        <p>
+          <a href="https://data.scooter.fyi/legal/privacy-policy" target="_blank" rel="noopener">Privacy&nbsp;Policy</a>
+          ·
+          <a href="https://data.scooter.fyi/legal/terms-of-service" target="_blank" rel="noopener">Terms&nbsp;of&nbsp;Use</a>
+        </p>
+
+        <section class="control-group" id="about-analytics" aria-labelledby="about-analytics-label">
+          <h3 id="about-analytics-label" class="control-label">Private analytics</h3>
+          <p class="control-hint">
+            First-party and cookieless: no third-party scripts, no analytics
+            cookies, no persistent identifier. Turning this off stops all
+            usage-event collection for this browser; the choice is stored on
+            your device only.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="about-telemetry-toggle" checked />
+            <span>Allow private analytics</span>
           </label>
         </section>
       </div>
