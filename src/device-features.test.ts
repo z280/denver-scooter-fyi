@@ -17,10 +17,15 @@
 //  * Points copy is read from /points/schedule, with a fallback that
 //    matches src/points.py — so "+14 pts" can never promise a number the
 //    ledger doesn't pay.
+//  * The basket is asked of EVERY device, not only the models that ship
+//    with one: the Trike's cargo basket is standard and a bent one has to
+//    be reportable. One fixed question list is also what keeps "not asked"
+//    unrepresentable — `null` can only ever mean "hasn't answered yet".
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   FEATURE_POINTS_FALLBACK,
+  FEATURE_QUESTIONS,
   FEATURE_STATUS_LABEL,
   asFeatureStatus,
   describeSubmitError,
@@ -108,13 +113,35 @@ function a(over: Partial<FeatureAnswerState> = {}): FeatureAnswerState {
   return { ...emptyAnswers(), ...over };
 }
 
+describe("the question set", () => {
+  it("asks every device the same four questions", () => {
+    // One fixed list, no per-model gate: the Trike ships with a cargo
+    // basket and the Cosmo's is optional, so gating the question on the
+    // model would make a bent Trike basket unreportable.
+    expect(FEATURE_QUESTIONS.map((q) => q.key)).toEqual([
+      "bell",
+      "cup_holder",
+      "phone_holder",
+      "basket",
+    ]);
+  });
+});
+
 describe("answer state", () => {
   it("starts with nothing answered", () => {
     const empty = emptyAnswers();
     expect(empty.bell).toBeNull();
     expect(empty.cup_holder).toBeNull();
     expect(empty.phone_holder).toBeNull();
+    expect(empty.basket).toBeNull();
     expect(empty.allGood).toBeNull();
+  });
+
+  it("offers a confirmed basket to the condition follow-up", () => {
+    expect(presentFeatures(a({ bell: true, basket: true }))).toEqual([
+      "bell",
+      "basket",
+    ]);
   });
 
   it("offers only confirmed-present features to the condition follow-up", () => {
@@ -141,6 +168,7 @@ describe("readyToSubmit", () => {
     bell: true,
     cup_holder: true,
     phone_holder: true,
+    basket: true,
     allGood: true,
     plate: "1025543",
   });
@@ -150,8 +178,10 @@ describe("readyToSubmit", () => {
   });
 
   it("refuses while any presence question is unanswered", () => {
-    for (const key of ["bell", "cup_holder", "phone_holder"] as const) {
-      expect(readyToSubmit({ ...complete, [key]: null })).toBe(false);
+    // Driven off the question list, so a fifth feature is covered here the
+    // day it is added rather than the day someone remembers this test.
+    for (const q of FEATURE_QUESTIONS) {
+      expect(readyToSubmit({ ...complete, [q.key]: null })).toBe(false);
     }
   });
 
@@ -176,7 +206,7 @@ describe("readyToSubmit", () => {
     ).toBe(true);
   });
 
-  it("accepts 'not all good' on a scooter with none of the three features", () => {
+  it("accepts 'not all good' on a scooter carrying none of the four", () => {
     // There is nothing to itemise, so the follow-up is never shown — and a
     // question with no answerable options must not deadlock the button.
     expect(
@@ -185,6 +215,7 @@ describe("readyToSubmit", () => {
           bell: false,
           cup_holder: false,
           phone_holder: false,
+          basket: false,
           allGood: false,
           plate: "1025543",
         }),
@@ -209,6 +240,20 @@ describe("toRequestBody", () => {
     expect(body.has_bell).toBe(false);
     expect(body.has_cup_holder).toBe(false);
     expect(body.has_phone_holder).toBe(false);
+    expect(body.has_basket).toBe(false);
+  });
+
+  it("sends the basket answer for every device", () => {
+    expect(toRequestBody(a({ basket: true })).has_basket).toBe(true);
+    expect(toRequestBody(a({ basket: false })).has_basket).toBe(false);
+  });
+
+  it("itemises a basket as needing work", () => {
+    const body = toRequestBody(
+      a({ basket: true, allGood: false, poor: ["basket"] }),
+    );
+    expect(body.all_good_condition).toBe(false);
+    expect(body.poor_condition).toEqual(["basket"]);
   });
 
   it("derives all_good_condition from the pruned list", () => {
@@ -268,6 +313,7 @@ function answerEverything(allGood = true): void {
   pick("bell-yes").click();
   pick("cup_holder-no").click();
   pick("phone_holder-yes").click();
+  pick("basket-no").click();
   pick(allGood ? "allgood-yes" : "allgood-no").click();
   plateField().value = "1025543";
   plateField().dispatchEvent(new Event("input"));
@@ -284,13 +330,29 @@ describe("the survey UI", () => {
     expect(document.body.textContent).toContain("Does this scooter have…");
   });
 
-  it("asks the owner's four questions", () => {
+  it("asks the owner's questions", () => {
     open();
     const text = document.body.textContent ?? "";
-    expect(text).toContain("a working bell?");
+    // "a bell?", not "a working bell?" — whether it WORKS is what the
+    // condition question underneath asks, and asking twice made a "No" here
+    // ambiguous between absent and silent.
+    expect(text).toContain("a bell?");
+    expect(text).not.toContain("a working bell?");
     expect(text).toContain("a cup holder?");
     expect(text).toContain("a phone holder?");
+    expect(text).toContain("a basket?");
     expect(text).toContain("And they're all in good condition?");
+  });
+
+  it("asks about a basket whatever the model is", () => {
+    // Including the models that never carry one: a confirmed "No" is real
+    // data (it is what makes "show me the ones with a basket" filterable),
+    // and the Trike's cargo basket means no gate would be right anyway.
+    for (const modelName of ["Veo Astro", "Apollo", "Veo Trike", null]) {
+      document.body.replaceChildren();
+      open({ modelName });
+      expect(document.body.textContent).toContain("a basket?");
+    }
   });
 
   it("presses NEITHER toggle by default", () => {
@@ -299,6 +361,7 @@ describe("the survey UI", () => {
       "bell-yes", "bell-no",
       "cup_holder-yes", "cup_holder-no",
       "phone_holder-yes", "phone_holder-no",
+      "basket-yes", "basket-no",
       "allgood-yes", "allgood-no",
     ]) {
       expect(pick(id).classList.contains("is-on")).toBe(false);
@@ -330,6 +393,8 @@ describe("the survey UI", () => {
     pick("cup_holder-no").click();
     pick("phone_holder-yes").click();
     pick("allgood-yes").click();
+    expect(sendBtn().disabled).toBe(true); // the basket is still unanswered
+    pick("basket-no").click();
     expect(sendBtn().disabled).toBe(true); // still no plate
     plateField().value = "1025543";
     plateField().dispatchEvent(new Event("input"));
@@ -370,6 +435,7 @@ describe("the condition follow-up", () => {
     pick("bell-no").click();
     pick("cup_holder-no").click();
     pick("phone_holder-no").click();
+    pick("basket-no").click();
     pick("allgood-no").click();
     expect(document.querySelectorAll("[data-poor]").length).toBe(0);
     plateField().value = "1025543";
@@ -412,8 +478,28 @@ describe("submitting", () => {
       has_bell: true,
       has_cup_holder: false,
       has_phone_holder: true,
+      has_basket: false,
       all_good_condition: true,
       poor_condition: [],
+    });
+  });
+
+  it("carries a basket through to the wire", async () => {
+    const { submit } = open({ modelName: "Veo Trike" });
+    pick("bell-no").click();
+    pick("cup_holder-no").click();
+    pick("phone_holder-no").click();
+    pick("basket-yes").click();
+    pick("allgood-no").click();
+    document.querySelector<HTMLButtonElement>('[data-poor="basket"]')!.click();
+    plateField().value = "1025543";
+    plateField().dispatchEvent(new Event("input"));
+    sendBtn().click();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    expect(submit.mock.calls[0][0]).toMatchObject({
+      has_basket: true,
+      all_good_condition: false,
+      poor_condition: ["basket"],
     });
   });
 
@@ -588,6 +674,7 @@ describe("readDeviceFeatures", () => {
     bell: true,
     cup_holder: false,
     phone_holder: true,
+    basket: true,
     poor_condition: ["bell"],
   };
 
@@ -619,16 +706,27 @@ describe("readDeviceFeatures", () => {
       bell: true,
       cup_holder: true,
       phone_holder: true,
-      poor_condition: ["bell", "basket", 7],
+      poor_condition: ["bell", "kickstand", 7],
     });
     expect(parsed?.poor_condition).toEqual(["bell"]);
   });
 
+  it("keeps a basket in poor_condition", () => {
+    const parsed = readDeviceFeatures({
+      basket: true,
+      poor_condition: ["basket"],
+    });
+    expect(parsed?.poor_condition).toEqual(["basket"]);
+  });
+
   it("coerces missing booleans to false rather than undefined", () => {
+    // Every device confirmed before the basket question existed, and every
+    // non-Cosmo, arrives with no `basket` key at all.
     expect(readDeviceFeatures({})).toEqual({
       bell: false,
       cup_holder: false,
       phone_holder: false,
+      basket: false,
       poor_condition: [],
     });
   });
@@ -657,7 +755,19 @@ describe("summarizeFeatures", () => {
     ).toBe("🔔 Bell (needs work)");
   });
 
-  it("says so when someone looked and found none of the three", () => {
+  it("lists a basket", () => {
+    expect(
+      summarizeFeatures({
+        bell: false,
+        cup_holder: false,
+        phone_holder: false,
+        basket: true,
+        poor_condition: ["basket"],
+      }),
+    ).toBe("🧺 Basket (needs work)");
+  });
+
+  it("says so when someone looked and found none of the four", () => {
     // A different fact from nobody having looked — which is what
     // `readDeviceFeatures` returning null means, and which the popup renders
     // as the status label instead.
@@ -666,8 +776,9 @@ describe("summarizeFeatures", () => {
         bell: false,
         cup_holder: false,
         phone_holder: false,
+        basket: false,
         poor_condition: [],
       }),
-    ).toBe("None of the three");
+    ).toBe("None of the four");
   });
 });

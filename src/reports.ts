@@ -83,6 +83,10 @@ export interface DeviceFeatureReport {
   has_bell: boolean;
   has_cup_holder: boolean;
   has_phone_holder: boolean;
+  /** Asked of every device, not just the models that ship with one — the
+   *  Trike's cargo basket is standard and the Cosmo's is optional, and both
+   *  can be bent. */
+  has_basket: boolean;
   /** Must equal `poor_condition.length === 0`. The API rejects the
    *  contradiction with a 422 rather than normalizing it. */
   all_good_condition: boolean;
