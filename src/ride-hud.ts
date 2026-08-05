@@ -42,8 +42,9 @@ import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
 import type { EndRideIn } from "./api.ts";
 import { selectedDevice } from "./ride-session.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
-import type { TrackFix, TrackRecorder } from "./track-store.ts";
+import type { TrackAddResult, TrackFix, TrackRecorder } from "./track-store.ts";
 import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
+import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
 
 // ---------------------------------------------------------------------------
 // F3: tracked-ride seams (frontend plan, `ride-hud.ts` module-map row + the
@@ -61,8 +62,16 @@ import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
 
 /** The recorder methods ride-hud.ts calls — a `Pick`, not the whole
  *  `TrackRecorder`, so a fake in tests (or a future alternate implementation)
- *  only has to satisfy what this module actually uses. */
-export type RideHudTrackControl = Pick<TrackRecorder, "addFix" | "finish">;
+ *  only has to satisfy what this module actually uses.
+ *
+ *  `batches` is OPTIONAL where the other two are required: it exists only to
+ *  seed the live trail with what a RESUMED ride already recorded before the
+ *  reload (see `seedTrail`), and a recorder that cannot answer that question
+ *  simply draws its trail from the next fix onward — a degraded picture, not
+ *  a broken ride. Keeping it optional also means every existing
+ *  `{ addFix, finish }` fake still satisfies this type. */
+export type RideHudTrackControl = Pick<TrackRecorder, "addFix" | "finish"> &
+  Partial<Pick<TrackRecorder, "batches">>;
 
 /** The one ride-session action ride-hud.ts ever dispatches, plus a read of
  *  the live doc — the integrator's `case "riding"` guard already reads
@@ -79,6 +88,12 @@ export interface RideHudDeps {
    *  has nothing to dispatch to, and the Screen 7 nav overlay never mounts
    *  (no doc to read a `route` off of). */
   session?: RideHudSessionControl;
+  /** The live breadcrumb layer (`ride-trail.ts`), drawn on the same map this
+   *  HUD follow-cams. Injected rather than created here for the same reason
+   *  `map`/`deviceCtl` are: this module drives ride-mode behavior, main.ts
+   *  owns which map objects exist. Omit it and the HUD behaves exactly as it
+   *  did before — recording still happens, it just isn't drawn. */
+  trail?: RideTrailHandle;
 }
 
 /** What `beginHandoff` needs to put the HUD straight into `riding` for a ride
@@ -247,6 +262,27 @@ export class RideHud {
   /** Dispatches the F3 interim End Ride report onto the shared ride-session
    *  doc. Null when the integrator hasn't wired one — see `RideHudDeps`. */
   private readonly session: RideHudSessionControl | null;
+  /** The live breadcrumb of this ride's recorded track, or null when the
+   *  integrator wired no trail layer — see `RideHudDeps.trail`. Fed from the
+   *  SAME shared watchPosition callback as `trackRecorder`, but only once the
+   *  recorder has confirmed a fix was actually saved (see `onFix`): the line
+   *  is a picture of the local track, so drawing a point the store rejected
+   *  or failed to write would be a picture of something that doesn't
+   *  exist. */
+  private readonly trail: RideTrailHandle | null;
+  /** Bumped on every `enterRiding`. The trail seed for a resumed ride is read
+   *  out of IndexedDB asynchronously, and a ride can end (and another begin)
+   *  before that read lands — this is what stops one ride's history from
+   *  being drawn under the next one. */
+  private rideGeneration = 0;
+  /** Whether THIS ride draws a trail: Save Ride Tracks is the option whose
+   *  own copy promises the rider they can "trace where you've been on the map
+   *  display", so turning it off has to take the line away too, not just the
+   *  donation. Captured once per ride from the session doc (Screen 2 is
+   *  pre-ride; nothing moves it mid-ride), and true for the legacy
+   *  session-free armed→countdown→start path, which has no options blob to
+   *  read and whose rider never opted out of anything. */
+  private trailOn = true;
   /** Screen 7 turn-by-turn overlay for the current ride, or null when no
    *  route is active (out-of-coverage / nav off) or the session isn't wired.
    *  Fed from the SAME shared watchPosition callback as `trackRecorder` (see
@@ -293,6 +329,7 @@ export class RideHud {
   ) {
     this.root = container;
     this.session = deps.session ?? null;
+    this.trail = deps.trail ?? null;
     this.root.addEventListener("click", (e) => this.onClick(e));
     // Re-acquire the wake lock when the tab comes back (the browser
     // silently releases it on hide).
@@ -377,6 +414,38 @@ export class RideHud {
    *  after a reload. A no-op call with the HUD not riding is harmless. */
   attachTrackRecorder(recorder: RideHudTrackControl | null): void {
     this.trackRecorder = recorder;
+    // A recorder arriving late is the normal case for the wizard's Screen 6
+    // handoff (opening IndexedDB is async) and the only case for a reload
+    // recovery that re-imports one. Either way the trail has to catch up on
+    // whatever that recorder already holds — for a freshly started ride
+    // that's nothing, which `seedTrail` handles by drawing nothing.
+    if (recorder) this.seedTrail(recorder);
+  }
+
+  /** Draw what a recorder has ALREADY sealed, under whatever this ride has
+   *  drawn live so far. Only a resumed ride has anything to seed — a reload
+   *  mid-ride, or the resume-or-end prompt's Resume — but the fresh-start
+   *  path runs the same code with an empty batch list rather than needing the
+   *  caller to know which case it's in.
+   *
+   *  Best-effort throughout: a trail is a picture, and failing to redraw the
+   *  first half of one must never take a live ride down with it. */
+  private seedTrail(recorder: RideHudTrackControl): void {
+    if (this.state !== "riding") return;
+    if (!this.trail || !this.trailOn || !recorder.batches) return;
+    const generation = this.rideGeneration;
+    void recorder
+      .batches()
+      .then((batches) => {
+        // The ride this seed belongs to has since ended (or another has
+        // begun) — drawing it now would put one ride's history under
+        // another's.
+        if (generation !== this.rideGeneration) return;
+        this.trail?.prepend(trailCoordsFromBatches(batches));
+      })
+      .catch((e) => {
+        console.error("ride trail: reading already-recorded batches failed", e);
+      });
   }
 
   /** The ride's own last-known GPS fix — the same one `endRide()`'s equity
@@ -829,6 +898,12 @@ export class RideHud {
     this.startedAt = opts.startedAtMs;
     this.trackedRideId = opts.rideId;
     this.trackRecorder = opts.recorder;
+    this.rideGeneration += 1;
+    // Save Ride Tracks decides whether this ride gets a line at all; the
+    // trail starts empty either way, so a prior ride's breadcrumb can never
+    // survive into this one.
+    this.trailOn = this.session?.current()?.options.save_tracks ?? true;
+    this.trail?.reset();
     this.smoothedMps = 0;
     this.distanceM = 0;
     this.lastFix = null;
@@ -851,6 +926,10 @@ export class RideHud {
     this.applyRideModels();
     closeAllPopups();
     this.enterFollowCam();
+    // After `enterFollowCam` (which is what makes the trail visible), so a
+    // resumed ride's already-recorded line is on screen from the first frame
+    // of the riding view rather than appearing a beat later.
+    if (opts.recorder) this.seedTrail(opts.recorder);
     this.startSensors();
     void this.acquireWakeLock();
   }
@@ -873,6 +952,7 @@ export class RideHud {
     this.addBuildings3D();
     this.userMarker ??= new maplibregl.Marker({ element: makeUserDot() });
     this.following = true;
+    this.trail?.setVisible(true);
   }
 
   /** Restore the pre-ride 2D view and remove ride-only map decorations. */
@@ -881,6 +961,11 @@ export class RideHud {
     this.following = false;
     this.userMarker?.remove();
     this.removeBuildings3D();
+    // Hidden, not cleared: BRB hands the map back to Analysis / Find wheels
+    // with the ride (and a tracked ride's recording) still running, and the
+    // rider's breadcrumb has no business drawn across a map they opened for
+    // something else. `endRide` is what actually forgets it.
+    this.trail?.setVisible(false);
     if (this.savedView) {
       this.map.easeTo({
         center: [this.savedView.center.lng, this.savedView.center.lat],
@@ -1192,7 +1277,31 @@ export class RideHud {
         lon: fix.coords.longitude,
         accM: fix.coords.accuracy,
       };
-      void this.trackRecorder.addFix(trackFix);
+      const recorder = this.trackRecorder;
+      // The trail extends only on a fix the recorder confirms it SAVED. It
+      // rejects a duplicate or back-dated timestamp (the API's strict
+      // monotonicity check) and an out-of-range coordinate, and it resolves
+      // only after the write actually lands — so drawing on `accepted` is
+      // what keeps the line an honest picture of the local track rather than
+      // of the raw GPS feed. `Promise.resolve` because this recorder is a
+      // structural type: a caller's fake need only be call-compatible, and a
+      // synchronous stub returning nothing should cost the trail a point,
+      // not throw inside the shared watchPosition callback.
+      void Promise.resolve(recorder.addFix(trackFix)).then(
+        (result: TrackAddResult | undefined) => {
+          if (!result?.accepted) return;
+          // A ride that ended (or stopped tracking) while this write was in
+          // flight must not gain one last breadcrumb afterwards.
+          if (recorder !== this.trackRecorder || !this.trailOn) return;
+          this.trail?.push([fix.coords.longitude, fix.coords.latitude]);
+        },
+        (e: unknown) => {
+          // The fix was not saved, so there is nothing to draw. Logged rather
+          // than swallowed: this is the local-storage failure the fallback
+          // warning exists for.
+          console.error("ride trail: recording a waypoint failed", e);
+        },
+      );
     }
     this.navHud?.feedFix(fix.coords.latitude, fix.coords.longitude, fix.coords.accuracy);
 
@@ -1272,6 +1381,15 @@ export class RideHud {
   private async endRide(): Promise<void> {
     this.stopSensors();
     this.exitFollowCam();
+    // The ride is over, so the live trail is too — unlike BRB, which only
+    // hides it. The track itself is untouched in IndexedDB: the account
+    // drawer's Local Data tab (`track-route.ts`) is where a FINISHED ride is
+    // looked at, with its own layers and its own fit-to-the-whole-path
+    // framing. `trailOn` goes down FIRST, so a write that was still in flight
+    // when the rider tapped End Ride can't land one last breadcrumb on a map
+    // that has already been wiped (see `onFix`'s guard).
+    this.trailOn = false;
+    this.trail?.clear();
     this.navHud?.dispose();
     this.navHud = null;
     this.navHudContainer = null;

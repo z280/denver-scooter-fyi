@@ -83,6 +83,7 @@ import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createTrackRoute } from "./track-route.ts";
+import { createRideTrail } from "./ride-trail.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -141,6 +142,12 @@ const devices = new Devices(map, locate);
 // never imports maplibre — and so its tests never need a map.
 const homeWorkPins = createHomeWorkPins(map);
 const trackRoute = createTrackRoute(map);
+// Two different jobs, two different sets of layers on the same map (see
+// ride-trail.ts's header): `trackRoute` draws a FINISHED ride from the account
+// drawer's Local Data tab and frames the camera around it; `rideTrail` is the
+// live breadcrumb ride mode draws under the rider, fix by fix, while the
+// follow-cam owns the camera.
+const rideTrail = createRideTrail(map);
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -437,6 +444,7 @@ function equityZones(): Promise<IndexedFeature[]> {
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
     session: rideSession,
+    trail: rideTrail,
   });
 }
 
