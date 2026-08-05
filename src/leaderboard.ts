@@ -177,9 +177,19 @@ export function hexWithAlpha(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-function formatWindowDate(iso: string): string {
+/** An ISO timestamp as a local date, falling back to the raw string rather
+ *  than rendering "Invalid Date" if the API ever sends something unexpected.
+ *  Shared by everything that prints the leaderboard window — the cell detail
+ *  panel, the territory legend and the panel's tally all quote the same
+ *  window, and three copies of this would be three chances to disagree. */
+export function formatWindowDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+}
+
+/** "Window: 7/2/2026 – 7/30/2026", the one phrasing for that span. */
+export function formatWindowRange(start: string, end: string): string {
+  return `${formatWindowDate(start)} – ${formatWindowDate(end)}`;
 }
 
 /** The rider's colors as a small square — the same fill the map paints for
@@ -216,7 +226,7 @@ export function buildLeaderboardDetailHtml(
   input: LeaderboardDetailInput,
 ): string {
   const { cellId, cell, windowStart, windowEnd, signedIn } = input;
-  const windowLine = `Window: ${escapeHtml(formatWindowDate(windowStart))} – ${escapeHtml(formatWindowDate(windowEnd))}`;
+  const windowLine = `Window: ${escapeHtml(formatWindowRange(windowStart, windowEnd))}`;
   const cellLine = `<p class="hex-inspect__cell">H3 cell <code>${escapeHtml(cellId)}</code></p>`;
 
   if (!cell || !cell.leader) {

@@ -25,6 +25,7 @@ import {
 import {
   TERRITORY_FILL_OPACITY,
   escapeHtml,
+  formatWindowRange,
   hexWithAlpha,
 } from "./leaderboard.ts";
 import { TRIPLE_CLICK_COUNT } from "./triple-click.ts";
@@ -75,12 +76,8 @@ export function buildRegionalTallyHtml(
 }
 
 function windowLine(resp: LeaderboardRegionalResponse): string {
-  const fmt = (iso: string): string => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
-  };
   return escapeHtml(
-    `Rolling window: ${fmt(resp.window_start)} – ${fmt(resp.window_end)}`,
+    `Rolling window: ${formatWindowRange(resp.window_start, resp.window_end)}`,
   );
 }
 

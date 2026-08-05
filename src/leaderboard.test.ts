@@ -18,6 +18,7 @@ import {
   TERRITORY_FILL_OPACITY,
   buildLeaderboardDetailHtml,
   escapeHtml,
+  formatWindowRange,
   hexWithAlpha,
   leaderboardMapToFeatureCollection,
 } from "./leaderboard.ts";
@@ -164,6 +165,26 @@ describe("leaderboardMapToFeatureCollection", () => {
       baseResponse({ "not-an-h3-cell": EMPTY_CELL, [CELL_CLAIMED]: CLAIMED_CELL }),
     );
     expect(fc.features.map((f) => f.properties.cell)).toEqual([CELL_CLAIMED]);
+  });
+});
+
+describe("formatWindowRange", () => {
+  it("renders two ISO timestamps as local dates", () => {
+    const out = formatWindowRange("2026-07-23T00:00:00Z", "2026-07-30T00:00:00Z");
+    expect(out).toContain("–");
+    expect(out).not.toContain("Invalid Date");
+  });
+
+  it("falls back to the raw string rather than printing 'Invalid Date'", () => {
+    // Every surface that quotes the window — the cell panel, the territory
+    // legend, the panel's tally — goes through this, so an unexpected value
+    // from the API degrades to something legible in all three at once.
+    expect(formatWindowRange("nonsense", "2026-07-30T00:00:00Z")).toContain(
+      "nonsense",
+    );
+    expect(formatWindowRange("nonsense", "also-nonsense")).not.toContain(
+      "Invalid Date",
+    );
   });
 });
 

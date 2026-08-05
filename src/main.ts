@@ -1835,9 +1835,11 @@ function wireHexDensity(): void {
   const applySizeLock = (locked: boolean): void => {
     for (const b of btns) {
       const size = b.dataset.hex || "";
-      const disabled = locked && size !== "" && size !== TERRITORY_HEX_SIZE;
-      b.disabled = disabled;
-      b.classList.toggle("seg-btn--locked", disabled);
+      // `disabled` alone: it carries the semantics (unclickable, out of the
+      // tab order, announced as disabled) AND the styling, via
+      // `.seg-btn:disabled`. A parallel class would be a second thing to
+      // keep in sync for no added behavior.
+      b.disabled = locked && size !== "" && size !== TERRITORY_HEX_SIZE;
     }
     sizeLockedHint.hidden = !locked;
   };

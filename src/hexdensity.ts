@@ -39,6 +39,7 @@ import {
   LEADERBOARD_DETAIL_TITLE,
   buildLeaderboardDetailHtml,
   escapeHtml,
+  formatWindowRange,
   leaderboardMapToFeatureCollection,
 } from "./leaderboard.ts";
 import { isAuthenticated as defaultIsAuthenticated } from "./map-auth.js";
@@ -523,7 +524,7 @@ export class HexDensity {
     if (this.territory) {
       const window_ = document.createElement("p");
       window_.className = "legend__note";
-      window_.textContent = `Window: ${new Date(this.territory.window_start).toLocaleDateString()} – ${new Date(this.territory.window_end).toLocaleDateString()}`;
+      window_.textContent = `Window: ${formatWindowRange(this.territory.window_start, this.territory.window_end)}`;
       this.legendEl.appendChild(window_);
     }
     this.legendEl.hidden = false;

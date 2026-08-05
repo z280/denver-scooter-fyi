@@ -192,6 +192,20 @@ describe("territory control as a hex metric", () => {
     expect(fetchAggregates).not.toHaveBeenCalled();
   });
 
+  it("the legend quotes the window without ever printing 'Invalid Date'", async () => {
+    const map = fakeMap();
+    const legend = document.createElement("div");
+    const hex = new HexDensity(map as never, legend, {
+      fetchTerritory: async () => ({
+        ...territoryPayload(),
+        window_start: "not-a-timestamp",
+      }),
+    });
+    await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    expect(legend.textContent).toContain("not-a-timestamp");
+    expect(legend.textContent).not.toContain("Invalid Date");
+  });
+
   it("turning shading off clears the source and hides the legend", async () => {
     const { hex, map, legend } = setup();
     await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
