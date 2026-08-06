@@ -172,7 +172,7 @@ const VEO_MODELS: Record<string, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
   apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
-  trike: { name: "Veo Trike", desc: "Three-wheel seated trike w/ cargo basket" },
+  trike: { name: "Veo Rover", desc: "Three-wheel seated trike w/ cargo basket" },
 };
 
 function veoModel(
@@ -2245,7 +2245,7 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
 
 /** Ride posture for the "Device use" icon style and the ride-type filter:
  *  the server-corrected `vehicle_use_type` decides, with the seated models
- *  (Cosmo, Apollo, Trike) as the tiebreaker when it's absent. */
+ *  (Cosmo, Apollo, Rover) as the tiebreaker when it's absent. */
 export function rideTypeOf(p: {
   vehicle_use_type?: string | null;
   vehicle_model_name?: string | null;
@@ -2255,18 +2255,24 @@ export function rideTypeOf(p: {
     p.vehicle_use_type === "sitting" ||
     model === "cosmo" ||
     model === "apollo" ||
-    model === "trike"
+    model === "trike" ||
+    model === "rover"
   ) {
     return "sitting";
   }
   return "standing";
 }
 
-/** Recognized Veo model, or null for mystery hardware. */
+/** Recognized Veo model, or null for mystery hardware. Veo's marketing name
+ *  for the three-wheeler is "Rover" — accept it alongside the feed's
+ *  historical "trike" spelling, but keep the INTERNAL key "trike": it is
+ *  baked into saved filter presets, sprite ids, and the `vehicle_model`
+ *  field the routing API receives, so the key is wire format, not copy. */
 export function modelKeyOf(p: {
   vehicle_model_name?: string | null;
 }): ModelKey | null {
   const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  if (model === "rover") return "trike";
   return model === "astro" ||
     model === "cosmo" ||
     model === "apollo" ||
@@ -2561,14 +2567,14 @@ const MODEL_TAG: Record<string, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
-  trike: "Tr",
+  trike: "Ro",
   unk: "?",
 };
 
 /** The "letter" Model icon style: a single model-tinted disc. Colors echo
  *  each comic badge's dominant background — Astro's day sky (light blue),
  *  Cosmo's terracotta courtyard (orange), Apollo's night city (purple),
- *  Trike's seaside sunset (pink). */
+ *  the Rover's seaside sunset (pink). */
 const MODEL_COLOR: Record<ModelKey, string> = {
   astro: "#5bb8e6",
   cosmo: "#ee8836",
@@ -2598,7 +2604,7 @@ const MODEL_LETTER: Record<ModelKey, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
-  trike: "Tr",
+  trike: "Ro",
 };
 
 function drawInnerBadge(

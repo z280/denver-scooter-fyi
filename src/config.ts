@@ -152,7 +152,9 @@ function vehicleTypeTag(modelName: string | null | undefined): string {
   if (m.includes("astro")) return VEO_VEHICLE_TYPE_TAGS.scooter;
   if (m.includes("apollo")) return VEO_VEHICLE_TYPE_TAGS.apollo;
   if (m.includes("cosmo")) return VEO_VEHICLE_TYPE_TAGS.cosmo;
-  if (m.includes("trike")) return VEO_VEHICLE_TYPE_TAGS.trike;
+  // Veo's marketing name for the three-wheeler is "Rover"; older feed
+  // rows (and our internal key) still say "trike" — same dropdown option.
+  if (m.includes("trike") || m.includes("rover")) return VEO_VEHICLE_TYPE_TAGS.trike;
   return ""; // unknown model → leave the dropdown for the rider
 }
 

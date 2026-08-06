@@ -89,6 +89,7 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
         ${modelCard("Astro", "/astro.png")}
         ${modelCard("Cosmo", "/cosmo.png")}
         ${modelCard("Apollo", "/apollo.png")}
+        ${modelCard("Rover", "/trike.png")}
       </div>
       <p>Filter by model, standing or seated, minimum battery, rideability —
       even by neighborhood. Save your favorite combos and reuse them in one

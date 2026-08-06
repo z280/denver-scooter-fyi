@@ -366,7 +366,7 @@ export class RideWizard {
       { value: "astro", name: "Astro", desc: "Standing scooter", svg: "/astro.png" },
       { value: "cosmo", name: "Cosmo", desc: "One passenger glider (no pedals)", svg: "/cosmo.png" },
       { value: "apollo", name: "Apollo", desc: "Two passenger e-bike w/ pedals", svg: "/apollo.png" },
-      { value: "trike", name: "Trike", desc: "Three-wheel seated trike w/ cargo basket", svg: "/trike.png" },
+      { value: "trike", name: "Rover", desc: "Three-wheel seated trike w/ cargo basket", svg: "/trike.png" },
     ];
     const typeBtns: HTMLButtonElement[] = [];
     const syncTypes = (): void => {

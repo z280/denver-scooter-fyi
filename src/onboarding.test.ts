@@ -55,14 +55,14 @@ describe("the tour's screens", () => {
     ]);
   });
 
-  it("names the three scooter models on the model-choice screen", () => {
+  it("names all four models on the model-choice screen, Rover included", () => {
     const models = ONBOARDING_SCREENS[1].body;
-    for (const m of ["Astro", "Cosmo", "Apollo"]) {
+    for (const m of ["Astro", "Cosmo", "Apollo", "Rover"]) {
       expect(models).toContain(m);
     }
-    // Trike is deliberately absent (its own incoming request), and the old
-    // "the operator app treats every scooter the same" line was retired —
-    // Veo added vehicle-type filtering, so the claim went stale.
+    // "Trike" was Veo's old name for the Rover — riders must never see it —
+    // and the old "the operator app treats every scooter the same" line was
+    // retired: Veo added vehicle-type filtering, so the claim went stale.
     expect(models).not.toContain("Trike");
     expect(models).not.toContain("operator app");
   });
