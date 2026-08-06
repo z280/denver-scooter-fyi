@@ -126,6 +126,13 @@ import {
   wireLeaderboardPanel,
   type LeaderboardPanelHandle,
 } from "./leaderboard-panel.ts";
+import {
+  maybeShowOnboarding,
+  showOnboarding,
+  maybeShowFirstRideOverlay,
+  type OnboardingHooks,
+} from "./onboarding.ts";
+import { showTipOnce } from "./discovery-tips.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -1076,7 +1083,75 @@ map.on("load", async () => {
   // Warm the default-selected ranks' polygons so the estimate populates.
   void equity.warm();
   startRefreshLoop();
+
+  // First-run tour + progressive discovery tips. Wired last: the tour's
+  // "Start Exploring" CTA drives the mode bar, so wireModes() must exist.
+  wireOnboarding();
 });
+
+// ---------- Onboarding & progressive discovery ----------
+
+// The seven-screen tour (onboarding.ts) auto-shows once per browser and is
+// replayable from the About drawer. Its final CTA hands the user straight to
+// Find-a-ride — center on location and ranked picks are the wizard's own
+// consent flow — plus the map's rideability/icon legend and the one-time
+// "tap any scooter" nudge, so nobody is left wondering what to do next.
+function wireOnboarding(): void {
+  const hooks: OnboardingHooks = {
+    onStartExploring: () => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '#mode-switch .mode-btn[data-mode="ride"]',
+        )
+        ?.click();
+      const legend = document.getElementById(
+        "legend-toggle",
+      ) as HTMLInputElement | null;
+      if (legend && !legend.checked) {
+        legend.checked = true;
+        legend.dispatchEvent(new Event("change"));
+      }
+      showTipOnce(
+        "tap-scooter",
+        "Tap any scooter to learn why it's recommended.",
+      );
+    },
+  };
+
+  document
+    .getElementById("about-replay-tour")
+    ?.addEventListener("click", () => {
+      closeAllPopups();
+      showOnboarding(hooks);
+    });
+
+  // Progressive discovery: first High-Risk popup explains the
+  // classification (devices.ts dispatches the event with the tier).
+  window.addEventListener("scooter:popup-open", (e) => {
+    const tier = (e as CustomEvent<{ tier?: string }>).detail?.tier;
+    if (tier === "risk") {
+      showTipOnce(
+        "high-risk",
+        "This classification is based on failed starts, dwell time, rider reports, and other rideability signals.",
+      );
+    }
+  });
+
+  // Progressive discovery: first time Territory Control shading goes on.
+  const territoryToggle = document.getElementById(
+    "leaderboard-territory-toggle",
+  ) as HTMLInputElement | null;
+  territoryToggle?.addEventListener("change", () => {
+    if (territoryToggle.checked) {
+      showTipOnce(
+        "territory",
+        "Hexes wear the colors of whoever leads them. Keep contributing nearby to claim and defend yours.",
+      );
+    }
+  });
+
+  maybeShowOnboarding(hooks);
+}
 
 // ---------- Controls ----------
 
@@ -2207,7 +2282,7 @@ function wireModes(): void {
     btn.addEventListener("click", () => {
       track("mode_switch", { mode: btn.dataset.mode ?? "?" });
       switch (btn.dataset.mode) {
-        case "riding":
+        case "riding": {
           // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
           // "Entry" — F3 flips this on unconditionally; no dev-flag gate
           // here) UNLESS a tracked ride is already live, in which case a
@@ -2229,9 +2304,16 @@ function wireModes(): void {
             setActive("riding");
             rideHud.open();
           } else {
-            openRideModal();
+            // First Ride Mode entry only (a resumed live ride skips straight
+            // back to its HUD above): the "rotate your phone" overlay defers
+            // the wizard open to its own buttons — still a user gesture, so
+            // the HUD's later fullscreen/orientation attempts stay eligible.
+            if (!maybeShowFirstRideOverlay(() => openRideModal())) {
+              openRideModal();
+            }
           }
           break;
+        }
         case "ride":
           enterRide();
           break;
@@ -2243,6 +2325,11 @@ function wireModes(): void {
             applyAnalysis();
             setActive("analysis");
           }
+          // Progressive discovery: first deliberate Analysis open.
+          showTipOnce(
+            "analysis",
+            "This mode lets you explore Denver's scooter ecosystem — density, compliance, and historical trends.",
+          );
       }
     });
   }

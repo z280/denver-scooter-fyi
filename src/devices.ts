@@ -1199,7 +1199,15 @@ export class Devices {
       // re-render passes retry=true and is the same popup to the rider),
       // and a delegated action listener so each button/link below stays
       // untouched. Only recognized actions map to a bounded vocabulary.
-      if (!retry) track("popup_open");
+      if (!retry) {
+        track("popup_open");
+        // Progressive discovery hook (main.ts listens): the one-time "what
+        // does High risk mean" tip needs to know a risk-tier popup opened,
+        // without this module knowing anything about tips.
+        window.dispatchEvent(
+          new CustomEvent("scooter:popup-open", { detail: { tier: relTier } }),
+        );
+      }
       const ACTION_TRACK: Record<string, string> = {
         "use-in-ride-mode": "preflight",
         "confirm-features": "confirm_features",
