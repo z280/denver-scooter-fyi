@@ -145,11 +145,11 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
       <div class="onb-report" aria-hidden="true">
         <span class="onb-tier__badge onb-report__from">🟡 Unknown Risk</span>
         <span class="onb-report__arrow">→ 📝 →</span>
-        <span class="onb-tier__badge onb-report__to">🟢 Likely Rideable</span>
+        <span class="onb-tier__badge onb-report__to">🔴 High Risk</span>
       </div>
       <p>Every contribution makes Scooter.fyi better.</p>
-      <p>Report damaged scooters. Confirm rideability. Improve
-      recommendations.</p>`,
+      <p>Report a dud and it's flagged for everyone — nobody else wastes
+      the walk. Confirm equipment, add photos, improve recommendations.</p>`,
   },
   {
     id: "territory",
