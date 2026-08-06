@@ -129,12 +129,14 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
     headline: "Smarter routing",
     body: `
       <div class="onb-routes" aria-hidden="true">
-        <span class="onb-route">⚡ Fastest</span>
-        <span class="onb-route">🔋 Battery Saver</span>
-        <span class="onb-route">🌳 Hot Day Friendly</span>
+        <span class="onb-route">🛡️ Safe &amp; Protected</span>
+        <span class="onb-route">🔋 The Range Maximizer</span>
+        <span class="onb-route">🌳 The Shaded Canopy</span>
+        <span class="onb-route">⚡ Commuter Express</span>
       </div>
-      <p>Ride the way you want. Choose routes that minimize hills, seek
-      shade, or avoid roads that riders find uncomfortable.</p>`,
+      <p>Ride the way you want. Stick to safer streets, dodge hills to
+      stretch your battery, chase shade on hot days, or take the most
+      direct line.</p>`,
   },
   {
     id: "contribute",

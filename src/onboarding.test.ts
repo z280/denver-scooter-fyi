@@ -67,6 +67,20 @@ describe("the tour's screens", () => {
     expect(models).not.toContain("operator app");
   });
 
+  it("shows the four real route profiles, by their in-app names", () => {
+    // Mirrors ride-screen-routes.ts's FALLBACK_PROFILES labels — the tour
+    // must promise the buttons Screen 4 of the wizard actually renders.
+    const body = ONBOARDING_SCREENS[4].body;
+    for (const label of [
+      "Safe &amp; Protected",
+      "The Range Maximizer",
+      "The Shaded Canopy",
+      "Commuter Express",
+    ]) {
+      expect(body).toContain(label);
+    }
+  });
+
   it("teaches the three rideability tiers", () => {
     const body = ONBOARDING_SCREENS[2].body;
     for (const label of ["Likely Rideable", "Unknown Risk", "High Risk"]) {
