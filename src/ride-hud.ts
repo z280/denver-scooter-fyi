@@ -25,6 +25,7 @@ export interface RideDeviceControl {
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
+  billableMinutes,
   comparatorPassQuote,
   formatCents,
   planFor,
@@ -1665,10 +1666,18 @@ export class RideHud {
       passQuote.passCount === 1
         ? `a ${formatCents(passQuote.cents)} ${COMPARATOR.name} pass (${passQuote.minutes} min, free unlock)`
         : `${formatCents(passQuote.cents)} in ${COMPARATOR.name} passes (${passQuote.minutes} min total, free unlocks)`;
+    // The pass covers whole blocks of minutes, so a ride rarely uses it all —
+    // say what's left, because that remainder is more rides for the same
+    // money and is half the point of comparing against a pass.
+    const leftoverMin = passQuote.minutes - billableMinutes(elapsed);
+    const leftoverClause =
+      leftoverMin > 0
+        ? `, and you'd have ${leftoverMin} minute${leftoverMin === 1 ? "" : "s"} left to use`
+        : "";
     const monopolyLine =
       deltaCents > 0
         ? `<p class="hud-note hud-note--pointed">You paid ≈ ${formatCents(deltaCents)} more because Denver has one operator —
-           ${passDesc} would have covered this ride.</p>`
+           ${passDesc} would have covered this ride${leftoverClause}.</p>`
         : "";
 
     const zoneLine = zoneRide

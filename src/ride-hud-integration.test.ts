@@ -696,6 +696,34 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(container.innerHTML).toContain("no $1 unlock charge");
   });
 
+  it("when the pass beats Veo, the comparison says how many pass minutes the ride would have left over", async () => {
+    // 31 billed minutes: Veo resident ≈ $8.75, vs the $4.99 60-minute pass —
+    // the one-operator line shows, and the 60-minute pass has 29 minutes of
+    // riding left after this ride's 31.
+    const doc = docWith(
+      {
+        rideId: null,
+        private: true,
+        device: null,
+        dest: null,
+        route: null,
+        // 5s shy of 31 minutes, so the wall-clock ms the test itself burns
+        // can't tip billableMinutes' ceil() over into a 32nd minute.
+        startedAtMs: Date.now() - (31 * 60_000 - 5000),
+        trackKeyId: "private-guest2",
+      },
+      { own_device: false },
+    );
+    const { container, dispatch } = mountWith(doc);
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({ type: "endRide" });
+    });
+    expect(container.innerHTML).toContain(
+      "would have covered this ride, and you'd have 29 minutes left to use.",
+    );
+  });
+
   it("a tracked Veo-device ride keeps the counter and its chip, exactly as before", () => {
     const { container } = mountWith(docWith({}, { cost_hud: true }));
     expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(false);
