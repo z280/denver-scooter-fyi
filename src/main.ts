@@ -1147,9 +1147,12 @@ function wireSeg(
   };
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => {
-      // Only real gestures count — programmatic setter replays (presets,
-      // chips) go through the returned function below and emit nothing.
-      if (trackId) track("control_change", { control: trackId });
+      // Only real gestures that change the value count — programmatic
+      // setter replays (presets, chips) go through the returned function
+      // below and emit nothing, and re-clicking the active segment is a
+      // no-op change not worth an event.
+      if (trackId && !btn.classList.contains("is-active"))
+        track("control_change", { control: trackId });
       select(btn);
     });
     btn.addEventListener("keydown", (e) => {

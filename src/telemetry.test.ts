@@ -153,6 +153,20 @@ describe("lifecycle", () => {
     expect(beacon).toHaveBeenCalledTimes(1);
   });
 
+  it("falls back to keepalive fetch when sendBeacon refuses the batch", () => {
+    const beacon = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      userAgent: navigator.userAgent,
+      sendBeacon: beacon,
+    });
+    initTelemetry();
+    window.dispatchEvent(new Event("pagehide"));
+    expect(beacon).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ keepalive: true });
+  });
+
   it("initTelemetry is idempotent", () => {
     initTelemetry();
     initTelemetry();

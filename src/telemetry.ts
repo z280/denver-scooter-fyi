@@ -252,11 +252,13 @@ function flush(useBeacon: boolean): void {
   const url = API_BASE + ENDPOINT;
   try {
     if (useBeacon && "sendBeacon" in navigator) {
-      navigator.sendBeacon(
+      // sendBeacon can refuse (quota/size); fall through to keepalive
+      // fetch instead of dropping the batch.
+      const queued = navigator.sendBeacon(
         url,
         new Blob([body], { type: "application/json" }),
       );
-      return;
+      if (queued) return;
     }
     void fetch(url, {
       method: "POST",
