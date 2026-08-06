@@ -89,6 +89,12 @@ export interface DeviceProperties {
    *  median dwell — the comparison baseline the reliability formula uses. */
   dwell_percentile_hood?: number | null;
   dwell_peer_median_hours?: number | null;
+  // ----- Crowdsourced equipment (sql/055). `feature_status` is always on
+  // the wire; `device_features` is null until somebody confirms the vehicle
+  // (and a JSON string when it rides through MapLibre's property
+  // flattening — `readDeviceFeatures` in device-features.ts handles both).
+  feature_status?: string | null;
+  device_features?: unknown;
   // ----- Client-derived (not on the wire): battery_percent (0–100) computed
   // against the observed-max range for the device's propulsion type, since
   // the public endpoint doesn't expose per-type `max_range_meters`.

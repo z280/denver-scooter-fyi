@@ -53,9 +53,11 @@ import {
 import {
   FEATURE_STATUS_LABEL,
   asFeatureStatus,
+  matchesFeatureFilter,
   openConfirmFeatures,
   readDeviceFeatures,
   summarizeFeatures,
+  type FeatureFilterKey,
 } from "./device-features.ts";
 import { openRidePreflight } from "./ride-preflight.ts";
 import {
@@ -201,6 +203,9 @@ export class Devices {
    *  satisfy a minimum. */
   private minBattery = 0;
   private quality: QualityFilter = "any";
+  /** Features filter (crowdsourced equipment). Empty = off; see
+   *  `matchesFeatureFilter` for the require/AND/¯\_(ツ)_/¯ semantics. */
+  private featureFilter = new Set<FeatureFilterKey>();
   // Iconography: inner badge style + gauge ring (default on). The badge
   // ("icon data") and the ring ("gauge data") have independent signals so
   // riders can see reliability in the icon while the ring tracks battery.
@@ -1797,6 +1802,12 @@ export class Devices {
     this.apply();
   }
 
+  /** Features filter selection (empty set = off). */
+  setFeatureFilter(selected: ReadonlySet<FeatureFilterKey>): void {
+    this.featureFilter = new Set(selected);
+    this.apply();
+  }
+
   /** Restrict to devices inside any of these indexed polygons (null = no area filter). */
   setAreaFilter(areas: AreaFilter): void {
     this.areaFilter = areas;
@@ -1989,6 +2000,12 @@ export class Devices {
         const tier = f.properties.reliability_tier;
         return wantOk ? tier === "ok" : tier !== "risk";
       });
+    }
+    if (this.featureFilter.size > 0) {
+      const selected = this.featureFilter;
+      feats = feats.filter((f) =>
+        matchesFeatureFilter(f.properties.device_features, selected),
+      );
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
       const polys = this.areaFilter;
