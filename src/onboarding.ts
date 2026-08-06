@@ -1,6 +1,6 @@
 // First-run onboarding: a skippable, seven-screen tour of the ideas that make
 // Scooter.fyi worth using (model choice, rideability, Ride Mode, routing,
-// contributions, territory), plus the first-ride "rotate your phone" overlay.
+// contributions, territory).
 //
 // The tour's job is NOT to explain every feature — it is to land five ideas
 // in under 60 seconds (see docs discussion / success criteria): pick your
@@ -15,10 +15,9 @@
 
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 
-// Hyphenated keys: UI preferences, not app state (telemetry.ts's own
+// Hyphenated key: a UI preference, not app state (telemetry.ts's own
 // convention note).
 export const ONBOARDED_KEY = "scooter-fyi-onboarded";
-export const RIDE_ROTATE_KEY = "scooter-fyi-ride-rotate";
 
 export interface OnboardingHooks {
   /** Final CTA ("Start Exploring"): hand the user straight to Find-a-ride so
@@ -283,91 +282,4 @@ export function showOnboarding(hooks: OnboardingHooks): void {
   render();
   document.body.append(root);
   root.querySelector<HTMLButtonElement>(".onboarding__next")?.focus();
-}
-
-// ---------- First-ride rotate overlay ----------
-
-/** Stored rotate choice: only written when "Remember my choice" is checked,
- *  and its mere presence suppresses the overlay forever after. */
-export function rideRotateChoice(): "landscape" | "portrait" | null {
-  try {
-    const v = localStorage.getItem(RIDE_ROTATE_KEY);
-    return v === "landscape" || v === "portrait" ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-let openRotate: HTMLElement | null = null;
-
-/** First entry into Ride Mode: a lightweight "rotate your phone" overlay with
- *  a phone-into-mount animation. Returns true when it displayed (the caller
- *  defers `proceed` to the overlay's buttons — still a user gesture, so the
- *  HUD's fullscreen/orientation-lock attempts stay eligible); false when a
- *  remembered choice exists and the caller should proceed immediately. */
-export function maybeShowFirstRideOverlay(proceed: () => void): boolean {
-  if (rideRotateChoice() || openRotate) return false;
-  const root = document.createElement("div");
-  root.className = "first-ride";
-  root.setAttribute("role", "dialog");
-  root.setAttribute("aria-modal", "true");
-  root.setAttribute("aria-label", "Rotate your phone for the best experience");
-  openRotate = root;
-  root.innerHTML = `
-    <div class="first-ride__card">
-      <div class="first-ride__anim" aria-hidden="true">
-        <span class="first-ride__mount"></span>
-        <span class="first-ride__phone">📱</span>
-      </div>
-      <h2 class="first-ride__headline">Rotate your phone for the best experience.</h2>
-      <label class="first-ride__remember">
-        <input type="checkbox" id="first-ride-remember" />
-        <span>Remember my choice</span>
-      </label>
-      <div class="first-ride__actions">
-        <button type="button" class="first-ride__btn first-ride__btn--primary" data-rotate="landscape">Rotate Now</button>
-        <button type="button" class="first-ride__btn" data-rotate="portrait">Continue in Portrait</button>
-      </div>
-    </div>`;
-
-  const untrap = trapFocusWithin(root, () => openRotate === root);
-  const finish = (choice: "landscape" | "portrait"): void => {
-    const remember = root.querySelector<HTMLInputElement>(
-      "#first-ride-remember",
-    )?.checked;
-    if (remember) {
-      try {
-        localStorage.setItem(RIDE_ROTATE_KEY, choice);
-      } catch {
-        /* private mode — the choice just isn't remembered */
-      }
-    }
-    untrap();
-    root.remove();
-    openRotate = null;
-    proceed();
-  };
-
-  root.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>(
-      "[data-rotate]",
-    );
-    if (btn) finish(btn.dataset.rotate as "landscape" | "portrait");
-  });
-  root.addEventListener("keydown", (e) => {
-    // Escape = "not now" — proceed in portrait without remembering.
-    if (e.key === "Escape") {
-      e.preventDefault();
-      untrap();
-      root.remove();
-      openRotate = null;
-      proceed();
-    }
-  });
-
-  document.body.append(root);
-  root
-    .querySelector<HTMLButtonElement>(".first-ride__btn--primary")
-    ?.focus();
-  return true;
 }

@@ -129,7 +129,6 @@ import {
 import {
   maybeShowOnboarding,
   showOnboarding,
-  maybeShowFirstRideOverlay,
   type OnboardingHooks,
 } from "./onboarding.ts";
 import { showTipOnce } from "./discovery-tips.ts";
@@ -2282,7 +2281,7 @@ function wireModes(): void {
     btn.addEventListener("click", () => {
       track("mode_switch", { mode: btn.dataset.mode ?? "?" });
       switch (btn.dataset.mode) {
-        case "riding": {
+        case "riding":
           // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
           // "Entry" — F3 flips this on unconditionally; no dev-flag gate
           // here) UNLESS a tracked ride is already live, in which case a
@@ -2304,16 +2303,9 @@ function wireModes(): void {
             setActive("riding");
             rideHud.open();
           } else {
-            // First Ride Mode entry only (a resumed live ride skips straight
-            // back to its HUD above): the "rotate your phone" overlay defers
-            // the wizard open to its own buttons — still a user gesture, so
-            // the HUD's later fullscreen/orientation attempts stay eligible.
-            if (!maybeShowFirstRideOverlay(() => openRideModal())) {
-              openRideModal();
-            }
+            openRideModal();
           }
           break;
-        }
         case "ride":
           enterRide();
           break;
