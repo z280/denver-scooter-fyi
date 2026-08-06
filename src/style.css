@@ -6132,35 +6132,14 @@ input[data-ride-keypad="on"] {
   justify-content: center;
   margin: 6px 0;
 }
-.onb-phone__screen {
-  width: 230px;
-  border-radius: 16px;
-  border: 4px solid var(--fg);
-  background: #11203a;
-  color: #e6edf3;
-  padding: 12px 14px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 4px 12px;
-  text-align: left;
-}
-.onb-phone__speed {
-  grid-row: span 3;
-  font-size: 34px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.onb-phone__speed small {
-  font-size: 12px;
-  font-weight: 400;
-  margin-left: 2px;
-}
-.onb-phone__stat {
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* A real Ride Mode screenshot wearing a landscape phone bezel. */
+.onb-phone__shot {
+  display: block;
+  width: min(340px, 100%);
+  height: auto;
+  border-radius: 18px;
+  border: 6px solid #1a2230;
+  box-shadow: var(--shadow);
 }
 .onb-routes {
   display: flex;

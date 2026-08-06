@@ -113,12 +113,8 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
     headline: "Ride Mode",
     body: `
       <div class="onb-phone" aria-hidden="true">
-        <div class="onb-phone__screen">
-          <span class="onb-phone__speed">14<small>mph</small></span>
-          <span class="onb-phone__stat">💵 $3.40</span>
-          <span class="onb-phone__stat">⏱ 12:26</span>
-          <span class="onb-phone__stat">🧭 Turn left on Blake St</span>
-        </div>
+        <img class="onb-phone__shot" src="/onboarding-hud.webp"
+          alt="" width="760" height="351" loading="lazy" />
       </div>
       <p>Built specifically for Denver scooter riders.</p>
       <p>Rotate your phone and enjoy a dashboard designed for the landscape

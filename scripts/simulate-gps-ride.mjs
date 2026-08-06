@@ -318,6 +318,14 @@ async function runAutoGuest(opts) {
     geolocation: { latitude: opts.lat, longitude: opts.lon, accuracy: 8 },
     permissions: ["geolocation"],
   });
+  // A fresh context is a "first visit", so the onboarding tour would open
+  // over the map and swallow the #ride-open click. Pre-mark it seen — this
+  // script exercises the ride flow, not first-run UX.
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem("scooter-fyi-onboarded", "1");
+    } catch {}
+  });
   const page = await context.newPage();
   page.on("pageerror", (err) => console.log("PAGE EXCEPTION:", err.message));
 
