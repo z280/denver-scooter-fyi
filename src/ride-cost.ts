@@ -42,8 +42,51 @@ export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
   return unlockCents + perMinCents;
 }
 
-export function comparatorCostCents(elapsedMs: number): number {
-  return COMPARATOR.unlockCents + billableMinutes(elapsedMs) * COMPARATOR.perMinCents;
+/** The comparator-pass purchase this ride is priced against — the ladder
+ *  tier that covers it, NOT a cost-minimizing combination (see
+ *  `comparatorPassQuote`'s own doc for the distinction). */
+export interface ComparatorPassQuote {
+  /** Total price of the pass(es), cents. Unlocks included — a pass ride has
+   *  no separate unlock charge. */
+  cents: number;
+  /** Total pass minutes purchased (may exceed the ride — a 40-minute ride
+   *  is covered by a 60-minute pass). */
+  minutes: number;
+  /** How many passes the quote uses. 1 for any ride that fits the largest
+   *  pass; >1 only when the ride is longer than the largest pass and extra
+   *  ones are stacked to cover the overflow. */
+  passCount: number;
+}
+
+/** The SMALLEST single pass covering the ride's billable minutes — the tier
+ *  a rider would actually buy off the price ladder (≤30 min → the 30-minute
+ *  pass, ≤60 → the 60, ≤120 → the 120). A ride longer than the largest pass
+ *  stacks additional largest passes until the remainder fits.
+ *
+ *  Deliberately NOT a min-cost cover, in either regime: at the current
+ *  prices two 60-minute passes undercut the single 120 ($9.98 vs $12.99),
+ *  but quoting that would contradict the listed 120-minute price and assume
+ *  passes stack freely within one ride — the comparison stays on the ladder
+ *  as published. The same rule holds past 120 minutes: the overflow is
+ *  covered by the smallest single pass that fits it (a 200-minute ride is
+ *  120 + 120, not a cost-optimized 120 + 60 + 30), so the quote is always
+ *  "the tier(s) you'd buy", never "the cleverest basket". */
+export function comparatorPassQuote(elapsedMs: number): ComparatorPassQuote {
+  const passes = COMPARATOR.passes; // sorted by minutes ascending
+  const largest = passes[passes.length - 1];
+  let remaining = billableMinutes(elapsedMs);
+  const quote: ComparatorPassQuote = { cents: 0, minutes: 0, passCount: 0 };
+  while (remaining > largest.minutes) {
+    quote.cents += largest.cents;
+    quote.minutes += largest.minutes;
+    quote.passCount += 1;
+    remaining -= largest.minutes;
+  }
+  const cover = passes.find((p) => remaining <= p.minutes) ?? largest;
+  quote.cents += cover.cents;
+  quote.minutes += cover.minutes;
+  quote.passCount += 1;
+  return quote;
 }
 
 export function formatCents(cents: number): string {

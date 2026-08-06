@@ -285,12 +285,28 @@ export const RATE_PLANS: RatePlan[] = [
   { key: "equity", label: "Equity program — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
 ];
 
+/** One purchasable comparator pass: a flat price for a block of riding
+ *  minutes, unlocks included (no per-ride unlock charge). */
+export interface ComparatorPass {
+  minutes: number;
+  cents: number;
+}
+
 /** "If Veo had competition" comparator for the ride summary. Lime's
  *  typical mid-market US pricing; update to Lime's last-known Denver rates
- *  when confirmed. */
+ *  when confirmed.
+ *
+ *  Pass-based pricing only — that's how a regular rider would realistically
+ *  pay: buy a block of minutes up front, ride unlock-free. (The old
+ *  pay-as-you-go `unlockCents`/`perMinCents` fields left with their last
+ *  consumer, the retired "typical pricing" summary row.) Keep `passes`
+ *  sorted by minutes ascending — `comparatorPassQuote`'s smallest-covering-
+ *  pass search assumes it. */
 export const COMPARATOR = {
   name: "Lime",
-  unlockCents: 100,
-  perMinCents: 30,
-  weekPassCents: 499,
+  passes: [
+    { minutes: 30, cents: 299 },
+    { minutes: 60, cents: 499 },
+    { minutes: 120, cents: 1299 },
+  ] as ComparatorPass[],
 };

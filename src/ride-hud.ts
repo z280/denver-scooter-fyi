@@ -25,7 +25,8 @@ export interface RideDeviceControl {
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
-  comparatorCostCents,
+  billableMinutes,
+  comparatorPassQuote,
   formatCents,
   planFor,
   rideCostCents,
@@ -40,10 +41,12 @@ import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
 // `minimalEndReport`'s return type, which stays exported/tested as a pure
 // function even though this class no longer calls it itself.
 import type { EndRideIn } from "./api.ts";
-import { selectedDevice } from "./ride-session.ts";
+import { isOwnDevice, selectedDevice } from "./ride-session.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
 import type { TrackAddResult, TrackFix, TrackRecorder } from "./track-store.ts";
-import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
+import { createNavHud, decodePolyline, type NavHud } from "./ride-nav-hud.ts";
+import { colorForProfile } from "./ride-screen-routes.ts";
+import type { RideRouteLineHandle } from "./ride-route-line.ts";
 import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +97,11 @@ export interface RideHudDeps {
    *  owns which map objects exist. Omit it and the HUD behaves exactly as it
    *  did before — recording still happens, it just isn't drawn. */
   trail?: RideTrailHandle;
+  /** The planned-pathway layer (`ride-route-line.ts`) — the Screen 4 route
+   *  the nav overlay is guiding along, superimposed on the same map. Injected
+   *  for the same reason `trail` is. Omit it and navigation behaves exactly
+   *  as before: instructions only, no line on the map. */
+  routeLine?: RideRouteLineHandle;
 }
 
 /** What `beginHandoff` needs to put the HUD straight into `riding` for a ride
@@ -222,6 +230,12 @@ export class RideHud {
   private startedAt = 0;
   private smoothedMps = 0;
   private distanceM = 0;
+  /** GPS fixes seen this ride — the summary's "Waypoints" figure. A plain
+   *  count of what the shared watchPosition delivered, deliberately NOT read
+   *  from the trail or the track recorder: it stays meaningful with Save
+   *  Ride Tracks off, and it has no ordering hazard against `endRide`'s
+   *  trail wipe. */
+  private fixCount = 0;
   private lastFix: { pos: LngLat; t: number } | null = null;
   private startPos: LngLat | null = null;
   private startedInZone = false;
@@ -270,6 +284,12 @@ export class RideHud {
    *  or failed to write would be a picture of something that doesn't
    *  exist. */
   private readonly trail: RideTrailHandle | null;
+  /** The planned pathway drawn on the map while the nav overlay guides along
+   *  it, or null when the integrator wired none — see `RideHudDeps.routeLine`.
+   *  Drawn/replaced only from `mountNavHud` (initial route + off-route
+   *  re-routes), hidden with the follow-cam through BRB, wiped on nav dismiss
+   *  and at ride end. */
+  private readonly routeLine: RideRouteLineHandle | null;
   /** Bumped on every `enterRiding`. The trail seed for a resumed ride is read
    *  out of IndexedDB asynchronously, and a ride can end (and another begin)
    *  before that read lands — this is what stops one ride's history from
@@ -314,6 +334,45 @@ export class RideHud {
    *  the post-ride summary are all separate surfaces and stay put. */
   private costHudVisible = true;
 
+  /** The last preference PUSHED via `setCostHudVisible`, or null if it was
+   *  never called. Kept separately from `costHudVisible` (the live per-ride
+   *  flag) so a session-less ride can reset to something honest: the pushed
+   *  preference if there is one, else the documented always-on default —
+   *  never whatever the PREVIOUS ride's doc derived (review fix: an
+   *  own-device ride force-off used to survive into an unrelated legacy
+   *  quick-start ride, whose rider never opted out of anything). */
+  private costHudPref: boolean | null = null;
+
+  /** True while the CURRENT ride is "My own Device". Captured once per ride
+   *  in `enterRiding` (nothing moves it mid-ride). The Veo cost counter is
+   *  a picture of Veo's per-minute billing clock, and an own-device ride has
+   *  no such clock running — so this forces the counter off for the ride and
+   *  drops its wrench-panel toggle entirely (there is nothing meaningful to
+   *  turn back on). Also drops the legacy summary's cost/comparator rows for
+   *  the same reason. */
+  private ownDeviceRide = false;
+
+  /** Whether the live HUD shows the bottom-right analog speedometer and the
+   *  top-right digital mph readout (`RideOptions.speedometer`, finally read —
+   *  ride-settings.ts's header records the field was never consumed before).
+   *  Seeded per ride from the session doc — `"classic"` shows both (the ℹ
+   *  copy's "ON by default both a classic and digital readout"), `"digital"`
+   *  only the digital, `"none"` neither; a session-less legacy ride shows
+   *  both, exactly as it always did — and flippable mid-ride from the wrench
+   *  panel's Display chips. Ride-scoped, like the ☀/☾ toggle: no
+   *  persistence. */
+  private speedoClassicVisible = true;
+  private speedoDigitalVisible = true;
+
+  /** Whether the top-left ride clock shows. Independent of the cost flag —
+   *  the rider can watch the timer without being shown a price (or vice
+   *  versa; the two share the TL stack but hide separately). Always starts
+   *  ON: there is no pre-ride option for it, it's a wrench-panel Display
+   *  chip like the speedometers, ride-scoped and unpersisted. The wrench
+   *  panel's own adjust clock stays visible regardless — you can't nudge a
+   *  clock you can't see. */
+  private timerVisible = true;
+
   constructor(
     container: HTMLElement,
     /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
@@ -330,6 +389,7 @@ export class RideHud {
     this.root = container;
     this.session = deps.session ?? null;
     this.trail = deps.trail ?? null;
+    this.routeLine = deps.routeLine ?? null;
     this.root.addEventListener("click", (e) => this.onClick(e));
     // Re-acquire the wake lock when the tab comes back (the browser
     // silently releases it on hide).
@@ -395,8 +455,14 @@ export class RideHud {
    *  the same breath as `beginHandoff()` without caring which ran first.
    *  Hiding uses the `hidden` attribute rather than removing the node, so a
    *  rider who changes their rate plan mid-ride and flips it back finds the
-   *  readout already up to date. */
+   *  readout already up to date.
+   *
+   *  Note `enterRiding` re-derives this flag from the session doc whenever a
+   *  live one exists (including forcing it off for an own-device ride, which
+   *  Veo isn't billing) — so a pre-handoff call matters mainly for the
+   *  session-less legacy path, where there is no doc to derive from. */
   setCostHudVisible(visible: boolean): void {
+    this.costHudPref = visible;
     this.costHudVisible = visible;
     this.syncCostVisibility();
     if (this.state === "riding") this.renderTick();
@@ -632,6 +698,28 @@ export class RideHud {
       case "stop-tracking-cancel":
         this.hideStopTrackingPrompt();
         break;
+      case "display": {
+        const key = btn.dataset.display;
+        let on: boolean;
+        if (key === "timer") {
+          on = this.timerVisible = !this.timerVisible;
+        } else if (key === "cost") {
+          on = this.costHudVisible = !this.costHudVisible;
+        } else if (key === "classic") {
+          on = this.speedoClassicVisible = !this.speedoClassicVisible;
+        } else if (key === "digital") {
+          on = this.speedoDigitalVisible = !this.speedoDigitalVisible;
+        } else {
+          break;
+        }
+        btn.classList.toggle("is-on", on);
+        btn.setAttribute("aria-pressed", String(on));
+        this.syncDisplayVisibility();
+        // A cost readout flipped back on mid-ride must show the CURRENT
+        // figure, not whatever was last painted into it.
+        this.renderTick();
+        break;
+      }
       case "dev": {
         const model = btn.dataset.model as ModelKey;
         if (this.rideModels.has(model)) this.rideModels.delete(model);
@@ -648,6 +736,46 @@ export class RideHud {
         this.setState("hidden");
         break;
     }
+  }
+
+  /** Chips for the adjust panel's "Display" row: per-readout ON/OFF for the
+   *  top-left ride timer, the estimated Veo cost counter, the bottom-right
+   *  classic (analog) speedometer, and the top-right digital mph. Timer and
+   *  cost toggle independently — showing the clock without a price is a
+   *  first-class choice. The cost chip is omitted entirely on an own-device
+   *  ride — there is no Veo billing clock to picture, so a toggle for it
+   *  would only re-enable a number that means nothing. (The rate-plan
+   *  selection the cost estimate prices against is the wrench panel's
+   *  existing "Rate" select, directly above this row.) */
+  private displayChipsMarkup(): string {
+    const chip = (key: string, label: string, on: boolean): string =>
+      `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="display" data-display="${key}" aria-pressed="${on}">${label}</button>`;
+    const chips: string[] = [chip("timer", "Timer", this.timerVisible)];
+    if (!this.ownDeviceRide) {
+      chips.push(chip("cost", "Est. cost", this.costHudVisible));
+    }
+    chips.push(
+      chip("classic", "Speedo classic", this.speedoClassicVisible),
+      chip("digital", "Speedo digital", this.speedoDigitalVisible),
+    );
+    return chips.join("");
+  }
+
+  /** Push the three display flags into whatever riding DOM is on screen.
+   *  Corners are hidden wholesale (the `[hidden]` attribute — style.css's
+   *  global `[hidden] { display: none !important }` makes it stick against
+   *  `.hud-corner`'s own `display: flex`); the cost readout keeps its
+   *  existing per-tick `hidden` re-assertion in `renderTick`. */
+  private syncDisplayVisibility(): void {
+    const digital = this.root.querySelector<HTMLElement>(".hud-corner--tr");
+    if (digital) digital.hidden = !this.speedoDigitalVisible;
+    const classic = this.root.querySelector<HTMLElement>(".hud-corner--br");
+    if (classic) classic.hidden = !this.speedoClassicVisible;
+    // The clock element alone, not the TL corner — the cost readout shares
+    // that stack and hides on its own flag.
+    const clock = this.root.querySelector<HTMLElement>("#hud-clock");
+    if (clock) clock.hidden = !this.timerVisible;
+    this.syncCostVisibility();
   }
 
   /** Chips for the adjust panel's "Show" row, reflecting the current
@@ -910,9 +1038,42 @@ export class RideHud {
     // trail starts empty either way, so a prior ride's breadcrumb can never
     // survive into this one.
     this.trailOn = this.session?.current()?.options.save_tracks ?? true;
+    // Per-ride display flags, read off the LIVE doc only (same stale-doc
+    // guard as `mountNavHud`: the legacy quick-start path never touches the
+    // session, and a prior wizard ride's `done` doc must not leak ITS display
+    // preferences into an unrelated ride).
+    const docNow = this.session?.current();
+    const liveDoc = docNow?.state === "riding" ? docNow : null;
+    this.ownDeviceRide =
+      liveDoc !== null &&
+      (isOwnDevice(liveDoc.device) || liveDoc.options.own_device === true);
+    if (liveDoc) {
+      // The own-device guard is the fix for the cost counter applying to
+      // rides Veo isn't billing: `cost_hud` ON still yields a hidden counter
+      // when the rider brought their own wheels.
+      this.costHudVisible = liveDoc.options.cost_hud && !this.ownDeviceRide;
+      this.speedoClassicVisible = liveDoc.options.speedometer === "classic";
+      this.speedoDigitalVisible = liveDoc.options.speedometer !== "none";
+    } else {
+      // Session-less legacy ride: both speedometers, as always, and the
+      // cost flag re-resolved from the last EXPLICIT push (a pre-handoff
+      // `setCostHudVisible` call) or the documented always-on default —
+      // never left as whatever the previous ride's doc derived, which would
+      // leak an own-device force-off (or a wizard opt-out) into an
+      // unrelated ride this rider never configured.
+      this.costHudVisible = this.costHudPref ?? true;
+      this.speedoClassicVisible = true;
+      this.speedoDigitalVisible = true;
+    }
+    this.timerVisible = true;
     this.trail?.reset();
+    // A prior ride's planned pathway must never survive into this one —
+    // `mountNavHud` (via `renderRiding` below) redraws it from the CURRENT
+    // session doc's route, if there is one.
+    this.routeLine?.clear();
     this.smoothedMps = 0;
     this.distanceM = 0;
+    this.fixCount = 0;
     this.lastFix = null;
     this.startPos = null;
     this.startedInZone = false;
@@ -960,6 +1121,7 @@ export class RideHud {
     this.userMarker ??= new maplibregl.Marker({ element: makeUserDot() });
     this.following = true;
     this.trail?.setVisible(true);
+    this.routeLine?.setVisible(true);
   }
 
   /** Restore the pre-ride 2D view and remove ride-only map decorations. */
@@ -973,6 +1135,9 @@ export class RideHud {
     // rider's breadcrumb has no business drawn across a map they opened for
     // something else. `endRide` is what actually forgets it.
     this.trail?.setVisible(false);
+    // Same rule for the planned pathway: hidden through BRB, forgotten only
+    // on nav dismiss or ride end.
+    this.routeLine?.setVisible(false);
     if (this.savedView) {
       this.map.easeTo({
         center: [this.savedView.center.lng, this.savedView.center.lat],
@@ -1101,6 +1266,10 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
+          <div class="hud-adjust-row hud-devrow">
+            <span class="hud-devrow__label">Display</span>
+            ${this.displayChipsMarkup()}
+          </div>
           ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
@@ -1120,6 +1289,9 @@ export class RideHud {
     // before this render (fresh ride start, or a BRB resume) — re-mount it.
     const liveEl = this.root.querySelector<HTMLElement>(".hud-live");
     if (liveEl) this.mountNavHud(liveEl);
+    // The rebuilt corners come back visible — re-assert the display flags so
+    // a BRB resume (or theme flip) keeps whatever the rider toggled off.
+    this.syncDisplayVisibility();
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -1165,6 +1337,16 @@ export class RideHud {
     const route = doc?.state === "riding" ? doc.route : null;
     const dest = doc?.state === "riding" ? doc.dest : null;
     if (!doc || !route || !dest) return;
+    // Superimpose the pathway itself on the map, in the chosen profile's
+    // Screen 4 color, with the retained destination marked — the picture the
+    // maneuver instructions describe. Drawn before the overlay is built so
+    // the line is on the map from the same frame the instructions appear.
+    const routeColor = colorForProfile(route.profile);
+    const destPoint: [number, number] = [dest.lon, dest.lat];
+    this.routeLine?.set(decodePolyline(route.polyline), {
+      color: routeColor,
+      dest: destPoint,
+    });
     const overlay = document.createElement("div");
     liveEl.appendChild(overlay);
     this.navHudContainer = overlay;
@@ -1172,7 +1354,19 @@ export class RideHud {
       route,
       dest: { lat: dest.lat, lon: dest.lon },
       vehicleModel: selectedDevice(doc.device)?.model ?? null,
+      onRouteUpdate: (update) => {
+        // An off-route re-route swapped the guidance geometry in place —
+        // redraw the drawn pathway to match, same color (a re-route only
+        // ever re-requests the originally selected profile).
+        this.routeLine?.set(update.coordinates, {
+          color: routeColor,
+          dest: destPoint,
+        });
+      },
       onDismiss: () => {
+        // Dismissing guidance takes the pathway off the map too — the line
+        // is part of the guidance, not part of the base ride view.
+        this.routeLine?.clear();
         // Tear-down already happened inside ride-nav-hud.ts itself — just
         // forget our references so a later BRB resume doesn't try to
         // re-parent a container nav-hud has already emptied, and so it stays
@@ -1238,6 +1432,7 @@ export class RideHud {
   private onFix(fix: GeolocationPosition): void {
     const pos: LngLat = { lng: fix.coords.longitude, lat: fix.coords.latitude };
     const t = fix.timestamp;
+    this.fixCount += 1;
 
     if (!this.startPos) {
       this.startPos = pos;
@@ -1401,6 +1596,7 @@ export class RideHud {
     // that has already been wiped (see `onFix`'s guard).
     this.trailOn = false;
     this.trail?.clear();
+    this.routeLine?.clear();
     this.navHud?.dispose();
     this.navHud = null;
     this.navHudContainer = null;
@@ -1451,12 +1647,39 @@ export class RideHud {
       }
     }
 
+    const miles = this.distanceM / 1609.344;
+
+    // Own-device ride: no Veo bill, no comparator, no Veo-specific equity
+    // discount — none of the money copy describes a transaction that
+    // happened. The summary is exactly three facts about the ride itself:
+    // time, distance, and the waypoints this device saw.
+    if (this.ownDeviceRide) {
+      const rows = [
+        row("Duration", formatClock(elapsed)),
+        row("Distance", `${miles.toFixed(1)} mi`),
+        row("Waypoints", String(this.fixCount)),
+      ];
+      this.setState("summary");
+      this.root.innerHTML = `
+      <div class="hud-card">
+        <h2 class="hud-title">Ride summary</h2>
+        <dl class="hud-summary">${rows.join("")}</dl>
+        <p class="hud-note">Estimates from this device's clock and GPS.</p>
+        <button type="button" class="hud-btn hud-btn--primary" data-hud="done">Done</button>
+      </div>`;
+      return;
+    }
+
     const rate = savedRatePlan();
     const plan = planFor(rate ?? "resident");
     const veoCents = rideCostCents(plan, elapsed);
-    const limeCents = comparatorCostCents(elapsed);
-    const deltaCents = veoCents - limeCents;
-    const miles = this.distanceM / 1609.344;
+    // The comparator is pass-based now: the realistic alternative to Veo's
+    // metered bill is buying a block of Lime minutes up front (unlocks
+    // included), so that's what the ride is priced against — the smallest
+    // pass on the published ladder that covers it (stacked for 2h+ rides;
+    // see comparatorPassQuote for why it's the ladder, not a min-cost mix).
+    const passQuote = comparatorPassQuote(elapsed);
+    const deltaCents = veoCents - passQuote.cents;
     const zoneRide = this.startedInZone || endedInZone;
 
     const rows: string[] = [
@@ -1466,18 +1689,29 @@ export class RideHud {
         `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
         formatCents(veoCents),
       ),
-      row(`With ${COMPARATOR.name}'s typical pricing`, formatCents(limeCents)),
+      row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)),
     ];
 
     const veoPlusLine = plan.veoPlus
       ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
       : "";
 
+    const passDesc =
+      passQuote.passCount === 1
+        ? `a ${formatCents(passQuote.cents)} ${COMPARATOR.name} pass (${passQuote.minutes} min, free unlock)`
+        : `${formatCents(passQuote.cents)} in ${COMPARATOR.name} passes (${passQuote.minutes} min total, free unlocks)`;
+    // The pass covers whole blocks of minutes, so a ride rarely uses it all —
+    // say what's left, because that remainder is more rides for the same
+    // money and is half the point of comparing against a pass.
+    const leftoverMin = passQuote.minutes - billableMinutes(elapsed);
+    const leftoverClause =
+      leftoverMin > 0
+        ? `, and you'd have ${leftoverMin} minute${leftoverMin === 1 ? "" : "s"} left to use`
+        : "";
     const monopolyLine =
       deltaCents > 0
-        ? `<p class="hud-note hud-note--pointed">You paid ≈ ${formatCents(deltaCents)} more because Denver has one operator.
-           A ${formatCents(COMPARATOR.weekPassCents)}/week ${COMPARATOR.name} pass would cover this in
-           ${Math.max(1, Math.ceil(COMPARATOR.weekPassCents / Math.max(1, limeCents)))} rides.</p>`
+        ? `<p class="hud-note hud-note--pointed">You paid ≈ ${formatCents(deltaCents)} more because Denver has one operator —
+           ${passDesc} would have covered this ride${leftoverClause}.</p>`
         : "";
 
     const zoneLine = zoneRide
@@ -1493,7 +1727,8 @@ export class RideHud {
         ${veoPlusLine}
         ${zoneLine}
         ${monopolyLine}
-        <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.</p>
+        <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.
+          ${COMPARATOR.name} pass pricing includes unlocks (no $1 unlock charge).</p>
         <button type="button" class="hud-btn hud-btn--primary" data-hud="done">Done</button>
       </div>`;
   }

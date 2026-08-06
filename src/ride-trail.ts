@@ -25,7 +25,10 @@ import { emptyFC } from "./util.ts";
 import { decodeTrackBatch, type StoredTrackBatch } from "./track-store.ts";
 
 const SRC = "ride-trail";
-const CASING_LAYER = "ride-trail-casing";
+/** Exported for ride-route-line.ts, which inserts the planned pathway's
+ *  layers beneath this one so the live breadcrumb draws over the plan. */
+export const RIDE_TRAIL_CASING_LAYER = "ride-trail-casing";
+const CASING_LAYER = RIDE_TRAIL_CASING_LAYER;
 const LINE_LAYER = "ride-trail-line";
 const START_LAYER = "ride-trail-start";
 
