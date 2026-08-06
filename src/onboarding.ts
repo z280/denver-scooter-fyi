@@ -129,7 +129,7 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
     headline: "Smarter routing",
     body: `
       <div class="onb-routes" aria-hidden="true">
-        <span class="onb-route">🛡️ Safe &amp; Protected</span>
+        <span class="onb-route">🦺 Safe &amp; Protected</span>
         <span class="onb-route">🔋 The Range Maximizer</span>
         <span class="onb-route">🌳 The Shaded Canopy</span>
         <span class="onb-route">⚡ Commuter Express</span>
