@@ -25,9 +25,9 @@
 //
 // BASKET IS ASKED OF EVERY DEVICE, not just the models that ship with one.
 // It briefly wasn't — the question arrived Cosmo-only — and that was wrong
-// on the fleet: the Trike carries a cargo basket as standard equipment
+// on the fleet: the Rover carries a cargo basket as standard equipment
 // (`devices.ts`'s model catalog says so), so a model gate would have made a
-// bent Trike basket permanently unreportable. Asking everyone also keeps
+// bent Rover basket permanently unreportable. Asking everyone also keeps
 // this list FIXED, which is what lets a "not asked" answer stay
 // unrepresentable: every rider sees every question, so `null` can only ever
 // mean "hasn't answered yet".

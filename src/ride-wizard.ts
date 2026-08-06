@@ -354,7 +354,7 @@ export class RideWizard {
 
     // Model sub-picker, shown only when "Exact device type" is the
     // priority. The same model cards as the Filters drawer: badge art +
-    // name + description (per UAT: pick by Cosmo/Astro/Apollo/Trike, not by
+    // name + description (per UAT: pick by Cosmo/Astro/Apollo/Rover, not by
     // abstract posture labels).
     typeRow.append(el("span", "ride-wizard__typerow-label", "Which model?"));
     const typeDefs: {

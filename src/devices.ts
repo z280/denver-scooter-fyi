@@ -2610,7 +2610,7 @@ function relLuminance(hex: string): number {
 }
 
 /** Pick a legible glyph color for a tinted badge: a dark ink on light tints
- *  (Astro/Cosmo/Trike), white on dark ones (Apollo), so the letter clears WCAG
+ *  (Astro/Cosmo/Rover), white on dark ones (Apollo), so the letter clears WCAG
  *  large-text contrast on every model color rather than washing out. */
 function glyphColorFor(bg: string): { fill: string; halo: string } {
   return relLuminance(bg) >= 0.3
@@ -2661,7 +2661,7 @@ function drawInnerBadge(
     ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
   } else if (inner.startsWith("ml-")) {
     // Model-tinted letter badge: colored disc + a glyph whose color is chosen
-    // by the tint's luminance (dark ink on light Astro/Cosmo/Trike, white on
+    // by the tint's luminance (dark ink on light Astro/Cosmo/Rover, white on
     // dark Apollo) so the letter clears contrast on every model color.
     const mk = inner.slice(3) as ModelKey;
     const bg = MODEL_COLOR[mk] ?? BATTERY_MISSING_COLOR;
