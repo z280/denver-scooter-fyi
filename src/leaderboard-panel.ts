@@ -114,7 +114,6 @@ const SCHEDULE_GROUPS: { title: string; actions: [string, string][] }[] = [
   {
     title: "Adding to the map",
     actions: [
-      ["qr_scan", "Scan a device's QR code"],
       ["device_photo", "Add a device photo"],
       ["device_features_first", "Be first to confirm a device's features"],
       ["device_features_review", "Review features flagged for a second look"],
@@ -126,6 +125,13 @@ const SCHEDULE_GROUPS: { title: string; actions: [string, string][] }[] = [
     actions: [["profile_completion", "Complete your profile"]],
   },
 ];
+
+/** Actions deliberately NOT listed, even if the API publishes them.
+ *  `qr_scan` never shipped client-side — advertising 100 pts for a flow
+ *  that doesn't exist is a promise nobody can collect on. Suppressed here
+ *  (not just unnamed) because the humanized "More" pass below would
+ *  otherwise resurrect it straight from the server's schedule. */
+const HIDDEN_ACTIONS = new Set(["qr_scan"]);
 
 /** Every action this module names, for the "did the API send something we
  *  don't know about" pass below. */
@@ -191,7 +197,7 @@ export function buildPointsScheduleHtml(
   // Anything the API publishes that this build has no copy for. Rendering it
   // humanized beats hiding an award riders can actually earn.
   const extraRows = Object.keys(schedule)
-    .filter((action) => !KNOWN_ACTIONS.has(action))
+    .filter((action) => !KNOWN_ACTIONS.has(action) && !HIDDEN_ACTIONS.has(action))
     .sort()
     .map((action) => {
       const value = formatScheduleValue(schedule, action);
