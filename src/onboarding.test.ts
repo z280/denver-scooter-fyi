@@ -55,11 +55,16 @@ describe("the tour's screens", () => {
     ]);
   });
 
-  it("names all four models on the model-choice screen", () => {
+  it("names the three scooter models on the model-choice screen", () => {
     const models = ONBOARDING_SCREENS[1].body;
-    for (const m of ["Astro", "Cosmo", "Apollo", "Trike"]) {
+    for (const m of ["Astro", "Cosmo", "Apollo"]) {
       expect(models).toContain(m);
     }
+    // Trike is deliberately absent (its own incoming request), and the old
+    // "the operator app treats every scooter the same" line was retired —
+    // Veo added vehicle-type filtering, so the claim went stale.
+    expect(models).not.toContain("Trike");
+    expect(models).not.toContain("operator app");
   });
 
   it("teaches the three rideability tiers", () => {
