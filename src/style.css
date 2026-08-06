@@ -4401,6 +4401,28 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   padding: 0 0 14px;
 }
 
+/* ---------- Filters drawer accordion ---------- */
+/* Same native-<details> accordion, restyled so the summaries keep the
+   drawer's old .control-label section-header voice. wireFilterAccordion()
+   (main.ts) enforces one-open-at-a-time. */
+#filters-accordion > .accordion:first-of-type {
+  border-top: none;
+}
+/* The stack is followed by the Clear All Filters button, not another
+   accordion, so the generic :last-child bottom rule never applies — close
+   the stack here and give the button breathing room. */
+#filters-accordion > .accordion:last-of-type {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+#filters-accordion .accordion__summary {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
 .leaderboard-panel__rows {
   list-style: none;
   margin: 0;

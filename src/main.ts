@@ -41,6 +41,10 @@ import {
   type AreaFilterState,
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
+import {
+  FEATURE_FILTER_KEYS,
+  type FeatureFilterKey,
+} from "./device-features.ts";
 import { Locate } from "./locate.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
@@ -280,10 +284,12 @@ let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
 let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
 let minBatteryPct = 0;
 let qualityOn: QualityFilter = "any";
+let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
 let clearModelFilter: () => void = () => {};
+let clearFeatureFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let setQualityFilter: (value: QualityFilter) => void = () => {};
@@ -309,6 +315,13 @@ const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "ok-only": "✓ Reliable only",
 };
 
+const FEATURE_CHIP_LABEL: Record<FeatureFilterKey, string> = {
+  bell: "🔔 Bell",
+  basket: "🧺 Basket",
+  cup_holder: "🥤 Cup holder",
+  missing: "¯\\_(ツ)_/¯ Missing data",
+};
+
 /** One entry per live constraint — the chip label plus its clear hook.
  *  Three consumers, one label source: the floating chips, the preset name
  *  suggestion, and the wizard's carried-filters summary. */
@@ -332,6 +345,19 @@ function activeFilterChips(): Chip[] {
       id: "models",
       label: names.length ? `Models: ${names.join(", ")}` : "🚫 No models",
       onClear: clearModelFilter,
+    });
+  }
+
+  if (featuresOn.size > 0) {
+    // Iterate the canonical key list so the chip's order is stable no
+    // matter the order the pills were tapped in.
+    const labels = FEATURE_FILTER_KEYS.filter((k) => featuresOn.has(k)).map(
+      (k) => FEATURE_CHIP_LABEL[k],
+    );
+    active.push({
+      id: "features",
+      label: labels.join(" + "),
+      onClear: clearFeatureFilter,
     });
   }
 
@@ -725,7 +751,9 @@ map.on("load", async () => {
   buildLayerToggles();
   wireRideTypes();
   wireModels();
+  wireFeatureFilter();
   wireHideUnavailable();
+  wireFilterAccordion();
   wireBatterySlider();
   wireQuality();
   wireClearFilters();
@@ -1247,6 +1275,42 @@ function wireModels(): void {
   );
 }
 
+function wireFeatureFilter(): void {
+  // A REQUIRE filter, so it can't ride on wireToggleGroup (whose contract is
+  // "everything starts enabled, tap to hide"): here nothing starts selected,
+  // empty = off, and each pill ADDS a constraint. See matchesFeatureFilter
+  // (device-features.ts) for the AND/¯\_(ツ)_/¯ semantics.
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#feature-filter .toggle-pill"),
+  );
+  const selected = new Set<FeatureFilterKey>();
+  const sync = (): void => {
+    for (const b of btns) {
+      const on = selected.has(b.dataset.feature as FeatureFilterKey);
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    featuresOn = new Set(selected);
+    devices.setFeatureFilter(featuresOn);
+    clusters.update(devices.visibleFeatures());
+    refreshChips();
+  };
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      track("control_change", { control: "features" });
+      const v = btn.dataset.feature as FeatureFilterKey;
+      if (selected.has(v)) selected.delete(v);
+      else selected.add(v);
+      sync();
+    });
+  }
+  clearFeatureFilter = () => {
+    if (selected.size === 0) return;
+    selected.clear();
+    sync();
+  };
+}
+
 function wireQuality(): void {
   const set = wireSeg(
     "#quality-seg",
@@ -1272,6 +1336,7 @@ function snapshotFilters(): FilterSnapshot {
   return {
     rideTypes: [...rideTypesOn],
     models: [...modelsOn],
+    features: FEATURE_FILTER_KEYS.filter((k) => featuresOn.has(k)),
     hideUnavailable: need<HTMLInputElement>("hide-unavailable").checked,
     minBattery: minBatteryPct,
     quality: qualityOn,
@@ -1283,7 +1348,7 @@ function snapshotFilters(): FilterSnapshot {
  *  handler (and the whole map→clusters→chips sync path) runs normally. */
 function setToggleGroup(
   rootSel: string,
-  key: "ride" | "model",
+  key: "ride" | "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
   for (const btn of document.querySelectorAll<HTMLButtonElement>(
@@ -1306,6 +1371,9 @@ function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
   return async (s: FilterSnapshot): Promise<void> => {
     setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
     setToggleGroup("#model-filter", "model", new Set(s.models));
+    // Presets saved before the Features filter existed carry no `features`
+    // member — that reads as "no selection", which clears the live one.
+    setToggleGroup("#feature-filter", "feature", new Set(s.features ?? []));
     const hideCb = need<HTMLInputElement>("hide-unavailable");
     if (hideCb.checked !== s.hideUnavailable) {
       hideCb.checked = s.hideUnavailable;
@@ -1325,6 +1393,7 @@ function wireClearFilters(): void {
   resetAllFilters = () => {
     clearRideTypeFilter();
     clearModelFilter();
+    clearFeatureFilter();
     clearBatteryMin();
     clearQualityFilter();
     const hideCb = need<HTMLInputElement>("hide-unavailable");
@@ -2321,6 +2390,27 @@ function renderEquityMetric(): void {
     `<strong>${percent.toFixed(1)}%</strong> of devices are in ` +
     `<span class="equity-metric__ranks">${ranks}</span> right now ` +
     `<span class="equity-metric__count">(${inside.toLocaleString()} of ${total.toLocaleString()})</span>`;
+}
+
+/** The Filters drawer's accordion sections: one open at a time. Native
+ *  <details> keeps the keyboard behavior and open state for free (same
+ *  pattern as the Leaderboard drawer); the only added rule is exclusivity —
+ *  opening a section closes whichever other one was open, so the drawer's
+ *  now-longer section list never becomes one giant scroll. */
+function wireFilterAccordion(): void {
+  const sections = Array.from(
+    document.querySelectorAll<HTMLDetailsElement>(
+      "#filters-accordion > details.accordion",
+    ),
+  );
+  for (const section of sections) {
+    section.addEventListener("toggle", () => {
+      if (!section.open) return;
+      for (const other of sections) {
+        if (other !== section && other.open) other.open = false;
+      }
+    });
+  }
 }
 
 function wireDrawers(): void {

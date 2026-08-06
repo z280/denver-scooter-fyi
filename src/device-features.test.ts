@@ -31,6 +31,7 @@ import {
   describeSubmitError,
   emptyAnswers,
   featurePointsFor,
+  matchesFeatureFilter,
   openConfirmFeatures,
   presentFeatures,
   prunePoorCondition,
@@ -39,6 +40,7 @@ import {
   summarizeFeatures,
   toRequestBody,
   type FeatureAnswerState,
+  type FeatureFilterKey,
 } from "./device-features.ts";
 import { ReportHttpError } from "./reports.ts";
 
@@ -780,5 +782,75 @@ describe("summarizeFeatures", () => {
         poor_condition: [],
       }),
     ).toBe("None of the four");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Filtering the map by confirmed equipment
+// ---------------------------------------------------------------------------
+
+describe("matchesFeatureFilter", () => {
+  const sel = (...keys: FeatureFilterKey[]): Set<FeatureFilterKey> =>
+    new Set(keys);
+  const withBell = { bell: true, cup_holder: false, basket: false };
+  const withBellAndBasket = { bell: true, cup_holder: false, basket: true };
+
+  it("passes everything when nothing is selected", () => {
+    // Empty selection IS the off state — the drawer's default.
+    expect(matchesFeatureFilter(withBell, sel())).toBe(true);
+    expect(matchesFeatureFilter(null, sel())).toBe(true);
+    expect(matchesFeatureFilter("{not json", sel())).toBe(true);
+  });
+
+  it("requires the selected feature", () => {
+    expect(matchesFeatureFilter(withBell, sel("bell"))).toBe(true);
+    expect(matchesFeatureFilter(withBell, sel("basket"))).toBe(false);
+  });
+
+  it("ANDs multiple selected features together", () => {
+    // Bell + Basket means one scooter carrying both, not either.
+    expect(matchesFeatureFilter(withBellAndBasket, sel("bell", "basket"))).toBe(
+      true,
+    );
+    expect(matchesFeatureFilter(withBell, sel("bell", "basket"))).toBe(false);
+  });
+
+  it("hides unconfirmed devices when a feature is required without ¯\\_(ツ)_/¯", () => {
+    expect(matchesFeatureFilter(null, sel("bell"))).toBe(false);
+  });
+
+  it("¯\\_(ツ)_/¯ ORs the unconfirmed fleet back in alongside a required feature", () => {
+    // No data doesn't mean no bell — the shrug keeps the (majority)
+    // unconfirmed devices visible while still hiding confirmed bell-less ones.
+    expect(matchesFeatureFilter(null, sel("bell", "missing"))).toBe(true);
+    expect(matchesFeatureFilter(withBell, sel("bell", "missing"))).toBe(true);
+    expect(
+      matchesFeatureFilter(withBellAndBasket, sel("cup_holder", "missing")),
+    ).toBe(false);
+  });
+
+  it("¯\\_(ツ)_/¯ alone shows only the unconfirmed devices", () => {
+    // Which is also how a points-hunter finds scooters worth confirming.
+    expect(matchesFeatureFilter(null, sel("missing"))).toBe(true);
+    expect(matchesFeatureFilter(withBell, sel("missing"))).toBe(false);
+  });
+
+  it("reads the flattened JSON string the map click path produces", () => {
+    // Same MapLibre stringification readDeviceFeatures defends against —
+    // the filter has to see the same equipment the popup does.
+    expect(matchesFeatureFilter(JSON.stringify(withBell), sel("bell"))).toBe(
+      true,
+    );
+    expect(matchesFeatureFilter(JSON.stringify(withBell), sel("basket"))).toBe(
+      false,
+    );
+  });
+
+  it("treats a device confirmed to carry nothing as confirmed, not missing", () => {
+    // Somebody looked and found none of the four — that scooter must not
+    // ride back in under ¯\_(ツ)_/¯.
+    const none = { bell: false, cup_holder: false, basket: false };
+    expect(matchesFeatureFilter(none, sel("missing"))).toBe(false);
+    expect(matchesFeatureFilter(none, sel("bell", "missing"))).toBe(false);
   });
 });

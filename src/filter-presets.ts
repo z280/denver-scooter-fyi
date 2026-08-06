@@ -4,6 +4,7 @@
 // module owns storage and the drawer UI.
 
 import type { BoundaryLayer } from "./api.ts";
+import type { FeatureFilterKey } from "./device-features.ts";
 import type { ModelKey, QualityFilter, RideType } from "./devices.ts";
 import { track } from "./telemetry.ts";
 
@@ -14,6 +15,9 @@ export interface FilterPreset {
   name: string;
   rideTypes: RideType[];
   models: ModelKey[];
+  /** Optional because presets saved before the Features filter existed
+   *  lack it — absent applies as "no selection" (the filter's off state). */
+  features?: FeatureFilterKey[];
   hideUnavailable: boolean;
   minBattery: number;
   quality: QualityFilter;
@@ -32,6 +36,12 @@ const KEY = "scooter-fyi-filter-presets";
 
 const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
 const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo", "trike"];
+const FEATURE_KEYS: readonly string[] = [
+  "bell",
+  "basket",
+  "cup_holder",
+  "missing",
+];
 const QUALITIES: readonly string[] = ["any", "no-risk", "ok-only"];
 
 /** Structural validation — a hand-edited or corrupted blob must not apply
@@ -43,6 +53,9 @@ function isValidPreset(p: FilterPreset): boolean {
     p.rideTypes.every((t) => RIDE_TYPES.includes(t)) &&
     Array.isArray(p.models) &&
     p.models.every((m) => MODEL_KEYS.includes(m)) &&
+    (p.features === undefined ||
+      (Array.isArray(p.features) &&
+        p.features.every((f) => FEATURE_KEYS.includes(f)))) &&
     typeof p.hideUnavailable === "boolean" &&
     typeof p.minBattery === "number" &&
     p.minBattery >= 0 &&
