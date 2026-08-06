@@ -742,7 +742,7 @@ export class RideHud {
       `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="display" data-display="${key}" aria-pressed="${on}">${label}</button>`;
     const chips: string[] = [chip("timer", "Timer", this.timerVisible)];
     if (!this.ownDeviceRide) {
-      chips.push(chip("cost", "Est. Veo cost", this.costHudVisible));
+      chips.push(chip("cost", "Est. cost", this.costHudVisible));
     }
     chips.push(
       chip("classic", "Speedo classic", this.speedoClassicVisible),
