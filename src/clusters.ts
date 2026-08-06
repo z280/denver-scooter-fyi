@@ -7,6 +7,7 @@ import type {
 import type { Overlays } from "./overlays.ts";
 import { indexFeature, pointInFeature, type IndexedFeature } from "./geo.ts";
 import { prettyRegion } from "./util.ts";
+import { track } from "./telemetry.ts";
 
 // 30 ft in meters. Tuned for volunteers placing cards on physically-clumped devices.
 const EPS_METERS = 9.144;
@@ -164,7 +165,10 @@ export class Clusters {
       this.regionLayer = this.regionSelect.value as BoundaryLayer;
       if (this.enabled) void this.applyRegionLayer();
     });
-    this.findBtn.addEventListener("click", () => void this.activate());
+    this.findBtn.addEventListener("click", () => {
+      track("cluster_tool", { tool: "find" });
+      void this.activate();
+    });
     this.renderIdle();
   }
 

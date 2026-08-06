@@ -3,6 +3,7 @@
 
 import { clearStoredSessionIfToken } from "./auth-storage.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
+import { trackApiError } from "./telemetry.ts";
 
 // In production, the browser calls the API directly (CORS allows denver.scooter.fyi).
 // In local dev, requests go through the Vite proxy (see vite.config.ts) because the
@@ -193,6 +194,7 @@ export async function getJSON<T>(
   });
   if (res.status === 503 || res.status === 404) {
     const { detail, errorKey } = await readErrorBody(res);
+    trackApiError(path, res.status, errorKey);
     throw new NoDataError(
       errorMessage(detail, errorKey, `No data (${res.status})`),
       res.status,
@@ -200,7 +202,9 @@ export async function getJSON<T>(
     );
   }
   if (!res.ok) {
-    throw await apiErrorFrom(res, `Request to ${path} failed: ${res.status}`);
+    const err = await apiErrorFrom(res, `Request to ${path} failed: ${res.status}`);
+    trackApiError(path, res.status, err.errorKey);
+    throw err;
   }
   if (parseText) return parseText(await res.text());
   return (await res.json()) as T;
@@ -423,7 +427,9 @@ export async function authedFetchJSON<T>(
 ): Promise<T> {
   const res = await authedFetch(path, init);
   if (!res.ok) {
-    throw await apiErrorFrom(res, `HTTP ${res.status}`);
+    const err = await apiErrorFrom(res, `HTTP ${res.status}`);
+    trackApiError(path, res.status, err.errorKey);
+    throw err;
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

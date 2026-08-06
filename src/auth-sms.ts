@@ -23,6 +23,7 @@
 import { API_BASE } from "./api.ts";
 import { AuthSendError } from "./auth-magic-link.ts";
 import { isSession, persistSession } from "./auth-session.ts";
+import { track } from "./telemetry.ts";
 
 /** The recipient has blocked texts from the shared sender. `message` is the
  *  server's own sentence — show it verbatim, it names the keyword and number
@@ -100,6 +101,7 @@ export async function requestSmsCode(phone: string): Promise<void> {
     body: JSON.stringify({ phone_number: e164 }),
   });
   if (res.status !== 202 && res.status !== 200) await throwForStatus(res, "code");
+  track("auth_start", { method: "sms" });
 }
 
 /**
@@ -123,6 +125,7 @@ export async function verifySmsCode(phone: string, code: string): Promise<void> 
     }),
   });
   if (!res.ok) {
+    track("auth_error", { method: "sms", key: String(res.status) });
     const detail = await detailOf(res);
     // 409 here is a contested number, not an opt-out — the server's
     // sentence explains it and tells them what to do.
@@ -132,4 +135,5 @@ export async function verifySmsCode(phone: string, code: string): Promise<void> 
   const data: unknown = await res.json();
   if (!isSession(data)) throw new Error("Verification returned no session");
   persistSession(data);
+  track("auth_success", { method: "sms" });
 }

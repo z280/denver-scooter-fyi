@@ -241,11 +241,25 @@ export function isRideModalEnabled(): boolean {
   }
 }
 
+/** Funnel telemetry rides the window CustomEvent channel (the
+ *  `scooter:theme` pattern) so this module keeps importing no app state;
+ *  src/telemetry.ts validates names and drops everything when opted out. */
+function emitTrack(n: string, p?: Record<string, string | number | boolean>): void {
+  try {
+    window.dispatchEvent(new CustomEvent("scooter:track", { detail: { n, p } }));
+  } catch {
+    /* telemetry must never break the wizard */
+  }
+}
+
 /** Open the wizard. Re-entering while open (a second deep link, a popup's
  *  "Ride this") closes the live instance with reason `reopen` and starts
  *  clean — the new entry wins. */
 export function openRideModal(entry: RideModalEntry = {}): void {
   if (current) closeRideModal("reopen");
+  emitTrack("ride_open", {
+    entry: entry.vehicleIdentifier ? "device" : "direct",
+  });
   const modal = new RideModal(entry, modalHooks);
   current = modal;
   modal.open();
@@ -379,6 +393,12 @@ class RideModal {
   close(reason: RideModalCloseReason): void {
     if (this.closed) return;
     this.closed = true;
+    if (reason === "handoff") {
+      emitTrack("ride_complete");
+    } else if (reason === "escape" || reason === "close-button") {
+      const screen = this.screenId();
+      emitTrack("ride_abandon", screen !== null ? { screen } : undefined);
+    }
     this.teardownScreen();
     for (const fn of this.cleanupFns.splice(0)) {
       try {
@@ -403,6 +423,13 @@ class RideModal {
   // ---------- navigation ----------
 
   private render(id: ScreenId, mode: "push" | "replace"): void {
+    const fromScreen = this.screenId();
+    if (fromScreen !== id) {
+      emitTrack("ride_screen", {
+        screen: id,
+        ...(fromScreen !== null ? { from: fromScreen } : {}),
+      });
+    }
     this.teardownScreen();
     if (mode === "replace") this.stack.length = 0;
     this.stack.push(id);

@@ -116,6 +116,13 @@ import {
 } from "./chrome.ts";
 import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
 import {
+  initTelemetry,
+  setAuthState,
+  setTelemetryOptOut,
+  telemetryOptedOut,
+  track,
+} from "./telemetry.ts";
+import {
   wireLeaderboardPanel,
   type LeaderboardPanelHandle,
 } from "./leaderboard-panel.ts";
@@ -140,6 +147,21 @@ const { map, geolocate } = createMap("map", theme0);
 // adopts the corner into the top bar.
 map.addControl(new ThemeControl(theme0), "top-left");
 initChrome();
+setAuthState(isAuthenticated());
+initTelemetry();
+// About drawer's "Allow private analytics" switch — a purely local choice,
+// meaningful signed-in or out, so it lives outside wireAccount().
+{
+  const toggle = document.getElementById(
+    "about-telemetry-toggle",
+  ) as HTMLInputElement | null;
+  if (toggle) {
+    toggle.checked = !telemetryOptedOut();
+    toggle.addEventListener("change", () => {
+      setTelemetryOptOut(!toggle.checked);
+    });
+  }
+}
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
 const devices = new Devices(map, locate);
@@ -1110,6 +1132,7 @@ function wireSeg(
   rootSel: string,
   valueOf: (b: HTMLButtonElement) => string,
   onChange: (value: string) => void,
+  trackId?: string,
 ): (value: string) => void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(`${rootSel} .seg-btn`),
@@ -1123,7 +1146,15 @@ function wireSeg(
     onChange(valueOf(btn));
   };
   btns.forEach((btn, i) => {
-    btn.addEventListener("click", () => select(btn));
+    btn.addEventListener("click", () => {
+      // Only real gestures that change the value count — programmatic
+      // setter replays (presets, chips) go through the returned function
+      // below and emit nothing, and re-clicking the active segment is a
+      // no-op change not worth an event.
+      if (trackId && !btn.classList.contains("is-active"))
+        track("control_change", { control: trackId });
+      select(btn);
+    });
     btn.addEventListener("keydown", (e) => {
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
@@ -1151,6 +1182,7 @@ function wireToggleGroup<T extends string>(
   valueOf: (b: HTMLButtonElement) => T,
   all: readonly T[],
   onChange: (enabled: Set<T>) => void,
+  trackId?: string,
 ): () => void {
   const enabled = new Set<T>(all);
   const sync = (): void => {
@@ -1163,6 +1195,7 @@ function wireToggleGroup<T extends string>(
   };
   for (const btn of btns) {
     btn.addEventListener("click", () => {
+      if (trackId) track("control_change", { control: trackId });
       const v = valueOf(btn);
       if (enabled.has(v)) enabled.delete(v);
       else enabled.add(v);
@@ -1192,6 +1225,7 @@ function wireRideTypes(): void {
       clusters.update(devices.visibleFeatures());
       refreshChips();
     },
+    "ride-types",
   );
 }
 
@@ -1209,6 +1243,7 @@ function wireModels(): void {
       clusters.update(devices.visibleFeatures());
       refreshChips();
     },
+    "models",
   );
 }
 
@@ -1222,6 +1257,7 @@ function wireQuality(): void {
       clusters.update(devices.visibleFeatures());
       refreshChips();
     },
+    "quality",
   );
   setQualityFilter = (value) => set(value);
   clearQualityFilter = () => set("any");
@@ -1646,6 +1682,7 @@ function wireIconography(): void {
       devices.setGaugeData(gaugeData);
       renderAll();
     },
+    "gauge-data-source",
   );
   const opposite = (s: DataSource): DataSource =>
     s === "battery" ? "reliability" : "battery";
@@ -1661,6 +1698,7 @@ function wireIconography(): void {
       if (gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
+    "icon-data",
   );
   const setStyle = wireSeg(
     "#icon-style-seg",
@@ -1674,6 +1712,7 @@ function wireIconography(): void {
       if (style === "data" && gauge.checked) setGaugeSrc(opposite(iconData));
       renderAll();
     },
+    "icon-style",
   );
   // 📐 Design Options.
   let gaugeDisplayOn: GaugeDisplay = "always";
@@ -1684,6 +1723,7 @@ function wireIconography(): void {
       gaugeDisplayOn = v as GaugeDisplay;
       devices.setGaugeDisplay(gaugeDisplayOn);
     },
+    "gauge-display",
   );
 
   // ✋ Touch-aware hover: no hover-dependent options on a touch device.
@@ -1712,6 +1752,7 @@ function wireIconography(): void {
       devices.setGaugeThickness(thickness);
       renderAll(); // examples + legend preview the new ring weight
     },
+    "gauge-thickness",
   );
   const setPlacement = wireSeg(
     "#gauge-placement-seg",
@@ -1721,6 +1762,7 @@ function wireIconography(): void {
       devices.setGaugePlacement(placement);
       renderAll();
     },
+    "gauge-placement",
   );
   gauge.addEventListener("change", () => {
     devices.setGauge(gauge.checked);
@@ -1896,6 +1938,7 @@ function wireHexDensity(): void {
   btns.forEach((btn, i) => {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
+      track("hex_tool", { tool: btn.dataset.hex || "off" });
       apply((btn.dataset.hex || "") as HexSize | "", metricSelect.value as HexMetric);
     });
     btn.addEventListener("keydown", (e) => {
@@ -2162,6 +2205,7 @@ function wireModes(): void {
 
   for (const btn of btns) {
     btn.addEventListener("click", () => {
+      track("mode_switch", { mode: btn.dataset.mode ?? "?" });
       switch (btn.dataset.mode) {
         case "riding":
           // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
@@ -2315,6 +2359,7 @@ function wireDrawers(): void {
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
       const id = tab.dataset.drawer ?? null;
+      if (id && active !== id) track("drawer_open", { drawer: id });
       setActive(active === id ? null : id);
     });
   }

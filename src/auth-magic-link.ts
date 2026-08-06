@@ -24,6 +24,7 @@
 
 import { API_BASE } from "./api.ts";
 import { isSession, persistSession } from "./auth-session.ts";
+import { track } from "./telemetry.ts";
 
 /** Query param carrying the one-time token on the return link. */
 const MAGIC_PARAM = "ml";
@@ -69,6 +70,7 @@ export function isProbablyCode(value: string): boolean {
 export async function requestMagicLink(email: string): Promise<void> {
   const trimmed = email.trim();
   if (!isProbablyEmail(trimmed)) throw new Error("Enter a valid email address");
+  track("auth_start", { method: "magic_link" });
   const res = await fetch(`${API_BASE}/api/v1/auth/magic-link`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -91,6 +93,7 @@ export async function requestMagicLink(email: string): Promise<void> {
 export async function requestLoginCode(email: string): Promise<void> {
   const trimmed = email.trim();
   if (!isProbablyEmail(trimmed)) throw new Error("Enter a valid email address");
+  track("auth_start", { method: "email_code" });
   const res = await fetch(`${API_BASE}/api/v1/auth/code`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -112,11 +115,13 @@ export async function redeemMagicLink(token: string): Promise<void> {
     body: JSON.stringify({ token }),
   });
   if (!res.ok) {
+    track("auth_error", { method: "magic_link", key: String(res.status) });
     throw new Error(`Sign-in link invalid or expired (HTTP ${res.status})`);
   }
   const data: unknown = await res.json();
   if (!isSession(data)) throw new Error("Sign-in link returned no session");
   persistSession(data);
+  track("auth_success", { method: "magic_link" });
 }
 
 /**
@@ -134,6 +139,7 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
     body: JSON.stringify({ email: email.trim(), code: normalizeCode(code) }),
   });
   if (!res.ok) {
+    track("auth_error", { method: "email_code", key: String(res.status) });
     throw new AuthSendError(
       res.status,
       `Code invalid or expired (HTTP ${res.status})`,
@@ -142,6 +148,7 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
   const data: unknown = await res.json();
   if (!isSession(data)) throw new Error("Verification returned no session");
   persistSession(data);
+  track("auth_success", { method: "email_code" });
 }
 
 /**

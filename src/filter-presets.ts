@@ -5,6 +5,7 @@
 
 import type { BoundaryLayer } from "./api.ts";
 import type { ModelKey, QualityFilter, RideType } from "./devices.ts";
+import { track } from "./telemetry.ts";
 
 /** One saved filter set. `area` stores only the display selection
  *  (layer + subset) — polygons are re-resolved on load, because the live
@@ -138,6 +139,7 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
       // Same name replaces — saving twice shouldn't pile up duplicates.
       const rest = loadPresets().filter((p) => p.name !== name);
       const ok = persistPresets([...rest, { name, ...deps.snapshot() }]);
+      if (ok) track("filter_preset", { action: "save" });
       note(
         ok ? `Saved “${name}”.` : "Couldn't save — storage is unavailable (private mode?).",
         saveBtn,
@@ -161,6 +163,7 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
       const applyBtn = el("button", "preset-item__apply", preset.name);
       applyBtn.type = "button";
       applyBtn.addEventListener("click", async () => {
+        track("filter_preset", { action: "apply" });
         // Area restore is async — hold the whole list disabled until it
         // settles (the busy flag also blocks a fresh list rendered from a
         // re-tap of Load while this apply is in flight).
@@ -182,6 +185,7 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
       del.setAttribute("aria-label", `Delete preset ${preset.name}`);
       del.addEventListener("click", () => {
         if (busy) return;
+        track("filter_preset", { action: "delete" });
         persistPresets(loadPresets().filter((p) => p.name !== preset.name));
         renderLoad();
         loadBtn.focus(); // the ✕ that had focus is gone with the re-render

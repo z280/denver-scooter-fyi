@@ -40,6 +40,7 @@ import type { LngLat, Locate } from "./locate.ts";
 import { markUndoFree } from "./ios-shake-undo.ts";
 import type { GeocodeKind, GeocodeResult } from "./api.ts";
 import type { RideSessionDest, RideSessionStore } from "./ride-session.ts";
+import { track } from "./telemetry.ts";
 import {
   createGeocodeSearch,
   type GeocodeSearchClient,
@@ -258,6 +259,7 @@ function buildDestScreen(
 
   function selectDest(dest: RideDestWithCoverage): void {
     if (destroyed) return;
+    track("geocode_search", { outcome: "picked" });
     deps.session.dispatch({ type: "setDest", dest });
     recents = recordRecentDest({
       label: dest.label,
@@ -324,6 +326,7 @@ function buildDestScreen(
       return;
     }
     if (results.length === 0) {
+      track("geocode_search", { outcome: "no_results" });
       statusEl.hidden = false;
       statusEl.textContent = "No matches yet — keep typing, or try a nearby cross street.";
       return;

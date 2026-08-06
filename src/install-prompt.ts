@@ -4,6 +4,7 @@
 // only fires it after its own engagement heuristics, so a button wired to
 // that event would often silently do nothing on first visit. Instead we
 // always hand the rider our own platform-appropriate steps.
+import { track } from "./telemetry.ts";
 
 const DISMISSED_KEY = "scooter-fyi-install-dismissed";
 const ICON_URL = "/icon-192.png";
@@ -128,11 +129,13 @@ function showBanner(): void {
   `;
 
   document.body.appendChild(banner);
+  track("install_prompt", { step: "shown" });
   repositionAboveModeSwitch(banner);
   const onResize = (): void => repositionAboveModeSwitch(banner);
   window.addEventListener("resize", onResize);
 
   const close = (): void => {
+    track("install_prompt", { step: "dismissed" });
     window.removeEventListener("resize", onResize);
     setDismissed();
     banner.remove();
@@ -143,6 +146,7 @@ function showBanner(): void {
   banner
     .querySelector(".install-banner__install")
     ?.addEventListener("click", () => {
+      track("install_prompt", { step: "accepted" });
       window.removeEventListener("resize", onResize);
       setDismissed();
       banner.remove();
