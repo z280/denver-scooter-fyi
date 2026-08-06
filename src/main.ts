@@ -90,6 +90,7 @@ import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
+import { createRideRouteLine } from "./ride-route-line.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -175,6 +176,10 @@ const trackRoute = createTrackRoute(map);
 // live breadcrumb ride mode draws under the rider, fix by fix, while the
 // follow-cam owns the camera.
 const rideTrail = createRideTrail(map);
+// The third set of route-shaped layers on this map: the PLANNED pathway the
+// Screen 7 nav overlay is guiding along, drawn beneath `rideTrail`'s live
+// breadcrumb so where-you've-been covers where-you-should-go.
+const rideRouteLine = createRideRouteLine(map);
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -477,6 +482,7 @@ function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
     session: rideSession,
     trail: rideTrail,
+    routeLine: rideRouteLine,
   });
 }
 

@@ -43,7 +43,9 @@ import type { EndRideIn } from "./api.ts";
 import { selectedDevice } from "./ride-session.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
 import type { TrackAddResult, TrackFix, TrackRecorder } from "./track-store.ts";
-import { createNavHud, type NavHud } from "./ride-nav-hud.ts";
+import { createNavHud, decodePolyline, type NavHud } from "./ride-nav-hud.ts";
+import { colorForProfile } from "./ride-screen-routes.ts";
+import type { RideRouteLineHandle } from "./ride-route-line.ts";
 import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,11 @@ export interface RideHudDeps {
    *  owns which map objects exist. Omit it and the HUD behaves exactly as it
    *  did before — recording still happens, it just isn't drawn. */
   trail?: RideTrailHandle;
+  /** The planned-pathway layer (`ride-route-line.ts`) — the Screen 4 route
+   *  the nav overlay is guiding along, superimposed on the same map. Injected
+   *  for the same reason `trail` is. Omit it and navigation behaves exactly
+   *  as before: instructions only, no line on the map. */
+  routeLine?: RideRouteLineHandle;
 }
 
 /** What `beginHandoff` needs to put the HUD straight into `riding` for a ride
@@ -270,6 +277,12 @@ export class RideHud {
    *  or failed to write would be a picture of something that doesn't
    *  exist. */
   private readonly trail: RideTrailHandle | null;
+  /** The planned pathway drawn on the map while the nav overlay guides along
+   *  it, or null when the integrator wired none — see `RideHudDeps.routeLine`.
+   *  Drawn/replaced only from `mountNavHud` (initial route + off-route
+   *  re-routes), hidden with the follow-cam through BRB, wiped on nav dismiss
+   *  and at ride end. */
+  private readonly routeLine: RideRouteLineHandle | null;
   /** Bumped on every `enterRiding`. The trail seed for a resumed ride is read
    *  out of IndexedDB asynchronously, and a ride can end (and another begin)
    *  before that read lands — this is what stops one ride's history from
@@ -330,6 +343,7 @@ export class RideHud {
     this.root = container;
     this.session = deps.session ?? null;
     this.trail = deps.trail ?? null;
+    this.routeLine = deps.routeLine ?? null;
     this.root.addEventListener("click", (e) => this.onClick(e));
     // Re-acquire the wake lock when the tab comes back (the browser
     // silently releases it on hide).
@@ -911,6 +925,10 @@ export class RideHud {
     // survive into this one.
     this.trailOn = this.session?.current()?.options.save_tracks ?? true;
     this.trail?.reset();
+    // A prior ride's planned pathway must never survive into this one —
+    // `mountNavHud` (via `renderRiding` below) redraws it from the CURRENT
+    // session doc's route, if there is one.
+    this.routeLine?.clear();
     this.smoothedMps = 0;
     this.distanceM = 0;
     this.lastFix = null;
@@ -960,6 +978,7 @@ export class RideHud {
     this.userMarker ??= new maplibregl.Marker({ element: makeUserDot() });
     this.following = true;
     this.trail?.setVisible(true);
+    this.routeLine?.setVisible(true);
   }
 
   /** Restore the pre-ride 2D view and remove ride-only map decorations. */
@@ -973,6 +992,9 @@ export class RideHud {
     // rider's breadcrumb has no business drawn across a map they opened for
     // something else. `endRide` is what actually forgets it.
     this.trail?.setVisible(false);
+    // Same rule for the planned pathway: hidden through BRB, forgotten only
+    // on nav dismiss or ride end.
+    this.routeLine?.setVisible(false);
     if (this.savedView) {
       this.map.easeTo({
         center: [this.savedView.center.lng, this.savedView.center.lat],
@@ -1165,6 +1187,16 @@ export class RideHud {
     const route = doc?.state === "riding" ? doc.route : null;
     const dest = doc?.state === "riding" ? doc.dest : null;
     if (!doc || !route || !dest) return;
+    // Superimpose the pathway itself on the map, in the chosen profile's
+    // Screen 4 color, with the retained destination marked — the picture the
+    // maneuver instructions describe. Drawn before the overlay is built so
+    // the line is on the map from the same frame the instructions appear.
+    const routeColor = colorForProfile(route.profile);
+    const destPoint: [number, number] = [dest.lon, dest.lat];
+    this.routeLine?.set(decodePolyline(route.polyline), {
+      color: routeColor,
+      dest: destPoint,
+    });
     const overlay = document.createElement("div");
     liveEl.appendChild(overlay);
     this.navHudContainer = overlay;
@@ -1172,7 +1204,19 @@ export class RideHud {
       route,
       dest: { lat: dest.lat, lon: dest.lon },
       vehicleModel: selectedDevice(doc.device)?.model ?? null,
+      onRouteUpdate: (update) => {
+        // An off-route re-route swapped the guidance geometry in place —
+        // redraw the drawn pathway to match, same color (a re-route only
+        // ever re-requests the originally selected profile).
+        this.routeLine?.set(update.coordinates, {
+          color: routeColor,
+          dest: destPoint,
+        });
+      },
       onDismiss: () => {
+        // Dismissing guidance takes the pathway off the map too — the line
+        // is part of the guidance, not part of the base ride view.
+        this.routeLine?.clear();
         // Tear-down already happened inside ride-nav-hud.ts itself — just
         // forget our references so a later BRB resume doesn't try to
         // re-parent a container nav-hud has already emptied, and so it stays
@@ -1401,6 +1445,7 @@ export class RideHud {
     // that has already been wiped (see `onFix`'s guard).
     this.trailOn = false;
     this.trail?.clear();
+    this.routeLine?.clear();
     this.navHud?.dispose();
     this.navHud = null;
     this.navHudContainer = null;
