@@ -15,6 +15,7 @@ import {
   DEVICE_INTERACTIVE_LAYERS,
   ALL_RIDE_TYPES,
   ALL_MODELS,
+  MODELS_BY_RIDE_TYPE,
   gaugeColor,
   iconPreviewURL,
   whenModelIconsReady,
@@ -312,7 +313,7 @@ const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
 
 const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "no-risk": "Hiding high-risk",
-  "ok-only": "✓ Reliable only",
+  "ok-only": "✓ Likely rideable",
 };
 
 const FEATURE_CHIP_LABEL: Record<FeatureFilterKey, string> = {
@@ -366,10 +367,7 @@ function activeFilterChips(): Chip[] {
     active.push({
       id: "availability",
       label: "Hiding unavailable",
-      onClear: () => {
-        hideCb.checked = false;
-        hideCb.dispatchEvent(new Event("change"));
-      },
+      onClear: () => setHideUnavailableControl(false),
     });
   }
 
@@ -414,7 +412,7 @@ function refreshChips(): void {
 }
 
 /** Human one-liner of the live filters, emoji stripped — "Standing only ·
- *  ≥ 50% · Reliable only". Empty string when nothing is filtered. */
+ *  ≥ 50% · Likely rideable". Empty string when nothing is filtered. */
 function filterSummary(): string {
   return activeFilterChips()
     .map((c) =>
@@ -756,6 +754,7 @@ map.on("load", async () => {
   wireFilterAccordion();
   wireBatterySlider();
   wireQuality();
+  wireQuickFilters();
   wireClearFilters();
   wireIconography();
   wireRecommended();
@@ -1250,11 +1249,85 @@ function wireRideTypes(): void {
     (enabled) => {
       rideTypesOn = enabled;
       devices.setRideTypes(enabled);
+      syncModelsToRideTypes(enabled);
       clusters.update(devices.visibleFeatures());
       refreshChips();
     },
     "ride-types",
   );
+}
+
+/** Ride type → model sync: the two controls are deliberately redundant
+ *  (Astro is the only standing model), so every ride-type change drives the
+ *  model toggles to exactly the models that ride type can produce —
+ *  otherwise "Seated" + a leftover Astro-only model pick is a dead filter
+ *  showing nothing. Deliberately one-directional: a model tap is a narrower
+ *  statement than a ride-type tap and never rewrites the type pills.
+ *  Both-off is left alone (the empty ride-type set already hides
+ *  everything, and any model rewrite would just be lost state). */
+function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
+  if (types.size === 0) return;
+  const want = new Set<string>(
+    ALL_RIDE_TYPES.filter((t) => types.has(t)).flatMap((t) => [
+      ...MODELS_BY_RIDE_TYPE[t],
+    ]),
+  );
+  setToggleGroup("#model-filter", "model", want);
+}
+
+/** Drive the Availability checkbox through its normal change path. */
+function setHideUnavailableControl(hide: boolean): void {
+  const cb = need<HTMLInputElement>("hide-unavailable");
+  if (cb.checked === hide) return;
+  cb.checked = hide;
+  cb.dispatchEvent(new Event("change"));
+}
+
+/** Drive the battery slider through its normal input path. */
+function setMinBatteryControl(pct: number): void {
+  const slider = need<HTMLInputElement>("battery-min");
+  if (slider.value === String(pct)) return;
+  slider.value = String(pct);
+  slider.dispatchEvent(new Event("input"));
+}
+
+/** Quick Filters: one tap sets a handful of the drawer's controls, through
+ *  each control's normal event path — a quick filter is a shortcut into the
+ *  same state the sections below own, not a separate filter mode, so
+ *  everything stays individually adjustable (and chip-clearable) after.
+ *  Controls a set doesn't mention are left alone on purpose: tapping
+ *  "Decent Rides" with an area filter on means decent rides in that area. */
+function wireQuickFilters(): void {
+  const sets: Record<string, () => void> = {
+    // Plenty of charge, the likely-rideable tier only, nothing reserved
+    // or out of service.
+    charged: () => {
+      setMinBatteryControl(60);
+      setQualityFilter("ok-only");
+      setHideUnavailableControl(true);
+    },
+    // Softer cut: drop the high-risk tier and near-dead batteries.
+    decent: () => {
+      setMinBatteryControl(20);
+      setQualityFilter("no-risk");
+      setHideUnavailableControl(true);
+    },
+    // Seated rides only — the ride-type sync turns the Astro off in step.
+    "no-standing": () => {
+      setToggleGroup("#ride-type-filter", "ride", new Set(["sitting"]));
+      setHideUnavailableControl(true);
+    },
+  };
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(
+    "#quick-filters button",
+  )) {
+    const apply = sets[btn.dataset.quick ?? ""];
+    if (!apply) continue;
+    btn.addEventListener("click", () => {
+      track("control_change", { control: `quick-${btn.dataset.quick}` });
+      apply();
+    });
+  }
 }
 
 function wireModels(): void {
@@ -1374,16 +1447,8 @@ function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
     // Presets saved before the Features filter existed carry no `features`
     // member — that reads as "no selection", which clears the live one.
     setToggleGroup("#feature-filter", "feature", new Set(s.features ?? []));
-    const hideCb = need<HTMLInputElement>("hide-unavailable");
-    if (hideCb.checked !== s.hideUnavailable) {
-      hideCb.checked = s.hideUnavailable;
-      hideCb.dispatchEvent(new Event("change"));
-    }
-    const slider = need<HTMLInputElement>("battery-min");
-    if (slider.value !== String(s.minBattery)) {
-      slider.value = String(s.minBattery);
-      slider.dispatchEvent(new Event("input"));
-    }
+    setHideUnavailableControl(s.hideUnavailable);
+    setMinBatteryControl(s.minBattery);
     setQualityFilter(s.quality);
     await areaFilter.applySelection(s.area);
   };
@@ -1396,11 +1461,7 @@ function wireClearFilters(): void {
     clearFeatureFilter();
     clearBatteryMin();
     clearQualityFilter();
-    const hideCb = need<HTMLInputElement>("hide-unavailable");
-    if (hideCb.checked) {
-      hideCb.checked = false;
-      hideCb.dispatchEvent(new Event("change"));
-    }
+    setHideUnavailableControl(false);
     const areaCb = need<HTMLInputElement>("area-filter-enable");
     if (areaCb.checked) {
       areaCb.checked = false;
