@@ -334,6 +334,15 @@ export class RideHud {
    *  the post-ride summary are all separate surfaces and stay put. */
   private costHudVisible = true;
 
+  /** The last preference PUSHED via `setCostHudVisible`, or null if it was
+   *  never called. Kept separately from `costHudVisible` (the live per-ride
+   *  flag) so a session-less ride can reset to something honest: the pushed
+   *  preference if there is one, else the documented always-on default —
+   *  never whatever the PREVIOUS ride's doc derived (review fix: an
+   *  own-device ride force-off used to survive into an unrelated legacy
+   *  quick-start ride, whose rider never opted out of anything). */
+  private costHudPref: boolean | null = null;
+
   /** True while the CURRENT ride is "My own Device". Captured once per ride
    *  in `enterRiding` (nothing moves it mid-ride). The Veo cost counter is
    *  a picture of Veo's per-minute billing clock, and an own-device ride has
@@ -453,6 +462,7 @@ export class RideHud {
    *  Veo isn't billing) — so a pre-handoff call matters mainly for the
    *  session-less legacy path, where there is no doc to derive from. */
   setCostHudVisible(visible: boolean): void {
+    this.costHudPref = visible;
     this.costHudVisible = visible;
     this.syncCostVisibility();
     if (this.state === "riding") this.renderTick();
@@ -1045,10 +1055,13 @@ export class RideHud {
       this.speedoClassicVisible = liveDoc.options.speedometer === "classic";
       this.speedoDigitalVisible = liveDoc.options.speedometer !== "none";
     } else {
-      // Session-less legacy ride: both speedometers, as always. The cost
-      // flag is deliberately left alone — `setCostHudVisible` may have been
-      // called ahead of the handoff, and with no doc there is nothing better
-      // to derive it from.
+      // Session-less legacy ride: both speedometers, as always, and the
+      // cost flag re-resolved from the last EXPLICIT push (a pre-handoff
+      // `setCostHudVisible` call) or the documented always-on default —
+      // never left as whatever the previous ride's doc derived, which would
+      // leak an own-device force-off (or a wizard opt-out) into an
+      // unrelated ride this rider never configured.
+      this.costHudVisible = this.costHudPref ?? true;
       this.speedoClassicVisible = true;
       this.speedoDigitalVisible = true;
     }
@@ -1662,8 +1675,9 @@ export class RideHud {
     const veoCents = rideCostCents(plan, elapsed);
     // The comparator is pass-based now: the realistic alternative to Veo's
     // metered bill is buying a block of Lime minutes up front (unlocks
-    // included), so that's what the ride is priced against — the cheapest
-    // pass (or stack of passes) that covers it.
+    // included), so that's what the ride is priced against — the smallest
+    // pass on the published ladder that covers it (stacked for 2h+ rides;
+    // see comparatorPassQuote for why it's the ladder, not a min-cost mix).
     const passQuote = comparatorPassQuote(elapsed);
     const deltaCents = veoCents - passQuote.cents;
     const zoneRide = this.startedInZone || endedInZone;

@@ -724,6 +724,48 @@ describe("RideHud own-device cost fix + Display chips", () => {
     );
   });
 
+  it("an own-device ride's forced-off cost flag does NOT leak into a later legacy quick-start ride", async () => {
+    // Review fix: enterRiding's session-less branch used to leave
+    // costHudVisible alone, so the own-device force-off survived into an
+    // unrelated ride whose rider never opted out of anything.
+    const doc = ownDeviceDoc();
+    const holder: { doc: RideSessionDoc } = { doc };
+    const dispatch = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const hud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session: { current: () => holder.doc, dispatch } },
+    );
+    hud.beginHandoff({
+      rideId: null,
+      startedAtMs: doc.startedAtMs as number,
+      recorder: null,
+    });
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(true);
+
+    // End the own-device ride (legacy summary), close it, and mark the doc
+    // done — exactly the state a later legacy "Start now" ride begins from.
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({ type: "endRide" });
+    });
+    container.querySelector<HTMLButtonElement>('[data-hud="done"]')?.click();
+    holder.doc = { ...doc, state: "done" };
+
+    // Legacy quick-start: a Veo ride with no session doc backing it.
+    hud.open();
+    const rateSel = container.querySelector<HTMLSelectElement>("#hud-rate");
+    if (rateSel) rateSel.value = "resident";
+    container.querySelector<HTMLButtonElement>('[data-hud="start-now"]')?.click();
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(false);
+  });
+
   it("a tracked Veo-device ride keeps the counter and its chip, exactly as before", () => {
     const { container } = mountWith(docWith({}, { cost_hud: true }));
     expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(false);

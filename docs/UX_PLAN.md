@@ -345,13 +345,15 @@ On End, a summary card:
 
 - Duration (with editable start/end per 3.4), distance (integrated from GPS
   fixes), estimated Veo cost at the account's rate.
-- **"If Veo had competition":** the same ride priced under config-driven
-  comparator rates (`src/config.ts`:
-  `COMPARATOR = { name: "Lime", unlock: 1.00, perMin: 0.30, weekPass: 4.99 }`
-  — adjust to Lime's last-known Denver rates before shipping). Rendered as
-  *"With Lime's typical pricing: $X.XX — you paid $Y.YY more because Denver
-  has one operator."* Plus the break-even: *"a $4.99 weekly pass would have
-  covered this in N rides."*
+- **"If Veo had competition":** the same ride priced against config-driven
+  comparator PASSES (`src/config.ts`:
+  `COMPARATOR = { name: "Lime", passes: [{30 min, $2.99}, {60 min, $4.99}, {120 min, $12.99}] }`
+  — unlocks included in every pass; adjust to Lime's last-known Denver rates
+  before shipping). Rendered as *"With a Lime pass: $X.XX"* plus, when the
+  pass wins, *"you paid ≈ $Y.YY more because Denver has one operator — a
+  $X.XX Lime pass (M min, free unlock) would have covered this ride, and
+  you'd have Z minutes left to use."* (Own-device rides show no money copy
+  at all — duration, distance, waypoints only.)
 - Equity flags: *"This ride started in an equity zone — Veo owes you the
   contract discount. Check your receipt"* → links into the Phase 4 missed-
   discount report (until Phase 4 ships, the "how to check" helper text).
