@@ -747,8 +747,30 @@ describe("RideHud own-device cost fix + Display chips", () => {
     ).toEqual({ digital: true, classic: true });
   });
 
+  it("the Timer chip hides the ride clock WITHOUT touching the cost readout — and vice versa", () => {
+    const { container } = mountWith(docWith({}, { cost_hud: true }));
+    const clock = () => container.querySelector<HTMLElement>("#hud-clock");
+    const cost = () => container.querySelector<HTMLElement>("#hud-cost");
+    // Both default ON, independent flags.
+    expect(clock()?.hidden).toBe(false);
+    expect(cost()?.hidden).toBe(false);
+    // Timer off: the price can stay on screen with no clock…
+    chipFor(container, "timer")?.click();
+    expect(clock()?.hidden).toBe(true);
+    expect(cost()?.hidden).toBe(false);
+    // …and timer back on / cost off: the clock with no price — the case the
+    // toggle exists for.
+    chipFor(container, "timer")?.click();
+    chipFor(container, "cost")?.click();
+    expect(clock()?.hidden).toBe(false);
+    expect(cost()?.hidden).toBe(true);
+  });
+
   it("the Display chips flip each readout live, and the choice survives a BRB resume's DOM rebuild", () => {
     const { hud, container } = mountWith(docWith({}, { cost_hud: true }));
+
+    chipFor(container, "timer")?.click();
+    expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(true);
 
     chipFor(container, "classic")?.click();
     expect(container.querySelector<HTMLElement>(".hud-corner--br")?.hidden).toBe(true);
@@ -771,9 +793,11 @@ describe("RideHud own-device cost fix + Display chips", () => {
     container.querySelector<HTMLButtonElement>('[data-hud="brb"]')?.click();
     expect(hud.isPaused()).toBe(true);
     hud.open(); // resume
+    expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(true);
     expect(container.querySelector<HTMLElement>(".hud-corner--br")?.hidden).toBe(true);
     expect(container.querySelector<HTMLElement>(".hud-corner--tr")?.hidden).toBe(false);
     expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(true);
+    expect(chipFor(container, "timer")?.getAttribute("aria-pressed")).toBe("false");
     expect(chipFor(container, "classic")?.getAttribute("aria-pressed")).toBe("false");
     expect(chipFor(container, "digital")?.getAttribute("aria-pressed")).toBe("true");
     expect(chipFor(container, "cost")?.getAttribute("aria-pressed")).toBe("false");

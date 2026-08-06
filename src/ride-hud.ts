@@ -355,6 +355,15 @@ export class RideHud {
   private speedoClassicVisible = true;
   private speedoDigitalVisible = true;
 
+  /** Whether the top-left ride clock shows. Independent of the cost flag —
+   *  the rider can watch the timer without being shown a price (or vice
+   *  versa; the two share the TL stack but hide separately). Always starts
+   *  ON: there is no pre-ride option for it, it's a wrench-panel Display
+   *  chip like the speedometers, ride-scoped and unpersisted. The wrench
+   *  panel's own adjust clock stays visible regardless — you can't nudge a
+   *  clock you can't see. */
+  private timerVisible = true;
+
   constructor(
     container: HTMLElement,
     /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
@@ -682,7 +691,9 @@ export class RideHud {
       case "display": {
         const key = btn.dataset.display;
         let on: boolean;
-        if (key === "cost") {
+        if (key === "timer") {
+          on = this.timerVisible = !this.timerVisible;
+        } else if (key === "cost") {
           on = this.costHudVisible = !this.costHudVisible;
         } else if (key === "classic") {
           on = this.speedoClassicVisible = !this.speedoClassicVisible;
@@ -718,16 +729,20 @@ export class RideHud {
   }
 
   /** Chips for the adjust panel's "Display" row: per-readout ON/OFF for the
-   *  Veo cost counter, the bottom-right classic (analog) speedometer, and the
-   *  top-right digital mph. The cost chip is omitted entirely on an
-   *  own-device ride — there is no Veo billing clock to picture, so a toggle
-   *  for it would only re-enable a number that means nothing. */
+   *  top-left ride timer, the estimated Veo cost counter, the bottom-right
+   *  classic (analog) speedometer, and the top-right digital mph. Timer and
+   *  cost toggle independently — showing the clock without a price is a
+   *  first-class choice. The cost chip is omitted entirely on an own-device
+   *  ride — there is no Veo billing clock to picture, so a toggle for it
+   *  would only re-enable a number that means nothing. (The rate-plan
+   *  selection the cost estimate prices against is the wrench panel's
+   *  existing "Rate" select, directly above this row.) */
   private displayChipsMarkup(): string {
     const chip = (key: string, label: string, on: boolean): string =>
       `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="display" data-display="${key}" aria-pressed="${on}">${label}</button>`;
-    const chips: string[] = [];
+    const chips: string[] = [chip("timer", "Timer", this.timerVisible)];
     if (!this.ownDeviceRide) {
-      chips.push(chip("cost", "Veo cost", this.costHudVisible));
+      chips.push(chip("cost", "Est. Veo cost", this.costHudVisible));
     }
     chips.push(
       chip("classic", "Speedo classic", this.speedoClassicVisible),
@@ -746,6 +761,10 @@ export class RideHud {
     if (digital) digital.hidden = !this.speedoDigitalVisible;
     const classic = this.root.querySelector<HTMLElement>(".hud-corner--br");
     if (classic) classic.hidden = !this.speedoClassicVisible;
+    // The clock element alone, not the TL corner — the cost readout shares
+    // that stack and hides on its own flag.
+    const clock = this.root.querySelector<HTMLElement>("#hud-clock");
+    if (clock) clock.hidden = !this.timerVisible;
     this.syncCostVisibility();
   }
 
@@ -1033,6 +1052,7 @@ export class RideHud {
       this.speedoClassicVisible = true;
       this.speedoDigitalVisible = true;
     }
+    this.timerVisible = true;
     this.trail?.reset();
     // A prior ride's planned pathway must never survive into this one —
     // `mountNavHud` (via `renderRiding` below) redraws it from the CURRENT
