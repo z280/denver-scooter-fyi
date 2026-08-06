@@ -25,9 +25,9 @@
 //
 // BASKET IS ASKED OF EVERY DEVICE, not just the models that ship with one.
 // It briefly wasn't — the question arrived Cosmo-only — and that was wrong
-// on the fleet: the Trike carries a cargo basket as standard equipment
+// on the fleet: the Rover carries a cargo basket as standard equipment
 // (`devices.ts`'s model catalog says so), so a model gate would have made a
-// bent Trike basket permanently unreportable. Asking everyone also keeps
+// bent Rover basket permanently unreportable. Asking everyone also keeps
 // this list FIXED, which is what lets a "not asked" answer stay
 // unrepresentable: every rider sees every question, so `null` can only ever
 // mean "hasn't answered yet".
@@ -676,6 +676,52 @@ export function readDeviceFeatures(raw: unknown): {
     basket: o.basket === true,
     poor_condition: poor,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Filtering the map by confirmed equipment
+// ---------------------------------------------------------------------------
+
+/** What the Filters drawer's Features section can select. The three
+ *  equipment keys are the crowdsourced features riders actually shop for
+ *  (the phone holder never made the cut — nobody plans a ride around one);
+ *  "missing" is the ¯\_(ツ)_/¯ option, matching devices nobody has
+ *  confirmed yet. */
+export type FeatureFilterKey = "bell" | "basket" | "cup_holder" | "missing";
+
+export const FEATURE_FILTER_KEYS: readonly FeatureFilterKey[] = [
+  "bell",
+  "basket",
+  "cup_holder",
+  "missing",
+];
+
+/** Does a device pass the Features filter?
+ *
+ *  This is a REQUIRE filter, not a hide filter like the ride-type/model
+ *  toggles: most of the fleet has no confirmed data at all, so
+ *  "everything on, tap to hide" has nothing to hide. Empty selection =
+ *  filter off.
+ *
+ *  Selected equipment keys AND together — a rider picking Bell + Basket
+ *  wants one scooter carrying both, not either. ¯\_(ツ)_/¯ (missing) ORs
+ *  in the unconfirmed devices: no data doesn't mean no bell, and without
+ *  this option requiring any feature would silently hide the (majority)
+ *  unconfirmed fleet. Selected alone, it shows ONLY unconfirmed devices —
+ *  which is also how a points-hunter finds scooters worth confirming. */
+export function matchesFeatureFilter(
+  rawFeatures: unknown,
+  selected: ReadonlySet<FeatureFilterKey>,
+): boolean {
+  if (selected.size === 0) return true;
+  const known = readDeviceFeatures(rawFeatures);
+  if (!known) return selected.has("missing");
+  const wanted = [...selected].filter(
+    (k): k is Exclude<FeatureFilterKey, "missing"> => k !== "missing",
+  );
+  // Missing-data only: confirmed devices are exactly what's excluded.
+  if (wanted.length === 0) return false;
+  return wanted.every((k) => known[k]);
 }
 
 /** "🔔 Bell · 🥤 Cup holder (worn)" — the confirmed equipment, in one line.

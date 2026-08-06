@@ -99,12 +99,12 @@ import {
 } from "./api.ts";
 import { encodePolyline } from "./polyline-encode.ts";
 import { emptyFC } from "./util.ts";
+import { previewBasemapStyle } from "./map.ts";
 import maplibregl, {
   type ExpressionSpecification,
   type GeoJSONSource,
   type LngLatBoundsLike,
   type Map as MLMap,
-  type StyleSpecification,
 } from "maplibre-gl";
 
 // ---------------------------------------------------------------------------
@@ -271,16 +271,21 @@ export function resolveOrigin(
   return null;
 }
 
-/** `auto` best-effort resolves against the OS preference — a small,
- *  self-contained stand-in until `theme.ts` exports its sun-times resolver
- *  (frontend plan: "`theme.ts` exports a small resolver for its currently
- *  module-private sun-times logic" — not yet true of this branch, and not
- *  this lane's file to add it to). Ride-scoped only: this never touches
- *  `setManualTheme`/the durable preference, exactly like the HUD's own
- *  ☀/☾ toggle. */
+/** `auto` follows the app's LIVE theme first — `data-theme` on the root
+ *  element, kept current by theme.ts (manual toggle or sun-sync) — so the
+ *  preview map can never sit dark inside a light modal (or vice versa),
+ *  which reads as a broken render, not a preference. The OS preference is
+ *  only the fallback for the no-DOM/test case. Ride-scoped only: this never
+ *  touches `setManualTheme`/the durable preference, exactly like the HUD's
+ *  own ☀/☾ toggle. */
 export function resolveFlavor(theme: RideThemeChoice): RouteMapFlavor {
   if (theme === "light" || theme === "dark") return theme;
   try {
+    const live =
+      typeof document !== "undefined"
+        ? document.documentElement.dataset.theme
+        : undefined;
+    if (live === "light" || live === "dark") return live;
     return typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -882,27 +887,24 @@ async function defaultCreateMap(
   flavor: RouteMapFlavor,
   signal?: AbortSignal,
 ): Promise<RouteMapLike> {
-  const style: StyleSpecification = {
-    version: 8,
-    sources: {},
-    layers: [
-      {
-        id: "bg",
-        type: "background",
-        paint: {
-          "background-color": flavor === "dark" ? "#151b24" : "#e9edf2",
-        },
-      },
-    ],
-  };
+  // Real streets under the route lines (revising DEVIATION 1's original
+  // flat-background compromise — riders read an unlabeled colored line on a
+  // blank panel as a broken render, not a preview). The pmtiles:// protocol
+  // is already registered globally by map.ts's createMap(), which always
+  // runs long before this modal can open, and previewBasemapStyle() shares
+  // the main map's self-hosted archive/glyphs/sprites, so the extra cost is
+  // a handful of cached tile reads for one modal-sized viewport.
   const map = new maplibregl.Map({
     container,
-    style,
+    style: previewBasemapStyle(flavor),
     // Denver center — replaced by fitBounds() the instant origin/dest are
     // known, which is immediately after this promise resolves.
     center: [-104.9903, 39.7392],
     zoom: 12,
     attributionControl: false,
+    // A static preview: the route layers repaint via setData/fitBounds, and
+    // an accidentally-pannable aria-hidden pane inside a modal is a trap.
+    interactive: false,
   });
   await waitForLoadAndSize(map, container);
   if (signal?.aborted) {

@@ -617,7 +617,19 @@ describe("resolveFlavor", () => {
     expect(resolveFlavor("dark")).toBe("dark");
   });
 
-  it("resolves auto against the OS preference without throwing", () => {
+  it("auto follows the app's live data-theme, not the OS preference", () => {
+    // The preview must match the modal around it: theme.ts keeps data-theme
+    // current on the root element, and a dark preview inside a light modal
+    // reads as a broken render.
+    document.documentElement.dataset.theme = "dark";
+    expect(resolveFlavor("auto")).toBe("dark");
+    document.documentElement.dataset.theme = "light";
+    expect(resolveFlavor("auto")).toBe("light");
+    delete document.documentElement.dataset.theme;
+  });
+
+  it("resolves auto against the OS preference when no live theme is set", () => {
+    delete document.documentElement.dataset.theme;
     expect(["light", "dark"]).toContain(resolveFlavor("auto"));
   });
 });

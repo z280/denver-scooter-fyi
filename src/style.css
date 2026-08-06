@@ -4401,6 +4401,28 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   padding: 0 0 14px;
 }
 
+/* ---------- Filters drawer accordion ---------- */
+/* Same native-<details> accordion, restyled so the summaries keep the
+   drawer's old .control-label section-header voice. wireFilterAccordion()
+   (main.ts) enforces one-open-at-a-time. */
+#filters-accordion > .accordion:first-of-type {
+  border-top: none;
+}
+/* The stack is followed by the Clear All Filters button, not another
+   accordion, so the generic :last-child bottom rule never applies — close
+   the stack here and give the button breathing room. */
+#filters-accordion > .accordion:last-of-type {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+#filters-accordion .accordion__summary {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
 .leaderboard-panel__rows {
   list-style: none;
   margin: 0;
@@ -5989,4 +6011,304 @@ input[data-ride-keypad="on"] {
   font-size: 11.5px;
   line-height: 1.35;
   color: var(--fg-muted);
+}
+
+/* ============================================================
+   Onboarding tour (onboarding.ts) — full-screen, above every
+   other surface (ride overlays top out at z-index 80).
+   ============================================================ */
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 16, 26, 0.55);
+  backdrop-filter: blur(3px);
+}
+.onboarding__card {
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.onboarding__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.onboarding__progress {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+.onboarding__skip {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.onboarding__skip:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+.onboarding__headline {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+.onboarding__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+.onboarding__body p {
+  margin: 0;
+}
+.onb-sub {
+  color: var(--fg-muted);
+  font-size: 15px;
+}
+.onb-hero {
+  font-size: 72px;
+  line-height: 1;
+  margin: 8px 0;
+}
+.onb-check {
+  color: var(--pass);
+  font-weight: 700;
+}
+.onb-models {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.onb-model {
+  margin: 0;
+  padding: 8px 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.onb-model img {
+  width: 100%;
+  max-height: 64px;
+  object-fit: contain;
+}
+.onb-model figcaption {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.onb-tiers {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.onb-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  flex: 1 1 0;
+}
+.onb-tier__scooter {
+  font-size: 34px;
+  line-height: 1;
+}
+.onb-tier--risk .onb-tier__scooter {
+  filter: grayscale(0.8) opacity(0.7);
+}
+.onb-tier__badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.onb-callout {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 13.5px;
+}
+.onb-phone {
+  display: flex;
+  justify-content: center;
+  margin: 6px 0;
+}
+/* A real Ride Mode screenshot wearing a landscape phone bezel. */
+.onb-phone__shot {
+  display: block;
+  width: min(340px, 100%);
+  height: auto;
+  border-radius: 18px;
+  border: 6px solid #1a2230;
+  box-shadow: var(--shadow);
+}
+.onb-routes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.onb-route {
+  display: inline-block;
+  padding: 9px 18px;
+  min-width: 200px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+}
+.onb-report {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.onb-report .onb-tier__badge {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+}
+.onb-report__arrow {
+  font-size: 18px;
+}
+.onb-hexes {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.onb-hex {
+  width: 44px;
+  height: 50px;
+  background: var(--hex);
+  opacity: 0.85;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+.onb-identities {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.onb-identity {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+.onboarding__dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+.onboarding__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--track);
+}
+.onboarding__dot.is-active {
+  background: var(--accent);
+}
+.onboarding__actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.onboarding__back {
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg);
+  font-size: 14.5px;
+  cursor: pointer;
+}
+.onboarding__next {
+  padding: 10px 26px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.onboarding__next:hover {
+  filter: brightness(1.08);
+}
+
+/* ---------- Progressive-discovery tip toast ---------- */
+.discovery-tip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Sits just above the mode bar (which hugs the safe-area bottom). */
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 62px);
+  z-index: 62;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 10px 12px 10px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.discovery-tip__close {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex: none;
+}
+.discovery-tip__close:hover {
+  color: var(--fg);
+}
+
+/* Slide 3's animated confirm-features demo — a real capture of the popup →
+   modal → "+pts" flow, shipped as an animated WebP. */
+.onb-anim-wrap {
+  display: flex;
+  justify-content: center;
+}
+.onb-anim {
+  display: block;
+  width: min(210px, 70%);
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }

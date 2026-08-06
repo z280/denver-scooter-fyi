@@ -41,6 +41,10 @@ import {
   type AreaFilterState,
 } from "./area-filter.ts";
 import { FilterChips, type Chip } from "./filter-chips.ts";
+import {
+  FEATURE_FILTER_KEYS,
+  type FeatureFilterKey,
+} from "./device-features.ts";
 import { Locate } from "./locate.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
@@ -127,6 +131,12 @@ import {
   wireLeaderboardPanel,
   type LeaderboardPanelHandle,
 } from "./leaderboard-panel.ts";
+import {
+  maybeShowOnboarding,
+  showOnboarding,
+  type OnboardingHooks,
+} from "./onboarding.ts";
+import { showTipOnce } from "./discovery-tips.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -285,10 +295,12 @@ let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
 let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
 let minBatteryPct = 0;
 let qualityOn: QualityFilter = "any";
+let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
 let clearModelFilter: () => void = () => {};
+let clearFeatureFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let setQualityFilter: (value: QualityFilter) => void = () => {};
@@ -314,6 +326,13 @@ const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "ok-only": "✓ Reliable only",
 };
 
+const FEATURE_CHIP_LABEL: Record<FeatureFilterKey, string> = {
+  bell: "🔔 Bell",
+  basket: "🧺 Basket",
+  cup_holder: "🥤 Cup holder",
+  missing: "¯\\_(ツ)_/¯ Missing data",
+};
+
 /** One entry per live constraint — the chip label plus its clear hook.
  *  Three consumers, one label source: the floating chips, the preset name
  *  suggestion, and the wizard's carried-filters summary. */
@@ -330,13 +349,29 @@ function activeFilterChips(): Chip[] {
   }
 
   if (modelsOn.size < ALL_MODELS.length) {
-    const names = [...modelsOn].map(
-      (m) => m[0].toUpperCase() + m.slice(1),
+    // Capitalized key ≠ display name for the three-wheeler: the internal
+    // key stays "trike" (presets/sprites/wire format) but riders know it
+    // as the Rover.
+    const names = [...modelsOn].map((m) =>
+      m === "trike" ? "Rover" : m[0].toUpperCase() + m.slice(1),
     );
     active.push({
       id: "models",
       label: names.length ? `Models: ${names.join(", ")}` : "🚫 No models",
       onClear: clearModelFilter,
+    });
+  }
+
+  if (featuresOn.size > 0) {
+    // Iterate the canonical key list so the chip's order is stable no
+    // matter the order the pills were tapped in.
+    const labels = FEATURE_FILTER_KEYS.filter((k) => featuresOn.has(k)).map(
+      (k) => FEATURE_CHIP_LABEL[k],
+    );
+    active.push({
+      id: "features",
+      label: labels.join(" + "),
+      onClear: clearFeatureFilter,
     });
   }
 
@@ -731,7 +766,9 @@ map.on("load", async () => {
   buildLayerToggles();
   wireRideTypes();
   wireModels();
+  wireFeatureFilter();
   wireHideUnavailable();
+  wireFilterAccordion();
   wireBatterySlider();
   wireQuality();
   wireClearFilters();
@@ -1082,7 +1119,75 @@ map.on("load", async () => {
   // Warm the default-selected ranks' polygons so the estimate populates.
   void equity.warm();
   startRefreshLoop();
+
+  // First-run tour + progressive discovery tips. Wired last: the tour's
+  // "Start Exploring" CTA drives the mode bar, so wireModes() must exist.
+  wireOnboarding();
 });
+
+// ---------- Onboarding & progressive discovery ----------
+
+// The seven-screen tour (onboarding.ts) auto-shows once per browser and is
+// replayable from the About drawer. Its final CTA hands the user straight to
+// Find-a-ride — center on location and ranked picks are the wizard's own
+// consent flow — plus the map's rideability/icon legend and the one-time
+// "tap any scooter" nudge, so nobody is left wondering what to do next.
+function wireOnboarding(): void {
+  const hooks: OnboardingHooks = {
+    onStartExploring: () => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '#mode-switch .mode-btn[data-mode="ride"]',
+        )
+        ?.click();
+      const legend = document.getElementById(
+        "legend-toggle",
+      ) as HTMLInputElement | null;
+      if (legend && !legend.checked) {
+        legend.checked = true;
+        legend.dispatchEvent(new Event("change"));
+      }
+      showTipOnce(
+        "tap-scooter",
+        "Tap any scooter to learn why it's recommended.",
+      );
+    },
+  };
+
+  document
+    .getElementById("about-replay-tour")
+    ?.addEventListener("click", () => {
+      closeAllPopups();
+      showOnboarding(hooks);
+    });
+
+  // Progressive discovery: first High-Risk popup explains the
+  // classification (devices.ts dispatches the event with the tier).
+  window.addEventListener("scooter:popup-open", (e) => {
+    const tier = (e as CustomEvent<{ tier?: string }>).detail?.tier;
+    if (tier === "risk") {
+      showTipOnce(
+        "high-risk",
+        "This classification is based on failed starts, dwell time, rider reports, and other rideability signals.",
+      );
+    }
+  });
+
+  // Progressive discovery: first time Territory Control shading goes on.
+  const territoryToggle = document.getElementById(
+    "leaderboard-territory-toggle",
+  ) as HTMLInputElement | null;
+  territoryToggle?.addEventListener("change", () => {
+    if (territoryToggle.checked) {
+      showTipOnce(
+        "territory",
+        "Hexes wear the colors of whoever leads them. Keep contributing nearby to claim and defend yours.",
+      );
+    }
+  });
+
+  maybeShowOnboarding(hooks);
+}
 
 // ---------- Controls ----------
 
@@ -1253,6 +1358,42 @@ function wireModels(): void {
   );
 }
 
+function wireFeatureFilter(): void {
+  // A REQUIRE filter, so it can't ride on wireToggleGroup (whose contract is
+  // "everything starts enabled, tap to hide"): here nothing starts selected,
+  // empty = off, and each pill ADDS a constraint. See matchesFeatureFilter
+  // (device-features.ts) for the AND/¯\_(ツ)_/¯ semantics.
+  const btns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#feature-filter .toggle-pill"),
+  );
+  const selected = new Set<FeatureFilterKey>();
+  const sync = (): void => {
+    for (const b of btns) {
+      const on = selected.has(b.dataset.feature as FeatureFilterKey);
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    featuresOn = new Set(selected);
+    devices.setFeatureFilter(featuresOn);
+    clusters.update(devices.visibleFeatures());
+    refreshChips();
+  };
+  for (const btn of btns) {
+    btn.addEventListener("click", () => {
+      track("control_change", { control: "features" });
+      const v = btn.dataset.feature as FeatureFilterKey;
+      if (selected.has(v)) selected.delete(v);
+      else selected.add(v);
+      sync();
+    });
+  }
+  clearFeatureFilter = () => {
+    if (selected.size === 0) return;
+    selected.clear();
+    sync();
+  };
+}
+
 function wireQuality(): void {
   const set = wireSeg(
     "#quality-seg",
@@ -1278,6 +1419,7 @@ function snapshotFilters(): FilterSnapshot {
   return {
     rideTypes: [...rideTypesOn],
     models: [...modelsOn],
+    features: FEATURE_FILTER_KEYS.filter((k) => featuresOn.has(k)),
     hideUnavailable: need<HTMLInputElement>("hide-unavailable").checked,
     minBattery: minBatteryPct,
     quality: qualityOn,
@@ -1289,7 +1431,7 @@ function snapshotFilters(): FilterSnapshot {
  *  handler (and the whole map→clusters→chips sync path) runs normally. */
 function setToggleGroup(
   rootSel: string,
-  key: "ride" | "model",
+  key: "ride" | "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
   for (const btn of document.querySelectorAll<HTMLButtonElement>(
@@ -1312,6 +1454,9 @@ function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
   return async (s: FilterSnapshot): Promise<void> => {
     setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
     setToggleGroup("#model-filter", "model", new Set(s.models));
+    // Presets saved before the Features filter existed carry no `features`
+    // member — that reads as "no selection", which clears the live one.
+    setToggleGroup("#feature-filter", "feature", new Set(s.features ?? []));
     const hideCb = need<HTMLInputElement>("hide-unavailable");
     if (hideCb.checked !== s.hideUnavailable) {
       hideCb.checked = s.hideUnavailable;
@@ -1331,6 +1476,7 @@ function wireClearFilters(): void {
   resetAllFilters = () => {
     clearRideTypeFilter();
     clearModelFilter();
+    clearFeatureFilter();
     clearBatteryMin();
     clearQualityFilter();
     const hideCb = need<HTMLInputElement>("hide-unavailable");
@@ -1556,7 +1702,7 @@ function wireIconography(): void {
         item(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — Standing scooter"),
         item(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — One passenger glider (no pedals)"),
         item(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — Two passenger e-bike w/ pedals"),
-        item(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Trike — Three-wheel seated trike w/ cargo basket"),
+        item(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Rover — Three-wheel seated trike w/ cargo basket"),
       );
     } else {
       styleDetail.append(
@@ -1626,7 +1772,7 @@ function wireIconography(): void {
     legendEl.append(head("Icons"));
     if (style === "use") {
       legendEl.append(
-        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider, Apollo e-bike or Trike)"),
+        icon(k("use-sitting", "off"), "Seated ride (Cosmo glider, Apollo e-bike or Rover)"),
         icon(k("use-standing", "off"), "Standing scooter (Astro)"),
       );
     } else if (style === "model") {
@@ -1635,7 +1781,7 @@ function wireIconography(): void {
         icon(k(c ? "msvg-astro" : "ml-astro", "off"), "Veo Astro — standing scooter"),
         icon(k(c ? "msvg-cosmo" : "ml-cosmo", "off"), "Veo Cosmo — one passenger glider (no pedals)"),
         icon(k(c ? "msvg-apollo" : "ml-apollo", "off"), "Veo Apollo — two passenger e-bike w/ pedals"),
-        icon(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Trike — three-wheel seated trike w/ cargo basket"),
+        icon(k(c ? "msvg-trike" : "ml-trike", "off"), "Veo Rover — three-wheel seated trike w/ cargo basket"),
         icon(k(c ? "model-unk" : "ml-unk", "off"), "Unrecognized model — tap its pin to tell us!"),
       );
     } else if (iconData === "battery") {
@@ -2249,6 +2395,11 @@ function wireModes(): void {
             applyAnalysis();
             setActive("analysis");
           }
+          // Progressive discovery: first deliberate Analysis open.
+          showTipOnce(
+            "analysis",
+            "This mode lets you explore Denver's scooter ecosystem — density, compliance, and historical trends.",
+          );
       }
     });
   }
@@ -2327,6 +2478,27 @@ function renderEquityMetric(): void {
     `<strong>${percent.toFixed(1)}%</strong> of devices are in ` +
     `<span class="equity-metric__ranks">${ranks}</span> right now ` +
     `<span class="equity-metric__count">(${inside.toLocaleString()} of ${total.toLocaleString()})</span>`;
+}
+
+/** The Filters drawer's accordion sections: one open at a time. Native
+ *  <details> keeps the keyboard behavior and open state for free (same
+ *  pattern as the Leaderboard drawer); the only added rule is exclusivity —
+ *  opening a section closes whichever other one was open, so the drawer's
+ *  now-longer section list never becomes one giant scroll. */
+function wireFilterAccordion(): void {
+  const sections = Array.from(
+    document.querySelectorAll<HTMLDetailsElement>(
+      "#filters-accordion > details.accordion",
+    ),
+  );
+  for (const section of sections) {
+    section.addEventListener("toggle", () => {
+      if (!section.open) return;
+      for (const other of sections) {
+        if (other !== section && other.open) other.open = false;
+      }
+    });
+  }
 }
 
 function wireDrawers(): void {

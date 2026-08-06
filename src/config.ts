@@ -140,7 +140,7 @@ export interface ParkingReportInput {
 
 /** Vehicle Type dropdown OPTION TAGS (not the visible labels) for Veo's form.
  *  Zendesk dropdowns prefill by tag. Astro is a standing scooter → the
- *  "Scooter" option; Cosmo, Apollo and Trike are their own options. Our type-5
+ *  "Scooter" option; Cosmo, Apollo and the Rover are their own options. Our type-5
  *  is a Cosmo too, so it maps there. **TODO(maintainer):** fill these from the
  *  live form (the extraction snippet reports each option's tag). Empty = unset,
  *  so the rider picks manually. */
@@ -152,7 +152,9 @@ function vehicleTypeTag(modelName: string | null | undefined): string {
   if (m.includes("astro")) return VEO_VEHICLE_TYPE_TAGS.scooter;
   if (m.includes("apollo")) return VEO_VEHICLE_TYPE_TAGS.apollo;
   if (m.includes("cosmo")) return VEO_VEHICLE_TYPE_TAGS.cosmo;
-  if (m.includes("trike")) return VEO_VEHICLE_TYPE_TAGS.trike;
+  // Veo's marketing name for the three-wheeler is "Rover"; older feed
+  // rows (and our internal key) still say "trike" — same dropdown option.
+  if (m.includes("trike") || m.includes("rover")) return VEO_VEHICLE_TYPE_TAGS.trike;
   return ""; // unknown model → leave the dropdown for the rider
 }
 
@@ -191,7 +193,7 @@ export const VEO_ZENDESK_PARKING: {
     // Veo's own GBFS client-side (see gbfs.ts / effectivePlate).
     { fieldId: "360038000552", map: (r) => r.plate ?? "" },
     // Vehicle type (dropdown) — Astro→Scooter, Cosmo→Cosmo, Apollo→Apollo,
-    // Trike→Trike.
+    // Rover→Trike (Veo's form may still label the option by the old name).
     // Field id confirmed off the live form; the option TAGS still need filling
     // in VEO_VEHICLE_TYPE_TAGS (the field is a JS dropdown, so its tags aren't
     // in the page HTML). Until then vehicleTypeTag() returns "" and the empty

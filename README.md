@@ -89,7 +89,7 @@ sessions. The authoritative, machine-readable retention policy is
   holder, a phone holder, a basket, and whether they're all in good
   condition. Every device is asked all four, including the models that
   rarely carry a basket: a confirmed "no" is what makes the fleet
-  filterable, and the Trike's cargo basket is standard equipment that can
+  filterable, and the Rover's cargo basket is standard equipment that can
   still be bent. The presence questions ask only what is bolted on; whether
   it *works* is what the condition question right underneath asks.
   Neither Yes nor No is pressed by default, because a pre-pressed answer is
@@ -126,7 +126,7 @@ sessions. The authoritative, machine-readable retention policy is
     percentage out of the box — and a "Color dots by reliability" toggle.
     Device popups open with a turquoise (Veo-brand) header naming the model
     — Veo Astro (standing), Cosmo (seated, no pedals), Apollo (seated,
-    pedals, 2-passenger), or Trike (seated, three wheels, cargo basket) —
+    pedals, 2-passenger), or Rover (seated, three wheels, cargo basket) —
     and corrected rider posture (keyed off
     `vehicle_use_type`, since Veo mislabels `form_factor`). An unrecognized
     model shows "Veo Unknown — Tell us!" with a one-tap report form

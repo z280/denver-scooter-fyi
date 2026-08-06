@@ -24,7 +24,7 @@ import { RELIABILITY_LABEL, type ReliabilityTier } from "./reliability.ts";
 export type RidePriority = "type" | "quality" | "distance";
 
 /** Model preference, asked only when "Exact device type" is the priority.
- *  Users pick the Veo model by name (Astro / Cosmo / Apollo / Trike). */
+ *  Users pick the Veo model by name (Astro / Cosmo / Apollo / Rover). */
 export type RideTypeChoice = ModelKey;
 
 export interface RecommendContext {
@@ -339,7 +339,7 @@ function matchesType(p: DeviceProperties, choice: RideTypeChoice): boolean {
     case "trike":
       // Nothing in the feed identifies a trike without the model name — the
       // posture/form pair it would match ("seated scooter") is exactly the
-      // Cosmo's. Better to match nothing than to pass a Cosmo off as a Trike.
+      // Cosmo's. Better to match nothing than to pass a Cosmo off as a Rover.
       return false;
   }
 }

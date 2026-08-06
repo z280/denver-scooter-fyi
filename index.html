@@ -259,18 +259,24 @@
         <h2 class="drawer-title" id="drawer-devices-h">Filters</h2>
         <button class="drawer-close" type="button" aria-label="Close Filters">&times;</button>
       </header>
-      <div class="drawer-body">
-        <section class="control-group" aria-labelledby="ride-type-label">
-          <h3 id="ride-type-label" class="control-label">Ride type</h3>
+      <!-- Accordion sections (native <details>, same pattern as the
+           Leaderboard drawer); wireFilterAccordion() keeps one open at a
+           time so the longer list of sections stays scannable. -->
+      <div class="drawer-body" id="filters-accordion">
+        <details class="accordion" open>
+          <summary class="accordion__summary" id="ride-type-label">Ride type</summary>
+          <div class="accordion__body">
           <p class="control-hint">All on by default — tap to hide a type.</p>
           <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
             <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
             <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Seated</button>
           </div>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group" aria-labelledby="model-filter-label">
-          <h3 id="model-filter-label" class="control-label">Model</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="model-filter-label">Model</summary>
+          <div class="accordion__body">
           <div id="model-filter" class="toggle-stack" role="group" aria-labelledby="model-filter-label">
             <button class="toggle-card is-active" type="button" data-model="astro" aria-pressed="true">
               <img class="toggle-card__icon" src="/astro.png" alt="" />
@@ -296,24 +302,42 @@
             <button class="toggle-card is-active" type="button" data-model="trike" aria-pressed="true">
               <img class="toggle-card__icon" src="/trike.png" alt="" />
               <span class="toggle-card__text">
-                <strong>Trike</strong>
+                <strong>Rover</strong>
                 <span>Three-wheel seated trike w/ cargo basket</span>
               </span>
             </button>
           </div>
           <p class="control-hint">Unrecognized models always stay visible.</p>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group">
-          <h3 class="control-label">Availability</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="feature-filter-label">Features</summary>
+          <div class="accordion__body">
+          <p class="control-hint">Off by default — tap to require confirmed equipment.</p>
+          <div id="feature-filter" class="toggle-row" role="group" aria-labelledby="feature-filter-label">
+            <button class="toggle-pill" type="button" data-feature="bell" aria-pressed="false">🔔 Bell</button>
+            <button class="toggle-pill" type="button" data-feature="basket" aria-pressed="false">🧺 Basket</button>
+            <button class="toggle-pill" type="button" data-feature="cup_holder" aria-pressed="false">🥤 Cup Holder</button>
+            <button class="toggle-pill" type="button" data-feature="missing" aria-pressed="false">¯\_(ツ)_/¯ Missing Data</button>
+          </div>
+          <p class="control-hint">Equipment is rider-confirmed, so most scooters have no data yet — ¯\_(ツ)_/¯ keeps those visible too (or, alone, shows only them).</p>
+          </div>
+        </details>
+
+        <details class="accordion">
+          <summary class="accordion__summary">Availability</summary>
+          <div class="accordion__body">
           <label class="switch">
             <input type="checkbox" id="hide-unavailable" />
             <span>Hide Reserved &amp; Out of Service</span>
           </label>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group" aria-labelledby="battery-min-label">
-          <h3 id="battery-min-label" class="control-label">Minimum battery percentage</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="battery-min-label">Minimum battery percentage</summary>
+          <div class="accordion__body">
           <div class="battery-slider">
             <input
               type="range"
@@ -327,20 +351,24 @@
             <output id="battery-min-value" for="battery-min">Off</output>
           </div>
           <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group" aria-labelledby="quality-label">
-          <h3 id="quality-label" class="control-label">Quality</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="quality-label">Quality</summary>
+          <div class="accordion__body">
           <div id="quality-seg" class="segmented" role="radiogroup" aria-labelledby="quality-label">
             <button class="seg-btn is-active" role="radio" aria-checked="true" data-quality="any">Any</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-quality="no-risk">Hide high-risk</button>
             <button class="seg-btn" role="radio" aria-checked="false" data-quality="ok-only">Reliable only</button>
           </div>
           <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group" aria-labelledby="area-filter-label">
-          <h3 id="area-filter-label" class="control-label">Only show devices in…</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="area-filter-label">Only show devices in…</summary>
+          <div class="accordion__body">
           <label class="switch">
             <input type="checkbox" id="area-filter-enable" />
             <span>Filter devices by area</span>
@@ -371,10 +399,12 @@
             <p class="control-hint">Tip: you can also click a region right on the map to add or remove it.</p>
             <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
           </div>
-        </section>
+          </div>
+        </details>
 
-        <section class="control-group" aria-labelledby="preset-label">
-          <h3 id="preset-label" class="control-label">Saved filters</h3>
+        <details class="accordion">
+          <summary class="accordion__summary" id="preset-label">Saved filters</summary>
+          <div class="accordion__body">
           <div class="preset-actions" role="group" aria-labelledby="preset-label">
             <button id="preset-save" class="preset-btn" type="button">💾 Save map filter</button>
             <button id="preset-load" class="preset-btn" type="button">📂 Load map filter</button>
@@ -382,7 +412,8 @@
           <!-- Save name row / saved-set list, rendered by filter-presets.ts -->
           <div id="preset-panel"></div>
           <p class="control-hint">Saved on this device only, for now.</p>
-        </section>
+          </div>
+        </details>
 
         <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
       </div>
@@ -716,6 +747,19 @@
         <button class="drawer-close" type="button" aria-label="Close About Scooter.fyi">&times;</button>
       </header>
       <div class="drawer-body drawer-body--prose">
+        <section class="control-group" id="about-tour" aria-labelledby="about-tour-label">
+          <h3 id="about-tour-label" class="control-label">Intro tour</h3>
+          <p class="control-hint">
+            A 60-second replay of what Scooter.fyi can do — model and
+            feature filtering, rideability, Ride Mode, and the territory
+            game.
+          </p>
+          <button id="about-replay-tour" class="preset-btn" type="button">
+            ▶ Replay the intro tour
+          </button>
+        </section>
+
+        <h3>Message from Founder</h3>
         <p>
           Hey there! I'm <a href="https://zneill.com" target="_blank" rel="noopener">Zeke Neill</a>,
           the Denverite responsible for Scooter.fyi. This project originally
@@ -723,7 +767,7 @@
           performance of our new City of Denver micromobility monopoly, Veo.
           I set out just to collect data and watch the metrics — but between
           the portrait-mode-only clunkiness of the Veo app (in sharp contrast
-          to the landscape phone holders on the Cosmo, Apollo, and Trike) and
+          to the landscape phone holders on the Cosmo, Apollo, and Rover) and
           the fact that Apollo e-bikes are just plain more fun than the other
           options (personal opinion!), it turned out there's a lot a web app
           can do that's complementary to the Veo app itself. So I built the

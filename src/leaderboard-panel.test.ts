@@ -99,7 +99,7 @@ describe("buildRegionalTallyHtml", () => {
 
 describe("formatScheduleValue", () => {
   it("renders a flat award", () => {
-    expect(formatScheduleValue(SCHEDULE, "qr_scan")).toBe("100 pts");
+    expect(formatScheduleValue(SCHEDULE, "gbfs_trip_validated")).toBe("20 pts");
   });
 
   it("renders a formula award with its base", () => {
@@ -115,22 +115,32 @@ describe("formatScheduleValue", () => {
   });
 
   it("tolerates the bare-number encoding the API may use for a flat award", () => {
-    expect(formatScheduleValue({ qr_scan: 100 }, "qr_scan")).toBe("100 pts");
+    expect(formatScheduleValue({ gbfs_trip_validated: 20 }, "gbfs_trip_validated")).toBe("20 pts");
   });
 
   it("returns null for an action the API didn't publish", () => {
     expect(formatScheduleValue(SCHEDULE, "not_a_real_action")).toBeNull();
-    expect(formatScheduleValue(null, "qr_scan")).toBeNull();
+    expect(formatScheduleValue(null, "gbfs_trip_validated")).toBeNull();
   });
 });
 
 describe("buildPointsScheduleHtml", () => {
   it("lists published awards under their group headings", () => {
     const html = buildPointsScheduleHtml(SCHEDULE);
-    expect(html).toContain("Scan a device&#39;s QR code");
-    expect(html).toContain("100 pts");
+    expect(html).toContain("Complete a validated trip");
+    expect(html).toContain("20 pts");
     expect(html).toContain("Riding");
     expect(html).toContain("Reporting a device");
+  });
+
+  it("suppresses qr_scan even when the server still publishes it", () => {
+    // The QR-scan flow never shipped client-side, so its award is a promise
+    // nobody can collect on — hidden from the named rows AND from the
+    // humanized "More" pass (SCHEDULE carries it at 100 pts).
+    const html = buildPointsScheduleHtml(SCHEDULE);
+    expect(html).not.toContain("QR");
+    expect(html).not.toContain("Qr scan");
+    expect(html).not.toContain("100 pts");
   });
 
   it("drops a row the API didn't publish rather than showing a blank award", () => {
@@ -148,7 +158,7 @@ describe("buildPointsScheduleHtml", () => {
   });
 
   it("hardcodes no point values — every number comes from the schedule", () => {
-    const html = buildPointsScheduleHtml({ qr_scan: { points: 7 } });
+    const html = buildPointsScheduleHtml({ device_photo: { points: 7 } });
     expect(html).toContain("7 pts");
     expect(html).not.toContain("100 pts");
   });
@@ -237,7 +247,7 @@ describe("wireLeaderboardPanel", () => {
     expect(fetchRegional).toHaveBeenCalledTimes(1);
     expect(fetchSchedule).toHaveBeenCalledTimes(1);
     expect(els.regionalBody.innerHTML).toContain("Duke Swift 🦦");
-    expect(els.scheduleBody.innerHTML).toContain("100 pts");
+    expect(els.scheduleBody.innerHTML).toContain("20 pts");
   });
 
   it("re-opening refetches the tally — that's what '(live)' means", async () => {

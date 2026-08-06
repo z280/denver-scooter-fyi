@@ -53,9 +53,11 @@ import {
 import {
   FEATURE_STATUS_LABEL,
   asFeatureStatus,
+  matchesFeatureFilter,
   openConfirmFeatures,
   readDeviceFeatures,
   summarizeFeatures,
+  type FeatureFilterKey,
 } from "./device-features.ts";
 import { openRidePreflight } from "./ride-preflight.ts";
 import {
@@ -172,7 +174,7 @@ const VEO_MODELS: Record<string, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
   apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
-  trike: { name: "Veo Trike", desc: "Three-wheel seated trike w/ cargo basket" },
+  trike: { name: "Veo Rover", desc: "Three-wheel seated trike w/ cargo basket" },
 };
 
 function veoModel(
@@ -201,6 +203,9 @@ export class Devices {
    *  satisfy a minimum. */
   private minBattery = 0;
   private quality: QualityFilter = "any";
+  /** Features filter (crowdsourced equipment). Empty = off; see
+   *  `matchesFeatureFilter` for the require/AND/¯\_(ツ)_/¯ semantics. */
+  private featureFilter = new Set<FeatureFilterKey>();
   // Iconography: inner badge style + gauge ring (default on). The badge
   // ("icon data") and the ring ("gauge data") have independent signals so
   // riders can see reliability in the icon while the ring tracks battery.
@@ -1199,7 +1204,15 @@ export class Devices {
       // re-render passes retry=true and is the same popup to the rider),
       // and a delegated action listener so each button/link below stays
       // untouched. Only recognized actions map to a bounded vocabulary.
-      if (!retry) track("popup_open");
+      if (!retry) {
+        track("popup_open");
+        // Progressive discovery hook (main.ts listens): the one-time "what
+        // does High risk mean" tip needs to know a risk-tier popup opened,
+        // without this module knowing anything about tips.
+        window.dispatchEvent(
+          new CustomEvent("scooter:popup-open", { detail: { tier: relTier } }),
+        );
+      }
       const ACTION_TRACK: Record<string, string> = {
         "use-in-ride-mode": "preflight",
         "confirm-features": "confirm_features",
@@ -1789,6 +1802,12 @@ export class Devices {
     this.apply();
   }
 
+  /** Features filter selection (empty set = off). */
+  setFeatureFilter(selected: ReadonlySet<FeatureFilterKey>): void {
+    this.featureFilter = new Set(selected);
+    this.apply();
+  }
+
   /** Restrict to devices inside any of these indexed polygons (null = no area filter). */
   setAreaFilter(areas: AreaFilter): void {
     this.areaFilter = areas;
@@ -1981,6 +2000,12 @@ export class Devices {
         const tier = f.properties.reliability_tier;
         return wantOk ? tier === "ok" : tier !== "risk";
       });
+    }
+    if (this.featureFilter.size > 0) {
+      const selected = this.featureFilter;
+      feats = feats.filter((f) =>
+        matchesFeatureFilter(f.properties.device_features, selected),
+      );
     }
     if (this.areaFilter && this.areaFilter.length > 0) {
       const polys = this.areaFilter;
@@ -2237,7 +2262,7 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
 
 /** Ride posture for the "Device use" icon style and the ride-type filter:
  *  the server-corrected `vehicle_use_type` decides, with the seated models
- *  (Cosmo, Apollo, Trike) as the tiebreaker when it's absent. */
+ *  (Cosmo, Apollo, Rover) as the tiebreaker when it's absent. */
 export function rideTypeOf(p: {
   vehicle_use_type?: string | null;
   vehicle_model_name?: string | null;
@@ -2247,18 +2272,24 @@ export function rideTypeOf(p: {
     p.vehicle_use_type === "sitting" ||
     model === "cosmo" ||
     model === "apollo" ||
-    model === "trike"
+    model === "trike" ||
+    model === "rover"
   ) {
     return "sitting";
   }
   return "standing";
 }
 
-/** Recognized Veo model, or null for mystery hardware. */
+/** Recognized Veo model, or null for mystery hardware. Veo's marketing name
+ *  for the three-wheeler is "Rover" — accept it alongside the feed's
+ *  historical "trike" spelling, but keep the INTERNAL key "trike": it is
+ *  baked into saved filter presets, sprite ids, and the `vehicle_model`
+ *  field the routing API receives, so the key is wire format, not copy. */
 export function modelKeyOf(p: {
   vehicle_model_name?: string | null;
 }): ModelKey | null {
   const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
+  if (model === "rover") return "trike";
   return model === "astro" ||
     model === "cosmo" ||
     model === "apollo" ||
@@ -2553,14 +2584,14 @@ const MODEL_TAG: Record<string, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
-  trike: "Tr",
+  trike: "Ro",
   unk: "?",
 };
 
 /** The "letter" Model icon style: a single model-tinted disc. Colors echo
  *  each comic badge's dominant background — Astro's day sky (light blue),
  *  Cosmo's terracotta courtyard (orange), Apollo's night city (purple),
- *  Trike's seaside sunset (pink). */
+ *  the Rover's seaside sunset (pink). */
 const MODEL_COLOR: Record<ModelKey, string> = {
   astro: "#5bb8e6",
   cosmo: "#ee8836",
@@ -2579,7 +2610,7 @@ function relLuminance(hex: string): number {
 }
 
 /** Pick a legible glyph color for a tinted badge: a dark ink on light tints
- *  (Astro/Cosmo/Trike), white on dark ones (Apollo), so the letter clears WCAG
+ *  (Astro/Cosmo/Rover), white on dark ones (Apollo), so the letter clears WCAG
  *  large-text contrast on every model color rather than washing out. */
 function glyphColorFor(bg: string): { fill: string; halo: string } {
   return relLuminance(bg) >= 0.3
@@ -2590,7 +2621,7 @@ const MODEL_LETTER: Record<ModelKey, string> = {
   astro: "As",
   cosmo: "Co",
   apollo: "Ap",
-  trike: "Tr",
+  trike: "Ro",
 };
 
 function drawInnerBadge(
@@ -2630,7 +2661,7 @@ function drawInnerBadge(
     ctx.fillText(MODEL_TAG[inner.slice(6)] ?? "?", cx, cx + d * 0.04);
   } else if (inner.startsWith("ml-")) {
     // Model-tinted letter badge: colored disc + a glyph whose color is chosen
-    // by the tint's luminance (dark ink on light Astro/Cosmo/Trike, white on
+    // by the tint's luminance (dark ink on light Astro/Cosmo/Rover, white on
     // dark Apollo) so the letter clears contrast on every model color.
     const mk = inner.slice(3) as ModelKey;
     const bg = MODEL_COLOR[mk] ?? BATTERY_MISSING_COLOR;
