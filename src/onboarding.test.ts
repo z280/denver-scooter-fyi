@@ -3,7 +3,7 @@
 // The first-run tour (onboarding.ts).
 //
 // What matters here is the contract main.ts wires against: auto-show exactly
-// once per browser, skippable at every screen, seven screens with a live
+// once per browser, skippable at every screen, eight screens with a live
 // progress readout, and the final CTA (and ONLY the final CTA) firing the
 // Find-a-ride hand-off.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,10 +43,11 @@ beforeEach(() => {
 });
 
 describe("the tour's screens", () => {
-  it("has exactly seven, one per idea, in the spec's order", () => {
+  it("has exactly eight, one per idea, in order", () => {
     expect(ONBOARDING_SCREENS.map((s) => s.id)).toEqual([
       "welcome",
       "models",
+      "features",
       "rideability",
       "ride-mode",
       "routing",
@@ -55,8 +56,22 @@ describe("the tour's screens", () => {
     ]);
   });
 
+  const screen = (id: string) => {
+    const s = ONBOARDING_SCREENS.find((s) => s.id === id);
+    if (!s) throw new Error(`no screen ${id}`);
+    return s;
+  };
+
+  it("the features slide sells the filter and the confirm-for-points CTA", () => {
+    const body = screen("features").body;
+    expect(body).toContain("rider-confirmed");
+    expect(body).toContain("Confirm its features");
+    expect(body).toContain("earn points");
+    expect(body).toContain("onboarding-confirm.webp");
+  });
+
   it("names all four models on the model-choice screen, Rover included", () => {
-    const models = ONBOARDING_SCREENS[1].body;
+    const models = screen("models").body;
     for (const m of ["Astro", "Cosmo", "Apollo", "Rover"]) {
       expect(models).toContain(m);
     }
@@ -70,7 +85,7 @@ describe("the tour's screens", () => {
   it("shows the four real route profiles, by their in-app names", () => {
     // Mirrors ride-screen-routes.ts's FALLBACK_PROFILES labels — the tour
     // must promise the buttons Screen 4 of the wizard actually renders.
-    const body = ONBOARDING_SCREENS[4].body;
+    const body = screen("routing").body;
     for (const label of [
       "Safe &amp; Protected",
       "The Range Maximizer",
@@ -82,7 +97,7 @@ describe("the tour's screens", () => {
   });
 
   it("teaches the three rideability tiers", () => {
-    const body = ONBOARDING_SCREENS[2].body;
+    const body = screen("rideability").body;
     for (const label of ["Likely Rideable", "Unknown Risk", "High Risk"]) {
       expect(body).toContain(label);
     }
@@ -113,9 +128,9 @@ describe("maybeShowOnboarding", () => {
 });
 
 describe("navigation", () => {
-  it("walks forward and back with a live n / 7 progress readout", () => {
+  it("walks forward and back with a live n / 8 progress readout", () => {
     maybeShowOnboarding(hooks());
-    expect(progressText()).toBe("1 / 7");
+    expect(progressText()).toBe("1 / 8");
     // Screen 1's primary is "Get Started" and there is no Back yet.
     expect(document.querySelector(".onboarding__next")?.textContent).toBe(
       "Get Started",
@@ -123,11 +138,11 @@ describe("navigation", () => {
     expect(document.querySelector(".onboarding__back")).toBeNull();
 
     click(".onboarding__next");
-    expect(progressText()).toBe("2 / 7");
+    expect(progressText()).toBe("2 / 8");
     expect(document.querySelector(".onboarding__back")).not.toBeNull();
 
     click(".onboarding__back");
-    expect(progressText()).toBe("1 / 7");
+    expect(progressText()).toBe("1 / 8");
     click(".onboarding__skip"); // teardown via the tour's own UI
   });
 
@@ -148,7 +163,7 @@ describe("navigation", () => {
     for (let i = 0; i < ONBOARDING_SCREENS.length - 1; i++) {
       click(".onboarding__next");
     }
-    expect(progressText()).toBe("7 / 7");
+    expect(progressText()).toBe("8 / 8");
     const cta = document.querySelector<HTMLButtonElement>(".onboarding__next")!;
     expect(cta.textContent).toBe("Start Exploring");
     cta.click();

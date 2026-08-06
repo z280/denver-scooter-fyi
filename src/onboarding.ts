@@ -96,6 +96,24 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
       tap.</p>`,
   },
   {
+    id: "features",
+    headline: "Filter by what's bolted on.",
+    body: `
+      <div class="onb-identities" aria-hidden="true">
+        <span class="onb-identity">🔔 Bell</span>
+        <span class="onb-identity">🧺 Basket</span>
+        <span class="onb-identity">🥤 Cup Holder</span>
+      </div>
+      <div class="onb-anim-wrap" aria-hidden="true">
+        <img class="onb-anim" src="/onboarding-confirm.webp"
+          alt="" width="420" height="740" loading="lazy" />
+      </div>
+      <p>Filter for scooters with rider-confirmed equipment — a bell, a
+      basket, a cup holder.</p>
+      <p class="onb-callout">Standing next to a scooter?
+      <strong>Confirm its features</strong> in seconds — and earn points.</p>`,
+  },
+  {
     id: "rideability",
     headline: "Avoid bad scooters.",
     body: `

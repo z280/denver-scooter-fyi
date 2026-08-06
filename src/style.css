@@ -6297,3 +6297,18 @@ input[data-ride-keypad="on"] {
 .discovery-tip__close:hover {
   color: var(--fg);
 }
+
+/* Slide 3's animated confirm-features demo — a real capture of the popup →
+   modal → "+pts" flow, shipped as an animated WebP. */
+.onb-anim-wrap {
+  display: flex;
+  justify-content: center;
+}
+.onb-anim {
+  display: block;
+  width: min(210px, 70%);
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
