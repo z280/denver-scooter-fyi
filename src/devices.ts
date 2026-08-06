@@ -92,6 +92,15 @@ export const ALL_MODELS: readonly ModelKey[] = [
   "apollo",
   "trike",
 ];
+/** Which recognized models serve each ride type — the Astro is the only
+ *  standing scooter in the line-up; everything else is seated. Drives the
+ *  Filters drawer's ride-type → model sync (main.ts), which exists to keep
+ *  the two deliberately-redundant controls from combining into a dead
+ *  filter (ride type: seated, model: Astro → nothing shown). */
+export const MODELS_BY_RIDE_TYPE: Record<RideType, readonly ModelKey[]> = {
+  standing: ["astro"],
+  sitting: ["cosmo", "apollo", "trike"],
+};
 
 // ----- Gauge design options ("📐 Design Options" in the Iconography drawer).
 export type GaugeDisplay = "always" | "hover";

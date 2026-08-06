@@ -264,19 +264,38 @@
            time so the longer list of sections stays scannable. -->
       <div class="drawer-body" id="filters-accordion">
         <details class="accordion" open>
-          <summary class="accordion__summary" id="ride-type-label">Ride type</summary>
+          <summary class="accordion__summary">Quick &amp; Saved Filters</summary>
           <div class="accordion__body">
-          <p class="control-hint">All on by default — tap to hide a type.</p>
-          <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
-            <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
-            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Seated</button>
+          <!-- One tap drives the controls in the sections below through
+               their normal event paths (wireQuickFilters, main.ts) — a
+               quick filter is a shortcut, not a separate filter state. -->
+          <div id="quick-filters" class="quick-filters" role="group" aria-label="Quick filters">
+            <button class="preset-btn" type="button" data-quick="charged">⚡ Charged &amp; Ridable</button>
+            <button class="preset-btn" type="button" data-quick="decent">👍 Decent Rides</button>
+            <button class="preset-btn" type="button" data-quick="no-standing">🚫🛴 No Standing</button>
           </div>
+          <p class="control-hint">One tap sets the sections below — everything stays adjustable after.</p>
+          <h4 class="control-sublabel" id="preset-label">Saved filters</h4>
+          <div class="preset-actions" role="group" aria-labelledby="preset-label">
+            <button id="preset-save" class="preset-btn" type="button">💾 Save map filter</button>
+            <button id="preset-load" class="preset-btn" type="button">📂 Load map filter</button>
+          </div>
+          <!-- Save name row / saved-set list, rendered by filter-presets.ts -->
+          <div id="preset-panel"></div>
+          <p class="control-hint">Saved on this device only, for now.</p>
           </div>
         </details>
 
         <details class="accordion">
-          <summary class="accordion__summary" id="model-filter-label">Model</summary>
+          <summary class="accordion__summary">Model &amp; Ride Type</summary>
           <div class="accordion__body">
+          <h4 class="control-sublabel" id="ride-type-label">Ride type</h4>
+          <p class="control-hint">All on by default — tap to hide a type. Narrowing the ride type syncs the models below to match.</p>
+          <div id="ride-type-filter" class="toggle-row" role="group" aria-labelledby="ride-type-label">
+            <button class="toggle-pill is-active" type="button" data-ride="standing" aria-pressed="true">🛴 Standing</button>
+            <button class="toggle-pill is-active" type="button" data-ride="sitting" aria-pressed="true">🚲 Seated</button>
+          </div>
+          <h4 class="control-sublabel" id="model-filter-label">Model</h4>
           <div id="model-filter" class="toggle-stack" role="group" aria-labelledby="model-filter-label">
             <button class="toggle-card is-active" type="button" data-model="astro" aria-pressed="true">
               <img class="toggle-card__icon" src="/astro.png" alt="" />
@@ -326,18 +345,16 @@
         </details>
 
         <details class="accordion">
-          <summary class="accordion__summary">Availability</summary>
+          <summary class="accordion__summary">Rideability &amp; Battery</summary>
           <div class="accordion__body">
-          <label class="switch">
-            <input type="checkbox" id="hide-unavailable" />
-            <span>Hide Reserved &amp; Out of Service</span>
-          </label>
+          <h4 class="control-sublabel" id="quality-label">Rideability</h4>
+          <div id="quality-seg" class="segmented" role="radiogroup" aria-labelledby="quality-label">
+            <button class="seg-btn is-active" role="radio" aria-checked="true" data-quality="any">Any</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="no-risk">Hide high-risk</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-quality="ok-only">Likely rideable</button>
           </div>
-        </details>
-
-        <details class="accordion">
-          <summary class="accordion__summary" id="battery-min-label">Minimum battery percentage</summary>
-          <div class="accordion__body">
+          <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
+          <h4 class="control-sublabel" id="battery-min-label">Minimum battery percentage</h4>
           <div class="battery-slider">
             <input
               type="range"
@@ -351,23 +368,16 @@
             <output id="battery-min-value" for="battery-min">Off</output>
           </div>
           <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
+          <h4 class="control-sublabel">Availability</h4>
+          <label class="switch">
+            <input type="checkbox" id="hide-unavailable" />
+            <span>Hide Reserved &amp; Out of Service</span>
+          </label>
           </div>
         </details>
 
         <details class="accordion">
-          <summary class="accordion__summary" id="quality-label">Quality</summary>
-          <div class="accordion__body">
-          <div id="quality-seg" class="segmented" role="radiogroup" aria-labelledby="quality-label">
-            <button class="seg-btn is-active" role="radio" aria-checked="true" data-quality="any">Any</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-quality="no-risk">Hide high-risk</button>
-            <button class="seg-btn" role="radio" aria-checked="false" data-quality="ok-only">Reliable only</button>
-          </div>
-          <p class="control-hint">Based on the reliability tier: quality flags, reports, failed starts, dwell.</p>
-          </div>
-        </details>
-
-        <details class="accordion">
-          <summary class="accordion__summary" id="area-filter-label">Only show devices in…</summary>
+          <summary class="accordion__summary" id="area-filter-label">Geographic Filters</summary>
           <div class="accordion__body">
           <label class="switch">
             <input type="checkbox" id="area-filter-enable" />
@@ -399,19 +409,6 @@
             <p class="control-hint">Tip: you can also click a region right on the map to add or remove it.</p>
             <button id="area-filter-clear" class="text-btn" type="button" hidden>Clear selection</button>
           </div>
-          </div>
-        </details>
-
-        <details class="accordion">
-          <summary class="accordion__summary" id="preset-label">Saved filters</summary>
-          <div class="accordion__body">
-          <div class="preset-actions" role="group" aria-labelledby="preset-label">
-            <button id="preset-save" class="preset-btn" type="button">💾 Save map filter</button>
-            <button id="preset-load" class="preset-btn" type="button">📂 Load map filter</button>
-          </div>
-          <!-- Save name row / saved-set list, rendered by filter-presets.ts -->
-          <div id="preset-panel"></div>
-          <p class="control-hint">Saved on this device only, for now.</p>
           </div>
         </details>
 
