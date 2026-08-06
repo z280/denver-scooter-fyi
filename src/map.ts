@@ -35,9 +35,7 @@ function basemapLayers(flavor: Flavor): LayerSpecification[] {
  *  the basemap out from under them without touching their z-order. */
 let currentBasemapIds = new Set<string>();
 
-function buildStyle(flavor: Flavor): StyleSpecification {
-  const base = basemapLayers(flavor);
-  currentBasemapIds = new Set(base.map((l) => l.id));
+function styleFor(flavor: Flavor, base: LayerSpecification[]): StyleSpecification {
   return {
     version: 8,
     glyphs: asset("fonts/{fontstack}/{range}.pbf"),
@@ -52,6 +50,23 @@ function buildStyle(flavor: Flavor): StyleSpecification {
     },
     layers: base,
   };
+}
+
+function buildStyle(flavor: Flavor): StyleSpecification {
+  const base = basemapLayers(flavor);
+  currentBasemapIds = new Set(base.map((l) => l.id));
+  return styleFor(flavor, base);
+}
+
+/** Basemap style for small SECONDARY maps (the ride wizard's route preview).
+ *  Same self-hosted archive/glyphs/sprites as the main map — the pmtiles://
+ *  protocol is registered once, globally, by createMap(), and the pmtiles
+ *  Protocol's directory cache makes a second consumer cheap. Deliberately
+ *  does NOT touch `currentBasemapIds`: that set is setBasemapFlavor's
+ *  bookkeeping for the MAIN map's layers, and a preview building a style
+ *  must never confuse it. */
+export function previewBasemapStyle(flavor: Flavor): StyleSpecification {
+  return styleFor(flavor, basemapLayers(flavor));
 }
 
 /** Recolor the live map by swapping ONLY the basemap layers. The shared
