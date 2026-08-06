@@ -570,3 +570,149 @@ describe("RideHud cost readout (RideOptions.cost_hud)", () => {
     expect(costEl(container).textContent).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The own-device cost fix + the wrench panel's Display chips.
+//
+// Two related additions, tested together because they share the same seams:
+//   1. The Veo cost counter used to apply to EVERY ride, including "My own
+//      Device" — a ride Veo isn't billing, so the counter was a picture of a
+//      transaction that never happened. `enterRiding` now forces it off for
+//      an own-device ride (and the legacy summary drops its cost rows).
+//   2. The wrench (adjust) panel gained a "Display" row: per-readout ON/OFF
+//      chips for the Veo cost counter, the bottom-right classic (analog)
+//      speedometer, and the top-right digital mph — with the initial state
+//      finally seeded from `RideOptions.speedometer`, which ride-settings.ts's
+//      own header records was never read by the HUD before.
+// ---------------------------------------------------------------------------
+
+describe("RideHud own-device cost fix + Display chips", () => {
+  function docWith(
+    over: Partial<RideSessionDoc>,
+    options: Partial<RideOptions> = {},
+  ): RideSessionDoc {
+    return {
+      ...buildDoc("ride-display-1", Date.now() - 5000),
+      options: { ...OPTIONS, speedometer: "classic", ...options },
+      ...over,
+    };
+  }
+
+  function mountWith(doc: RideSessionDoc) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const dispatch = vi.fn();
+    const hud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session: { current: () => doc, dispatch } },
+    );
+    hud.beginHandoff({
+      rideId: doc.rideId,
+      startedAtMs: doc.startedAtMs as number,
+      recorder: null,
+    });
+    return { hud, container, dispatch };
+  }
+
+  const chipFor = (container: HTMLElement, key: string) =>
+    container.querySelector<HTMLButtonElement>(
+      `[data-hud="display"][data-display="${key}"]`,
+    );
+
+  function ownDeviceDoc(): RideSessionDoc {
+    return docWith(
+      {
+        rideId: null,
+        private: true,
+        device: { own: true },
+        dest: null,
+        route: null,
+        trackKeyId: "private-abc123",
+      },
+      { own_device: true, cost_hud: true },
+    );
+  }
+
+  it("an own-device ride hides the Veo cost counter even with cost_hud ON, and offers no chip to re-enable it", () => {
+    const { container } = mountWith(ownDeviceDoc());
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(true);
+    expect(chipFor(container, "cost")).toBeNull();
+    // The speedometer chips are still there — those readouts apply to any
+    // ride, whoever owns the wheels.
+    expect(chipFor(container, "classic")).not.toBeNull();
+    expect(chipFor(container, "digital")).not.toBeNull();
+  });
+
+  it("an own-device ride's legacy summary drops the Veo cost / comparator rows but keeps duration and distance", async () => {
+    const { container, dispatch } = mountWith(ownDeviceDoc());
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({ type: "endRide" });
+    });
+    expect(container.innerHTML).toContain("Ride summary");
+    expect(container.innerHTML).toContain("Duration");
+    expect(container.innerHTML).toContain("Distance");
+    expect(container.innerHTML).not.toContain("Est. Veo cost");
+    expect(container.innerHTML).not.toContain("typical pricing");
+  });
+
+  it("a tracked Veo-device ride keeps the counter and its chip, exactly as before", () => {
+    const { container } = mountWith(docWith({}, { cost_hud: true }));
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(false);
+    expect(chipFor(container, "cost")?.classList.contains("is-on")).toBe(true);
+  });
+
+  it("RideOptions.speedometer seeds the readouts: classic shows both, digital only the mph, none neither", () => {
+    const corners = (container: HTMLElement) => ({
+      digital: container.querySelector<HTMLElement>(".hud-corner--tr")?.hidden,
+      classic: container.querySelector<HTMLElement>(".hud-corner--br")?.hidden,
+    });
+    expect(corners(mountWith(docWith({})).container)).toEqual({
+      digital: false,
+      classic: false,
+    });
+    expect(
+      corners(mountWith(docWith({}, { speedometer: "digital" })).container),
+    ).toEqual({ digital: false, classic: true });
+    expect(
+      corners(mountWith(docWith({}, { speedometer: "none" })).container),
+    ).toEqual({ digital: true, classic: true });
+  });
+
+  it("the Display chips flip each readout live, and the choice survives a BRB resume's DOM rebuild", () => {
+    const { hud, container } = mountWith(docWith({}, { cost_hud: true }));
+
+    chipFor(container, "classic")?.click();
+    expect(container.querySelector<HTMLElement>(".hud-corner--br")?.hidden).toBe(true);
+    expect(chipFor(container, "classic")?.getAttribute("aria-pressed")).toBe("false");
+
+    chipFor(container, "digital")?.click();
+    expect(container.querySelector<HTMLElement>(".hud-corner--tr")?.hidden).toBe(true);
+
+    chipFor(container, "cost")?.click();
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(true);
+
+    // Flip the digital mph back on — independent of the other two.
+    chipFor(container, "digital")?.click();
+    expect(container.querySelector<HTMLElement>(".hud-corner--tr")?.hidden).toBe(false);
+
+    // BRB and resume: renderRiding() rebuilds the whole riding DOM, which
+    // comes back with every corner visible — the flags must be re-asserted,
+    // and the chips must reflect them.
+    container.querySelector<HTMLButtonElement>('[data-hud="exit"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="brb"]')?.click();
+    expect(hud.isPaused()).toBe(true);
+    hud.open(); // resume
+    expect(container.querySelector<HTMLElement>(".hud-corner--br")?.hidden).toBe(true);
+    expect(container.querySelector<HTMLElement>(".hud-corner--tr")?.hidden).toBe(false);
+    expect(container.querySelector<HTMLElement>("#hud-cost")?.hidden).toBe(true);
+    expect(chipFor(container, "classic")?.getAttribute("aria-pressed")).toBe("false");
+    expect(chipFor(container, "digital")?.getAttribute("aria-pressed")).toBe("true");
+    expect(chipFor(container, "cost")?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
