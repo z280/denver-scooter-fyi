@@ -25,7 +25,7 @@ export interface RideDeviceControl {
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
-  comparatorCostCents,
+  comparatorPassQuote,
   formatCents,
   planFor,
   rideCostCents,
@@ -229,6 +229,12 @@ export class RideHud {
   private startedAt = 0;
   private smoothedMps = 0;
   private distanceM = 0;
+  /** GPS fixes seen this ride — the summary's "Waypoints" figure. A plain
+   *  count of what the shared watchPosition delivered, deliberately NOT read
+   *  from the trail or the track recorder: it stays meaningful with Save
+   *  Ride Tracks off, and it has no ordering hazard against `endRide`'s
+   *  trail wipe. */
+  private fixCount = 0;
   private lastFix: { pos: LngLat; t: number } | null = null;
   private startPos: LngLat | null = null;
   private startedInZone = false;
@@ -1033,6 +1039,7 @@ export class RideHud {
     this.routeLine?.clear();
     this.smoothedMps = 0;
     this.distanceM = 0;
+    this.fixCount = 0;
     this.lastFix = null;
     this.startPos = null;
     this.startedInZone = false;
@@ -1391,6 +1398,7 @@ export class RideHud {
   private onFix(fix: GeolocationPosition): void {
     const pos: LngLat = { lng: fix.coords.longitude, lat: fix.coords.latitude };
     const t = fix.timestamp;
+    this.fixCount += 1;
 
     if (!this.startPos) {
       this.startPos = pos;
@@ -1605,42 +1613,62 @@ export class RideHud {
       }
     }
 
+    const miles = this.distanceM / 1609.344;
+
+    // Own-device ride: no Veo bill, no comparator, no Veo-specific equity
+    // discount — none of the money copy describes a transaction that
+    // happened. The summary is exactly three facts about the ride itself:
+    // time, distance, and the waypoints this device saw.
+    if (this.ownDeviceRide) {
+      const rows = [
+        row("Duration", formatClock(elapsed)),
+        row("Distance", `${miles.toFixed(1)} mi`),
+        row("Waypoints", String(this.fixCount)),
+      ];
+      this.setState("summary");
+      this.root.innerHTML = `
+      <div class="hud-card">
+        <h2 class="hud-title">Ride summary</h2>
+        <dl class="hud-summary">${rows.join("")}</dl>
+        <p class="hud-note">Estimates from this device's clock and GPS.</p>
+        <button type="button" class="hud-btn hud-btn--primary" data-hud="done">Done</button>
+      </div>`;
+      return;
+    }
+
     const rate = savedRatePlan();
     const plan = planFor(rate ?? "resident");
     const veoCents = rideCostCents(plan, elapsed);
-    const limeCents = comparatorCostCents(elapsed);
-    const deltaCents = veoCents - limeCents;
-    const miles = this.distanceM / 1609.344;
+    // The comparator is pass-based now: the realistic alternative to Veo's
+    // metered bill is buying a block of Lime minutes up front (unlocks
+    // included), so that's what the ride is priced against — the cheapest
+    // pass (or stack of passes) that covers it.
+    const passQuote = comparatorPassQuote(elapsed);
+    const deltaCents = veoCents - passQuote.cents;
     const zoneRide = this.startedInZone || endedInZone;
 
-    // Same reasoning as the live counter's own-device fix: a ride on the
-    // rider's own wheels has no Veo bill to estimate, so the cost/comparator
-    // rows (and the pricing commentary below) would be pictures of a
-    // transaction that never happened. Duration/distance/zone still apply.
     const rows: string[] = [
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
+      row(
+        `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
+        formatCents(veoCents),
+      ),
+      row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)),
     ];
-    if (!this.ownDeviceRide) {
-      rows.push(
-        row(
-          `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
-          formatCents(veoCents),
-        ),
-        row(`With ${COMPARATOR.name}'s typical pricing`, formatCents(limeCents)),
-      );
-    }
 
-    const veoPlusLine =
-      plan.veoPlus && !this.ownDeviceRide
-        ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
-        : "";
+    const veoPlusLine = plan.veoPlus
+      ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
+      : "";
 
+    const passDesc =
+      passQuote.passCount === 1
+        ? `a ${formatCents(passQuote.cents)} ${COMPARATOR.name} pass (${passQuote.minutes} min, free unlock)`
+        : `${formatCents(passQuote.cents)} in ${COMPARATOR.name} passes (${passQuote.minutes} min total, free unlocks)`;
     const monopolyLine =
-      deltaCents > 0 && !this.ownDeviceRide
-        ? `<p class="hud-note hud-note--pointed">You paid ≈ ${formatCents(deltaCents)} more because Denver has one operator.
-           A ${formatCents(COMPARATOR.weekPassCents)}/week ${COMPARATOR.name} pass would cover this in
-           ${Math.max(1, Math.ceil(COMPARATOR.weekPassCents / Math.max(1, limeCents)))} rides.</p>`
+      deltaCents > 0
+        ? `<p class="hud-note hud-note--pointed">You paid ≈ ${formatCents(deltaCents)} more because Denver has one operator —
+           ${passDesc} would have covered this ride.</p>`
         : "";
 
     const zoneLine = zoneRide
@@ -1656,7 +1684,8 @@ export class RideHud {
         ${veoPlusLine}
         ${zoneLine}
         ${monopolyLine}
-        <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.</p>
+        <p class="hud-note">Estimates from this device's clock and GPS — your Veo receipt is the bill.
+          ${COMPARATOR.name} pass pricing includes unlocks (no $1 unlock charge).</p>
         <button type="button" class="hud-btn hud-btn--primary" data-hud="done">Done</button>
       </div>`;
   }

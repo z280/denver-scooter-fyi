@@ -648,7 +648,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(chipFor(container, "digital")).not.toBeNull();
   });
 
-  it("an own-device ride's legacy summary drops the Veo cost / comparator rows but keeps duration and distance", async () => {
+  it("an own-device ride's summary is exactly duration, distance, waypoints — no money copy at all", async () => {
     const { container, dispatch } = mountWith(ownDeviceDoc());
     container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
     await vi.waitFor(() => {
@@ -657,8 +657,43 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(container.innerHTML).toContain("Ride summary");
     expect(container.innerHTML).toContain("Duration");
     expect(container.innerHTML).toContain("Distance");
+    expect(container.innerHTML).toContain("Waypoints");
+    // No cost estimate, no comparator, no operator commentary, no
+    // Veo-receipt or equity-discount copy — nobody billed this ride.
     expect(container.innerHTML).not.toContain("Est. Veo cost");
+    expect(container.innerHTML).not.toContain("Lime");
+    expect(container.innerHTML).not.toContain("$");
+    expect(container.innerHTML).not.toContain("receipt");
+    expect(container.innerHTML).not.toContain("equity zone");
+  });
+
+  it("a guest ride on an actual Veo scooter compares against Lime PASS pricing (free unlocks), not per-minute metering", async () => {
+    // Guest ride: private (no tracked_rides row → legacy summary), but NOT
+    // own-device — a real Veo scooter someone is paying Veo for. A ~5s ride
+    // bills 1 started minute → the $2.99 30-minute pass is the comparator.
+    const doc = docWith(
+      {
+        rideId: null,
+        private: true,
+        device: null,
+        dest: null,
+        route: null,
+        trackKeyId: "private-guest1",
+      },
+      { own_device: false, cost_hud: true },
+    );
+    const { container, dispatch } = mountWith(doc);
+    container.querySelector<HTMLButtonElement>('[data-hud="end"]')?.click();
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({ type: "endRide" });
+    });
+    expect(container.innerHTML).toContain("Est. Veo cost");
+    expect(container.innerHTML).toContain("With a Lime pass");
+    expect(container.innerHTML).toContain("$2.99");
+    // The old per-minute+unlock comparator row is gone…
     expect(container.innerHTML).not.toContain("typical pricing");
+    // …and the free-unlock promise is spelled out.
+    expect(container.innerHTML).toContain("no $1 unlock charge");
   });
 
   it("a tracked Veo-device ride keeps the counter and its chip, exactly as before", () => {

@@ -9,6 +9,7 @@ import { RATE_PLANS, type RatePlan, type RatePlanKey } from "./config.ts";
 import {
   DEFAULT_TAX_RATE,
   billableMinutes,
+  comparatorPassQuote,
   currentTaxRate,
   estimateWithTax,
   refreshTaxRate,
@@ -200,5 +201,55 @@ describe("currentTaxRate / refreshTaxRate", () => {
     const p = plan("resident");
     const b = estimateWithTax(p, 5 * MIN);
     expect(b.tax).toBe(Math.round((b.unlock + b.perMin) * 0.15));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// comparatorPassQuote — the pass ladder ($2.99/30, $4.99/60, $12.99/120,
+// unlocks included) mapped from ride duration. Smallest covering pass, NOT a
+// min-cost cover — see the function's own doc comment for why a 90-minute
+// ride quotes the $12.99 pass rather than a clever 60+30 stack.
+// ---------------------------------------------------------------------------
+
+describe("comparatorPassQuote", () => {
+  it("a short ride fits the 30-minute pass", () => {
+    expect(comparatorPassQuote(10 * MIN)).toEqual({
+      cents: 299,
+      minutes: 30,
+      passCount: 1,
+    });
+    // Exactly 30 minutes still fits — the pass covers 30, not 29.
+    expect(comparatorPassQuote(30 * MIN).cents).toBe(299);
+  });
+
+  it("minute 31 tips into the 60-minute pass", () => {
+    expect(comparatorPassQuote(31 * MIN)).toEqual({
+      cents: 499,
+      minutes: 60,
+      passCount: 1,
+    });
+    expect(comparatorPassQuote(60 * MIN).cents).toBe(499);
+  });
+
+  it("61-120 minutes quotes the single 120-minute pass — the ladder as published, not a 60+30 stack", () => {
+    expect(comparatorPassQuote(90 * MIN)).toEqual({
+      cents: 1299,
+      minutes: 120,
+      passCount: 1,
+    });
+    expect(comparatorPassQuote(120 * MIN).cents).toBe(1299);
+  });
+
+  it("beyond the largest pass, stacks additional 120s until the remainder fits", () => {
+    // 121 min: one 120 pass + the 30 covering the last minute.
+    expect(comparatorPassQuote(121 * MIN)).toEqual({
+      cents: 1299 + 299,
+      minutes: 150,
+      passCount: 2,
+    });
+  });
+
+  it("bills per started minute, same as the metered comparator (30:01 needs the 60 pass)", () => {
+    expect(comparatorPassQuote(30 * MIN + 1000).cents).toBe(499);
   });
 });
