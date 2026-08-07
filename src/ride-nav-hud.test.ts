@@ -18,15 +18,18 @@ import { encodePolyline, type LngLatCoord } from "./polyline-encode.ts";
 import type { RideSessionRoute } from "./ride-session.ts";
 import {
   INITIAL_OFF_ROUTE_STATE,
+  INITIAL_ROUTE_POSITION,
   NAV_DISMISS_HOLD_MS,
-  advanceMonotonic,
   createNavHud,
-  currentManeuverIndex,
   decodePolyline,
+  distanceAlongRoute,
   distanceToLineString,
-  nearestShapeIndex,
+  matchAlongRoute,
   noteOffRouteSample,
+  routeProgress,
+  upcomingManeuverIndex,
   type NavHudOptions,
+  type RoutePosition,
 } from "./ride-nav-hud.ts";
 
 afterEach(() => {
@@ -158,45 +161,106 @@ describe("decodePolyline", () => {
   });
 });
 
-describe("advanceMonotonic — out-and-back route (the case monotonic matching exists for)", () => {
+describe("matchAlongRoute — out-and-back route (the case monotonic matching exists for)", () => {
   const coords = buildOutAndBack();
 
-  it("the UNCONSTRAINED nearest-point search regresses to the earlier, physically-identical point", () => {
+  it("never regresses given a fix at the outbound mirror point, once already on the return leg", () => {
     // coords[12] (on the return leg) sits at the exact same lat/lng as
-    // coords[8] (on the outbound leg). Scanning the whole shape finds
-    // index 8 first and never beats its exact-zero distance — demonstrating
-    // the failure mode the monotonic window exists to avoid.
+    // coords[8] (on the outbound leg) — the shape that fools an
+    // unconstrained nearest match. From segment 12, the windowed search
+    // starts there and can only stay or advance.
     const fix = { lat: 39.7 + 8 * 0.0002, lng: -104.99 };
-    const unconstrained = nearestShapeIndex(coords, fix, 0, coords.length - 1);
-    expect(unconstrained.index).toBe(8);
-  });
-
-  it("advanceMonotonic never regresses given the same fix, once already at index 12", () => {
-    const fix = { lat: 39.7 + 8 * 0.0002, lng: -104.99 };
-    const windowed = advanceMonotonic(coords, fix, 12);
-    expect(windowed.index).toBe(12);
-    expect(windowed.distanceM).toBeLessThan(1);
+    const last: RoutePosition = { segIndex: 12, t: 0, distanceM: 0 };
+    const pos = matchAlongRoute(coords, fix, last);
+    expect(routeProgress(pos)).toBeGreaterThanOrEqual(12);
+    expect(pos.distanceM).toBeLessThan(1);
   });
 
   it("advances monotonically across a full outbound+return traversal", () => {
-    let lastIndex = 0;
+    let last: RoutePosition = { ...INITIAL_ROUTE_POSITION };
     for (let i = 0; i < coords.length; i++) {
       const [lng, lat] = coords[i];
-      const match = advanceMonotonic(coords, { lat, lng }, lastIndex);
-      expect(match.index).toBeGreaterThanOrEqual(lastIndex);
-      lastIndex = match.index;
+      const pos = matchAlongRoute(coords, { lat, lng }, last);
+      expect(routeProgress(pos)).toBeGreaterThanOrEqual(routeProgress(last));
+      last = pos;
     }
-    expect(lastIndex).toBe(coords.length - 1);
+    expect(routeProgress(last)).toBeCloseTo(coords.length - 1, 5);
   });
 
-  it("a GPS jump landing near an earlier switchback point still cannot pull the index backward", () => {
+  it("a GPS jump landing near an earlier switchback point still cannot pull the position backward", () => {
     // Simulate noise: rider is really at index 14, but a noisy fix reads as
-    // physically closer to the outbound leg's index-6 point (same trick as
-    // above, one step further back).
-    let lastIndex = 14;
+    // physically closer to the outbound leg's index-6 point.
+    const last: RoutePosition = { segIndex: 14, t: 0, distanceM: 0 };
     const noisyFixAtOutboundSix = { lat: 39.7 + 6 * 0.0002, lng: -104.99 };
-    const match = advanceMonotonic(coords, noisyFixAtOutboundSix, lastIndex);
-    expect(match.index).toBeGreaterThanOrEqual(lastIndex);
+    const pos = matchAlongRoute(coords, noisyFixAtOutboundSix, last);
+    expect(routeProgress(pos)).toBeGreaterThanOrEqual(14);
+  });
+});
+
+describe("matchAlongRoute — fractional (segment-projected) position", () => {
+  // Two sparse ~160m segments; vertex snapping would sit at a vertex until
+  // past a midpoint, which is what made turn detection feel late.
+  const SEG_DEG = 160 / 111_320;
+  const coords: LngLatCoord[] = [
+    [-104.99, 39.7],
+    [-104.99, 39.7 + SEG_DEG],
+    [-104.99, 39.7 + 2 * SEG_DEG],
+  ];
+
+  it("a rider halfway down a sparse segment reads as progress ~0.5, on the line", () => {
+    const fix = { lat: 39.7 + SEG_DEG / 2, lng: -104.99 };
+    const pos = matchAlongRoute(coords, fix, { ...INITIAL_ROUTE_POSITION });
+    expect(pos.segIndex).toBe(0);
+    expect(pos.t).toBeCloseTo(0.5, 2);
+    expect(pos.distanceM).toBeLessThan(1);
+  });
+
+  it("same-segment GPS noise pauses progress rather than rewinding it", () => {
+    const last: RoutePosition = { segIndex: 0, t: 0.6, distanceM: 0 };
+    const fixBehind = { lat: 39.7 + SEG_DEG * 0.4, lng: -104.99 };
+    const pos = matchAlongRoute(coords, fixBehind, last);
+    expect(pos.segIndex).toBe(0);
+    expect(pos.t).toBe(0.6);
+  });
+
+  it("never matches past lastPos.segIndex + window, even when a farther segment is objectively closer", () => {
+    const fix = { lat: 39.7 + 2 * SEG_DEG, lng: -104.99 }; // exactly the last vertex
+    const pos = matchAlongRoute(coords, fix, { ...INITIAL_ROUTE_POSITION }, 0);
+    expect(pos.segIndex).toBe(0); // clamped to the window's only segment
+    expect(pos.t).toBe(1); // ...at its far end
+  });
+
+  it("an empty shape returns the initial position; a single point matches with point distance", () => {
+    expect(matchAlongRoute([], { lat: 39.7, lng: -104.99 }, { ...INITIAL_ROUTE_POSITION }))
+      .toEqual(INITIAL_ROUTE_POSITION);
+    const single = matchAlongRoute(
+      [[-104.99, 39.7]],
+      { lat: 39.7, lng: -104.99 },
+      { ...INITIAL_ROUTE_POSITION },
+    );
+    expect(single.distanceM).toBeLessThan(1);
+  });
+});
+
+describe("distanceAlongRoute — the 'In 400 ft' countdown", () => {
+  const SEG_DEG = 160 / 111_320; // each segment ~160m
+  const coords: LngLatCoord[] = [
+    [-104.99, 39.7],
+    [-104.99, 39.7 + SEG_DEG],
+    [-104.99, 39.7 + 2 * SEG_DEG],
+    [-104.99, 39.7 + 3 * SEG_DEG],
+  ];
+
+  it("counts the unridden remainder of the current segment plus whole segments to the target", () => {
+    // Halfway down segment 0, turn at vertex 2: 80m + 160m.
+    const d = distanceAlongRoute(coords, { segIndex: 0, t: 0.5 }, 2);
+    expect(d).toBeGreaterThan(235);
+    expect(d).toBeLessThan(245);
+  });
+
+  it("a passed turn is 0 m away, never negative", () => {
+    expect(distanceAlongRoute(coords, { segIndex: 2, t: 0.5 }, 2)).toBe(0);
+    expect(distanceAlongRoute(coords, { segIndex: 2, t: 0.5 }, 0)).toBe(0);
   });
 });
 
@@ -217,12 +281,9 @@ describe("distanceToLineString — point-to-segment, not point-to-vertex", () =>
   const midLat = 39.7 + SEGMENT_LENGTH_DEG / 2;
 
   it("a rider at the segment's midpoint reads ~0m from the line despite being ~80m from either vertex", () => {
+    // This is exactly the failure mode the function exists for — a
+    // vertex-only distance reads ~80m here, above the 50m threshold.
     const fix = { lat: midLat, lng: -104.99 };
-    // Sanity check: this is exactly the failure mode being fixed — the OLD
-    // vertex-only distance reads ~80m here, which is > the 50m threshold.
-    const vertexDistance = nearestShapeIndex(coords, fix, 0, coords.length - 1).distanceM;
-    expect(vertexDistance).toBeGreaterThan(50);
-
     expect(distanceToLineString(coords, fix)).toBeLessThan(1);
   });
 
@@ -242,50 +303,40 @@ describe("distanceToLineString — point-to-segment, not point-to-vertex", () =>
   });
 });
 
-describe("advanceMonotonic — forward window boundary", () => {
-  const coords: LngLatCoord[] = [];
-  for (let i = 0; i <= 10; i++) coords.push([-104.99, 39.7 + i * 0.001]);
+describe("upcomingManeuverIndex — the step the rider is told about NEXT", () => {
+  // depart (turn at 0) → turn at 5 → turn at 10 → arrive at 15.
+  const maneuvers: RouteManeuver[] = [
+    maneuver(0, 5, "Head north"),
+    maneuver(5, 10, "Turn right"),
+    maneuver(10, 15, "Turn left"),
+    maneuver(15, 15, "Arrive"),
+  ];
 
-  it("never matches past lastIndex + window, even when a farther point is objectively closer", () => {
-    const fix = { lat: 39.7 + 10 * 0.001, lng: -104.99 }; // exactly coords[10]
-    const match = advanceMonotonic(coords, fix, 0, 3);
-    expect(match.index).toBeLessThanOrEqual(3);
-    expect(match.index).toBe(3); // clamped to the window's far edge
+  it("opens with the first real turn — the depart maneuver's turn point (index 0) is already behind the rider", () => {
+    expect(upcomingManeuverIndex(maneuvers, 0)).toBe(1);
   });
 
-  it("matches freely once the true nearest point falls inside the window", () => {
-    const fix = { lat: 39.7 + 5 * 0.001, lng: -104.99 }; // exactly coords[5]
-    const match = advanceMonotonic(coords, fix, 0, 6);
-    expect(match.index).toBe(5);
+  it("holds the upcoming turn while approaching it, and flips the moment its vertex is crossed", () => {
+    expect(upcomingManeuverIndex(maneuvers, 4.9)).toBe(1); // still riding toward the turn at 5
+    expect(upcomingManeuverIndex(maneuvers, 5)).toBe(2); // turn complete → next step
+    expect(upcomingManeuverIndex(maneuvers, 7.5)).toBe(2);
+    expect(upcomingManeuverIndex(maneuvers, 10.01)).toBe(3);
   });
 
-  it("never returns an index below lastIndex even at the window's lower edge", () => {
-    const fix = { lat: 0, lng: 0 }; // nowhere near any point — window floor wins
-    const match = advanceMonotonic(coords, fix, 4, 2);
-    expect(match.index).toBeGreaterThanOrEqual(4);
-  });
-});
-
-describe("currentManeuverIndex", () => {
-  const maneuvers: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 10), maneuver(10, 15)];
-
-  it("advances forward exactly as the matched shape index passes each maneuver's end", () => {
-    expect(currentManeuverIndex(maneuvers, 0)).toBe(0);
-    expect(currentManeuverIndex(maneuvers, 4)).toBe(0);
-    expect(currentManeuverIndex(maneuvers, 5)).toBe(1);
-    expect(currentManeuverIndex(maneuvers, 12)).toBe(2);
+  it("stays on the final (arrive) maneuver once nothing is ahead", () => {
+    expect(upcomingManeuverIndex(maneuvers, 15)).toBe(3);
+    expect(upcomingManeuverIndex(maneuvers, 99)).toBe(3);
   });
 
-  it("never regresses when fed back its own previous result, even given a lower shape index later", () => {
-    const idx = currentManeuverIndex(maneuvers, 12, 0);
-    expect(idx).toBe(2);
-    const next = currentManeuverIndex(maneuvers, 6, idx);
-    expect(next).toBe(2);
+  it("never regresses when fed back its own previous result, even given lower progress later", () => {
+    const idx = upcomingManeuverIndex(maneuvers, 12, 0);
+    expect(idx).toBe(3);
+    expect(upcomingManeuverIndex(maneuvers, 6, idx)).toBe(3);
   });
 
-  it("skips a zero-length leg without getting stuck", () => {
-    const withZero: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 5), maneuver(5, 10)];
-    expect(currentManeuverIndex(withZero, 5)).toBe(2);
+  it("skips coincident turn points (zero-length legs) without getting stuck", () => {
+    const withZero: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 5), maneuver(5, 10), maneuver(10, 10)];
+    expect(upcomingManeuverIndex(withZero, 5)).toBe(3);
   });
 });
 
@@ -499,24 +550,55 @@ describe("left/right directions-panel toggle state machine", () => {
 });
 
 describe("createNavHud — center card + directions list content", () => {
-  it("renders the current maneuver's instruction and highlights it in the panel, advancing as fixes come in", () => {
-    const maneuvers: RouteManeuver[] = [
-      maneuver(0, 2, "Head north on Blake St"),
-      maneuver(2, 4, "Turn right onto 20th St"),
-    ];
+  // depart at 0 → turn at vertex 2 → arrive at vertex 4, over BASE_COORDS'
+  // five points (~22m apart).
+  const THREE_STEP: RouteManeuver[] = [
+    maneuver(0, 2, "Head north on Blake St", 1),
+    maneuver(2, 4, "Turn right onto 20th St", 10),
+    maneuver(4, 4, "You have arrived", 4),
+  ];
+
+  it("shows the UPCOMING turn with a countdown — never the turn already made", () => {
     const { container, hud } = setup({
-      route: makeRoute({ maneuvers, polyline: encodePolyline(BASE_COORDS) }),
+      route: makeRoute({ maneuvers: THREE_STEP, polyline: encodePolyline(BASE_COORDS) }),
     });
     const instruction = container.querySelector(".nav-hud__instruction")!;
-    expect(instruction.textContent).toBe("Head north on Blake St");
+    const meta = container.querySelector(".nav-hud__meta")!;
 
-    const [lng, lat] = BASE_COORDS[3];
-    hud.feedFix(lat, lng);
+    // From the first instant the rider is being told about the first REAL
+    // turn ahead — the depart maneuver's turn point is index 0, already
+    // behind them (the old behavior showed the maneuver whose leg the rider
+    // was on, i.e. always one step stale).
     expect(instruction.textContent).toBe("Turn right onto 20th St");
+    expect(meta.textContent).toMatch(/^In /);
+
+    // Mid-first-leg: still approaching the same turn, countdown shrinking.
+    const [lng1, lat1] = BASE_COORDS[1];
+    hud.feedFix(lat1, lng1);
+    expect(instruction.textContent).toBe("Turn right onto 20th St");
+    expect(meta.textContent).toMatch(/^In \d+ ft$/);
+
+    // Past the turn vertex: the turn is COMPLETE — the card flips to the
+    // next step immediately, not a leg later.
+    const [lng3, lat3] = BASE_COORDS[3];
+    hud.feedFix(lat3, lng3);
+    expect(instruction.textContent).toBe("You have arrived");
+
     const steps = container.querySelectorAll(".nav-hud__step");
-    expect(steps.length).toBe(2);
-    expect(steps[1].classList.contains("is-current")).toBe(true);
+    expect(steps.length).toBe(3);
+    expect(steps[2].classList.contains("is-current")).toBe(true);
     expect(steps[0].classList.contains("is-done")).toBe(true);
+    expect(steps[1].classList.contains("is-done")).toBe(true);
+  });
+
+  it("reads 'Now' instead of a false-precision countdown within 15m of the turn point", () => {
+    const { container, hud } = setup({
+      route: makeRoute({ maneuvers: THREE_STEP, polyline: encodePolyline(BASE_COORDS) }),
+    });
+    // ~4m short of the turn vertex (BASE_COORDS spacing is ~22m).
+    hud.feedFix(39.7004 - 0.00004, -104.99);
+    const meta = container.querySelector(".nav-hud__meta")!;
+    expect(meta.textContent).toBe("Now");
   });
 
   it("falls back to a generic message when there are no maneuvers", () => {
