@@ -559,6 +559,13 @@ export function createNavHud(
   let coords: LngLatCoord[] = decodePolyline(opts.route.polyline);
   let maneuvers: RouteManeuver[] = opts.route.maneuvers.slice();
   let profile = opts.route.profile;
+  // The API's rider-facing `beta_warning`, carried on the session doc's route
+  // from Screen 4's `/route` response. The contract: render it wherever
+  // directions are shown — here, that is BOTH the center card (a strip under
+  // it, visible for the whole guided ride) and the step-by-step panel. A
+  // re-route's fresh response re-decides it: still present → keep showing it
+  // (possibly re-worded server-side); absent → directions left beta, drop it.
+  let betaWarning: string | null = opts.route.betaWarning ?? null;
   let lastMatchedIndex = 0;
   let currentManeuverIdx = 0;
   let offRoute: OffRouteState = { ...INITIAL_OFF_ROUTE_STATE };
@@ -610,7 +617,17 @@ export function createNavHud(
   );
   rightBtn.appendChild(svgArrowIcon("right"));
 
-  bar.append(leftBtn, card, rightBtn);
+  // The card and the beta strip stack in a column between the two arrows —
+  // the strip rides directly under the instruction it disclaims.
+  const betaEl = document.createElement("p");
+  betaEl.className = "nav-hud__beta";
+  betaEl.setAttribute("role", "note");
+  betaEl.hidden = true;
+  const center = document.createElement("div");
+  center.className = "nav-hud__center";
+  center.append(card, betaEl);
+
+  bar.append(leftBtn, center, rightBtn);
 
   const panel = document.createElement("div");
   panel.className = "nav-hud__panel";
@@ -629,10 +646,15 @@ export function createNavHud(
   panelClose.textContent = "×";
   panelHead.append(panelTitle, panelClose);
 
+  const panelBetaEl = document.createElement("p");
+  panelBetaEl.className = "nav-hud__panel-beta";
+  panelBetaEl.setAttribute("role", "note");
+  panelBetaEl.hidden = true;
+
   const stepsList = document.createElement("ol");
   stepsList.className = "nav-hud__steps";
 
-  panel.append(panelHead, stepsList);
+  panel.append(panelHead, panelBetaEl, stepsList);
 
   container.append(bar, panel);
 
@@ -761,8 +783,16 @@ export function createNavHud(
     });
   }
 
+  function renderBeta(): void {
+    betaEl.textContent = betaWarning ?? "";
+    betaEl.hidden = betaWarning === null;
+    panelBetaEl.textContent = betaWarning ?? "";
+    panelBetaEl.hidden = betaWarning === null;
+  }
+
   renderCard();
   renderPanel();
+  renderBeta();
 
   // ---------------- off-route re-route ----------------
 
@@ -786,6 +816,10 @@ export function createNavHud(
         (p) => [p[0], p[1]] as LngLatCoord,
       );
       maneuvers = resp.properties.maneuvers ?? [];
+      // Re-decided from the FRESH response, not carried over: an absent
+      // field means directions left beta mid-ride, and the warning must not
+      // outlive it (the API contract says never hardcode/persist the text).
+      betaWarning = resp.properties.beta_warning ?? null;
       lastMatchedIndex = 0;
       currentManeuverIdx = 0;
       // The excursion is over — a brand new shape starting from "here" —
@@ -793,6 +827,7 @@ export function createNavHud(
       offRoute = { sinceMs: null, lastRerouteAtMs: offRoute.lastRerouteAtMs };
       renderCard();
       renderPanel();
+      renderBeta();
       opts.onRouteUpdate?.({
         coordinates: coords.slice(),
         maneuvers: maneuvers.slice(),

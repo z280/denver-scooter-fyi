@@ -705,6 +705,22 @@ describe("persistence", () => {
     expect(restoredWithout).toEqual(withoutFlag);
   });
 
+  it("round-trips route.betaWarning — a reload mid-ride keeps the nav HUD's beta disclaimer", () => {
+    const doc = ridingDoc({
+      route: { ...ROUTE, betaWarning: "Navigation directions are in beta." },
+    });
+    const restored = parseRideSession(serializeRideSession(doc));
+    expect(restored?.route?.betaWarning).toBe("Navigation directions are in beta.");
+    expect(restored).toEqual(doc);
+
+    // A doc from before this field existed (or one stored after directions
+    // leave beta) must still parse cleanly with no stray `betaWarning` key.
+    const withoutWarning = ridingDoc();
+    const restoredWithout = parseRideSession(serializeRideSession(withoutWarning));
+    expect(restoredWithout?.route).not.toHaveProperty("betaWarning");
+    expect(restoredWithout).toEqual(withoutWarning);
+  });
+
   it("discards a doc it cannot trust", () => {
     expect(parseRideSession(null)).toBeNull();
     expect(parseRideSession("not json")).toBeNull();

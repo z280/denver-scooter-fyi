@@ -471,11 +471,20 @@ function buildLoadedScreen(
   let results = new Map<string, RouteState>();
   let selectedProfile: string | null = null;
   let mapHandle: RouteMapLike | null = null;
+  // The API's rider-facing beta disclaimer (`beta_warning`, on both
+  // `/route/profiles` and every `/route` response while directions are in
+  // beta). The contract: render it wherever directions are shown, never
+  // hardcode it, and treat its absence as "directions left beta". Whichever
+  // response carries it first wins — the server sends one canonical string.
+  let betaWarning: string | null = null;
 
   // ---------------- primary pane (toggle list) ----------------
   const statusEl = el("p", "ride-modal__hint ride-route-status");
   statusEl.setAttribute("role", "status");
   statusEl.setAttribute("aria-live", "polite");
+  const betaEl = el("p", "ride-route-beta");
+  betaEl.setAttribute("role", "note");
+  betaEl.hidden = true;
   const listEl = el("ol", "ride-options ride-route-list");
   const nextBtn = el("button", "login-btn ride-route-next", "NEXT >>");
   nextBtn.type = "button";
@@ -487,6 +496,7 @@ function buildLoadedScreen(
   primary.append(
     el("h3", "ride-modal__lede", "Choose your route"),
     statusEl,
+    betaEl,
     listEl,
     controls,
   );
@@ -562,6 +572,7 @@ function buildLoadedScreen(
       const resp = await (deps.fetchRouteProfiles ?? defaultFetchRouteProfiles)(
         abort.signal,
       );
+      if (resp.beta_warning) betaWarning = resp.beta_warning;
       list = resp.profiles.length > 0 ? resp.profiles : FALLBACK_PROFILES;
     } catch (e) {
       if (destroyed) return;
@@ -593,6 +604,7 @@ function buildLoadedScreen(
             abort.signal,
           );
           if (destroyed) return;
+          if (rr.properties.beta_warning) betaWarning = rr.properties.beta_warning;
           results.set(p.key, { key: p.key, label: p.label, status: "ready", response: rr });
         } catch (e) {
           if (destroyed) return;
@@ -647,6 +659,11 @@ function buildLoadedScreen(
       ),
       maneuvers: chosen.properties.maneuvers ?? [],
     };
+    // Carry the beta disclaimer with the chosen route so Screen 7's nav HUD
+    // can render it without another fetch. Omitted (not empty-stringed) when
+    // the API no longer sends it — directions out of beta.
+    const chosenWarning = chosen.properties.beta_warning ?? betaWarning;
+    if (chosenWarning) sessionRoute.betaWarning = chosenWarning;
     deps.session.dispatch({ type: "setRoute", route: sessionRoute });
     // Advance FIRST — the POST is non-blocking (frontend plan: "route choice
     // must proceed... until A3 deploys"). Fired after `ctx.next()` so it
@@ -674,6 +691,12 @@ function buildLoadedScreen(
       statusEl.textContent = "";
     }
     statusEl.hidden = statusEl.textContent === "";
+
+    // The beta disclaimer accompanies the directions whenever any are (or
+    // are about to be) shown; a total failure shows no directions, so no
+    // warning either — the degrade message speaks for itself there.
+    betaEl.textContent = betaWarning ?? "";
+    betaEl.hidden = betaWarning === null || (settled && readyCount === 0);
 
     listEl.replaceChildren();
     if (loadingProfiles) {

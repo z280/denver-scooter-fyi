@@ -162,6 +162,12 @@ export interface RideSessionRoute {
   /** Precision-5 encoded polyline of the chosen shape. */
   polyline: string;
   maneuvers: RouteManeuver[];
+  /** `/route`'s rider-facing `beta_warning`, captured with the chosen route
+   *  so every later surface that renders these directions (the Screen 7 nav
+   *  HUD) can show it without another fetch — the API contract requires it
+   *  wherever directions are shown. Absent once the API stops sending the
+   *  field (directions out of beta); never hardcode the text. */
+  betaWarning?: string;
 }
 
 export interface RideSessionDoc {
@@ -818,7 +824,7 @@ function parseRoute(raw: unknown): RideSessionRoute | null {
   const r = raw as Record<string, unknown>;
   const profile = str(r.profile);
   if (!profile) return null;
-  return {
+  const route: RideSessionRoute = {
     profile,
     rideRouteId: str(r.rideRouteId),
     distanceM: num(r.distanceM) ?? 0,
@@ -828,6 +834,9 @@ function parseRoute(raw: unknown): RideSessionRoute | null {
       ? (r.maneuvers as RouteManeuver[])
       : [],
   };
+  const betaWarning = str(r.betaWarning);
+  if (betaWarning) route.betaWarning = betaWarning;
+  return route;
 }
 
 /** Parse a stored doc. Returns null for anything unusable — a wrong `v`, an

@@ -391,6 +391,87 @@ describe("Screen 4 — profile toggle selection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The API's rider-facing beta disclaimer (`beta_warning`, on /route/profiles
+// and every /route response while directions are in beta) — the contract:
+// render it wherever directions are shown, never hardcode it, and treat its
+// absence as "directions left beta".
+// ---------------------------------------------------------------------------
+
+describe("Screen 4 — beta warning", () => {
+  const WARNING =
+    "Navigation directions are in beta and may be inaccurate or unsafe.";
+
+  it("renders /route/profiles' beta_warning above the route cards", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() =>
+      Promise.resolve({ ...profilesResponse(["safe"]), beta_warning: WARNING }),
+    );
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    const beta = rideModalRoot()?.querySelector<HTMLElement>(".ride-route-beta");
+    expect(beta?.hidden).toBe(false);
+    expect(beta?.textContent).toBe(WARNING);
+  });
+
+  it("falls back to a /route response's beta_warning when the profiles response lacks one", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() =>
+      Promise.resolve(fakeRoute("safe", ROUTE_COORDS, { beta_warning: WARNING })),
+    );
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    const beta = rideModalRoot()?.querySelector<HTMLElement>(".ride-route-beta");
+    expect(beta?.hidden).toBe(false);
+    expect(beta?.textContent).toBe(WARNING);
+  });
+
+  it("stays hidden when no response carries the field (directions out of beta)", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    expect(
+      rideModalRoot()?.querySelector<HTMLElement>(".ride-route-beta")?.hidden,
+    ).toBe(true);
+  });
+
+  it("NEXT carries the warning onto the session route for Screen 7's nav HUD", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() =>
+      Promise.resolve(fakeRoute("safe", ROUTE_COORDS, { beta_warning: WARNING })),
+    );
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    expect(session.current()?.route?.betaWarning).toBe(WARNING);
+  });
+
+  it("NEXT leaves betaWarning unset when the API sent none", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    expect(session.current()?.route?.betaWarning).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // NEXT — the 404-tolerant POST /ride-routes path
 // ---------------------------------------------------------------------------
 

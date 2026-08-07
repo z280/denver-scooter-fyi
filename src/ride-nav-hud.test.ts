@@ -91,6 +91,7 @@ function makeRoute(overrides: Partial<RideSessionRoute> = {}): RideSessionRoute 
 function fakeRouteResponse(
   coords: LngLatCoord[],
   maneuvers: RouteManeuver[] = [],
+  propertyOverrides: Partial<RouteResponse["properties"]> = {},
 ): RouteResponse {
   return {
     type: "Feature",
@@ -109,6 +110,7 @@ function fakeRouteResponse(
       battery_model: "unavailable",
       graph_bbox: [-105, 39, -104, 40],
       maneuvers,
+      ...propertyOverrides,
     },
   };
 }
@@ -522,6 +524,78 @@ describe("createNavHud — center card + directions list content", () => {
     expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
       "Follow the route",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The API's rider-facing beta disclaimer (`beta_warning`) — the contract:
+// render it wherever directions are shown (here: the center-card strip AND
+// the step-by-step panel), never hardcode it, treat absence as "out of beta".
+// ---------------------------------------------------------------------------
+
+describe("beta warning (route.betaWarning → .nav-hud__beta / .nav-hud__panel-beta)", () => {
+  const WARNING =
+    "Navigation directions are in beta and may be inaccurate or unsafe.";
+
+  it("renders the session route's warning in both the card strip and the panel", () => {
+    const { container } = setup({
+      route: makeRoute({ betaWarning: WARNING }),
+    });
+    const strip = container.querySelector<HTMLElement>(".nav-hud__beta")!;
+    const panelNote = container.querySelector<HTMLElement>(".nav-hud__panel-beta")!;
+    expect(strip.hidden).toBe(false);
+    expect(strip.textContent).toBe(WARNING);
+    expect(panelNote.hidden).toBe(false);
+    expect(panelNote.textContent).toBe(WARNING);
+  });
+
+  it("stays hidden when the session route carries no warning (out of beta)", () => {
+    const { container } = setup({ route: makeRoute() });
+    expect(container.querySelector<HTMLElement>(".nav-hud__beta")!.hidden).toBe(true);
+    expect(
+      container.querySelector<HTMLElement>(".nav-hud__panel-beta")!.hidden,
+    ).toBe(true);
+  });
+
+  it("a re-route re-decides it from the fresh response: present → shown, absent → dropped", async () => {
+    const REWORDED = "Directions are still in beta — ride carefully.";
+    let t = 0;
+    let nextResponse = fakeRouteResponse(BASE_COORDS, [], {
+      beta_warning: REWORDED,
+    });
+    const fetchRoute = vi.fn(() => Promise.resolve(nextResponse));
+    const container = document.createElement("div");
+    const hud = createNavHud(container, {
+      route: makeRoute({ betaWarning: WARNING }),
+      dest: { lat: 39.8, lon: -104.99 },
+      onDismiss: vi.fn(),
+      onCompress: vi.fn(),
+      fetchRoute,
+      now: () => t,
+    });
+    const strip = container.querySelector<HTMLElement>(".nav-hud__beta")!;
+    const FAR = { lat: 41.0, lng: -103.0 };
+
+    // Re-route #1: the fresh response still carries (re-worded) text.
+    t = 0;
+    hud.feedFix(FAR.lat, FAR.lng);
+    t = 10_000;
+    hud.feedFix(FAR.lat, FAR.lng);
+    await vi.waitFor(() => expect(strip.textContent).toBe(REWORDED));
+    expect(strip.hidden).toBe(false);
+
+    // Re-route #2 (past the 60s cooldown): the field is gone — beta ended
+    // mid-ride, and the warning must not outlive it.
+    nextResponse = fakeRouteResponse(BASE_COORDS);
+    t = 70_000;
+    hud.feedFix(FAR.lat, FAR.lng);
+    t = 80_000;
+    hud.feedFix(FAR.lat, FAR.lng);
+    expect(fetchRoute).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(strip.hidden).toBe(true));
+    expect(
+      container.querySelector<HTMLElement>(".nav-hud__panel-beta")!.hidden,
+    ).toBe(true);
   });
 });
 

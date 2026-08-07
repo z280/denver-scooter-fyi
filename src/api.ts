@@ -1244,6 +1244,12 @@ export interface RouteProperties {
   battery_model: "regression" | "unavailable";
   /** `[w, s, e, n]`, echoed on every response so clients can pre-filter. */
   graph_bbox: [number, number, number, number];
+  /** Rider-facing beta disclaimer. Present on EVERY response while
+   *  navigation directions are in beta; the API contract requires clients to
+   *  render it (or an equivalent warning) anywhere directions are shown to a
+   *  rider. The field disappears from the payload when directions leave
+   *  beta — never hardcode its text, and treat absence as "no warning". */
+  beta_warning?: string;
   /** Present only with `maneuvers: true`. */
   maneuvers?: RouteManeuver[];
   diagnostics?: Record<string, unknown>;
@@ -1301,6 +1307,9 @@ export interface RouteProfile {
 export interface RouteProfilesResponse {
   default: string;
   graph_bbox: [number, number, number, number];
+  /** Same rider-facing beta disclaimer as `RouteProperties.beta_warning` —
+   *  see that field's doc comment. Absent once directions leave beta. */
+  beta_warning?: string;
   profiles: RouteProfile[];
 }
 
