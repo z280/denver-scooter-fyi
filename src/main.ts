@@ -1421,12 +1421,20 @@ function wireModels(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#model-filter .toggle-card"),
   );
+  // Rover service-area caveat: shown when the rider is deliberately
+  // filtering FOR rovers (the Rover card on within a narrowed selection).
+  // Hidden in the everything-on default — it is a note about choosing
+  // rovers, not a banner on the drawer.
+  const roverNote = need<HTMLParagraphElement>("rover-area-note");
   clearModelFilter = wireToggleGroup(
     btns,
     (b) => b.dataset.model as ModelKey,
     ALL_MODELS,
     (enabled) => {
       modelsOn = enabled;
+      roverNote.hidden = !(
+        enabled.has("trike") && enabled.size < ALL_MODELS.length
+      );
       devices.setModels(enabled);
       clusters.update(devices.visibleFeatures());
       refreshChips();

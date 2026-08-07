@@ -792,6 +792,34 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
 }
 
+/* A hint that is a warning, not a tip (e.g. the Rover downtown-only note
+   under the model filter). Same footprint as .control-hint, colored to be
+   read rather than skimmed. */
+.control-hint--warning {
+  color: var(--warn-fg);
+  font-weight: 600;
+}
+
+/* Directions-are-beta disclaimer on Screen 4's route list. */
+.ride-route-beta {
+  color: var(--warn-fg);
+  font-weight: 600;
+}
+
+/* Directions-are-beta disclaimer pinned under the nav HUD's maneuver bar. */
+.nav-hud__beta {
+  margin: 4px auto 0;
+  max-width: 480px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn-fg);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
 /* ---------- Active-filter chips (float over the map, below the top bar) ---------- */
 .filter-chips {
   position: fixed;

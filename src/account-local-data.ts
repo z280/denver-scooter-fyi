@@ -225,9 +225,12 @@ export function buildLocalDataPanel(
     head.setAttribute("aria-pressed", String(selected === summary.trackId));
     head.append(el("span", "track-row__when", formatWhen(summary.startedAtMs)));
 
+    // "waypoints", never "points": this app also has a rewards points
+    // ledger, and "2 points" on a ride row reads as an award, not a track
+    // length.
     const metaBits = [
       formatDuration(summary.durationMs),
-      `${summary.waypointCount} points`,
+      `${summary.waypointCount} waypoints`,
     ];
     const meta = el("span", "track-row__meta", metaBits.join(" · "));
     head.append(meta);
@@ -275,7 +278,7 @@ export function buildLocalDataPanel(
           if (disposed || selected !== summary.trackId) return;
           const path = flattenTrackBatches(batches);
           if (path.coords.length === 0) {
-            rowStatus.set("No points were recorded for this ride.", true);
+            rowStatus.set("No waypoints were recorded for this ride.", true);
             deps.route?.clear();
             return;
           }

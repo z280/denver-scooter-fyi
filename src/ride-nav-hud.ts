@@ -634,7 +634,19 @@ export function createNavHud(
 
   panel.append(panelHead, stepsList);
 
-  container.append(bar, panel);
+  // The API's directions-are-beta disclaimer, kept on screen for the whole
+  // guided ride (the /route contract: show it wherever directions are
+  // rendered). Text comes off the route the rider chose on Screen 4 —
+  // never hardcoded, so it vanishes on its own when directions leave beta
+  // and the API stops sending it.
+  const betaEl = document.createElement("div");
+  betaEl.className = "nav-hud__beta";
+  if (opts.route.betaWarning) {
+    betaEl.textContent = `⚠️ ${opts.route.betaWarning}`;
+    container.append(bar, betaEl, panel);
+  } else {
+    container.append(bar, panel);
+  }
 
   // ---------------- panel + dismiss state machine ----------------
 
@@ -665,6 +677,7 @@ export function createNavHud(
     rerouteAbort?.abort();
     for (const fn of cleanupFns) fn();
     bar.remove();
+    betaEl.remove();
     panel.remove();
     container.classList.remove("nav-hud");
     if (fireDismiss) {

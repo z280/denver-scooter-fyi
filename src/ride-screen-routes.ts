@@ -476,6 +476,12 @@ function buildLoadedScreen(
   const statusEl = el("p", "ride-modal__hint ride-route-status");
   statusEl.setAttribute("role", "status");
   statusEl.setAttribute("aria-live", "polite");
+  // The API's directions-are-beta disclaimer, shown wherever directions are
+  // rendered (the /route contract). Text comes off the response, never
+  // hardcoded — the field disappears when directions leave beta and this
+  // line disappears with it.
+  const betaEl = el("p", "ride-modal__hint ride-route-beta");
+  betaEl.hidden = true;
   const listEl = el("ol", "ride-options ride-route-list");
   const nextBtn = el("button", "login-btn ride-route-next", "NEXT >>");
   nextBtn.type = "button";
@@ -487,6 +493,7 @@ function buildLoadedScreen(
   primary.append(
     el("h3", "ride-modal__lede", "Choose your route"),
     statusEl,
+    betaEl,
     listEl,
     controls,
   );
@@ -594,6 +601,10 @@ function buildLoadedScreen(
           );
           if (destroyed) return;
           results.set(p.key, { key: p.key, label: p.label, status: "ready", response: rr });
+          if (rr.properties.beta_warning && betaEl.hidden) {
+            betaEl.textContent = `⚠️ ${rr.properties.beta_warning}`;
+            betaEl.hidden = false;
+          }
         } catch (e) {
           if (destroyed) return;
           if (!isAbortError(e)) {
@@ -646,6 +657,7 @@ function buildLoadedScreen(
         ),
       ),
       maneuvers: chosen.properties.maneuvers ?? [],
+      betaWarning: chosen.properties.beta_warning ?? null,
     };
     deps.session.dispatch({ type: "setRoute", route: sessionRoute });
     // Advance FIRST — the POST is non-blocking (frontend plan: "route choice

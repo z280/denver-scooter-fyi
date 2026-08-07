@@ -678,3 +678,33 @@ describe("off-route re-route via feedFix", () => {
     expect(fetchRoute).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Directions-are-beta warning (the /route contract: beta_warning must be
+// shown wherever directions are rendered — the HUD shows the one Screen 4
+// carried onto the session route)
+// ---------------------------------------------------------------------------
+
+describe("beta warning", () => {
+  it("stays pinned under the maneuver bar for the whole guided ride", () => {
+    const { container } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    const note = container.querySelector<HTMLElement>(".nav-hud__beta");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("Navigation directions are in beta.");
+  });
+
+  it("renders nothing when the route carries no warning (post-beta, or a pre-field session doc)", () => {
+    const { container } = setup();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+
+  it("is torn down with the rest of the HUD", () => {
+    const { container, hud } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    hud.dispose();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+});

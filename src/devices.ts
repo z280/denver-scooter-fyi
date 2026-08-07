@@ -102,6 +102,15 @@ export const MODELS_BY_RIDE_TYPE: Record<RideType, readonly ModelKey[]> = {
   sitting: ["cosmo", "apollo", "trike"],
 };
 
+/** Shown wherever the rider filters FOR Rovers (the Filters drawer's model
+ *  card and the ride HUD's Show pill): Veo's Rover service area is smaller
+ *  than the rest of the fleet's, and a rider hunting one outside downtown
+ *  is hunting something the operator won't let them ride there. The same
+ *  copy also lives verbatim in index.html's #rover-area-note (static
+ *  markup) — change both together. */
+export const ROVER_AREA_WARNING =
+  "Warning: Veo has limited the ride area for rovers to downtown only!";
+
 // ----- Gauge design options ("📐 Design Options" in the Iconography drawer).
 export type GaugeDisplay = "always" | "hover";
 export type GaugeThickness = "thin" | "standard" | "large" | "xlarge";
