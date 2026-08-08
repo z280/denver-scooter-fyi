@@ -82,6 +82,7 @@ import {
 } from "./ride-modal.ts";
 import type { Locate, LngLat } from "./locate.ts";
 import { veoDeepLink } from "./config.ts";
+import { MODEL_NAMES, type ModelKey } from "./model-catalog.ts";
 import {
   isOwnDevice,
   selectedDevice,
@@ -189,12 +190,14 @@ export function wireRideScreenStart(deps: RideScreenStartDeps): () => void {
 // Copy / formatting helpers
 // ---------------------------------------------------------------------------
 
-function titleCase(s: string): string {
-  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
-}
-
 function deviceSummaryLabel(device: RideSessionSelectedDevice): string {
-  const name = device.model ? titleCase(device.model) : "Scooter";
+  // MODEL_NAMES, never a capitalized key: the "trike" key's rider-facing
+  // name is "Rover" (model-catalog.ts). The session stores the model as a
+  // plain string (a persisted doc may predate a key), so resolve through
+  // modelKeyOf-compatible lookup and fall back to the stored text as-is.
+  const key = device.model as ModelKey | null;
+  const name =
+    key !== null && key in MODEL_NAMES ? MODEL_NAMES[key] : device.model ?? "Scooter";
   return device.plate ? `${name} — plate ${device.plate}` : name;
 }
 

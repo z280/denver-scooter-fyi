@@ -185,21 +185,27 @@ const HOVER_NONE: maplibregl.FilterSpecification = [
  *  should not also trigger the map-click region filter beneath it. */
 export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
 
-/** Veo's model line-up, keyed by lowercased `vehicle_model_name`. The popup
- *  header shows the friendly name + a plain description; an unrecognized or
+/** Veo's model line-up, keyed by the INTERNAL `ModelKey`. The popup header
+ *  shows the friendly name + a plain description; an unrecognized or
  *  missing model falls through to a "Tell us!" report prompt. */
-const VEO_MODELS: Record<string, { name: string; desc: string }> = {
+const VEO_MODELS: Record<ModelKey, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
   apollo: { name: "Veo Apollo", desc: "Two passenger e-bike w/ pedals" },
   trike: { name: "Veo Rover", desc: "Three-wheel seated trike w/ cargo basket" },
 };
 
-function veoModel(
+/** Resolve a feed `vehicle_model_name` to its display card — THROUGH
+ *  `modelKeyOf`, never by raw-name lookup. The feed ships the marketing
+ *  name "Rover" for the three-wheeler while the map above is keyed by the
+ *  internal "trike"; a raw lookup missed it, and every Rover popup fell
+ *  through to the "Veo Unknown / Tell us!" prompt. Exported for the
+ *  model-key test file that pins the two-names-one-key mapping. */
+export function veoModel(
   modelName: string | null | undefined,
 ): { name: string; desc: string } | null {
-  if (!modelName) return null;
-  return VEO_MODELS[modelName.trim().toLowerCase()] ?? null;
+  const key = modelKeyOf({ vehicle_model_name: modelName ?? null });
+  return key ? VEO_MODELS[key] : null;
 }
 
 const PROPULSION_LABEL: Record<PropulsionType, string> = {
