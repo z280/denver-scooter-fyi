@@ -228,6 +228,27 @@ describe("readyToSubmit", () => {
   it("does not care whether the plate is right", () => {
     expect(readyToSubmit({ ...complete, plate: "not-a-plate" })).toBe(true);
   });
+
+  it("accepts a QR scan in place of a typed plate", () => {
+    // The scan is the same proof-of-presence with the typo removed, so
+    // either one opens the button.
+    expect(
+      readyToSubmit({ ...complete, plate: "", qrRawValue: "raw-payload" }),
+    ).toBe(true);
+  });
+
+  it("requireQr demands the scan, plate or no plate", () => {
+    // The tools-drawer flow has no tapped scooter: the scan is not just
+    // proof, it is the only statement of WHICH scooter — a typed plate
+    // cannot stand in for it.
+    expect(readyToSubmit(complete, { requireQr: true })).toBe(false);
+    expect(
+      readyToSubmit(
+        { ...complete, qrRawValue: "raw-payload" },
+        { requireQr: true },
+      ),
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -589,6 +610,151 @@ describe("submitting", () => {
       feature_status: "needs_features_confirmed", deduped: false,
     });
     await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The QR flows
+// ---------------------------------------------------------------------------
+
+describe("the QR flows", () => {
+  /** A scanner stand-in that "decodes" immediately. Matches openQrScanner's
+   *  contract: delivers onScan and returns a close function. */
+  const instantScan = (payload: string) =>
+    vi.fn((opts: { onScan(raw: string): void }) => {
+      opts.onScan(payload);
+      return () => {};
+    });
+
+  function answerToggles(): void {
+    pick("bell-yes").click();
+    pick("cup_holder-no").click();
+    pick("phone_holder-yes").click();
+    pick("basket-no").click();
+    pick("allgood-yes").click();
+  }
+
+  it("offers the scan as an alternative next to the plate field", () => {
+    open();
+    expect(plateField()).not.toBeNull();
+    expect(
+      document.querySelector('[data-action="scan-qr"]')?.textContent,
+    ).toContain("Or scan the QR code instead");
+  });
+
+  it("a scan satisfies the proof and rides along with the report", async () => {
+    const scan = instantScan("https://veo.example/q?number=1025543");
+    const { submit } = open({ scan });
+    answerToggles();
+    expect(sendBtn().disabled).toBe(true); // no plate, no scan yet
+    document
+      .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
+      .click();
+    expect(scan).toHaveBeenCalled();
+    expect(document.body.textContent).toContain("QR code captured");
+    expect(sendBtn().disabled).toBe(false);
+    sendBtn().click();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    const body = submit.mock.calls[0][0];
+    expect(body.qr_raw_value).toBe("https://veo.example/q?number=1025543");
+    // Nothing was typed, so no plate is sent — an empty one is a 422, and
+    // the scan is the proof.
+    expect(body.submitted_plate).toBeUndefined();
+    expect(body.vehicle_identifier).toBe("8c4a1f0d2e9b7a35");
+  });
+
+  it("requireQr hides the plate field and gates Send on the scan", () => {
+    const scan = instantScan("raw-payload");
+    open({ requireQr: true, vehicleIdentifier: undefined, deviceId: undefined, scan });
+    expect(
+      document.querySelector(".device-features__plate-input"),
+    ).toBeNull();
+    answerToggles();
+    expect(sendBtn().disabled).toBe(true);
+    document
+      .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
+      .click();
+    expect(sendBtn().disabled).toBe(false);
+  });
+
+  it("requireQr sends no vehicle at all — the scan is the identity", async () => {
+    const scan = instantScan("raw-payload");
+    const { submit } = open({
+      requireQr: true,
+      vehicleIdentifier: undefined,
+      deviceId: undefined,
+      scan,
+    });
+    answerToggles();
+    document
+      .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
+      .click();
+    sendBtn().click();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    const body = submit.mock.calls[0][0];
+    expect(body.vehicle_identifier).toBeUndefined();
+    expect(body.qr_raw_value).toBe("raw-payload");
+  });
+
+  it("hides the status badge when no vehicle is known yet", () => {
+    // No scooter, no status, and no honest number to promise — the server
+    // picks the award once the scan says which vehicle this is.
+    open({ requireQr: true, vehicleIdentifier: undefined, deviceId: undefined });
+    expect(document.querySelector(".device-features__status")).toBeNull();
+  });
+
+  it("tells the rider when the scan re-targeted the report", async () => {
+    // Tapped one scooter, scanned its neighbour: the server attached the
+    // answers to the scanned one, and silence here would make the map's
+    // later refresh of the OTHER dot read as the report vanishing.
+    const scan = instantScan("raw-payload");
+    const { submit } = open({ scan });
+    submit.mockResolvedValue({
+      id: 1, plate_valid: true, points_awarded: 12,
+      feature_status: "needs_features_confirmed", deduped: false,
+      vehicle_identifier: "00000000deadbeef", qr_matched: true,
+    });
+    answerToggles();
+    document
+      .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
+      .click();
+    sendBtn().click();
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "attached to the scanned one",
+      );
+    });
+  });
+
+  it("explains an unresolvable scan without scolding", async () => {
+    const scan = instantScan("GARBLED");
+    const { submit } = open({ scan });
+    submit.mockResolvedValue({
+      id: 1, plate_valid: false, points_awarded: 0,
+      feature_status: "needs_features_confirmed", deduped: false,
+      vehicle_identifier: "8c4a1f0d2e9b7a35", qr_matched: false,
+    });
+    answerToggles();
+    document
+      .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
+      .click();
+    sendBtn().click();
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "couldn't match that scan",
+      );
+    });
+  });
+
+  it("maps the QR flow's 404 to a rescan suggestion", () => {
+    // In the drawer flow a 404 means the SCAN resolved to nothing — "we
+    // lost this scooter's record" would point at the wrong fix.
+    expect(
+      describeSubmitError(new ReportHttpError(404), { viaQr: true }),
+    ).toContain("try scanning it again");
+    expect(describeSubmitError(new ReportHttpError(404))).toContain(
+      "may have left the fleet",
+    );
   });
 });
 
