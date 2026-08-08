@@ -2996,6 +2996,17 @@ body.is-map-picking .drawer--right {
   outline: 1.5px solid var(--accent);
 }
 .nav-hud__step.is-done { opacity: 0.5; }
+/* Each step row is a real button (tap to make it the current maneuver) —
+   the row's box styling stays on the <li>, the button just fills it. */
+.nav-hud__step-btn {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.nav-hud__step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav-hud__step-text { font-weight: 700; font-size: 13.5px; }
 .nav-hud__step-streets { font-size: 12px; opacity: 0.75; }
 

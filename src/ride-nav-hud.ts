@@ -239,12 +239,23 @@ export function advanceMonotonic(
   return match.index < from ? { ...match, index: from } : match;
 }
 
-/** The maneuver the matched shape index has REACHED, advancing forward only
- *  from `fromIndex` (the previous call's result — feed it back in so this
- *  is monotonic across a whole ride, exactly like `advanceMonotonic`).
- *  Zero-length legs (`end_shape_index <= begin_shape_index`, which the API
- *  is not expected to send but which would otherwise wedge the loop) are
- *  skipped without getting stuck. */
+/** The UPCOMING maneuver for the matched shape index — the turn the rider
+ *  is heading toward, advancing forward only from `fromIndex` (the previous
+ *  call's result — feed it back in so this is monotonic across a whole
+ *  ride, exactly like `advanceMonotonic`).
+ *
+ *  A maneuver's instruction is executed AT its `begin_shape_index` (its
+ *  span is the road you are on AFTER the turn, and Valhalla makes
+ *  `end_i === begin_{i+1}`), so a turn is COMPLETED the moment the match
+ *  moves strictly past its begin vertex — and the card must flip to the
+ *  next instruction right there. The original rule here advanced on
+ *  `matched >= end_shape_index`, which is the NEXT turn's location: after
+ *  completing a turn the HUD kept showing it for the entire block and only
+ *  "picked it up" on arriving at the following corner.
+ *
+ *  Zero-length legs (`end <= begin`, which the API is not expected to send)
+ *  fall out naturally: a chain of equal begin vertices is stepped through
+ *  in one call without wedging. */
 export function currentManeuverIndex(
   maneuvers: readonly RouteManeuver[],
   matchedShapeIndex: number,
@@ -254,7 +265,7 @@ export function currentManeuverIndex(
   let idx = Math.max(0, Math.min(fromIndex, maneuvers.length - 1));
   while (
     idx < maneuvers.length - 1 &&
-    matchedShapeIndex >= maneuvers[idx].end_shape_index
+    matchedShapeIndex > maneuvers[idx].begin_shape_index
   ) {
     idx++;
   }
@@ -741,10 +752,13 @@ export function createNavHud(
       return;
     }
     instructionEl.textContent = maneuver.instruction || "Continue";
+    // Distance to where the maneuver is EXECUTED (its begin vertex), not to
+    // the end of the road it puts you on — the card shows the upcoming
+    // turn, and the number that matters is how far away that turn is.
     const remaining = distanceAlongCoords(
       coords,
       lastMatchedIndex,
-      maneuver.end_shape_index,
+      maneuver.begin_shape_index,
     );
     const streets = maneuver.street_names.join(" / ");
     metaEl.textContent = [formatDistanceShort(remaining), streets]
@@ -760,19 +774,59 @@ export function createNavHud(
       li.className = "nav-hud__step";
       if (i === currentManeuverIdx) li.classList.add("is-current");
       if (i < currentManeuverIdx) li.classList.add("is-done");
+      // Each step is a real button: tapping it makes that maneuver the
+      // current one — the rider's manual override for when GPS matching
+      // lags the real ride (tunnels, urban canyons, a wedged match) or
+      // when they want to peek ahead. See jumpToStep for what it resets.
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "nav-hud__step-btn";
+      btn.dataset.step = String(i);
+      if (i === currentManeuverIdx) btn.setAttribute("aria-current", "step");
       const text = document.createElement("span");
       text.className = "nav-hud__step-text";
       text.textContent = m.instruction || "Continue";
-      li.appendChild(text);
+      btn.appendChild(text);
       if (m.street_names.length > 0) {
         const streets = document.createElement("span");
         streets.className = "nav-hud__step-streets";
         streets.textContent = m.street_names.join(" / ");
-        li.appendChild(streets);
+        btn.appendChild(streets);
       }
+      li.appendChild(btn);
       stepsList.appendChild(li);
     });
   }
+
+  /** Make step `i` the current maneuver, at the rider's request. Also moves
+   *  `lastMatchedIndex` to that maneuver's begin vertex so the remaining
+   *  distance and the monotonic matcher both resume from the step the rider
+   *  says they are on — a forward jump un-wedges a lagging match, and a
+   *  backward jump is honored too (the next fixes simply re-advance if GPS
+   *  disagrees, because the forward window reopens from the earlier
+   *  vertex). */
+  function jumpToStep(i: number): void {
+    if (destroyed || maneuvers.length === 0) return;
+    const idx = Math.max(0, Math.min(i, maneuvers.length - 1));
+    currentManeuverIdx = idx;
+    lastMatchedIndex = Math.max(0, maneuvers[idx].begin_shape_index);
+    renderCard();
+    renderPanel();
+  }
+
+  // One delegated listener rather than one per row: renderPanel rebuilds
+  // the rows on every fix (replaceChildren), and per-row listeners would
+  // have to be re-attached each time.
+  const onStepClick = (e: Event): void => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".nav-hud__step-btn",
+    );
+    if (!btn || !stepsList.contains(btn)) return;
+    const i = Number(btn.dataset.step);
+    if (Number.isInteger(i)) jumpToStep(i);
+  };
+  stepsList.addEventListener("click", onStepClick);
+  cleanupFns.push(() => stepsList.removeEventListener("click", onStepClick));
 
   renderCard();
   renderPanel();
