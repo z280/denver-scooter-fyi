@@ -20,6 +20,7 @@ import {
   openRideModal,
   resetRideModal,
   rideModalRoot,
+  wireRideModal,
 } from "./ride-modal.ts";
 import {
   createRideSessionStore,
@@ -592,6 +593,80 @@ describe("guest / private rides — never call the authed start endpoint", () =>
 // site, neither could ever reach `riding`. Both configurations must now
 // reach `riding` and hand off, exactly like a normal Veo-device ride.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Integration regression — the 2026-08 field failure. main.ts persists each
+// screen onto the session doc via `onScreenChange` AFTER the screen factory
+// has already run, so at auto-start time the doc still reads the PREVIOUS
+// screen. Pre-fix, the synchronous own-device auto-start dispatched
+// `rideStarted` from `wizard:2`, the reducer rejected it, and the flow ran
+// off the end anyway: wizard closed, no ride, no HUD. These tests wire the
+// same onScreenChange main.ts does instead of pre-seeding the doc at "6".
+// ---------------------------------------------------------------------------
+
+describe("shell persists the screen only after the factory runs", () => {
+  function mainLikeWiring(store: RideSessionStore): void {
+    wireRideModal({
+      onScreenChange: (id) => {
+        store.dispatch({ type: "goto", screen: id });
+      },
+    });
+  }
+
+  it("own-device auto-start still reaches riding from a doc reading wizard:2", async () => {
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: OWN_DEVICE });
+    mainLikeWiring(store);
+    const onPrivateRideStarted = vi.fn();
+    wire(store, { onPrivateRideStarted });
+    openRideModal({ fastForwardTo: "6" });
+
+    await vi.waitFor(() => expect(store.current()?.state).toBe("riding"));
+    expect(store.current()?.rideId).toBeNull();
+    expect(store.current()?.private).toBe(true);
+    expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
+    expect(rideModalRoot()).toBeNull();
+  });
+
+  it("entry.autoStart on a private guest ride reaches riding from wizard:2 too", async () => {
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: DEVICE, private: true });
+    mainLikeWiring(store);
+    const startTrackedRide = vi.fn();
+    wire(store, { startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => expect(store.current()?.state).toBe("riding"));
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(store.current()?.private).toBe(true);
+  });
+
+  it("never closes the wizard on a rejected rideStarted — shows an error instead", async () => {
+    // Force a rejection the self-heal cannot fix: a doc pinned in countdown
+    // with a rideId (goto is illegal there, and rideStarted from countdown
+    // IS legal — so instead pin the doc by replacing dispatch with one that
+    // rejects rideStarted). Simplest honest probe: a store whose doc is at
+    // wizard:2 with a dispatch wrapper that drops goto, so the self-heal
+    // silently fails and rideStarted stays illegal.
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: OWN_DEVICE });
+    const gotoLess: typeof store = {
+      ...store,
+      dispatch: (a) => (a.type === "goto" ? null : store.dispatch(a)),
+    };
+    wire(gotoLess as never);
+    openRideModal({ fastForwardTo: "6" });
+
+    await vi.waitFor(() =>
+      expect(root().textContent).toContain("Couldn't start the ride"),
+    );
+    expect(store.current()?.state).toBe("wizard");
+    expect(rideModalRoot()).not.toBeNull();
+  });
+});
 
 describe('own device ("My Scooter/Bike") — auto-starts, no Veo page', () => {
   function ownDeviceSession(): RideSessionStore {
