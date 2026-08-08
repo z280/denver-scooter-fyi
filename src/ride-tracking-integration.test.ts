@@ -647,7 +647,7 @@ describe("2. the 409 / reload resume UX, end to end", () => {
       await ride.recorder.addFix(fix);
     }
 
-    // A second "Start in Veo" tap (e.g. after a stalled first attempt): the
+    // A second "Open in Veo" tap (e.g. after a stalled first attempt): the
     // server already has this account on a ride and 409s.
     rig.on("POST", /\/api\/v1\/tracked-rides$/, async () =>
       jsonResponse({ detail: { error: "active_ride_exists" } }, 409),

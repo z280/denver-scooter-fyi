@@ -55,7 +55,7 @@ export const RIDE_MODAL_FLAG_KEY = "scooter-fyi-ride-modal";
 /** Which face Screen 6 shows for a rider who came in through the device
  *  card's "Use in Ride Mode" survey (`ride-preflight.ts`). Not a
  *  `RideOptions` field — it changes nothing about the ride, only whether
- *  the rider still needs the Start-in-Veo link. */
+ *  the rider still needs the Open-in-Veo link. */
 export type RideStartIntent = "already-started" | "need-link";
 
 /** The three `RideOptions` fields the pre-ride survey asks about, carried
@@ -91,14 +91,16 @@ export interface RideModalEntry {
    *  in this module reads them. */
   preflight?: RidePreflightChoices;
   /** Screen 6 should start the ride the moment it mounts, rather than
-   *  rendering its Start-in-Veo buttons and countdown.
+   *  rendering its Open-in-Veo buttons and countdown.
    *
    *  Set when the survey established there is nothing left to ask about
    *  Veo — the rider said they had already unlocked it, or they turned the
    *  cost HUD off (which per spec removes the consideration of starting Veo
-   *  altogether). Screen 6 stays IN the flow either way because it is the
-   *  reducer's only legal seat for `rideStarted`; this is what keeps it from
-   *  re-asking a question the rider already answered on the device card. */
+   *  altogether). An own-device ("My Scooter/Bike") ride auto-starts
+   *  regardless of this flag — there is no Veo app to coordinate with.
+   *  Screen 6 stays IN the flow either way because it is the reducer's only
+   *  legal seat for `rideStarted`; this is what keeps it from re-asking a
+   *  question the rider already answered on the device card. */
   autoStart?: boolean;
 }
 
@@ -146,6 +148,13 @@ export interface RideScreenContext {
   setPanes(primary: HTMLElement, secondary?: HTMLElement | null): void;
   setTitle(title: string): void;
   setSplit(split: RidePaneSplit): void;
+  /** Enable/disable the header's own Next button (the one to the left of the
+   *  ✕). Every screen render starts DISABLED — a screen that can advance
+   *  right now says so by calling this with `true`, and flips it back off
+   *  when the required information goes missing again. Tapping the header
+   *  button runs the screen's `onHeaderNext` when it declares one, else
+   *  `next()`. */
+  setNextEnabled(enabled: boolean): void;
   go(id: ScreenId): void;
   /** Next step in `RIDE_SCREEN_FLOW`, skipping screens whose registration says
    *  to. From a detour (2.5) this is `back()`. Past the last screen it fires
@@ -169,6 +178,11 @@ export interface RideScreen {
   split?: RidePaneSplit;
   /** Focused when the screen mounts; otherwise the first focusable element. */
   initialFocus?: HTMLElement | null;
+  /** What the header's Next button does when tapped (it is only tappable
+   *  after the screen calls `ctx.setNextEnabled(true)`). Omitted, the header
+   *  advances with plain `next()` — declare this when advancing needs the
+   *  screen's own commit work first (Screen 4 dispatches the chosen route). */
+  onHeaderNext?(): void;
   /** The phone turned. Re-slot panes / attach-or-detach the keypad here —
    *  never rebuild state. */
   onOrientationChange?(orientation: RideOrientation): void;
@@ -301,6 +315,7 @@ class RideModal {
   private readonly card: HTMLElement;
   private readonly titleEl: HTMLHeadingElement;
   private readonly backBtn: HTMLButtonElement;
+  private readonly nextBtn: HTMLButtonElement;
   private readonly grid: HTMLElement;
   private readonly primaryPane: HTMLElement;
   private readonly secondaryPane: HTMLElement;
@@ -341,12 +356,23 @@ class RideModal {
     this.backBtn.addEventListener("click", () => this.back());
     this.titleEl = el("h2", "ride-modal__title");
     this.titleEl.id = TITLE_ID;
+    // A second Next at the top of every page, to the left of the ✕ — starts
+    // disabled on each screen; the screen enables it via `ctx.setNextEnabled`
+    // once nothing required is missing.
+    this.nextBtn = el("button", "ride-modal__next");
+    this.nextBtn.type = "button";
+    this.nextBtn.textContent = "Next ›";
+    this.nextBtn.setAttribute("aria-label", "Next step");
+    this.nextBtn.disabled = true;
+    this.nextBtn.addEventListener("click", () => this.headerNext());
     const closeBtn = el("button", "ride-modal__close");
     closeBtn.type = "button";
     closeBtn.textContent = "×";
     closeBtn.setAttribute("aria-label", "Close ride setup");
     closeBtn.addEventListener("click", () => this.close("close-button"));
-    header.append(this.backBtn, this.titleEl, closeBtn);
+    const headerEnd = el("div", "ride-modal__header-end");
+    headerEnd.append(this.nextBtn, closeBtn);
+    header.append(this.backBtn, this.titleEl, headerEnd);
 
     this.grid = el("div", "ride-modal__grid");
     this.grid.dataset.split = "even";
@@ -436,6 +462,10 @@ class RideModal {
     this.generation += 1;
     const gen = this.generation;
     const ctx = this.makeContext(gen);
+    // Every screen starts with the header Next disabled — "disabled if
+    // information missing", and a fresh screen hasn't said otherwise yet.
+    // The factory (or a later event) re-enables it via `ctx.setNextEnabled`.
+    this.nextBtn.disabled = true;
 
     const reg = registry.get(id);
     let screen: RideScreen;
@@ -491,6 +521,9 @@ class RideModal {
       setSplit: (split) => {
         if (live()) this.setSplit(split);
       },
+      setNextEnabled: (enabled) => {
+        if (live()) this.nextBtn.disabled = !enabled;
+      },
       go: (next) => {
         if (live()) this.go(next);
       },
@@ -509,6 +542,18 @@ class RideModal {
         else fn();
       },
     };
+  }
+
+  /** The header Next tap. Runs the screen's own `onHeaderNext` when it has
+   *  one (Screen 4 commits its route pick), else the plain flow `next()`. */
+  private headerNext(): void {
+    if (this.nextBtn.disabled) return;
+    const screen = this.screen;
+    if (screen?.onHeaderNext) {
+      screen.onHeaderNext();
+      return;
+    }
+    this.next();
   }
 
   private go(id: ScreenId): void {

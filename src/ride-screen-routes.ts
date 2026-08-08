@@ -431,20 +431,26 @@ function buildDegradeScreen(
     el("p", "ride-modal__lede", "Direct route not available"),
     el("p", "ride-modal__hint", message),
   );
-  const continueBtn = el("button", "login-btn", "Continue without navigation");
-  continueBtn.type = "button";
-  continueBtn.addEventListener("click", () => {
+  const continueWithoutNav = (): void => {
     if (destroyed) return;
     const fresh = deps.session.current() ?? doc;
     if (fresh) clearNavigationForRide(deps, fresh);
     ctx.next();
-  });
+  };
+  const continueBtn = el("button", "login-btn", "Continue without navigation");
+  continueBtn.type = "button";
+  continueBtn.addEventListener("click", continueWithoutNav);
   wrap.append(continueBtn);
+
+  // Nothing is missing here — the only way forward is "continue without
+  // navigation", and the header Next does exactly that.
+  ctx.setNextEnabled(true);
 
   return {
     title: "Choose your route",
     primary: wrap,
     initialFocus: continueBtn,
+    onHeaderNext: continueWithoutNav,
     destroy() {
       destroyed = true;
     },
@@ -701,6 +707,10 @@ function buildLoadedScreen(
       readyCount === 0 && settled ? "Continue without navigation" : "NEXT >>";
     nextBtn.disabled =
       loadingProfiles || (readyCount === 0 && !settled) || (readyCount > 0 && selectedProfile === null);
+    // The header Next mirrors the pane's own button — same enablement, and
+    // the same `advance()` (via `onHeaderNext`), so the route pick is
+    // committed to the session whichever button the rider reaches for.
+    ctx.setNextEnabled(!nextBtn.disabled);
 
     renderMap();
   }
@@ -752,6 +762,7 @@ function buildLoadedScreen(
     primary,
     secondary,
     split: "40-60",
+    onHeaderNext: advance,
     onOrientationChange() {
       // The pane's pixel box changes shape on the flip (2-column ⇄ stacked);
       // wait a frame for the CSS grid to settle before resizing the canvas.

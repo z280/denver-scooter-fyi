@@ -5,7 +5,7 @@
 // was used, and it stopped gating access server-side. Reading the scope as
 // "is this an admin" is what left an allowlisted operator signed in by magic
 // link admin to every endpoint while the map showed no Administrator Mode and
-// blocked ▶️ Start in Veo and 🧭 Use in Ride Mode at any distance.
+// blocked ▶️ Open in Veo and 🧭 Use in Ride Mode at any distance.
 import { describe, expect, it } from "vitest";
 
 import { isAdminSession } from "./auth-session.ts";

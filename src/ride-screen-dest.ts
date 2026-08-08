@@ -237,6 +237,12 @@ function buildDestScreen(
     listEl,
   );
 
+  // Picking a destination advances by itself, so the header Next only has
+  // work to do when the session ALREADY carries one (the rider came back to
+  // change their mind and didn't) — otherwise the required information is
+  // missing and it stays disabled.
+  ctx.setNextEnabled((deps.session.current()?.dest ?? null) !== null);
+
   const search = (deps.createSearch ?? defaultCreateSearch)({
     onResults: (r, q) => {
       if (destroyed || q !== liveQuery) return;

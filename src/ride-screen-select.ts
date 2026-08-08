@@ -585,6 +585,9 @@ function buildSelectScreen(
     renderList();
     syncSessionDevice();
     buildOptionsPanel();
+    // The header's own Next mirrors the options panel's [NEXT >>]: enabled
+    // once a real device or "My Scooter/Bike" is picked.
+    ctx.setNextEnabled(nextEnabled());
     // The plate field only ever makes sense for manual entry: a list/auto-
     // selected candidate's plate already came from the GBFS match (nothing
     // to confirm), and "My own Device" has no plate at all in the session
@@ -596,6 +599,18 @@ function buildSelectScreen(
 
   function renderList(): void {
     listEl.replaceChildren();
+
+    // "My Scooter/Bike" ALWAYS renders first — riding your own (non-Veo)
+    // device is a first-class choice, not an afterthought buried under the
+    // fleet list.
+    const ownLi = el("li");
+    const ownRow = el("button", "ride-option");
+    ownRow.type = "button";
+    ownRow.classList.toggle("is-selected", selection?.kind === "own");
+    ownRow.append(el("div", "ride-option__title", "My Scooter/Bike"));
+    ownRow.addEventListener("click", selectOwn);
+    ownLi.append(ownRow);
+    listEl.append(ownLi);
 
     if (fix === null) {
       listEl.append(
@@ -661,15 +676,6 @@ function buildSelectScreen(
     manualRow.addEventListener("click", selectManual);
     manualLi.append(manualRow);
     listEl.append(manualLi);
-
-    const ownLi = el("li");
-    const ownRow = el("button", "ride-option");
-    ownRow.type = "button";
-    ownRow.classList.toggle("is-selected", selection?.kind === "own");
-    ownRow.append(el("div", "ride-option__title", "My own Device"));
-    ownRow.addEventListener("click", selectOwn);
-    ownLi.append(ownRow);
-    listEl.append(ownLi);
   }
 
   function buildOptionsPanel(): void {
@@ -818,6 +824,9 @@ function buildUsualsScreen(
 ): RideScreen {
   let destroyed = false;
   const root = el("div", "ride-wizard__body ride-screen-usuals");
+  // Nothing on this detour is required — the header Next simply returns to
+  // Screen 2 (a detour's `next()` is `back()`), same as Cancel.
+  ctx.setNextEnabled(true);
   const cancelBtn = el("button", "login-btn login-btn--secondary", "Cancel");
   cancelBtn.type = "button";
   cancelBtn.addEventListener("click", () => ctx.back());

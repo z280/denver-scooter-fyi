@@ -5074,8 +5074,33 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   font-size: 16px;
   font-weight: 600;
 }
-.ride-modal__close {
+.ride-modal__header-end {
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The header's second Next — sits to the left of the ✕ on every screen,
+   disabled while the screen's required information is missing. */
+.ride-modal__next {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ride-modal__next:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.ride-modal__next:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ride-modal__close {
   appearance: none;
   border: 0;
   background: transparent;

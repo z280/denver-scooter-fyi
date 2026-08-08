@@ -1,4 +1,4 @@
-// Screen 6 — "Start in Veo" (frontend plan, `ride-screen-start.ts` row;
+// Screen 6 — "Open in Veo" (frontend plan, `ride-screen-start.ts` row;
 // master Part 0 Screen 6: "Most similar to the current pre-start page. Since
 // the scooter and its start link are known: offer Android and Apple
 // 'Start in Veo' buttons which trigger a default 10 s countdown; an
@@ -33,6 +33,13 @@
 // same `finishStart()` used by the countdown/"I already started" paths for a
 // real device. `cost_hud` no longer gates entry to this screen at all — it
 // only ever affected the HUD's own display, per its name.
+//
+// UPDATE (onboarding-friendliness pass): an own-device ("My Scooter/Bike")
+// ride now AUTO-STARTS on mount instead of showing even that one-button
+// affordance — with no Veo app in the picture, the tap answered nothing.
+// The simplified face survives only as the fallback after a failed attempt.
+// Riders on a real Veo scooter keep this page as-is: they genuinely need
+// the start link / countdown to coordinate unlocking in the Veo app.
 // ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
@@ -258,10 +265,10 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        "Go back and pick the scooter you're standing next to before starting in Veo.",
+        "Go back and pick the scooter you're standing next to before opening it in Veo.",
       ),
     );
-    return { title: "Start in Veo", primary: root };
+    return { title: "Open in Veo", primary: root };
   }
 
   let destroyed = false;
@@ -291,7 +298,13 @@ function buildStartScreen(
   // the resume-or-end prompt) the screen falls back to its normal, fully
   // interactive idle render. A rider is never left staring at "Starting your
   // ride…" with no control on screen.
-  const autoStart = ctx.entry.autoStart === true;
+  //
+  // An own-device ("My Scooter/Bike") ride ALWAYS auto-starts: there is no
+  // Veo app to coordinate with, so the old "Start ride mode" button was one
+  // pointless tap — non-Veo riders go straight to riding. The interactive
+  // own-device face below survives only as the fallback after a failed
+  // attempt.
+  const autoStart = ctx.entry.autoStart === true || own0;
   let autoStartSettled = false;
 
   const root = el("div", "ride-wizard__body ride-screen-start");
@@ -363,7 +376,7 @@ function buildStartScreen(
    *  private) ride immediately, same as "I already started" for a real
    *  device. */
   function renderOwnDeviceIdle(): void {
-    root.append(el("p", "ride-wizard__lede", "Your own device"));
+    root.append(el("p", "ride-wizard__lede", "My Scooter/Bike"));
     root.append(
       el(
         "p",
@@ -391,7 +404,7 @@ function buildStartScreen(
         el(
           "p",
           "ride-wizard__hint",
-          "Go back and pick the scooter you're standing next to before starting in Veo.",
+          "Go back and pick the scooter you're standing next to before opening it in Veo.",
         ),
       );
       return;
@@ -408,7 +421,7 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        `Tap Start in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
+        `Tap Open in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
       ),
     );
     appendWaitingAndError();
@@ -424,12 +437,12 @@ function buildStartScreen(
     const androidBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — Android",
+      "▶️ Open in Veo — Android",
     ) as HTMLAnchorElement;
     const appleBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — iPhone",
+      "▶️ Open in Veo — iPhone",
     ) as HTMLAnchorElement;
     for (const a of [androidBtn, appleBtn]) {
       if (href) {
@@ -673,7 +686,9 @@ function buildStartScreen(
   });
 
   return {
-    title: "Start in Veo",
+    // "Open in Veo" would be a lie over an own-device ride — no Veo app is
+    // involved anywhere in it.
+    title: own0 ? "Starting ride" : "Open in Veo",
     primary: root,
     destroy() {
       destroyed = true;

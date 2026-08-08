@@ -30,7 +30,7 @@
 // WHERE THE ANSWERS SEND YOU (`preflightLanding` below is the whole rule):
 //   navigation ON   -> Screen 3 (destination) -> 4 (routes) -> 6
 //   navigation OFF  -> Screen 6 directly
-//   "give me a link" -> Screen 6 renders its Start-in-Veo buttons normally
+//   "give me a link" -> Screen 6 renders its Open-in-Veo buttons normally
 //   "already started"/cost HUD off -> Screen 6 auto-starts on mount
 //
 // Screen 6 is ALWAYS in the flow, even when the rider has nothing left to
@@ -153,7 +153,7 @@ export interface RidePreflightOptions {
   /** 16-hex identifier to preselect on Screen 2. */
   vehicleIdentifier?: string | null;
   /** Plate, when resolved. Feeds Screen 2's manual path and Screen 6's
-   *  Start-in-Veo deep link. */
+   *  Open-in-Veo deep link. */
   plate?: string | null;
   /** Starting answers. Defaults to `PREFLIGHT_DEFAULTS`; a caller can seed
    *  from a previous session. */
@@ -298,7 +298,7 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
 
       const choices: readonly { intent: RideStartIntent; label: string }[] = [
         { intent: "already-started", label: "I started the Veo already" },
-        { intent: "need-link", label: "Give me a link to Start" },
+        { intent: "need-link", label: "Give me a link to Open in Veo" },
       ];
       const opts = el("div", `${ROOT_CLASS}__startopts`);
       for (const choice of choices) {
@@ -383,9 +383,9 @@ export function describeNext(answers: RidePreflightAnswers): string {
   if (answers.navigation) {
     return autoStart
       ? "Next: pick a destination and a route, then ride mode starts."
-      : "Next: pick a destination and a route, then your link to start in Veo.";
+      : "Next: pick a destination and a route, then your link to open in Veo.";
   }
   return autoStart
     ? "Next: ride mode starts."
-    : "Next: your link to start in Veo.";
+    : "Next: your link to open in Veo.";
 }

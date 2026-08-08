@@ -828,8 +828,8 @@ export class Devices {
           ? veoDeepLink(effectivePlate)
           : null;
       const startBtn = startHref
-        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Start in Veo</a>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Start in Veo</button>`;
+        ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Open in Veo</a>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Open in Veo</button>`;
 
       // 🧭 Use in Ride Mode carries the same geographic gate as ▶️ Start:
       // both rows commit the rider to THIS scooter, and neither means
@@ -1295,7 +1295,7 @@ export class Devices {
       // popup, so the survey asks the three things the wizard would have,
       // then jumps past every screen the answers make unnecessary
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
-      // Screen 6 build a working Start-in-Veo deep link without a second
+      // Screen 6 build a working Open-in-Veo deep link without a second
       // GBFS round trip.
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="use-in-ride-mode"]')

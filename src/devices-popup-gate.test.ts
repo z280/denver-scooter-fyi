@@ -2,7 +2,7 @@
 //
 // The gates on the device popup's action row.
 //
-// Two primary rows — ▶️ Start in Veo and 🧭 Use in Ride Mode — are gated
+// Two primary rows — ▶️ Open in Veo and 🧭 Use in Ride Mode — are gated
 // GEOGRAPHICALLY: both commit the rider to THIS scooter, so both are only
 // actionable within UNLOCK_PROXIMITY_M of it, with the admin bypass so the
 // flows stay reachable from a desk. Start already carried this gate (issue

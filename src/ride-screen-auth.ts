@@ -184,6 +184,12 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
   // ---------------- GPS ----------------
   let gpsGranted = deps.locate.current() !== null;
 
+  // The header's Next mirrors [Ride as Guest]: GPS is the only REQUIRED
+  // information on this screen (signing in is optional — guests ride too),
+  // so Next lights up as soon as location is granted.
+  const syncHeaderNext = (): void => ctx.setNextEnabled(gpsGranted);
+  syncHeaderNext();
+
   const renderGps = (): void => {
     gpsSection.replaceChildren();
     if (gpsGranted) return;
@@ -228,6 +234,7 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
     if (destroyed || gpsGranted) return;
     gpsGranted = true;
     deps.onGpsGranted();
+    syncHeaderNext();
     renderGps();
     maybeAdvance();
   });
@@ -249,6 +256,7 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
       if (destroyed || gpsGranted || state !== "granted") return;
       gpsGranted = true;
       deps.onGpsGranted();
+      syncHeaderNext();
       // No prompt will fire (already granted) — safe to call outside a tap.
       // De-duped against the outer wire-time query (see `triggerOnceForGrant`'s
       // own doc comment) — whichever of the two resolves "granted" first is
