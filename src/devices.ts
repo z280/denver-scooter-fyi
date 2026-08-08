@@ -68,14 +68,13 @@ import {
   supportsPhotos,
   uploadDevicePhoto,
 } from "./device-photos.ts";
+import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 /** Ride posture, the primary "what am I sitting on" split. Derived from the
  *  server-corrected `vehicle_use_type` with model names as tiebreaker. */
 export type RideType = "sitting" | "standing";
-/** Veo's recognized model line-up (unrecognized models are never filtered). */
-export type ModelKey = "astro" | "cosmo" | "apollo" | "trike";
 export type QualityFilter = "any" | "no-risk" | "ok-only";
 /** What the marker's inner badge depicts. */
 export type IconStyle = "use" | "model" | "data";
@@ -86,12 +85,13 @@ export type ModelIcon = "comic" | "letter";
 export type DataSource = "battery" | "reliability";
 
 export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
-export const ALL_MODELS: readonly ModelKey[] = [
-  "astro",
-  "cosmo",
-  "apollo",
-  "trike",
-];
+// The model line-up moved to its own dependency-free module so
+// filter-presets.ts can share it without importing maplibre (review fix:
+// a second hardcoded list there would reintroduce the exact
+// "new model hidden by old preset" bug the presets change prevents).
+// Re-exported here so the many existing importers keep one import site.
+export { ALL_MODELS };
+export type { ModelKey };
 /** Which recognized models serve each ride type — the Astro is the only
  *  standing scooter in the line-up; everything else is seated. Drives the
  *  Filters drawer's ride-type → model sync (main.ts), which exists to keep

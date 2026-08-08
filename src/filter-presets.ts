@@ -5,7 +5,8 @@
 
 import type { BoundaryLayer } from "./api.ts";
 import type { FeatureFilterKey } from "./device-features.ts";
-import type { ModelKey, QualityFilter, RideType } from "./devices.ts";
+import type { QualityFilter, RideType } from "./devices.ts";
+import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
 
 /** One saved filter set. `area` stores only the display selection
@@ -45,7 +46,10 @@ interface StoredPresets {
 const KEY = "scooter-fyi-filter-presets";
 
 const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
-const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo", "trike"];
+// Derived from the shared catalog, never a second hardcoded list (review
+// fix): a copy here that lagged a model addition would reintroduce the
+// exact "new model hidden by old preset" bug effectiveModels prevents.
+const MODEL_KEYS: readonly string[] = ALL_MODELS;
 /** What a preset with no `knownModels` member could possibly have known:
  *  the lineup as it stood before the field existed. `trike` joined on
  *  2026-07-30 and the field shipped later still, so any preset old enough
@@ -63,7 +67,7 @@ export function effectiveModels(
 ): Set<ModelKey> {
   const known = new Set<string>(p.knownModels ?? LEGACY_KNOWN_MODELS);
   const want = new Set<ModelKey>(p.models);
-  for (const m of MODEL_KEYS as readonly ModelKey[]) {
+  for (const m of ALL_MODELS) {
     if (!known.has(m)) want.add(m);
   }
   return want;
