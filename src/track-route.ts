@@ -40,7 +40,7 @@ export function createTrackRoute(map: MLMap): TrackRouteHandle {
       filter: ["==", ["geometry-type"], "LineString"],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": "#0072b2",
+        "line-color": "#0066ff",
         "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.5, 16, 5],
         "line-opacity": 0.9,
       },
