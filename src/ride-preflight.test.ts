@@ -4,11 +4,11 @@
 //
 // The routing rule (`preflightLanding`) is the actual product decision in
 // that module — the DOM is only how the questions get asked — so it gets
-// tested over every answer combination rather than by example. On top of
-// that: the defaults (which the owner specified individually and which must
-// match the wizard's own), and the entry blob handed to the wizard. The old
-// "Starting it in Veo" either/or is gone — Screen 6 auto-starts for
-// everyone, so the survey has nothing to ask about Veo starts any more.
+// tested exhaustively over all eight answer combinations rather than by
+// example. On top of that: the defaults (which the owner specified
+// individually and which must match the wizard's own), the cost-HUD-off
+// branch that REMOVES the Veo question rather than disabling it, and the
+// entry blob handed to the wizard.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -51,6 +51,13 @@ describe("defaults", () => {
     expect(PREFLIGHT_DEFAULTS.save_tracks).toBe(wizard.save_tracks);
     expect(PREFLIGHT_DEFAULTS.cost_hud).toBe(wizard.cost_hud);
   });
+
+  it("default the Veo question to 'give me a link'", () => {
+    // The answer that costs nothing to be wrong about: a rider who already
+    // started can still tap "I already started" on Screen 6, but defaulting
+    // the other way would skip past the screen that hands out the link.
+    expect(PREFLIGHT_DEFAULTS.startIntent).toBe("need-link");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -66,13 +73,53 @@ describe("preflightLanding", () => {
     expect(preflightLanding(answers({ navigation: false })).fastForwardTo).toBe("6");
   });
 
-  it("routes on navigation alone — the cost HUD no longer affects landing", () => {
-    // Screen 6 auto-starts for everyone now, so there is no start-link
-    // screen for the cost HUD to route around.
+  it("does not auto-start a rider who still needs the Veo link", () => {
+    const landing = preflightLanding(
+      answers({ cost_hud: true, startIntent: "need-link" }),
+    );
+    expect(landing.autoStart).toBe(false);
+  });
+
+  it("auto-starts a rider who already unlocked the scooter", () => {
+    const landing = preflightLanding(
+      answers({ cost_hud: true, startIntent: "already-started" }),
+    );
+    expect(landing.autoStart).toBe(true);
+  });
+
+  it("auto-starts whenever the cost HUD is off, whatever the intent says", () => {
+    // The owner's rule: cost HUD off "removes consideration about starting
+    // veo". So the stale startIntent underneath is not consulted — a rider
+    // who picked "give me a link" and THEN turned the HUD off must not be
+    // routed to a link screen the survey stopped showing them.
+    for (const startIntent of ["need-link", "already-started"] as const) {
+      expect(
+        preflightLanding(answers({ cost_hud: false, startIntent })).autoStart,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps navigation and auto-start independent", () => {
+    // A nav rider who already started still visits 3 and 4; Screen 6 then
+    // starts by itself. Neither answer overrides the other.
+    const landing = preflightLanding(
+      answers({ navigation: true, startIntent: "already-started" }),
+    );
+    expect(landing).toEqual({ fastForwardTo: "3", autoStart: true });
+  });
+
+  it("covers all eight combinations without a surprise", () => {
     for (const navigation of [true, false]) {
       for (const cost_hud of [true, false]) {
-        const landing = preflightLanding(answers({ navigation, cost_hud }));
-        expect(landing).toEqual({ fastForwardTo: navigation ? "3" : "6" });
+        for (const startIntent of ["need-link", "already-started"] as const) {
+          const landing = preflightLanding(
+            answers({ navigation, cost_hud, startIntent }),
+          );
+          expect(landing.fastForwardTo).toBe(navigation ? "3" : "6");
+          expect(landing.autoStart).toBe(
+            !cost_hud || startIntent === "already-started",
+          );
+        }
       }
     }
   });
@@ -84,15 +131,15 @@ describe("describeNext", () => {
   });
 
   it("promises nothing further when there is nothing further", () => {
-    expect(describeNext(answers({ navigation: false }))).toBe(
-      "Next: ride mode starts.",
-    );
+    expect(
+      describeNext(answers({ navigation: false, cost_hud: false })),
+    ).toBe("Next: ride mode starts.");
   });
 
-  it("never mentions starting in Veo — that page is gone", () => {
-    for (const navigation of [true, false]) {
-      expect(describeNext(answers({ navigation }))).not.toContain("Veo");
-    }
+  it("promises the link when the rider asked for one", () => {
+    expect(
+      describeNext(answers({ navigation: false, startIntent: "need-link" })),
+    ).toContain("link to start in Veo");
   });
 });
 
@@ -137,12 +184,30 @@ describe("the survey UI", () => {
     expect(toggle("cost_hud").getAttribute("aria-checked")).toBe("false");
   });
 
-  it("never asks the old 'Starting it in Veo' question", () => {
-    // The Start-in-Veo page is gone and Screen 6 auto-starts, so the survey
-    // asking whether the rider has unlocked anything would be dead weight.
+  it("asks the Veo question while the cost HUD is on", () => {
     open();
+    expect(
+      document.querySelectorAll("[data-intent]").length,
+    ).toBe(2);
+    expect(document.body.textContent).toContain("I started the Veo already");
+    expect(document.body.textContent).toContain("Give me a link to Start");
+  });
+
+  it("REMOVES the Veo question when the cost HUD goes off", () => {
+    // Not disabled — absent. The owner's rule is that turning the cost HUD
+    // off removes the consideration of starting Veo altogether, and a
+    // greyed-out control still asks the rider to think about it.
+    open();
+    toggle("cost_hud").click();
     expect(document.querySelectorAll("[data-intent]").length).toBe(0);
-    expect(document.body.textContent).not.toContain("Starting it in Veo");
+    expect(document.body.textContent).not.toContain("I started the Veo already");
+  });
+
+  it("brings the Veo question back if the rider changes their mind", () => {
+    open();
+    toggle("cost_hud").click();
+    toggle("cost_hud").click();
+    expect(document.querySelectorAll("[data-intent]").length).toBe(2);
   });
 
   it("keeps focus on the control the rider just used", () => {
@@ -157,7 +222,7 @@ describe("the survey UI", () => {
     open();
     const next = () =>
       document.querySelector(".ride-preflight__next")?.textContent ?? "";
-    expect(next()).toBe("Next: ride mode starts.");
+    expect(next()).toContain("link to start in Veo");
     toggle("navigation").click();
     expect(next()).toContain("destination");
   });
@@ -189,6 +254,7 @@ describe("entering ride mode", () => {
   it("carries the routing decision", () => {
     const entry = enter();
     expect(entry.fastForwardTo).toBe("6");
+    expect(entry.autoStart).toBe(false);
   });
 
   it("reflects toggles flipped before the rider commits", () => {

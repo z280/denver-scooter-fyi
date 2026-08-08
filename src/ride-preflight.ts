@@ -9,9 +9,9 @@
 // "which scooter", and re-asking is the single loudest piece of friction
 // left in the flow.
 //
-// So this is a shortcut, not a second wizard. Three toggles, then straight
-// into ride mode — skipping every screen the answers make unnecessary and
-// visiting every screen they make necessary.
+// So this is a shortcut, not a second wizard. Three toggles and (sometimes)
+// one either/or, then straight into ride mode — skipping every screen the
+// answers make unnecessary and visiting every screen they make necessary.
 //
 // THE THREE TOGGLES, and why these three:
 //   Navigation directions      default OFF  — turn-by-turn is heavier (two
@@ -30,14 +30,23 @@
 // WHERE THE ANSWERS SEND YOU (`preflightLanding` below is the whole rule):
 //   navigation ON   -> Screen 3 (destination) -> 4 (routes) -> 6
 //   navigation OFF  -> Screen 6 directly
+//   "give me a link" -> Screen 6 renders its Start-in-Veo buttons normally
+//   "already started"/cost HUD off -> Screen 6 auto-starts on mount
 //
 // Screen 6 is ALWAYS in the flow, even when the rider has nothing left to
 // answer, and that is deliberate rather than an oversight in the skipping:
 // it is the reducer's only legal seat for `rideStarted` (see
 // `ride-screen-start.ts`'s header), so a path that skipped it could never
-// reach `riding` at all. It starts the ride automatically on mount — there
-// is no Start-in-Veo page any more, so this survey no longer asks whether
-// the rider has unlocked anything in Veo either.
+// reach `riding` at all. `autoStart` is how it stays out of the way — the
+// screen mounts, starts the ride, and hands off without the rider seeing a
+// decision they already made here.
+//
+// COST HUD OFF is a real branch, not a display tweak. When it is off we
+// stop asking about Veo entirely: no "did you start it?", no start link,
+// and — per the owner — no rate-plan reconfirmation either (that lives in
+// the profile, and asking again here would be exactly the pre-ride friction
+// this screen exists to remove). The ride simply starts, with the HUD's cost
+// readout hidden.
 //
 // House rules followed, same as every other modal in this program:
 // `document.createElement` only (never innerHTML), a `cleanupFns[]`
@@ -47,13 +56,18 @@ import { trapFocusWithin } from "./modal-focus-trap.ts";
 import {
   openRideModal,
   type RidePreflightChoices,
+  type RideStartIntent,
   type ScreenId,
 } from "./ride-modal.ts";
 
-export type { RidePreflightChoices };
+export type { RidePreflightChoices, RideStartIntent };
 
-/** Everything the survey collects — three `RideOptions` fields verbatim. */
-export type RidePreflightAnswers = RidePreflightChoices;
+/** Everything the survey collects. The three booleans are `RideOptions`
+ *  fields verbatim; `startIntent` is not an option — it only decides which
+ *  face Screen 6 shows. */
+export interface RidePreflightAnswers extends RidePreflightChoices {
+  startIntent: RideStartIntent;
+}
 
 /** Product defaults, stated once. Deliberately duplicated from
  *  `ride-settings.ts`'s `defaultRideOptions()` rather than imported: that
@@ -65,23 +79,35 @@ export const PREFLIGHT_DEFAULTS: RidePreflightAnswers = {
   navigation: false,
   save_tracks: true,
   cost_hud: true,
+  // Only ever read when `cost_hud` is on. "Give me a link" is the default
+  // because it is the answer that costs a rider nothing to be wrong about:
+  // a rider who already started can tap "I already started" on Screen 6,
+  // whereas defaulting to "already started" would silently skip past the
+  // one screen that hands out the start link.
+  startIntent: "need-link",
 };
 
-/** Where the survey's answers put the rider.
+/** Where the survey's answers put the rider, and whether Screen 6 should
+ *  start the ride by itself.
  *
  *  Pure, exported, and tested on its own because it is the actual product
  *  decision in this module — the DOM below is just how the questions get
  *  asked. */
 export function preflightLanding(answers: RidePreflightAnswers): {
   fastForwardTo: ScreenId;
+  autoStart: boolean;
 } {
   return {
     // Navigation is the only answer that adds screens. Screen 3's own skip
     // predicate reads `options.navigation` too, so this is belt-and-braces
     // — but landing on 3 rather than 6 is what makes the destination search
     // the first thing a nav rider sees instead of something they have to
-    // walk back to. Screen 6 starts the ride automatically either way.
+    // walk back to.
     fastForwardTo: answers.navigation ? "3" : "6",
+    // Nothing left to ask about Veo: either they told us they have already
+    // unlocked it, or they turned the cost HUD off, which the owner's spec
+    // defines as removing the consideration about starting Veo altogether.
+    autoStart: !answers.cost_hud || answers.startIntent === "already-started",
   };
 }
 
@@ -126,7 +152,8 @@ export interface RidePreflightOptions {
   deviceLabel: string;
   /** 16-hex identifier to preselect on Screen 2. */
   vehicleIdentifier?: string | null;
-  /** Plate, when resolved. Feeds Screen 2's manual path. */
+  /** Plate, when resolved. Feeds Screen 2's manual path and Screen 6's
+   *  Start-in-Veo deep link. */
   plate?: string | null;
   /** Starting answers. Defaults to `PREFLIGHT_DEFAULTS`; a caller can seed
    *  from a previous session. */
@@ -255,13 +282,53 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
       body.append(wrap);
     }
 
+    // ---- the Veo either/or, shown ONLY when the cost HUD is on.
+    //
+    // The owner's rule: "If they choose veo cost hud off, we remove
+    // consideration about starting veo." So this is not disabled-but-
+    // present — it is absent, along with the question of whether the rider
+    // has unlocked anything yet.
+    if (answers.cost_hud) {
+      const group = el("div", `${ROOT_CLASS}__startgroup`);
+      group.setAttribute("role", "radiogroup");
+      group.setAttribute("aria-label", "Starting the scooter in Veo");
+      group.append(
+        el("span", `${ROOT_CLASS}__label`, "Starting it in Veo"),
+      );
+
+      const choices: readonly { intent: RideStartIntent; label: string }[] = [
+        { intent: "already-started", label: "I started the Veo already" },
+        { intent: "need-link", label: "Give me a link to Start" },
+      ];
+      const opts = el("div", `${ROOT_CLASS}__startopts`);
+      for (const choice of choices) {
+        const b = el("button", `${ROOT_CLASS}__startopt`, choice.label);
+        b.type = "button";
+        b.dataset.intent = choice.intent;
+        const selected = answers.startIntent === choice.intent;
+        b.classList.toggle("is-selected", selected);
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", selected ? "true" : "false");
+        b.addEventListener("click", () => {
+          answers.startIntent = choice.intent;
+          renderBody();
+          body
+            .querySelector<HTMLButtonElement>(`[data-intent="${choice.intent}"]`)
+            ?.focus();
+        });
+        opts.append(b);
+      }
+      group.append(opts);
+      body.append(group);
+    }
+
     // ---- what happens next, in one line. A rider should never tap "Enter
     // Ride Mode" wondering whether they are about to get three more screens.
     body.append(el("p", `${ROOT_CLASS}__next`, describeNext(answers)));
   }
 
   goBtn.addEventListener("click", () => {
-    const { fastForwardTo } = preflightLanding(answers);
+    const { fastForwardTo, autoStart } = preflightLanding(answers);
     const enter = options.enterRideMode ?? openRideModal;
     // Close BEFORE opening the wizard: the wizard installs its own focus
     // trap, and two live traps fight over Tab.
@@ -270,6 +337,7 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
       vehicleIdentifier: options.vehicleIdentifier ?? undefined,
       plate: options.plate ?? undefined,
       fastForwardTo,
+      autoStart,
       preflight: {
         navigation: answers.navigation,
         save_tracks: answers.save_tracks,
@@ -308,10 +376,16 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
 }
 
 /** One line of "here's what tapping the button does". Exported for the
- *  test that pins its branches — the copy is the only thing telling a
+ *  test that pins the four branches — the copy is the only thing telling a
  *  rider whether they are about to be asked more questions. */
 export function describeNext(answers: RidePreflightAnswers): string {
-  return answers.navigation
-    ? "Next: pick a destination and a route, then ride mode starts."
-    : "Next: ride mode starts.";
+  const { autoStart } = preflightLanding(answers);
+  if (answers.navigation) {
+    return autoStart
+      ? "Next: pick a destination and a route, then ride mode starts."
+      : "Next: pick a destination and a route, then your link to start in Veo.";
+  }
+  return autoStart
+    ? "Next: ride mode starts."
+    : "Next: your link to start in Veo.";
 }

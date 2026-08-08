@@ -1,48 +1,78 @@
-// Screen 6 — automatic ride start.
+// Screen 6 — "Start in Veo" (frontend plan, `ride-screen-start.ts` row;
+// master Part 0 Screen 6: "Most similar to the current pre-start page. Since
+// the scooter and its start link are known: offer Android and Apple
+// 'Start in Veo' buttons which trigger a default 10 s countdown; an
+// 'I already started' button skips the countdown. After countdown or manual
+// start, ride mode initiates.").
 //
-// This used to be the "Start in Veo" page: Android/Apple deep-link buttons, a
-// 10 s countdown, and an "I already started" skip. That page assumed every
-// rider was coordinating with the Veo app, which made the flow hostile to
-// non-Veo riders (and one tap slower for everyone). It is gone: this screen
-// now starts ride mode by itself the moment it mounts with a location fix —
-// no buttons, no countdown, no Veo branding. A Veo rider unlocks their
-// scooter in the Veo app on their own schedule; the device popup's own
-// "▶️ Start in Veo" deep link (devices.ts) still exists for that.
-//
-// The screen itself stays IN the flow because it is the reducer's ONLY seat
-// for `rideStarted` (`ride-session.ts`: legal from phase `countdown` or
-// `wizard:6`), so it owns the single `POST /tracked-rides` call for this
-// flow — the master's data-flow diagram ("S6 start) → POST /tracked-rides")
-// and the reducer's own recovery-table comment ("crash before
-// `startTrackedRide` resolved … reopen the wizard at `wizard:6`") both anchor
-// the call here. Recovery that reopens at `wizard:6` now simply re-attempts
-// the start automatically.
+// This is the reducer's ONLY seat for `rideStarted` (`ride-session.ts`:
+// legal only from phase `countdown` or `wizard:6`), so it owns the single
+// `POST /tracked-rides` call for this flow — the master's data-flow diagram
+// ("S6 start) → POST /tracked-rides") and the reducer's own recovery-table
+// comment ("crash before `startTrackedRide` resolved … reopen the wizard at
+// `wizard:6`") both anchor the call here, not earlier in the wizard.
 //
 // ---------------------------------------------------------------------------
-// FIX (carried over) — guest/private rides must never call the authed-only
-// start endpoint.
+// RESOLVED (review pass) — Screen 6 is universal for any selected device.
+//
+// The original skip predicate gated Screen 6 on a real (non-"own") Veo device
+// AND `RideOptions.cost_hud === true`, quoting the master doc's Screen 6
+// heading literally: "(specific Veo device + cost-HUD tracking opted)". Taken
+// literally, that left an "own device" ride and a real-device ride with the
+// cost HUD off with no way to ever dispatch `rideStarted` — the reducer's
+// ONLY seat for that action — so neither could ever reach `riding`. Flagged
+// as a blocker in review: master Part 0 clearly intends "My own Device" to be
+// a first-class Screen 2 choice, so the gate itself was the bug, not a
+// product decision to relitigate.
+//
+// Resolution: `startScreenSkip` now only skips when NO device is selected at
+// all (`doc.device === null`) — own-device and real-device rides both land
+// on Screen 6. Inside the screen, `own-device` renders a simplified "Start
+// ride mode" affordance (no Veo deep links/plate/countdown — there is no Veo
+// app to coordinate with for a private ride) that goes straight through the
+// same `finishStart()` used by the countdown/"I already started" paths for a
+// real device. `cost_hud` no longer gates entry to this screen at all — it
+// only ever affected the HUD's own display, per its name.
+//
+// UPDATE (onboarding-friendliness pass): an own-device ("My Scooter/Bike")
+// ride now AUTO-STARTS on mount instead of showing even that one-button
+// affordance — with no Veo app in the picture, the tap answered nothing.
+// The simplified face survives only as the fallback after a failed attempt.
+// Riders on a real Veo scooter keep this page as-is: they genuinely need
+// the start link / countdown to coordinate unlocking in the Veo app.
+// ---------------------------------------------------------------------------
+//
+// ---------------------------------------------------------------------------
+// FIX — guest/private rides must never call the authed-only start endpoint.
 //
 // `startTrackedRide` (api.ts) is `authedFetchJSON`-backed — session-authed,
-// 401s with no bearer token. A guest's real-device pick is still a PRIVATE
-// ride (`ride-screen-select.ts`'s `syncSessionDevice` sets `doc.private`
-// accordingly), and `ride-session.ts`'s `rideStarted` action supports a
-// `rideId: null` / `private: true` local-only start for exactly this case.
-// `finishStart` below branches on `doc.private`: a private ride never
-// attempts the network call and instead starts locally, matching the master
-// glossary's guest ride ("no server key, no points; tracks stay local"). An
-// own-device ("My Scooter/Bike") ride is ALWAYS private and takes the same
-// branch.
+// 401s with no bearer token. `startScreenSkip` only gates on a real device +
+// `cost_hud`, not on auth, and `cost_hud` defaults `true`
+// (`ride-settings.ts`'s `defaultRideOptions`) — so an unauthenticated guest
+// who picks a real Veo device reaches this screen in the common case. A
+// guest's real-device pick is still a PRIVATE ride (`ride-screen-select.ts`'s
+// `syncSessionDevice` now sets `doc.private` accordingly — see its own
+// comment for why), and `ride-session.ts`'s `rideStarted` action already
+// supports a `rideId: null` / `private: true` local-only start for exactly
+// this case. `finishStart` below branches on `doc.private`: a private ride
+// never attempts the network call (which would otherwise throw `NO_AUTH` and
+// strand the guest on a "Couldn't start the ride" loop with no way forward)
+// and instead starts the ride locally, matching the master glossary's guest
+// ride ("no server key, no points; tracks stay local").
 //
 // ---------------------------------------------------------------------------
 // SCOPE NOTE — track-store is deliberately NOT touched here.
 //
 // `startTrackedRide`'s response carries `track_signing` (the per-ride HMAC
-// key material `track-store.ts` needs to start recording). This screen's
-// contract with that lane is the `onRideStarted` hook below: it fires with
-// the full `StartedTrackedRide` (track_signing included) right after the
-// session dispatch, before `ctx.next()` hands off to the HUD, so whichever
-// module owns the recorder can start it before any fix arrives.
-// `onPrivateRideStarted` is the private-ride mirror.
+// key material `track-store.ts` needs to start recording), but wiring
+// `openTrackStore()` / `TrackRecorder.startServerRide()` is Phase F3's job
+// ("live track-store integration", a separate lane) together with the shared
+// `watchPosition` feed. This screen's contract with that lane is the
+// `onRideStarted` hook below: it fires with the full `StartedTrackedRide`
+// (track_signing included) right after the session dispatch, before
+// `ctx.next()` hands off to the HUD, so whichever module owns the recorder
+// can start it before any fix arrives. Until that lane wires the hook, this
+// screen still compiles and works — `onRideStarted` is optional.
 // ---------------------------------------------------------------------------
 
 import {
@@ -51,10 +81,12 @@ import {
   type RideScreenContext,
 } from "./ride-modal.ts";
 import type { Locate, LngLat } from "./locate.ts";
+import { veoDeepLink } from "./config.ts";
 import {
   isOwnDevice,
   selectedDevice,
   type RideSessionDoc,
+  type RideSessionSelectedDevice,
   type RideSessionStore,
 } from "./ride-session.ts";
 import {
@@ -65,11 +97,27 @@ import {
 } from "./api.ts";
 
 // ---------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------
+
+/** Screen 6's default countdown, in seconds. MUST match `ride-hud.ts`'s own
+ *  default delay (the `<option selected>` in its `#hud-delay` picker) — the
+ *  master vision names "a default 10 s countdown" once, and the legacy HUD's
+ *  in-page countdown is that same default until F3 retires it. `ride-hud.ts`
+ *  is out of this lane's edit scope (a sibling F3 lane owns it), so this
+ *  constant can't import the other side's value — instead, this module's own
+ *  test file reads `ride-hud.ts`'s SOURCE to pull the live default out of it,
+ *  so the two can never silently drift apart without a failing test flagging
+ *  it. Do not "fix" this test by hardcoding a second literal `10`. */
+export const START_COUNTDOWN_S = 10;
+
+// ---------------------------------------------------------------------------
 // Skip predicate
 // ---------------------------------------------------------------------------
 
-/** Screen 6 runs for any selected device — own or real — and skips only
- *  when nothing was picked at all. */
+/** Screen 6 shows for any selected device — own or real — and skips only
+ *  when nothing was picked at all. See the module RESOLVED note above for
+ *  why this no longer gates on `cost_hud`. */
 export function startScreenSkip(doc: RideSessionDoc | null): boolean {
   if (!doc) return true;
   return doc.device === null;
@@ -141,6 +189,15 @@ export function wireRideScreenStart(deps: RideScreenStartDeps): () => void {
 // Copy / formatting helpers
 // ---------------------------------------------------------------------------
 
+function titleCase(s: string): string {
+  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+function deviceSummaryLabel(device: RideSessionSelectedDevice): string {
+  const name = device.model ? titleCase(device.model) : "Scooter";
+  return device.plate ? `${name} — plate ${device.plate}` : name;
+}
+
 function describeStartError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 409) {
@@ -164,7 +221,8 @@ function resolveStartedAtMs(ride: StartedTrackedRide, now: () => number): number
 /** `private-<hex>` local track id (ride-session.ts's `RideSessionDoc.
  *  trackKeyId` doc: "a `private-<hex>` local id for a private one"; the same
  *  convention `track-store.ts`'s own `startPrivateRide` uses). Generated here
- *  rather than imported from `track-store.ts` — this is only what the SESSION
+ *  rather than imported from `track-store.ts` — wiring the actual recorder is
+ *  Phase F3's job (see the module SCOPE NOTE); this is only what the SESSION
  *  transition needs to identify the local, unsigned recording it names. */
 function randomPrivateTrackId(randomBytes: (n: number) => Uint8Array): string {
   const bytes = randomBytes(6);
@@ -203,39 +261,68 @@ function buildStartScreen(
   if (!doc0 || (!device0 && !own0)) {
     const root = el("div", "ride-wizard__body ride-screen-start");
     root.append(
-      el("p", "ride-wizard__lede", "No ride selected"),
+      el("p", "ride-wizard__lede", "No scooter selected"),
       el(
         "p",
         "ride-wizard__hint",
-        "Go back and pick the device you're about to ride.",
+        "Go back and pick the scooter you're standing next to before starting in Veo.",
       ),
     );
-    return { title: "Starting ride", primary: root };
+    return { title: "Start in Veo", primary: root };
   }
 
   let destroyed = false;
+  let mode: "idle" | "counting" = "idle";
   let busy = false;
-  /** The one automatic attempt has fired. A failed attempt hands the rider a
-   *  visible "Try again" instead of retrying invisibly forever. */
-  let attempted = false;
+  let remaining = START_COUNTDOWN_S;
   let errorMessage: string | null = null;
   let fix: LngLat | null = deps.locate.current();
+  let countdownTimer: number | undefined;
   let abortController: AbortController | null = null;
+
+  // ---- Auto-start (the device-card "Use in Ride Mode" survey path).
+  //
+  // `ride-preflight.ts` sets `entry.autoStart` when its survey established
+  // that there is nothing left to ask about Veo: either the rider said they
+  // had already unlocked the scooter, or they turned the cost HUD off, which
+  // per spec removes the consideration of starting Veo altogether.
+  //
+  // This screen still RUNS — it is the reducer's only legal seat for
+  // `rideStarted` (module header), so a path that skipped it could never
+  // reach `riding` — it just doesn't ask anything. It takes exactly the
+  // "I already started" branch, which is the same branch the button would
+  // have taken, so there is no second start path to keep in sync.
+  //
+  // `autoStartSettled` is what stops it being a trap: the moment the attempt
+  // comes back unsuccessfully (a failed start, or the 409 that hands off to
+  // the resume-or-end prompt) the screen falls back to its normal, fully
+  // interactive idle render. A rider is never left staring at "Starting your
+  // ride…" with no control on screen.
+  //
+  // An own-device ("My Scooter/Bike") ride ALWAYS auto-starts: there is no
+  // Veo app to coordinate with, so the old "Start ride mode" button was one
+  // pointless tap — non-Veo riders go straight to riding. The interactive
+  // own-device face below survives only as the fallback after a failed
+  // attempt.
+  const autoStart = ctx.entry.autoStart === true || own0;
+  let autoStartSettled = false;
 
   const root = el("div", "ride-wizard__body ride-screen-start");
 
   function canStart(): boolean {
-    return !busy && fix !== null;
+    return !busy && mode === "idle" && fix !== null;
   }
 
-  /** Fire the automatic start once the preconditions hold. Called at mount
-   *  and again on every location fix — at mount there is very often no fix
-   *  yet (Screen 1 primed the permission; the first reading can lag), and
-   *  the auto-start must wait for it rather than failing on the spot. */
+  /** Fire the auto-start once the preconditions hold. Called at mount and
+   *  again on every location fix — at mount there is very often no fix yet
+   *  (Screen 1 primed the permission; the first reading can lag), and
+   *  auto-start must wait for it exactly as the buttons do rather than
+   *  failing on the spot. */
   function maybeAutoStart(): void {
-    if (attempted || destroyed || !canStart()) return;
-    attempted = true;
-    void finishStart();
+    if (!autoStart || autoStartSettled || destroyed) return;
+    if (!canStart()) return;
+    autoStartSettled = true;
+    onAlreadyStarted();
   }
 
   function render(): void {
@@ -244,34 +331,28 @@ function buildStartScreen(
       root.append(el("p", "ride-wizard__lede", "Starting your ride…"));
       return;
     }
-
-    // A settled failed attempt: the rider gets a visible way forward rather
-    // than an invisible retry loop. On the 409 path `errorMessage` is null —
-    // the resume-or-end prompt is telling the story — but Try again still
-    // shows in case that prompt was dismissed.
-    if (attempted) {
-      root.append(el("p", "ride-wizard__lede", "Ride mode didn't start"));
-      if (errorMessage) {
-        const err = el("p", "ride-modal__hint", errorMessage);
-        err.setAttribute("role", "status");
-        err.setAttribute("aria-live", "polite");
-        root.append(err);
-      }
-      const actions = el("div", "ride-wizard__actions");
-      const retryBtn = el("button", "login-btn", "Try again");
-      retryBtn.type = "button";
-      retryBtn.disabled = !canStart();
-      retryBtn.addEventListener("click", () => {
-        if (!canStart()) return;
-        errorMessage = null;
-        void finishStart();
-      });
-      actions.append(retryBtn);
-      root.append(actions);
+    if (mode === "counting") {
+      renderCounting();
       return;
     }
+    if (autoStart && !autoStartSettled) {
+      renderAutoStart();
+      return;
+    }
+    renderIdle();
+  }
 
+  /** The auto-start face: no Veo deep links, no countdown, no "I already
+   *  started" — every one of those re-asks something the device card's
+   *  survey already settled. Just enough to explain the pause while we wait
+   *  on a location fix. */
+  function renderAutoStart(): void {
     root.append(el("p", "ride-wizard__lede", "Starting ride mode…"));
+    appendWaitingAndError();
+  }
+
+  /** Shared by both the real-device and own-device idle renders. */
+  function appendWaitingAndError(): void {
     if (fix === null) {
       root.append(
         el(
@@ -281,6 +362,194 @@ function buildStartScreen(
         ),
       );
     }
+
+    if (errorMessage) {
+      const err = el("p", "ride-modal__hint", errorMessage);
+      err.setAttribute("role", "status");
+      err.setAttribute("aria-live", "polite");
+      root.append(err);
+    }
+  }
+
+  /** "My own Device" idle render — no Veo app to coordinate with, so no
+   *  deep links, plate, or countdown: a single button starts the (always
+   *  private) ride immediately, same as "I already started" for a real
+   *  device. */
+  function renderOwnDeviceIdle(): void {
+    root.append(el("p", "ride-wizard__lede", "My Scooter/Bike"));
+    root.append(
+      el(
+        "p",
+        "ride-wizard__hint",
+        "There's no Veo app to coordinate with — ride mode starts tracking as soon as you tap Start.",
+      ),
+    );
+    appendWaitingAndError();
+
+    const actions = el("div", "ride-wizard__actions");
+    const startBtn = el("button", "login-btn", "Start ride mode");
+    startBtn.type = "button";
+    startBtn.disabled = !canStart();
+    startBtn.addEventListener("click", () => onAlreadyStarted());
+    actions.append(startBtn);
+    root.append(actions);
+  }
+
+  function renderIdle(): void {
+    const doc = deps.session.current();
+    const device = doc ? selectedDevice(doc.device) : null;
+    const own = doc ? isOwnDevice(doc.device) : false;
+    if (!doc || (!device && !own)) {
+      root.append(
+        el(
+          "p",
+          "ride-wizard__hint",
+          "Go back and pick the scooter you're standing next to before starting in Veo.",
+        ),
+      );
+      return;
+    }
+
+    if (!device) {
+      // Guard above guarantees `own` is true here.
+      renderOwnDeviceIdle();
+      return;
+    }
+
+    root.append(el("p", "ride-wizard__lede", deviceSummaryLabel(device)));
+    root.append(
+      el(
+        "p",
+        "ride-wizard__hint",
+        `Tap Start in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
+      ),
+    );
+    appendWaitingAndError();
+
+    const plate = device.plate || null;
+    // Both buttons resolve the SAME Adjust universal link — one `href`
+    // computed once and assigned to both anchors, byte-identical by
+    // construction (Android/Apple are per-platform labels only; Adjust's own
+    // redirect handles app-vs-store routing — see the module map row).
+    const href = plate ? veoDeepLink(plate) : null;
+
+    const actions = el("div", "ride-wizard__actions");
+    const androidBtn = el(
+      "a",
+      "login-btn",
+      "▶️ Start in Veo — Android",
+    ) as HTMLAnchorElement;
+    const appleBtn = el(
+      "a",
+      "login-btn",
+      "▶️ Start in Veo — iPhone",
+    ) as HTMLAnchorElement;
+    for (const a of [androidBtn, appleBtn]) {
+      if (href) {
+        a.href = href;
+      } else {
+        a.removeAttribute("href");
+      }
+      const disabled = !canStart();
+      a.toggleAttribute("disabled", disabled);
+      a.setAttribute("aria-disabled", disabled ? "true" : "false");
+      a.addEventListener("click", (e) => {
+        if (!canStart()) {
+          e.preventDefault();
+          return;
+        }
+        onStartTapped();
+      });
+    }
+
+    const alreadyBtn = el(
+      "button",
+      "login-btn login-btn--secondary",
+      "I already started",
+    );
+    alreadyBtn.type = "button";
+    alreadyBtn.disabled = !canStart();
+    alreadyBtn.addEventListener("click", () => onAlreadyStarted());
+
+    actions.append(androidBtn, appleBtn, alreadyBtn);
+    root.append(actions);
+    if (!plate) {
+      root.append(
+        el(
+          "p",
+          "ride-wizard__hint",
+          "We don't have this scooter's plate yet — you can still start once you're on the scooter.",
+        ),
+      );
+    }
+  }
+
+  function renderCounting(): void {
+    const card = el("div", "ride-screen-start__countdown");
+    card.append(
+      el(
+        "div",
+        "ride-screen-start__countdown-digit",
+        String(Math.max(0, remaining)),
+      ),
+      el(
+        "p",
+        "ride-wizard__hint",
+        "Scan the QR and start the scooter — the clock starts when this hits zero.",
+      ),
+    );
+    const cancelBtn = el(
+      "button",
+      "login-btn login-btn--secondary",
+      "Cancel",
+    );
+    cancelBtn.type = "button";
+    cancelBtn.addEventListener("click", () => onCancelCountdown());
+    card.append(cancelBtn);
+    root.append(card);
+  }
+
+  // ---------------- actions ----------------
+
+  function onStartTapped(): void {
+    if (!canStart()) return;
+    errorMessage = null;
+    mode = "counting";
+    remaining = START_COUNTDOWN_S;
+    // Screen 6's own transition — legal only from `wizard:6` (ride-session.ts).
+    deps.session.dispatch({ type: "startCountdown" });
+    render();
+    countdownTimer = window.setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        window.clearInterval(countdownTimer);
+        countdownTimer = undefined;
+        void finishStart();
+      } else {
+        render();
+      }
+    }, 1000);
+  }
+
+  function onAlreadyStarted(): void {
+    if (!canStart()) return;
+    errorMessage = null;
+    // The `beginCountdown(0)` equivalent: straight to `finishStart` without
+    // ever dispatching `startCountdown` — `rideStarted` is legal directly
+    // from `wizard:6` (ride-session.ts), so no phase change is needed first.
+    void finishStart();
+  }
+
+  function onCancelCountdown(): void {
+    if (countdownTimer !== undefined) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = undefined;
+    }
+    mode = "idle";
+    // The only legal way back off an un-started countdown (ride-session.ts:
+    // "Cancelling an un-started countdown is the only way back off Screen 6").
+    deps.session.dispatch({ type: "goto", screen: "6" });
+    render();
   }
 
   async function finishStart(): Promise<void> {
@@ -290,7 +559,11 @@ function buildStartScreen(
     const own = doc ? isOwnDevice(doc.device) : false;
     const fixNow = deps.locate.current();
     if (!doc || (!device && !own) || !fixNow) {
-      errorMessage = "We lost your location or ride selection — try again.";
+      mode = "idle";
+      // An auto-start that cannot proceed hands the screen back to the
+      // rider rather than retrying invisibly — see `autoStartSettled`.
+      autoStartSettled = true;
+      errorMessage = "We lost your location or scooter selection — try again.";
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
       return;
@@ -298,15 +571,19 @@ function buildStartScreen(
 
     // Guest / private ride (see the module FIX note): never attempt the
     // authed-only `POST /tracked-rides` — it would throw NO_AUTH for a
-    // signed-out rider every time. An own-device ("My Scooter/Bike") ride is
-    // ALWAYS private and takes this same branch. Start locally instead: no
-    // `rideId`, a freshly generated local `trackKeyId`, `private: true`.
-    // `onPrivateRideStarted` fires with the SAME `trackKeyId` just
-    // dispatched, so the caller can attach a local `TrackRecorder` under
-    // that exact id (`track-store.ts`'s `resumeRide(trackId, {isPrivate:
-    // true})` mints a brand-new private ride keyed on a caller-supplied id
-    // when no local record exists yet) instead of the two modules
-    // independently generating two unrelated ids.
+    // signed-out rider every time. An own-device ride is ALWAYS private
+    // (`RideSessionOwnDevice`'s own doc comment: "never points-eligible") and
+    // takes this same branch. Start locally instead: no `rideId`, a freshly
+    // generated local `trackKeyId`, `private: true`. The Veo app start itself
+    // already happened (the countdown / "I already started" tap that got us
+    // here, for a real device) — this only decides whether a `tracked_rides`
+    // row exists server-side to track it against. `onPrivateRideStarted`
+    // fires with the SAME `trackKeyId` just dispatched, so the caller can
+    // attach a local `TrackRecorder` under that exact id
+    // (`track-store.ts`'s `resumeRide(trackId, {isPrivate: true})` mints a
+    // brand-new private ride keyed on a caller-supplied id when no local
+    // record exists yet) instead of the two modules independently generating
+    // two unrelated ids.
     if (doc.private) {
       const nowFn = deps.now ?? (() => Date.now());
       const randomBytesFn = deps.randomBytes ?? defaultRandomBytes;
@@ -328,7 +605,9 @@ function buildStartScreen(
     // Defensive only; the guard above and `startScreenSkip` already ensure
     // this in practice.
     if (!device) {
-      errorMessage = "We lost your location or ride selection — try again.";
+      mode = "idle";
+      autoStartSettled = true;
+      errorMessage = "We lost your location or scooter selection — try again.";
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
       return;
@@ -365,18 +644,23 @@ function buildStartScreen(
     } catch (err) {
       if (destroyed) return;
       busy = false;
+      mode = "idle";
+      // Whatever went wrong, the rider gets the interactive screen back —
+      // including on the 409 path, where `errorMessage` is deliberately left
+      // null because the resume-or-end prompt is telling the story instead.
+      autoStartSettled = true;
       if (err instanceof ApiError && err.status === 409 && deps.onServerConflict) {
         // The resume-or-end prompt's trigger (see `startTrackedRide`'s own
         // doc comment) — hand off to the caller instead of a dead-end
         // static message; it fetches the conflicting ride and shows the
-        // shared prompt (`ride-resume-prompt.ts`). `errorMessage` stays
-        // null: the prompt is telling the story.
+        // shared prompt (`ride-resume-prompt.ts`).
         errorMessage = null;
         deps.onServerConflict();
       } else {
         errorMessage = describeStartError(err);
       }
-      // `goto` back to Screen 6 is a legal no-op from `wizard:6`.
+      // `goto` back to Screen 6 is a no-op from `wizard:6` and the sanctioned
+      // un-start from `countdown` — legal from both paths that lead here.
       deps.session.dispatch({ type: "goto", screen: "6" });
       render();
     }
@@ -389,18 +673,22 @@ function buildStartScreen(
   const unFix = deps.locate.onFix((pos) => {
     if (destroyed) return;
     fix = pos;
-    if (!busy) render();
-    // A late first fix is the common path: Screen 1 primed the permission,
-    // but the reading itself usually lands after this screen has mounted.
+    if (mode === "idle" && !busy) render();
+    // A late first fix is the common auto-start path: Screen 1 primed the
+    // permission, but the reading itself usually lands after this screen
+    // has already mounted.
     maybeAutoStart();
   });
   ctx.onCleanup(unFix);
   ctx.onCleanup(() => {
+    if (countdownTimer !== undefined) window.clearInterval(countdownTimer);
     abortController?.abort();
   });
 
   return {
-    title: "Starting ride",
+    // "Start in Veo" would be a lie over an own-device ride — no Veo app is
+    // involved anywhere in it.
+    title: own0 ? "Starting ride" : "Start in Veo",
     primary: root,
     destroy() {
       destroyed = true;

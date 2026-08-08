@@ -52,6 +52,12 @@ export type RidePaneSplit = "even" | "40-60";
  *  "Entry"). UI-pref key, hence the hyphenated convention. */
 export const RIDE_MODAL_FLAG_KEY = "scooter-fyi-ride-modal";
 
+/** Which face Screen 6 shows for a rider who came in through the device
+ *  card's "Use in Ride Mode" survey (`ride-preflight.ts`). Not a
+ *  `RideOptions` field — it changes nothing about the ride, only whether
+ *  the rider still needs the Start-in-Veo link. */
+export type RideStartIntent = "already-started" | "need-link";
+
 /** The three `RideOptions` fields the pre-ride survey asks about, carried
  *  on the entry so the integrator can seed the session doc with them at
  *  `onOpen` time.
@@ -84,6 +90,18 @@ export interface RideModalEntry {
    *  these into the fresh session doc's `RideOptions` in `onOpen`; nothing
    *  in this module reads them. */
   preflight?: RidePreflightChoices;
+  /** Screen 6 should start the ride the moment it mounts, rather than
+   *  rendering its Start-in-Veo buttons and countdown.
+   *
+   *  Set when the survey established there is nothing left to ask about
+   *  Veo — the rider said they had already unlocked it, or they turned the
+   *  cost HUD off (which per spec removes the consideration of starting Veo
+   *  altogether). An own-device ("My Scooter/Bike") ride auto-starts
+   *  regardless of this flag — there is no Veo app to coordinate with.
+   *  Screen 6 stays IN the flow either way because it is the reducer's only
+   *  legal seat for `rideStarted`; this is what keeps it from re-asking a
+   *  question the rider already answered on the device card. */
+  autoStart?: boolean;
 }
 
 export type RideModalCloseReason =
