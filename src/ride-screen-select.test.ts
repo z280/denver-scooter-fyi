@@ -362,6 +362,21 @@ describe("checkTypedPlate", () => {
 // ---------------------------------------------------------------------------
 
 describe("Screen 2 — selection and session sync", () => {
+  it('always renders "My Scooter/Bike" as the FIRST option, above the ranked fleet', () => {
+    // Non-Veo riders are first-class: riding your own device leads the list
+    // instead of trailing it, whatever the fleet around you looks like.
+    const near = feature("near", V1, ORIGIN);
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const rows = [...document.querySelectorAll("button.ride-option")];
+    expect(rows[0]?.textContent).toContain("My Scooter/Bike");
+    expect(document.body.textContent).not.toContain("My own Device");
+  });
+
   it("auto-preselects the nearest candidate and stores it as the session device", () => {
     const near = feature("near", V1, metersNorth(5));
     const devices = fakeDevices([near]);
@@ -392,7 +407,11 @@ describe("Screen 2 — selection and session sync", () => {
     expect(document.querySelector(".ride-option.is-selected")).toBeNull();
     expect(session.current()?.device).toBeNull();
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     // renderList() rebuilds the row elements on every selection change, so
     // re-query rather than trust the pre-click reference.
@@ -408,7 +427,7 @@ describe("Screen 2 — selection and session sync", () => {
     openRideModal({ fastForwardTo: "2" });
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     expect(ownBtn).toBeTruthy();
     ownBtn.click();
@@ -431,7 +450,11 @@ describe("Screen 2 — selection and session sync", () => {
     wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
     openRideModal({ fastForwardTo: "2" });
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V1 });
     expect(session.current()?.private).toBe(true);
@@ -449,7 +472,7 @@ describe("Screen 2 — selection and session sync", () => {
     openRideModal({ fastForwardTo: "2" });
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     ownBtn.click();
     expect(session.current()?.private).toBe(true);
@@ -476,7 +499,11 @@ describe("Screen 2 — selection and session sync", () => {
 
     expect(document.querySelector('input[aria-label^="Battery"]')).toBeNull();
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     expect(session.current()?.device).toMatchObject({ batteryConfirmed: null });
   });
@@ -510,7 +537,7 @@ describe("Screen 2 — selection and session sync", () => {
       openRideModal({ fastForwardTo: "2" });
 
       const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-        b.textContent?.includes("My own Device"),
+        b.textContent?.includes("My Scooter/Bike"),
       ) as HTMLButtonElement;
       ownBtn.click();
       expect(confirmStripHidden()).toBe(true);
@@ -652,11 +679,11 @@ describe("Screen 2 — selection and session sync", () => {
     expect(disposes[disposes.length - 1]).not.toHaveBeenCalled();
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     ownBtn.click();
 
-    // The rebuild triggered by selecting "My own Device" must dispose the
+    // The rebuild triggered by selecting "My Scooter/Bike" must dispose the
     // panel handle from the previous build before replacing it.
     expect(disposes.length).toBe(mountBuilds + 1);
     expect(disposes[mountBuilds - 1]).toHaveBeenCalledTimes(1);
@@ -764,7 +791,7 @@ describe("Screen 2.5 — Usuals", () => {
     const session = createRideSessionStore({
       storage: memoryRideSessionStorage(),
     });
-    // A private ride (e.g. "My own Device") — the three 🏆 options must be
+    // A private ride (e.g. "My Scooter/Bike") — the three 🏆 options must be
     // forced off even though this Usual was saved on a real device with
     // them on.
     session.dispatch({ type: "open", options: OPTIONS, screen: "2", private: true });
