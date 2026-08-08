@@ -1,4 +1,4 @@
-// Screen 6 — "Start in Veo" (frontend plan, `ride-screen-start.ts` row;
+// Screen 6 — "Open in Veo" (frontend plan, `ride-screen-start.ts` row;
 // master Part 0 Screen 6: "Most similar to the current pre-start page. Since
 // the scooter and its start link are known: offer Android and Apple
 // 'Start in Veo' buttons which trigger a default 10 s countdown; an
@@ -265,10 +265,10 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        "Go back and pick the scooter you're standing next to before starting in Veo.",
+        "Go back and pick the scooter you're standing next to before opening it in Veo.",
       ),
     );
-    return { title: "Start in Veo", primary: root };
+    return { title: "Open in Veo", primary: root };
   }
 
   let destroyed = false;
@@ -404,7 +404,7 @@ function buildStartScreen(
         el(
           "p",
           "ride-wizard__hint",
-          "Go back and pick the scooter you're standing next to before starting in Veo.",
+          "Go back and pick the scooter you're standing next to before opening it in Veo.",
         ),
       );
       return;
@@ -421,7 +421,7 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        `Tap Start in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
+        `Tap Open in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
       ),
     );
     appendWaitingAndError();
@@ -437,12 +437,12 @@ function buildStartScreen(
     const androidBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — Android",
+      "▶️ Open in Veo — Android",
     ) as HTMLAnchorElement;
     const appleBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — iPhone",
+      "▶️ Open in Veo — iPhone",
     ) as HTMLAnchorElement;
     for (const a of [androidBtn, appleBtn]) {
       if (href) {
@@ -686,9 +686,9 @@ function buildStartScreen(
   });
 
   return {
-    // "Start in Veo" would be a lie over an own-device ride — no Veo app is
+    // "Open in Veo" would be a lie over an own-device ride — no Veo app is
     // involved anywhere in it.
-    title: own0 ? "Starting ride" : "Start in Veo",
+    title: own0 ? "Starting ride" : "Open in Veo",
     primary: root,
     destroy() {
       destroyed = true;

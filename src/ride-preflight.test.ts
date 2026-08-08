@@ -139,7 +139,7 @@ describe("describeNext", () => {
   it("promises the link when the rider asked for one", () => {
     expect(
       describeNext(answers({ navigation: false, startIntent: "need-link" })),
-    ).toContain("link to start in Veo");
+    ).toContain("link to open in Veo");
   });
 });
 
@@ -190,7 +190,7 @@ describe("the survey UI", () => {
       document.querySelectorAll("[data-intent]").length,
     ).toBe(2);
     expect(document.body.textContent).toContain("I started the Veo already");
-    expect(document.body.textContent).toContain("Give me a link to Start");
+    expect(document.body.textContent).toContain("Give me a link to Open in Veo");
   });
 
   it("REMOVES the Veo question when the cost HUD goes off", () => {
@@ -222,7 +222,7 @@ describe("the survey UI", () => {
     open();
     const next = () =>
       document.querySelector(".ride-preflight__next")?.textContent ?? "";
-    expect(next()).toContain("link to start in Veo");
+    expect(next()).toContain("link to open in Veo");
     toggle("navigation").click();
     expect(next()).toContain("destination");
   });

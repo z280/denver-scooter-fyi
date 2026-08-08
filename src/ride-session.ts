@@ -315,7 +315,7 @@ export type RideAction =
     }
   | { type: "setDest"; dest: RideSessionDest | null }
   | { type: "setRoute"; route: RideSessionRoute | null }
-  /** Screen 6's "Start in Veo" — the default 10 s countdown. */
+  /** Screen 6's "Open in Veo" — the default 10 s countdown. */
   | { type: "startCountdown" }
   /** The ride is live. From `countdown`, or straight from `wizard:6` when the
    *  rider taps "I already started" and skips the countdown. */

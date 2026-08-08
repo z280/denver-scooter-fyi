@@ -55,7 +55,7 @@ export const RIDE_MODAL_FLAG_KEY = "scooter-fyi-ride-modal";
 /** Which face Screen 6 shows for a rider who came in through the device
  *  card's "Use in Ride Mode" survey (`ride-preflight.ts`). Not a
  *  `RideOptions` field — it changes nothing about the ride, only whether
- *  the rider still needs the Start-in-Veo link. */
+ *  the rider still needs the Open-in-Veo link. */
 export type RideStartIntent = "already-started" | "need-link";
 
 /** The three `RideOptions` fields the pre-ride survey asks about, carried
@@ -91,7 +91,7 @@ export interface RideModalEntry {
    *  in this module reads them. */
   preflight?: RidePreflightChoices;
   /** Screen 6 should start the ride the moment it mounts, rather than
-   *  rendering its Start-in-Veo buttons and countdown.
+   *  rendering its Open-in-Veo buttons and countdown.
    *
    *  Set when the survey established there is nothing left to ask about
    *  Veo — the rider said they had already unlocked it, or they turned the

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 //
-// Screen 6 — "Start in Veo". Covers: the skip predicate's device+cost_hud
+// Screen 6 — "Open in Veo". Covers: the skip predicate's device+cost_hud
 // matrix, that the Android/Apple buttons carry the literal SAME Adjust link,
 // that the default countdown can never silently drift from ride-hud.ts's own
 // default, the countdown → POST /tracked-rides → `rideStarted` → handoff
@@ -260,7 +260,7 @@ describe("START_COUNTDOWN_S", () => {
 // The Adjust link — literal equality, both buttons.
 // ---------------------------------------------------------------------------
 
-describe("Start in Veo buttons", () => {
+describe("Open in Veo buttons", () => {
   it("Android and Apple resolve to the literal SAME Adjust link", () => {
     const session = sessionAt(DEVICE, true);
     wire(session);
@@ -377,10 +377,10 @@ describe('"I already started"', () => {
 });
 
 // ---------------------------------------------------------------------------
-// "Start in Veo" — the timed countdown path.
+// "Open in Veo" — the timed countdown path.
 // ---------------------------------------------------------------------------
 
-describe("Start in Veo — timed countdown", () => {
+describe("Open in Veo — timed countdown", () => {
   it("ticks down from START_COUNTDOWN_S, then starts the ride and hands off", async () => {
     vi.useFakeTimers();
     const session = sessionAt(DEVICE, true);
@@ -648,7 +648,7 @@ describe('own device ("My Scooter/Bike") — auto-starts, no Veo page', () => {
     expect(root().textContent).toContain("Waiting for your location");
     // No Veo anything while it waits — this is the non-Veo path.
     expect(anchors().length).toBe(0);
-    expect(root().textContent).not.toContain("Start in Veo");
+    expect(root().textContent).not.toContain("Open in Veo");
 
     locate.emitFix(FIX);
     await Promise.resolve();
