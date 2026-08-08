@@ -697,7 +697,11 @@ export function openConfirmFeatures(
           ? `${prefix}+${result.points_awarded} pts. It can take a few minutes to show on the map.`
           : `${prefix}Logged. You've already earned points for this scooter today — this still counts toward the data.`
         : result.qr_matched === false && !typedPlate
-          ? "We couldn't match that scan to this scooter, so no points this time — your answers were still recorded."
+          ? // "this scooter" only when one was tapped — the QR-identified
+            // flow has no preselected scooter for the phrase to point at.
+            options.vehicleIdentifier != null
+            ? "We couldn't match that scan to this scooter, so no points this time — your answers were still recorded."
+            : "We couldn't match that scan to a scooter we know, so no points this time — your answers were still recorded."
           : "That plate didn't match this scooter, so no points this time — your answers were still recorded.";
       render();
       options.onSubmitted?.({

@@ -101,8 +101,11 @@ function makeDefaultDecoder(): (video: HTMLVideoElement) => Promise<string | nul
     const w = video.videoWidth;
     const h = video.videoHeight;
     if (!ctx || !w || !h) return null;
-    canvas.width = w;
-    canvas.height = h;
+    // Resizing reallocates the backing store and resets context state, so
+    // only do it when the stream's dimensions actually changed (camera
+    // switch, orientation flip) — not five times a second.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
     ctx.drawImage(video, 0, 0, w, h);
     const image = ctx.getImageData(0, 0, w, h);
     const code = jsQR(image.data, w, h);
@@ -200,7 +203,12 @@ export function openQrScanner(options: QrScannerOptions): () => void {
       }
 
       // Recursive setTimeout rather than setInterval so a slow decode
-      // (jsQR on a big frame) can't stack calls behind itself.
+      // (jsQR on a big frame) can't stack calls behind itself. One shared
+      // timer id, registered for cleanup ONCE — only one tick is ever
+      // pending, and pushing a fresh closure per frame would grow
+      // cleanupFns by ~5 entries a second for as long as the rider aims.
+      let pollTimer: ReturnType<typeof setTimeout> | undefined;
+      cleanupFns.push(() => clearTimeout(pollTimer));
       const tick = (): void => {
         if (closed || scanned) return;
         void decode(video)
@@ -216,8 +224,7 @@ export function openQrScanner(options: QrScannerOptions): () => void {
               options.onScan(raw);
               return;
             }
-            const t = setTimeout(tick, FRAME_INTERVAL_MS);
-            cleanupFns.push(() => clearTimeout(t));
+            pollTimer = setTimeout(tick, FRAME_INTERVAL_MS);
           });
       };
       tick();
