@@ -584,17 +584,37 @@ function buildStartScreen(
     // brand-new private ride keyed on a caller-supplied id when no local
     // record exists yet) instead of the two modules independently generating
     // two unrelated ids.
+    // Self-heal the persisted screen before starting: the reducer only
+    // accepts `rideStarted` from `wizard:6`, but the shell persists this
+    // screen (main.ts's `onScreenChange` → `goto 6`) only AFTER the factory
+    // returns, so a start that fires early sees a doc still reading the
+    // previous screen. Legal (and a no-op) from any wizard screen; skipped
+    // from `countdown`, where a `goto` would un-start the countdown.
+    if (doc.state === "wizard" && doc.screen !== "6") {
+      deps.session.dispatch({ type: "goto", screen: "6" });
+    }
+
     if (doc.private) {
       const nowFn = deps.now ?? (() => Date.now());
       const randomBytesFn = deps.randomBytes ?? defaultRandomBytes;
       const trackKeyId = randomPrivateTrackId(randomBytesFn);
-      deps.session.dispatch({
+      const started = deps.session.dispatch({
         type: "rideStarted",
         rideId: null,
         startedAtMs: nowFn(),
         trackKeyId,
         private: true,
       });
+      // A rejected transition means the session doc is NOT riding — closing
+      // the wizard anyway (the pre-fix behavior) stranded the rider with no
+      // HUD and no error. Fall back to the interactive screen instead.
+      if (started?.accepted !== true) {
+        mode = "idle";
+        autoStartSettled = true;
+        errorMessage = "Couldn't start the ride — please try again.";
+        render();
+        return;
+      }
       deps.onPrivateRideStarted?.(trackKeyId);
       ctx.next();
       return;
@@ -632,13 +652,24 @@ function buildStartScreen(
       )(body, abortController.signal);
       if (destroyed) return;
       const nowFn = deps.now ?? (() => Date.now());
-      deps.session.dispatch({
+      const transition = deps.session.dispatch({
         type: "rideStarted",
         rideId: started.id,
         startedAtMs: resolveStartedAtMs(started, nowFn),
         trackKeyId: started.id,
         private: false,
       });
+      // Same guard as the private branch: never hand off on a doc that is
+      // not actually riding. The server row exists — a retry's 409 routes
+      // into the resume-or-end prompt, which can adopt it.
+      if (transition?.accepted !== true) {
+        busy = false;
+        mode = "idle";
+        autoStartSettled = true;
+        errorMessage = "Couldn't start the ride — please try again.";
+        render();
+        return;
+      }
       deps.onRideStarted?.(started);
       ctx.next();
     } catch (err) {
@@ -669,7 +700,16 @@ function buildStartScreen(
   // ---------------- mount ----------------
 
   render();
-  maybeAutoStart();
+  // Deferred out of the factory's own call stack: the shell is still
+  // mid-render when this factory runs, and the integrator persists this
+  // screen onto the session doc (`onScreenChange` → `goto 6`) only AFTER
+  // the factory returns. A synchronous auto-start here dispatched
+  // `rideStarted` against a doc still reading the PREVIOUS screen, which
+  // the reducer rejects — the flow then ran off the end with no ride
+  // started and no HUD (the 2026-08 field failure). One microtask is
+  // enough: the shell's render (onScreenChange included) is synchronous.
+  // The `goto 6` self-heal in `finishStart` covers any other early caller.
+  queueMicrotask(() => maybeAutoStart());
   const unFix = deps.locate.onFix((pos) => {
     if (destroyed) return;
     fix = pos;
