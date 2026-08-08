@@ -162,6 +162,10 @@ export interface RideSessionRoute {
   /** Precision-5 encoded polyline of the chosen shape. */
   polyline: string;
   maneuvers: RouteManeuver[];
+  /** `/route`'s `beta_warning`, carried so the nav HUD can keep showing it
+   *  mid-ride. Optional (docs persisted before the field existed lack it);
+   *  absent/null means the API stopped sending one — directions left beta. */
+  betaWarning?: string | null;
 }
 
 export interface RideSessionDoc {

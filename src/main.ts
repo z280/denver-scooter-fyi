@@ -120,7 +120,11 @@ import {
   closeAllPopups,
   registerPopupCloser,
 } from "./chrome.ts";
-import { wireFilterPresets, type FilterSnapshot } from "./filter-presets.ts";
+import {
+  effectiveModels,
+  wireFilterPresets,
+  type FilterSnapshot,
+} from "./filter-presets.ts";
 import {
   initTelemetry,
   setAuthState,
@@ -1417,12 +1421,20 @@ function wireModels(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#model-filter .toggle-card"),
   );
+  // Rover service-area caveat: shown when the rider is deliberately
+  // filtering FOR rovers (the Rover card on within a narrowed selection).
+  // Hidden in the everything-on default — it is a note about choosing
+  // rovers, not a banner on the drawer.
+  const roverNote = need<HTMLParagraphElement>("rover-area-note");
   clearModelFilter = wireToggleGroup(
     btns,
     (b) => b.dataset.model as ModelKey,
     ALL_MODELS,
     (enabled) => {
       modelsOn = enabled;
+      roverNote.hidden = !(
+        enabled.has("trike") && enabled.size < ALL_MODELS.length
+      );
       devices.setModels(enabled);
       clusters.update(devices.visibleFeatures());
       refreshChips();
@@ -1492,6 +1504,11 @@ function snapshotFilters(): FilterSnapshot {
   return {
     rideTypes: [...rideTypesOn],
     models: [...modelsOn],
+    // The lineup as of this save, so a model added AFTER can be told apart
+    // from one the saver deselected (see effectiveModels) — absence from
+    // `models` alone can't distinguish the two, which is how pre-Rover
+    // presets used to hide every Rover.
+    knownModels: [...ALL_MODELS],
     features: FEATURE_FILTER_KEYS.filter((k) => featuresOn.has(k)),
     hideUnavailable: need<HTMLInputElement>("hide-unavailable").checked,
     minBattery: minBatteryPct,
@@ -1526,7 +1543,10 @@ let applyFilterSnapshot: (s: FilterSnapshot) => Promise<void> = () =>
 function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
   return async (s: FilterSnapshot): Promise<void> => {
     setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
-    setToggleGroup("#model-filter", "model", new Set(s.models));
+    // effectiveModels, not s.models verbatim: a model the preset never knew
+    // about (saved before it joined the lineup) defaults to ON rather than
+    // being read as deselected.
+    setToggleGroup("#model-filter", "model", effectiveModels(s));
     // Presets saved before the Features filter existed carry no `features`
     // member — that reads as "no selection", which clears the live one.
     setToggleGroup("#feature-filter", "feature", new Set(s.features ?? []));

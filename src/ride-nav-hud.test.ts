@@ -265,12 +265,21 @@ describe("advanceMonotonic — forward window boundary", () => {
 });
 
 describe("currentManeuverIndex", () => {
+  // Valhalla's contiguity contract: each maneuver's end is the next one's
+  // begin, and the instruction is executed AT the begin vertex.
   const maneuvers: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 10), maneuver(10, 15)];
 
-  it("advances forward exactly as the matched shape index passes each maneuver's end", () => {
+  it("returns the UPCOMING maneuver: a turn is complete once the match moves past its begin vertex", () => {
+    // At the departure vertex: the departure instruction itself.
     expect(currentManeuverIndex(maneuvers, 0)).toBe(0);
-    expect(currentManeuverIndex(maneuvers, 4)).toBe(0);
+    // One vertex underway: heading toward turn 1 — show it.
+    expect(currentManeuverIndex(maneuvers, 1)).toBe(1);
+    // AT turn 1's corner (begin 5): still turn 1 — the rider is executing it.
     expect(currentManeuverIndex(maneuvers, 5)).toBe(1);
+    // Past the corner: the turn is COMPLETED — flip to the next instruction
+    // immediately, not a block later. (The old end-based rule kept showing
+    // turn 1 here until the rider arrived at turn 2's own corner.)
+    expect(currentManeuverIndex(maneuvers, 6)).toBe(2);
     expect(currentManeuverIndex(maneuvers, 12)).toBe(2);
   });
 
@@ -281,9 +290,9 @@ describe("currentManeuverIndex", () => {
     expect(next).toBe(2);
   });
 
-  it("skips a zero-length leg without getting stuck", () => {
+  it("steps through a zero-length leg without getting stuck", () => {
     const withZero: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 5), maneuver(5, 10)];
-    expect(currentManeuverIndex(withZero, 5)).toBe(2);
+    expect(currentManeuverIndex(withZero, 6)).toBe(2);
   });
 });
 
@@ -676,5 +685,109 @@ describe("off-route re-route via feedFix", () => {
     t = 50_000;
     expect(() => hud.feedFix(41.0, -103.0)).not.toThrow();
     expect(fetchRoute).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Directions-are-beta warning (the /route contract: beta_warning must be
+// shown wherever directions are rendered — the HUD shows the one Screen 4
+// carried onto the session route)
+// ---------------------------------------------------------------------------
+
+describe("beta warning", () => {
+  it("stays pinned under the maneuver bar for the whole guided ride", () => {
+    const { container } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    const note = container.querySelector<HTMLElement>(".nav-hud__beta");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("Navigation directions are in beta.");
+  });
+
+  it("renders nothing when the route carries no warning (post-beta, or a pre-field session doc)", () => {
+    const { container } = setup();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+
+  it("is torn down with the rest of the HUD", () => {
+    const { container, hud } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    hud.dispose();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Completed turns flip the card immediately; tapping a step jumps to it
+// ---------------------------------------------------------------------------
+
+describe("createNavHud — turn completion + tap-to-jump", () => {
+  const threeManeuvers = (): RouteManeuver[] => [
+    maneuver(0, 1, "Head north"),
+    maneuver(1, 3, "Turn right onto A St"),
+    maneuver(3, 4, "Turn left onto B Ave"),
+  ];
+
+  it("flips to the next instruction the moment a turn is completed, not at the following corner", () => {
+    const { container, hud } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const instruction = container.querySelector(".nav-hud__instruction")!;
+
+    // At the corner of turn 1 (its begin vertex): still executing it.
+    const [cornerLng, cornerLat] = BASE_COORDS[1];
+    hud.feedFix(cornerLat, cornerLng);
+    expect(instruction.textContent).toBe("Turn right onto A St");
+
+    // One vertex past the corner — the turn is done, and the card must
+    // already show the NEXT turn (the old end-based rule kept "Turn right
+    // onto A St" here until the rider reached B Ave's own corner).
+    const [pastLng, pastLat] = BASE_COORDS[2];
+    hud.feedFix(pastLat, pastLng);
+    expect(instruction.textContent).toBe("Turn left onto B Ave");
+  });
+
+  it("lets the rider tap a step in the list to make it current", () => {
+    const { container } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const btns = container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-btn");
+    expect(btns.length).toBe(3);
+    btns[2].click();
+
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Turn left onto B Ave",
+    );
+    const steps = container.querySelectorAll(".nav-hud__step");
+    expect(steps[2].classList.contains("is-current")).toBe(true);
+    expect(steps[1].classList.contains("is-done")).toBe(true);
+    expect(
+      container
+        .querySelector('.nav-hud__step-btn[aria-current="step"]')
+        ?.closest(".nav-hud__step"),
+    ).toBe(steps[2]);
+  });
+
+  it("honors a backward tap — the rider's override beats the monotonic match", () => {
+    const { container, hud } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const [lng, lat] = BASE_COORDS[2];
+    hud.feedFix(lat, lng); // advance to the last maneuver
+    const btns = container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-btn");
+    btns[1].click();
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Turn right onto A St",
+    );
   });
 });

@@ -11,7 +11,12 @@
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
-import { FIRST_DEVICE_LAYER, ALL_MODELS, type ModelKey } from "./devices.ts";
+import {
+  FIRST_DEVICE_LAYER,
+  ALL_MODELS,
+  ROVER_AREA_WARNING,
+  type ModelKey,
+} from "./devices.ts";
 
 /** The slice of the device layer the HUD drives: ride-scoped tap behavior
  *  and on-map visibility filtering. */
@@ -727,6 +732,10 @@ export class RideHud {
         const on = this.rideModels.has(model);
         btn.classList.toggle("is-on", on);
         btn.setAttribute("aria-pressed", String(on));
+        // Rover service-area caveat, mirroring the Filters drawer's note:
+        // visible whenever the Show selection includes the Rover.
+        const note = this.root.querySelector<HTMLElement>("#hud-rover-note");
+        if (note) note.hidden = !this.rideModels.has("trike");
         this.applyRideModels();
         break;
       }
@@ -1266,6 +1275,7 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
+          <p id="hud-rover-note" class="control-hint control-hint--warning"${this.rideModels.has("trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           <div class="hud-adjust-row hud-devrow">
             <span class="hud-devrow__label">Display</span>
             ${this.displayChipsMarkup()}

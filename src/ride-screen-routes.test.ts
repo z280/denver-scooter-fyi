@@ -736,3 +736,62 @@ describe("clearNavigationForRide", () => {
     expect(store.current()).toBe(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Directions-are-beta warning (the /route contract: beta_warning must be
+// shown wherever directions are rendered)
+// ---------------------------------------------------------------------------
+
+describe("Screen 4 — directions beta warning", () => {
+  it("shows the API's beta_warning above the route list", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() =>
+      Promise.resolve(
+        fakeRoute("safe", ROUTE_COORDS, {
+          beta_warning: "Navigation directions are in beta.",
+        }),
+      ),
+    );
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    const beta = rideModalRoot()?.querySelector<HTMLElement>(".ride-route-beta");
+    expect(beta?.hidden).toBe(false);
+    expect(beta?.textContent).toContain("Navigation directions are in beta.");
+  });
+
+  it("stays hidden when the API sends none — the beta is over, the copy is not ours", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    expect(
+      rideModalRoot()?.querySelector<HTMLElement>(".ride-route-beta")?.hidden,
+    ).toBe(true);
+  });
+
+  it("carries the warning into the session route so the nav HUD can keep showing it", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() =>
+      Promise.resolve(
+        fakeRoute("safe", ROUTE_COORDS, {
+          beta_warning: "Navigation directions are in beta.",
+        }),
+      ),
+    );
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    expect(session.current()?.route?.betaWarning).toBe(
+      "Navigation directions are in beta.",
+    );
+  });
+});

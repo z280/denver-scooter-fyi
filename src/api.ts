@@ -1246,6 +1246,12 @@ export interface RouteProperties {
   graph_bbox: [number, number, number, number];
   /** Present only with `maneuvers: true`. */
   maneuvers?: RouteManeuver[];
+  /** Present on every response while navigation is in beta: rider-facing
+   *  text the API requires clients to show wherever directions are
+   *  rendered. Server-controlled on purpose — the field disappears when
+   *  directions leave beta, so never hardcode the copy; render it iff
+   *  present. */
+  beta_warning?: string | null;
   diagnostics?: Record<string, unknown>;
 }
 

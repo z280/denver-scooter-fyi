@@ -281,13 +281,13 @@ describe("showing a ride on the map", () => {
     await panel.refresh();
 
     const meta = rows()[0].querySelector<HTMLElement>(".track-row__meta")!;
-    // "10 min · 2 points" — a distance would read "0.8 mi".
+    // "10 min · 2 waypoints" — a distance would read "0.8 mi".
     expect(meta.textContent).not.toMatch(/[\d.]+ mi\b/);
     rows()[0].querySelector<HTMLButtonElement>(".track-row__head")!.click();
     await vi.waitFor(() => expect(meta.textContent).toMatch(/[\d.]+ mi\b/));
   });
 
-  it("says so when a ride recorded no points", async () => {
+  it("says so when a ride recorded no waypoints", async () => {
     const store = await fakeStore([ride({ waypointCount: 0, batchCount: 0 })]);
     const route = fakeRoute();
     const panel = mount({ getTrackStore: async () => store, route });
@@ -295,7 +295,7 @@ describe("showing a ride on the map", () => {
 
     rows()[0].querySelector<HTMLButtonElement>(".track-row__head")!.click();
     await vi.waitFor(() =>
-      expect(rows()[0].textContent).toContain("No points were recorded"),
+      expect(rows()[0].textContent).toContain("No waypoints were recorded"),
     );
   });
 
