@@ -18,3 +18,16 @@ export const ALL_MODELS: readonly ModelKey[] = [
   "apollo",
   "trike",
 ];
+
+/** Rider-facing marketing name for each key. This is the copy side of the
+ *  key/copy split the module header describes: the WIRE key for the
+ *  three-wheeler stays "trike", but every surface that shows a rider a
+ *  model name must say "Rover" — capitalizing the raw key was how Rovers
+ *  leaked out as "Trike" (and, via a raw-`vehicle_model_name` lookup, as
+ *  "Veo Unknown") after the marketing rename. */
+export const MODEL_NAMES: Record<ModelKey, string> = {
+  astro: "Astro",
+  cosmo: "Cosmo",
+  apollo: "Apollo",
+  trike: "Rover",
+};

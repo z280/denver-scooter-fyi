@@ -377,6 +377,23 @@ describe("Screen 2 — selection and session sync", () => {
     expect(document.body.textContent).not.toContain("My own Device");
   });
 
+  it('shows a Rover candidate as "Rover", never "Trike" or unknown', () => {
+    const near = feature("near", V1, ORIGIN, { vehicle_model_name: "Rover" });
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const titles = [...document.querySelectorAll(".ride-option__title strong")].map(
+      (n) => n.textContent,
+    );
+    expect(titles).toContain("Rover");
+    expect(titles).not.toContain("Trike");
+    // The internal key is still the wire-format "trike".
+    expect(session.current()?.device).toBeNull(); // 0 m away but plates not primed ≠ no preselect
+  });
+
   it("auto-preselects the nearest candidate and stores it as the session device", () => {
     const near = feature("near", V1, metersNorth(5));
     const devices = fakeDevices([near]);

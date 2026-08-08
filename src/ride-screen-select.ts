@@ -49,6 +49,7 @@ import {
 import { distanceMeters, type Locate, type LngLat } from "./locate.ts";
 import type { Devices, ModelKey } from "./devices.ts";
 import { modelKeyOf } from "./devices.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import { GbfsPlates } from "./gbfs.ts";
 import {
   VEHICLE_IDENTIFIER_RE,
@@ -233,7 +234,9 @@ export type Selection =
   | null;
 
 function titleFor(c: Candidate): string {
-  const name = c.model ? c.model[0].toUpperCase() + c.model.slice(1) : "the scooter";
+  // MODEL_NAMES, never a capitalized key: the "trike" key's rider-facing
+  // name is "Rover" (model-catalog.ts).
+  const name = c.model ? MODEL_NAMES[c.model] : "the scooter";
   return c.plate ? `${name} (plate ${c.plate})` : name;
 }
 
@@ -646,7 +649,7 @@ function buildSelectScreen(
         title.append(glyph);
       }
       title.append(
-        el("strong", undefined, c.model ? c.model[0].toUpperCase() + c.model.slice(1) : "Scooter"),
+        el("strong", undefined, c.model ? MODEL_NAMES[c.model] : "Scooter"),
       );
       if (c.plate) title.append(el("span", "ride-option__desc", `Plate ${c.plate}`));
       const meta = el(
