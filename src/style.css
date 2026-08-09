@@ -17,9 +17,9 @@
   --fg-muted: #5b6675;
   --border: #dfe3ea;
   /* accent */
-  --accent: #0072b2;
+  --accent: #0066ff;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(0, 114, 178, 0.08);
+  --accent-soft: rgba(0, 102, 255, 0.08);
   --hover-neutral: rgba(0, 0, 0, 0.04);
   /* status (--pass/--pending darkened from #1b8a3f/#b06a00 so white text
      passes WCAG AA 4.5:1 on the pills) */
@@ -66,7 +66,7 @@
 }
 
 /* Dark palette: GitHub-dark-adjacent charcoals to match the Protomaps dark
-   basemap flavor. Accent lightens to #58a6ff — #0072b2 fails AA as link
+   basemap flavor. Accent lightens to #58a6ff — #0066ff fails AA as link
    text on the dark panel — with a dark ink for text on accent fills. */
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -3323,9 +3323,9 @@ body.is-map-picking .drawer--right {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #0072b2;
+  background: #0066ff;
   border: 3px solid #fff;
-  box-shadow: 0 0 0 3px rgba(0, 114, 178, 0.35), 0 1px 4px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.35), 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 /* While a ride is active the app chrome gets out of the way so the frame +
@@ -6003,6 +6003,130 @@ input[data-ride-keypad="on"] {
   letter-spacing: 0.08em;
 }
 .device-features__status-line {
+  margin: 10px 0 0;
+  min-height: 1em;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+/* The "or scan" alternative under the plate field, and the scanned-state
+   chip it turns into. Secondary styling on purpose: the typed plate stays
+   the primary path in the popup flow, and two competing primary buttons
+   above Send would make the modal read as two forms. */
+.device-features__qr-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.device-features__qr-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.device-features__qr-done {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+.device-features__qr-rescan {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 4px;
+}
+
+/* ---------- qr-scan.ts: the camera scanner ---------- */
+.qr-scan {
+  position: fixed;
+  inset: 0;
+  /* Above .device-features (72): the scanner is launched from inside that
+     modal and has to land on top of it. */
+  z-index: 74;
+  background: rgba(13, 27, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.qr-scan__card {
+  width: min(380px, 94vw);
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.qr-scan__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.qr-scan__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.qr-scan__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.qr-scan__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.qr-scan__prompt {
+  margin: 6px 0 10px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.qr-scan__viewport {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  /* Fixed dark ground either way: before the stream starts, and as the
+     letterbox around a camera whose aspect doesn't match. */
+  background: #0d1117;
+  aspect-ratio: 1 / 1;
+}
+.qr-scan__video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.qr-scan__reticle {
+  position: absolute;
+  inset: 18%;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 12px;
+  pointer-events: none;
+  box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0.25);
+}
+.qr-scan__status {
   margin: 10px 0 0;
   min-height: 1em;
   font-size: 12px;

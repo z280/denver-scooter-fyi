@@ -62,7 +62,7 @@ export function createHomeWorkPins(map: MLMap): HomeWorkPinsHandle {
           "circle-color": "#ffffff",
           "circle-opacity": 0.9,
           "circle-stroke-width": 2,
-          "circle-stroke-color": "#0072b2",
+          "circle-stroke-color": "#0066ff",
         },
       },
       before,
@@ -72,7 +72,7 @@ export function createHomeWorkPins(map: MLMap): HomeWorkPinsHandle {
         id: DOT_LAYER,
         type: "circle",
         source: SRC,
-        paint: { "circle-radius": 3.5, "circle-color": "#0072b2" },
+        paint: { "circle-radius": 3.5, "circle-color": "#0066ff" },
       },
       before,
     );
@@ -89,7 +89,7 @@ export function createHomeWorkPins(map: MLMap): HomeWorkPinsHandle {
           "text-allow-overlap": false,
         },
         paint: {
-          "text-color": "#0072b2",
+          "text-color": "#0066ff",
           "text-halo-color": "#ffffff",
           "text-halo-width": 1.5,
         },

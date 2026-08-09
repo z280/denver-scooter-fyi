@@ -44,6 +44,7 @@ import {
 import { FilterChips, type Chip } from "./filter-chips.ts";
 import {
   FEATURE_FILTER_KEYS,
+  openConfirmFeatures,
   type FeatureFilterKey,
 } from "./device-features.ts";
 import { Locate } from "./locate.ts";
@@ -280,6 +281,17 @@ const clusters = new Clusters(
   need<HTMLSelectElement>("cluster-region-layer"),
   overlays,
 );
+// Tools drawer: confirm features for a scooter identified by its QR code
+// alone — no map tap, no vehicle preselected. The scan is mandatory (it is
+// the only statement of WHICH scooter), so the modal opens in requireQr
+// mode; status is unknowable until the server resolves the scan, and the
+// modal hides its status badge when no vehicle is passed.
+need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
+  openConfirmFeatures({
+    requireQr: true,
+    status: "needs_features_confirmed",
+  });
+});
 // Mode switches sweep every open floating surface (closeAllPopups).
 registerPopupCloser(() => devices.closePopup());
 registerPopupCloser(() => clusters.closePopup());
