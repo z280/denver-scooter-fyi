@@ -1,7 +1,8 @@
-// Admin Tools → analytics charts, over the telemetry_daily rollups.
+// Tools → analytics charts.
 //
-// Two modal "reports", both admin-only (the Tools drawer hides the section
-// for everyone else, and the endpoints are require_admin regardless):
+// Three modal "reports". The first two are admin-only (the Tools drawer
+// hides the section for everyone else, and the endpoints are require_admin
+// regardless); the third is public:
 //
 //   traffic  — the site pulse: unique visitors & sessions as two lines,
 //              with total events as ITS OWN chart below. Events run one to
@@ -12,6 +13,13 @@
 //   events   — one event name's per-day count, with an optional SECOND
 //              event overlaid for comparison (same day range, same axis —
 //              both series are "events per day", so one scale is honest).
+//   devices  — PUBLIC: the fleet by hour over up to 14 days. Chart one is
+//              total/available/reserved/out-of-service; chart two is the
+//              available count per model (top models, the rest folded into
+//              "Other"). Hours whose breakdown predates the snapshot table
+//              come back null from the API — a null BREAKS the line
+//              (see linePath) and prints "–" in the table; plotting zero
+//              would chart a fleet collapse that never happened.
 //
 // Chart discipline (the dataviz method, applied):
 //   * line charts for change-over-time; 2px lines; one y-axis per chart;
@@ -34,6 +42,8 @@
 import {
   fetchAnalyticsDaily as defaultFetchDaily,
   fetchAnalyticsEventDaily as defaultFetchEventDaily,
+  fetchDeviceHistoryHourly as defaultFetchDeviceHistory,
+  type DeviceHistoryHour,
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 import { TELEMETRY_EVENTS } from "./telemetry.ts";
@@ -43,28 +53,50 @@ import { TELEMETRY_EVENTS } from "./telemetry.ts";
 // against this app's real chart surfaces (--bg-elev: #ffffff / #1c2230).
 // ---------------------------------------------------------------------------
 
-export const SERIES_COLORS_LIGHT = ["#0066FF", "#B45309"] as const;
-export const SERIES_COLORS_DARK = ["#4C8DFF", "#D97706"] as const;
+export const SERIES_COLORS_LIGHT = [
+  "#0066FF",
+  "#B45309",
+  "#0D8A66",
+  "#7C3AED",
+  "#DB2777",
+] as const;
+export const SERIES_COLORS_DARK = [
+  "#4C8DFF",
+  "#D97706",
+  "#1FA184",
+  "#9B7BF0",
+  "#D9548F",
+] as const;
 
-export function seriesColors(): readonly [string, string] {
+export function seriesColors(): readonly string[] {
   const dark =
     typeof document !== "undefined" &&
     document.documentElement.dataset.theme === "dark";
-  return dark
-    ? [SERIES_COLORS_DARK[0], SERIES_COLORS_DARK[1]]
-    : [SERIES_COLORS_LIGHT[0], SERIES_COLORS_LIGHT[1]];
+  return dark ? SERIES_COLORS_DARK : SERIES_COLORS_LIGHT;
 }
 
 export const DAY_RANGES = [7, 30, 90, 365] as const;
+
+/** The devices report ranges — the snapshot table keeps 30 days, the API
+ *  serves at most 14. */
+export const DEVICE_DAY_RANGES = [1, 3, 7, 14] as const;
+
+/** Most model series a chart carries; beyond this the remainder folds into
+ *  one "Other" series — five validated colors is the palette's honest
+ *  ceiling, and a 12-line chart is unreadable anyway. */
+export const MAX_MODEL_SERIES = 5;
 
 // ---------------------------------------------------------------------------
 // Pure data shaping (exported for unit tests)
 // ---------------------------------------------------------------------------
 
 export interface DayPoint {
-  /** ISO date, e.g. "2026-08-10". */
+  /** ISO date ("2026-08-10") or, for the hourly devices report, an ISO
+   *  timestamp ("2026-08-10T14:00:00+00:00"). */
   day: string;
-  value: number;
+  /** Null = "unknown for this point" (a backfilled fleet-history hour) —
+   *  it breaks the line and prints "–", never a fake zero. */
+  value: number | null;
 }
 
 export interface ChartSeries {
@@ -136,28 +168,48 @@ export function niceMax(rawMax: number): number {
   return 10 * mag;
 }
 
-/** SVG polyline path for a series inside a w×h plot box, y-scaled to
- *  `yMax`, x spread evenly across the points. A single point draws a short
- *  flat dash rather than nothing. */
+/** SVG path for a series inside a w×h plot box, y-scaled to `yMax`, x
+ *  spread evenly across the points. Null values BREAK the line into
+ *  separate segments (an unknown is not a zero); a segment of one point —
+ *  including a single-point series — draws a short flat dash rather than
+ *  nothing. */
 export function linePath(
   points: readonly DayPoint[],
   w: number,
   h: number,
   yMax: number,
 ): string {
-  if (points.length === 0) return "";
-  const x = (i: number): number =>
-    points.length === 1 ? w / 2 : (i / (points.length - 1)) * w;
+  const n = points.length;
+  if (n === 0) return "";
+  const x = (i: number): number => (n === 1 ? w / 2 : (i / (n - 1)) * w);
   const y = (v: number): number => h - (Math.min(v, yMax) / yMax) * h;
-  if (points.length === 1) {
-    const cy = y(points[0].value);
-    return `M ${(w / 2 - 4).toFixed(1)},${cy.toFixed(1)} L ${(w / 2 + 4).toFixed(1)},${cy.toFixed(1)}`;
+  const parts: string[] = [];
+  let run: number[] = [];
+  const flush = (): void => {
+    if (run.length === 1) {
+      const i = run[0];
+      const cy = y(points[i].value as number).toFixed(1);
+      parts.push(
+        `M ${(x(i) - 4).toFixed(1)},${cy} L ${(x(i) + 4).toFixed(1)},${cy}`,
+      );
+    } else if (run.length > 1) {
+      parts.push(
+        run
+          .map(
+            (i, k) =>
+              `${k === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(points[i].value as number).toFixed(1)}`,
+          )
+          .join(" "),
+      );
+    }
+    run = [];
+  };
+  for (let i = 0; i < n; i += 1) {
+    if (points[i].value === null) flush();
+    else run.push(i);
   }
-  return points
-    .map(
-      (p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(p.value).toFixed(1)}`,
-    )
-    .join(" ");
+  flush();
+  return parts.join(" ");
 }
 
 /** "Aug 10" — compact x-tick labels in the rider's own locale. */
@@ -171,16 +223,82 @@ export function shortDay(iso: string): string {
   });
 }
 
+/** Label for any point key: hourly keys (they contain a "T") render as
+ *  "Aug 10, 2:00 PM" in the rider's own timezone — a fleet sample is a
+ *  moment in time, unlike the rollups' calendar days. */
+export function pointLabel(iso: string): string {
+  if (!iso.includes("T")) return shortDay(iso);
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Series points from the hourly fleet rows, one per hour from the first
+ *  row to the last, stepping by exactly one hour. Hours the API skipped
+ *  entirely (an outage with no core total either) become null points, so
+ *  the line breaks instead of gliding across the gap. Falls back to a
+ *  direct row-per-point mapping if any key won't parse or the span is
+ *  implausibly wide (bad clock data must not allocate a year of points). */
+export function fillHourGaps(
+  rows: readonly DeviceHistoryHour[],
+  get: (row: DeviceHistoryHour) => number | null,
+): DayPoint[] {
+  const HOUR_MS = 3_600_000;
+  const byMs = new Map<number, DeviceHistoryHour>();
+  for (const r of rows) {
+    const ms = Date.parse(r.hour);
+    if (Number.isNaN(ms)) return rows.map((x) => ({ day: x.hour, value: get(x) }));
+    byMs.set(ms, r);
+  }
+  if (byMs.size === 0) return [];
+  const all = [...byMs.keys()].sort((a, b) => a - b);
+  const [first, last] = [all[0], all[all.length - 1]];
+  if ((last - first) / HOUR_MS > 24 * 31) {
+    return rows.map((x) => ({ day: x.hour, value: get(x) }));
+  }
+  const points: DayPoint[] = [];
+  for (let ms = first; ms <= last; ms += HOUR_MS) {
+    const row = byMs.get(ms);
+    points.push(
+      row
+        ? { day: row.hour, value: get(row) }
+        : { day: new Date(ms).toISOString(), value: null },
+    );
+  }
+  return points;
+}
+
+/** Model names ranked by their summed available count over the window —
+ *  the order the "Available by model" chart assigns its colors in. */
+export function rankModels(rows: readonly DeviceHistoryHour[]): string[] {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    for (const [model, count] of Object.entries(r.models_available ?? {})) {
+      totals.set(model, (totals.get(model) ?? 0) + count);
+    }
+  }
+  return [...totals.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([model]) => model);
+}
+
 // ---------------------------------------------------------------------------
 // The modal
 // ---------------------------------------------------------------------------
 
-export type AdminReportKind = "traffic" | "events";
+export type AdminReportKind = "traffic" | "events" | "devices";
 
 export interface AdminAnalyticsDeps {
-  /** Injected for tests; default to the real authed fetchers. */
+  /** Injected for tests; default to the real fetchers ("devices" is the
+   *  one public report — its fetcher is unauthenticated). */
   fetchDaily?: typeof defaultFetchDaily;
   fetchEventDaily?: typeof defaultFetchEventDaily;
+  fetchDeviceHistory?: typeof defaultFetchDeviceHistory;
   onClose?(): void;
 }
 
@@ -222,6 +340,8 @@ export function openAdminAnalytics(
 
   const fetchDaily = deps.fetchDaily ?? defaultFetchDaily;
   const fetchEventDaily = deps.fetchEventDaily ?? defaultFetchEventDaily;
+  const fetchDeviceHistory =
+    deps.fetchDeviceHistory ?? defaultFetchDeviceHistory;
 
   const cleanupFns: (() => void)[] = [];
   let closed = false;
@@ -233,7 +353,7 @@ export function openAdminAnalytics(
   let status: string | null = "Loading…";
 
   // ---- controls state
-  let days: number = 30;
+  let days: number = kind === "devices" ? 14 : 30;
   let eventName: string = "page_load";
   let compareName: string = "";
 
@@ -247,7 +367,11 @@ export function openAdminAnalytics(
   const title = el(
     "h3",
     undefined,
-    kind === "traffic" ? "📈 Traffic overview" : "📊 Events by day",
+    kind === "traffic"
+      ? "📈 Traffic overview"
+      : kind === "events"
+        ? "📊 Events by day"
+        : "🛴 Devices over time",
   );
   title.id = "admin-analytics-title";
   const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
@@ -278,10 +402,12 @@ export function openAdminAnalytics(
     return wrap;
   }
 
-  const dayOptions = DAY_RANGES.map((d) => ({
-    value: String(d),
-    label: d === 7 ? "7 days" : d === 365 ? "1 year" : `${d} days`,
-  }));
+  const dayOptions = (kind === "devices" ? DEVICE_DAY_RANGES : DAY_RANGES).map(
+    (d) => ({
+      value: String(d),
+      label: d === 1 ? "24 hours" : d === 365 ? "1 year" : `${d} days`,
+    }),
+  );
   const eventOptions = TELEMETRY_EVENTS.map((e) => ({ value: e, label: e }));
 
   if (kind === "events") {
@@ -351,9 +477,77 @@ export function openAdminAnalytics(
     status = "Loading…";
     charts = [];
     render();
-    const [colorA, colorB] = seriesColors();
+    const palette = seriesColors();
+    const [colorA, colorB] = palette;
     try {
-      if (kind === "traffic") {
+      if (kind === "devices") {
+        const resp = await fetchDeviceHistory(days);
+        if (closed || seq !== requestSeq) return;
+        if (resp.hours.length === 0) {
+          status = "No fleet history in this range yet.";
+          render();
+          return;
+        }
+        // Semantic colors from the validated palette: total wears the
+        // brand blue, available the green, reserved the amber "paused",
+        // out-of-service the red-leaning pink.
+        const statusSeries: ChartSeries[] = [
+          {
+            label: "Total",
+            color: palette[0],
+            points: fillHourGaps(resp.hours, (h) => h.total),
+          },
+          {
+            label: "Available",
+            color: palette[2],
+            points: fillHourGaps(resp.hours, (h) => h.available),
+          },
+          {
+            label: "Reserved",
+            color: palette[1],
+            points: fillHourGaps(resp.hours, (h) => h.reserved),
+          },
+          {
+            label: "Out of service",
+            color: palette[4],
+            points: fillHourGaps(resp.hours, (h) => h.out_of_service),
+          },
+        ];
+        const ranked = rankModels(resp.hours);
+        const top =
+          ranked.length > MAX_MODEL_SERIES
+            ? ranked.slice(0, MAX_MODEL_SERIES - 1)
+            : ranked;
+        const folded = ranked.slice(top.length);
+        const modelSeries: ChartSeries[] = top.map((model, i) => ({
+          label: model,
+          color: palette[i % palette.length],
+          points: fillHourGaps(resp.hours, (h) =>
+            h.models_available === null
+              ? null
+              : (h.models_available[model] ?? 0),
+          ),
+        }));
+        if (folded.length > 0) {
+          modelSeries.push({
+            label: `Other (${folded.length} models)`,
+            color: palette[MAX_MODEL_SERIES - 1],
+            points: fillHourGaps(resp.hours, (h) =>
+              h.models_available === null
+                ? null
+                : folded.reduce(
+                    (sum, m) => sum + (h.models_available?.[m] ?? 0),
+                    0,
+                  ),
+            ),
+          });
+        }
+        charts = [{ title: "Fleet by status", series: statusSeries }];
+        if (modelSeries.length > 0) {
+          charts.push({ title: "Available by model", series: modelSeries });
+        }
+        status = null;
+      } else if (kind === "traffic") {
         const resp = await fetchDaily(days);
         if (closed || seq !== requestSeq) return;
         const extent = dayExtent([resp.daily]);
@@ -445,7 +639,9 @@ export function openAdminAnalytics(
     } catch {
       if (closed || seq !== requestSeq) return;
       status =
-        "Couldn't load analytics — your session may have expired, or the rollup hasn't run yet today.";
+        kind === "devices"
+          ? "Couldn't load fleet history — the API may be briefly unavailable. Try again in a minute."
+          : "Couldn't load analytics — your session may have expired, or the rollup hasn't run yet today.";
       charts = [];
     }
     render();
@@ -471,7 +667,11 @@ export function openAdminAnalytics(
     const yMax = niceMax(
       Math.max(
         0,
-        ...chart.series.flatMap((s) => s.points.map((p) => p.value)),
+        ...chart.series.flatMap((s) =>
+          s.points
+            .map((p) => p.value)
+            .filter((v): v is number => v !== null),
+        ),
       ),
     );
 
@@ -518,7 +718,7 @@ export function openAdminAnalytics(
           "text-anchor": "middle",
           class: `${ROOT_CLASS}__tick`,
         });
-        tick.textContent = shortDay(first[i].day);
+        tick.textContent = pointLabel(first[i].day);
         plot.append(tick);
       }
     }
@@ -584,9 +784,14 @@ export function openAdminAnalytics(
       crosshair.setAttribute("visibility", "visible");
       tooltip.hidden = false;
       tooltip.replaceChildren(
-        el("strong", undefined, shortDay(first[idx].day)),
+        el("strong", undefined, pointLabel(first[idx].day)),
         ...chart.series.map((s, si) => {
-          const v = s.points[idx]?.value ?? 0;
+          const v = s.points[idx]?.value ?? null;
+          if (v === null) {
+            // An unknown point gets no dot and an honest label.
+            dots[si].setAttribute("visibility", "hidden");
+            return el("div", undefined, `${s.label}: no data`);
+          }
           const yMaxSafe = yMax || 1;
           dots[si].setAttribute("cx", x.toFixed(1));
           dots[si].setAttribute(
@@ -634,7 +839,7 @@ export function openAdminAnalytics(
     const table = el("table", `${ROOT_CLASS}__table`);
     const thead = el("thead");
     const hrow = el("tr");
-    hrow.append(el("th", undefined, "Day"));
+    hrow.append(el("th", undefined, kind === "devices" ? "Hour" : "Day"));
     for (const s of chart.series) hrow.append(el("th", undefined, s.label));
     thead.append(hrow);
     const tbody = el("tbody");
@@ -642,11 +847,13 @@ export function openAdminAnalytics(
     // Newest first — the row an analyst wants is almost always today's.
     for (let i = daysList.length - 1; i >= 0; i -= 1) {
       const row = el("tr");
-      row.append(el("td", undefined, daysList[i].day));
+      // Daily rows keep the raw ISO date (copyable, sortable); hourly keys
+      // are unreadable raw, so they wear the local-time label.
+      const key = daysList[i].day;
+      row.append(el("td", undefined, key.includes("T") ? pointLabel(key) : key));
       for (const s of chart.series) {
-        row.append(
-          el("td", undefined, (s.points[i]?.value ?? 0).toLocaleString()),
-        );
+        const v = s.points[i]?.value ?? null;
+        row.append(el("td", undefined, v === null ? "–" : v.toLocaleString()));
       }
       tbody.append(row);
     }

@@ -306,6 +306,11 @@ need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () =>
     .querySelector<HTMLButtonElement>('.drawer-tab[data-drawer="compliance"]')
     ?.click();
 });
+// Public, unlike the admin reports below — the hourly fleet history is the
+// same aggregate count the map footer already shows, just over time.
+need<HTMLButtonElement>("tools-devices-history").addEventListener("click", () => {
+  openAdminAnalytics("devices");
+});
 need<HTMLButtonElement>("tools-admin-traffic").addEventListener("click", () => {
   openAdminAnalytics("traffic");
 });

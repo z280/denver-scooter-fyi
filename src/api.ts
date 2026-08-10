@@ -1261,6 +1261,32 @@ export function fetchAnalyticsEventDaily(
   );
 }
 
+// --- Fleet history (Tools → Devices over time) -----------------------------
+
+/** One hourly fleet sample from `GET /devices/history/hourly` — the LAST
+ *  observation cycle in that hour, Denver-core scope. The status/model
+ *  breakdowns are null for hours predating the snapshot table (or an
+ *  ingest outage): the total still comes from the core metrics, and null
+ *  means "unknown", never zero. */
+export interface DeviceHistoryHour {
+  /** ISO timestamp truncated to the hour, e.g. "2026-08-10T14:00:00+00:00". */
+  hour: string;
+  total: number;
+  available: number | null;
+  reserved: number | null;
+  out_of_service: number | null;
+  models_available: Record<string, number> | null;
+}
+
+/** Public — the same aggregate fleet count the map footer already shows,
+ *  just over time. `days` is clamped server-side to 1..14. */
+export function fetchDeviceHistoryHourly(
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ days: number; hours: DeviceHistoryHour[] }> {
+  return getJSON(`/api/v1/devices/history/hourly?days=${days}`, signal);
+}
+
 // --- Chosen route persistence (Screen 4) ----------------------------------
 
 /** `[lat, lon]` — the order `POST /ride-routes` expects, and the reverse of
