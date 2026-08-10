@@ -31,6 +31,7 @@ import {
 } from "./ride-session.ts";
 import {
   FALLBACK_PROFILE_INFO,
+  FALLBACK_PROFILES,
   PROFILE_COLORS,
   buildPreviewFeatureCollection,
   clearNavigationForRide,
@@ -479,7 +480,7 @@ describe("Screen 4 — total failure (graceful degrade)", () => {
 
     // Every fallback profile got a real /route call — never hardcoded past
     // a working /route/profiles response, but never a dead end either.
-    expect(fetchRoute).toHaveBeenCalledTimes(4);
+    expect(fetchRoute).toHaveBeenCalledTimes(FALLBACK_PROFILES.length);
     expect(rideModalRoot()?.querySelectorAll(".ride-route-option").length).toBeGreaterThan(0);
   });
 });
@@ -606,6 +607,15 @@ describe("Screen 4 — the per-profile \u2139 explainer", () => {
   it("profileInfoText falls back honestly for an unknown profile", () => {
     expect(profileInfoText("hoverboard")).toBe(FALLBACK_PROFILE_INFO);
     expect(profileInfoText("safe")).toContain("High Injury Network");
+  });
+
+  it("Night Owl explains dark-hours street preference, in its own color", () => {
+    // The live deployment's fifth profile (config.json key "night") — the
+    // generic fallback line here was a field-reported bug.
+    expect(profileInfoText("night")).toContain("after dark");
+    expect(profileInfoText("night")).toContain("streets");
+    expect(colorForProfile("night")).toBe(PROFILE_COLORS.night);
+    expect(PROFILE_COLORS.night).not.toBe(colorForProfile("hoverboard"));
   });
 });
 

@@ -142,6 +142,7 @@ export const PROFILE_COLORS: Record<string, string> = {
   safe: "#0072B2",
   range: "#009E73",
   shade: "#CC79A7",
+  night: "#56B4E9",
   express: "#E69F00",
 };
 export const FALLBACK_PROFILE_COLOR = "#8a8f98";
@@ -159,6 +160,7 @@ export const FALLBACK_PROFILES: RouteProfile[] = [
   { key: "safe", label: "Safe & Protected", shade_ranked: false },
   { key: "range", label: "The Range Maximizer", shade_ranked: false },
   { key: "shade", label: "The Shaded Canopy", shade_ranked: true },
+  { key: "night", label: "Night Owl", shade_ranked: false },
   { key: "express", label: "Commuter Express", shade_ranked: false },
 ];
 
@@ -175,6 +177,8 @@ export const PROFILE_INFO: Record<string, string> = {
     "Avoids hills and stop-start climbs to stretch your battery — the route that gets there on the fewest percentage points.",
   shade:
     "Prefers tree cover and shadowed streets to keep you out of the sun as much as possible. Best on hot, bright afternoons.",
+  night:
+    "Night Owl routes are optimized for safe riding after dark, preferring streets — which are more likely to be lit and have people around — over dark, isolated trails.",
   express:
     "The most direct route — fewest detours, fastest arrival, traded against the safety, battery, and shade the other styles optimize for.",
 };
