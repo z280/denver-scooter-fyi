@@ -19,7 +19,7 @@ import {
   fillHourGaps,
   linePath,
   niceMax,
-  openAdminAnalytics,
+  openAnalyticsReport,
   pointLabel,
   rankModels,
   shortDay,
@@ -260,13 +260,13 @@ describe("rankModels + pointLabel", () => {
 // the modal
 // ---------------------------------------------------------------------------
 
-describe("openAdminAnalytics", () => {
+describe("openAnalyticsReport", () => {
   it("traffic: two charts, one axis each — visitors/sessions never share the events axis", async () => {
     const fetchDaily = vi.fn(async () => ({
       days: 30,
       daily: [dailyRow("2026-08-01", 400), dailyRow("2026-08-02", 300)],
     }));
-    openAdminAnalytics("traffic", { fetchDaily });
+    openAnalyticsReport("traffic", { fetchDaily });
     await flush();
     const charts = document.querySelectorAll(".admin-analytics__chart");
     expect(charts.length).toBe(2);
@@ -284,7 +284,7 @@ describe("openAdminAnalytics", () => {
       days: 30,
       daily: [eventRow("2026-08-01", name === "page_load" ? 9 : 4)],
     }));
-    openAdminAnalytics("events", { fetchEventDaily });
+    openAnalyticsReport("events", { fetchEventDaily });
     await flush();
     // Pick a compare event through the control's normal path.
     const selects = document.querySelectorAll<HTMLSelectElement>(
@@ -315,7 +315,7 @@ describe("openAdminAnalytics", () => {
       days: 30,
       daily: [eventRow("2026-08-01", 5)],
     }));
-    openAdminAnalytics("events", { fetchEventDaily });
+    openAnalyticsReport("events", { fetchEventDaily });
     await flush();
     const path = document.querySelector('.admin-analytics__svg path[stroke]');
     expect(path?.getAttribute("stroke")).toBe(SERIES_COLORS_DARK[0]);
@@ -326,7 +326,7 @@ describe("openAdminAnalytics", () => {
       days: 30,
       daily: [dailyRow("2026-08-01", 100), dailyRow("2026-08-02", 200)],
     }));
-    openAdminAnalytics("traffic", { fetchDaily });
+    openAnalyticsReport("traffic", { fetchDaily });
     await flush();
     document
       .querySelector<HTMLButtonElement>(".admin-analytics__table-toggle")!
@@ -356,7 +356,7 @@ describe("openAdminAnalytics", () => {
         days: 7,
         daily: [eventRow("2026-08-02", 42)],
       }));
-    openAdminAnalytics("events", { fetchEventDaily });
+    openAnalyticsReport("events", { fetchEventDaily });
     // Change the range while the first request is still in flight…
     const selects = document.querySelectorAll<HTMLSelectElement>(
       ".admin-analytics__control select",
@@ -379,7 +379,7 @@ describe("openAdminAnalytics", () => {
     const fetchDaily = vi.fn(async () => {
       throw new Error("401");
     });
-    openAdminAnalytics("traffic", { fetchDaily });
+    openAnalyticsReport("traffic", { fetchDaily });
     await flush();
     expect(document.body.textContent).toContain("Couldn't load analytics");
     document
@@ -399,7 +399,7 @@ describe("openAdminAnalytics", () => {
         }),
       ],
     }));
-    openAdminAnalytics("devices", { fetchDeviceHistory });
+    openAnalyticsReport("devices", { fetchDeviceHistory });
     await flush();
     expect(fetchDeviceHistory).toHaveBeenCalledWith(14);
     const charts = document.querySelectorAll(".admin-analytics__chart");
@@ -445,7 +445,7 @@ describe("openAdminAnalytics", () => {
         }),
       ],
     }));
-    openAdminAnalytics("devices", { fetchDeviceHistory });
+    openAnalyticsReport("devices", { fetchDeviceHistory });
     await flush();
     const model = document.querySelector<HTMLSelectElement>(
       ".admin-analytics__control select",
@@ -469,8 +469,8 @@ describe("openAdminAnalytics", () => {
 
   it("opens at most one at a time", async () => {
     const fetchDaily = vi.fn(async () => ({ days: 30, daily: [] }));
-    openAdminAnalytics("traffic", { fetchDaily });
-    openAdminAnalytics("traffic", { fetchDaily });
+    openAnalyticsReport("traffic", { fetchDaily });
+    openAnalyticsReport("traffic", { fetchDaily });
     expect(document.querySelectorAll(".admin-analytics").length).toBe(1);
   });
 });

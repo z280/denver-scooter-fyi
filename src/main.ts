@@ -98,7 +98,7 @@ import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
 import { createRoutePreview } from "./route-preview.ts";
-import { openAdminAnalytics } from "./admin-analytics.ts";
+import { openAnalyticsReport } from "./admin-analytics.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -302,20 +302,24 @@ need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
 // programmatic click — which also closes the Tools drawer, exactly like a
 // visible tab switch would.
 need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () => {
-  document
-    .querySelector<HTMLButtonElement>('.drawer-tab[data-drawer="compliance"]')
-    ?.click();
+  // Hard-fail like need(): this button is the ONLY visible way into the
+  // compliance drawer now, so a silently-missing tab would strand it.
+  const tab = document.querySelector<HTMLButtonElement>(
+    '.drawer-tab[data-drawer="compliance"]',
+  );
+  if (!tab) throw new Error("compliance drawer tab missing from the ribbon");
+  tab.click();
 });
 // Public, unlike the admin reports below — the hourly fleet history is the
 // same aggregate count the map footer already shows, just over time.
 need<HTMLButtonElement>("tools-devices-history").addEventListener("click", () => {
-  openAdminAnalytics("devices");
+  openAnalyticsReport("devices");
 });
 need<HTMLButtonElement>("tools-admin-traffic").addEventListener("click", () => {
-  openAdminAnalytics("traffic");
+  openAnalyticsReport("traffic");
 });
 need<HTMLButtonElement>("tools-admin-events").addEventListener("click", () => {
-  openAdminAnalytics("events");
+  openAnalyticsReport("events");
 });
 // Mode switches sweep every open floating surface (closeAllPopups).
 registerPopupCloser(() => devices.closePopup());

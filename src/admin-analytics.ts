@@ -294,9 +294,12 @@ export function rankModels(rows: readonly DeviceHistoryHour[]): string[] {
 // The modal
 // ---------------------------------------------------------------------------
 
-export type AdminReportKind = "traffic" | "events" | "devices";
+// Named "analytics report", not "admin" — the devices report is public.
+// (The module filename and the .admin-analytics CSS block predate it and
+// stay put; renaming them would churn every style rule for a label.)
+export type AnalyticsReportKind = "traffic" | "events" | "devices";
 
-export interface AdminAnalyticsDeps {
+export interface AnalyticsReportDeps {
   /** Injected for tests; default to the real fetchers ("devices" is the
    *  one public report — its fetcher is unauthenticated). */
   fetchDaily?: typeof defaultFetchDaily;
@@ -332,11 +335,12 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
   return node;
 }
 
-/** Open one of the two admin reports. Returns a close function; at most
- *  one analytics modal is open at a time. */
-export function openAdminAnalytics(
-  kind: AdminReportKind,
-  deps: AdminAnalyticsDeps = {},
+/** Open one of the analytics reports (traffic/events are admin-only,
+ *  devices is public). Returns a close function; at most one analytics
+ *  modal is open at a time. */
+export function openAnalyticsReport(
+  kind: AnalyticsReportKind,
+  deps: AnalyticsReportDeps = {},
 ): () => void {
   activeClose?.();
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
@@ -372,15 +376,18 @@ export function openAdminAnalytics(
   card.setAttribute("aria-labelledby", "admin-analytics-title");
 
   const head = el("div", `${ROOT_CLASS}__head`);
-  const title = el(
-    "h3",
-    undefined,
+  // The emoji is decoration — aria-hidden keeps it out of the dialog's
+  // accessible name (title is the aria-labelledby target).
+  const [titleEmoji, titleText] =
     kind === "traffic"
-      ? "📈 Traffic overview"
+      ? ["📈", "Traffic overview"]
       : kind === "events"
-        ? "📊 Events by day"
-        : "🛴 Devices over time",
-  );
+        ? ["📊", "Events by day"]
+        : ["🛴", "Devices over time"];
+  const title = el("h3");
+  const emojiSpan = el("span", undefined, `${titleEmoji} `);
+  emojiSpan.setAttribute("aria-hidden", "true");
+  title.append(emojiSpan, document.createTextNode(titleText));
   title.id = "admin-analytics-title";
   const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
   closeBtn.type = "button";
@@ -643,11 +650,14 @@ export function openAdminAnalytics(
         ];
         status = null;
       } else {
-        const primary = await fetchEventDaily(eventName, days);
-        const compare =
+        // Independent requests — fetched in parallel; the requestSeq
+        // guard below still discards the pair if a newer selection races.
+        const [primary, compare] = await Promise.all([
+          fetchEventDaily(eventName, days),
           compareName && compareName !== eventName
-            ? await fetchEventDaily(compareName, days)
-            : null;
+            ? fetchEventDaily(compareName, days)
+            : Promise.resolve(null),
+        ]);
         if (closed || seq !== requestSeq) return;
         const extent = dayExtent(
           compare ? [primary.daily, compare.daily] : [primary.daily],
@@ -852,7 +862,10 @@ export function openAdminAnalytics(
           );
         }),
       );
-      tooltip.style.left = `${Math.min(e.clientX - rect.left + 12, rect.width - 130)}px`;
+      tooltip.style.left = `${Math.max(
+        0,
+        Math.min(e.clientX - rect.left + 12, rect.width - 130),
+      )}px`;
     });
     svg.addEventListener("mouseleave", () => {
       crosshair.setAttribute("visibility", "hidden");
