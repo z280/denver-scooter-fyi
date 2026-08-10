@@ -174,7 +174,9 @@ export interface RideSessionDoc {
   screen: RideScreenId | null;
   rideId: string | null;
   /** A private ride: "My own Device" or a guest. No `tracked_rides` row, no
-   *  points, no Screen 8/9/10 — `riding → done` directly. */
+   *  points, no Screen 8/10 — `riding` ends into `survey(9)` when a route
+   *  was chosen (the nav pane's route-feedback ask; `surveyPanes`), else
+   *  straight to `done`. */
   private: boolean;
   device: RideSessionDevice | null;
   options: RideOptions;
@@ -341,7 +343,8 @@ export type RideAction =
       trackKeyId: string | null;
       options?: RideOptions;
     }
-  /** Screen 7's End Ride. Tracked → `ending(8)`; private → `done`. */
+  /** Screen 7's End Ride. Tracked → `ending(8)`; private → `survey(9)`
+   *  when a route was chosen, else `done`. */
   | { type: "endRide" }
   /** Screen 8's [New Destination] — loops to Screen 3 keeping the session. */
   | { type: "newDestination" }
@@ -618,8 +621,15 @@ export function reduceRideSession(
         ...endEffect,
       ];
       // Master Part 0 gates Screen 8 on "a Veo device was selected, i.e. not a
-      // private ride"; there is no `PATCH /end` to send and S9/S10 never apply.
+      // private ride"; there is no `PATCH /end` to send and S10 never applies.
+      // Screen 9 is the exception since the nav pane stopped requiring a
+      // tracked ride (`surveyPanes`): a private ride that chose a route gets
+      // its route-feedback ask before closing out, and one that didn't still
+      // goes straight to done.
       if (doc.private || doc.rideId === null) {
+        if (shouldShowSurvey(doc)) {
+          return accept(doc, withPhase(doc, "survey"), effects);
+        }
         return accept(doc, withPhase(doc, "done"), effects);
       }
       if (opts.legacyEndRide === true) {
