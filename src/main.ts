@@ -1566,6 +1566,12 @@ function setToggleGroup(
   key: "ride" | "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
+  // Save/restore rather than set/clear: setToggleGroup re-enters itself
+  // (a Quick Filter drives the ride-type buttons, whose click handler runs
+  // syncModelsToRideTypes → setToggleGroup for the models), and an inner
+  // call blanking the flag would unsuppress telemetry for the rest of the
+  // outer drive.
+  const wasDriving = drivingToggleGroup;
   drivingToggleGroup = true;
   try {
     for (const btn of document.querySelectorAll<HTMLButtonElement>(
@@ -1576,7 +1582,7 @@ function setToggleGroup(
       if (btn.classList.contains("is-active") !== want.has(value)) btn.click();
     }
   } finally {
-    drivingToggleGroup = false;
+    drivingToggleGroup = wasDriving;
   }
 }
 
