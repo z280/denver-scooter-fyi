@@ -97,15 +97,27 @@ function defaultGetStream(): Promise<MediaStream> {
 
 function makeDefaultDecoder(): (video: HTMLVideoElement) => Promise<string | null> {
   // Native where the platform has it; the zxing wasm chunk otherwise —
-  // resolved once, and a failed load resolves to null so every later
-  // frame drops straight to jsQR instead of re-fetching a chunk that
-  // isn't coming.
-  const Native = window.BarcodeDetector;
-  const detectorPromise: Promise<QrDetector | null> = Native
-    ? Promise.resolve(new Native({ formats: ["qr_code"] }))
-    : import("./qr-zxing.ts")
-        .then((m) => m.createZxingDetector())
-        .catch(() => null);
+  // resolved once, and any failure resolves to null so every later frame
+  // drops straight to jsQR instead of re-fetching a chunk that isn't
+  // coming. The native constructor runs inside the async body on purpose:
+  // a buggy or partial BarcodeDetector implementation can throw
+  // SYNCHRONOUSLY, and thrown-at-construction must degrade to the wasm
+  // decoder like every other failure, not escape makeDefaultDecoder.
+  const detectorPromise: Promise<QrDetector | null> = (async () => {
+    const Native = window.BarcodeDetector;
+    if (Native) {
+      try {
+        return new Native({ formats: ["qr_code"] });
+      } catch {
+        /* fall through to the wasm decoder */
+      }
+    }
+    try {
+      return (await import("./qr-zxing.ts")).createZxingDetector();
+    } catch {
+      return null;
+    }
+  })();
 
   // Every decoder reads the same reused canvas: the CENTER SQUARE of the
   // frame — which is what the square viewfinder actually shows under
