@@ -9,41 +9,36 @@
 // API wants logged.
 //
 // Decoding prefers the platform's own BarcodeDetector (hardware-assisted on
-// most phones, and Chrome/Android has shipped it for years), then a
-// lazily-loaded zxing-cpp wasm decoder (`qr-zxing.ts`) everywhere else —
-// iOS Safari has no BarcodeDetector, and zxing reads the glossy, worn,
-// off-angle stickers that pure-JS jsQR gives up on. jsQR stays as the last
-// resort for when the wasm chunk itself fails to arrive. All three decode
-// the same center-cropped frame on a ~5/sec cadence.
-//
-// Three lessons from field testing on an iPhone 14 Pro Max are baked in:
-// getUserMedia defaults to 640×480 unless you ask for more (a sticker at
-// arm's length spans too few pixels to decode), the decoder should see the
-// square region the viewfinder shows rather than the whole frame, and the
-// phone's main camera cannot focus closer than ~20cm — hence the resolution
-// constraints, the center crop, and the pull-back hint below.
+// most phones, and Chrome/Android has shipped it for years) and falls back
+// to jsQR — a pure-JS decoder — everywhere else (iOS Safari has no
+// BarcodeDetector). Both run against the same <video> element on a ~5/sec
+// cadence: fast enough to feel instant, slow enough that the fallback's
+// full-frame scan doesn't cook a phone.
 //
 // House rules, as everywhere else: `document.createElement` only, a
 // `cleanupFns[]` teardown list, and a real focus trap.
 
 import jsQR from "jsqr";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
-import type { QrDetector } from "./qr-zxing.ts";
 
 // BarcodeDetector isn't in TypeScript's DOM lib yet; declare the sliver we
 // use rather than pulling in a types package for one class.
+interface DetectedBarcode {
+  rawValue: string;
+}
+interface BarcodeDetectorLike {
+  detect(source: CanvasImageSource): Promise<DetectedBarcode[]>;
+}
 declare global {
   interface Window {
-    BarcodeDetector?: new (options?: { formats?: string[] }) => QrDetector;
+    BarcodeDetector?: new (options?: {
+      formats?: string[];
+    }) => BarcodeDetectorLike;
   }
 }
 
 const ROOT_CLASS = "qr-scan";
 const FRAME_INTERVAL_MS = 200;
-/** Decode-canvas cap. A 1080p center crop downscaled to this loses nothing
- *  a sticker-sized code needs, and keeps zxing/jsQR under the frame
- *  budget on older phones. */
-const MAX_DECODE_SIDE = 1024;
 
 export interface QrScannerOptions {
   /** One line above the viewfinder saying what the scan is for. */
@@ -80,73 +75,40 @@ function defaultGetStream(): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
     return Promise.reject(new Error("camera unsupported"));
   }
-  // Every constraint here is an `ideal` preference, not a requirement — a
-  // laptop with only a low-res front camera still gets a working scanner
-  // rather than a refusal. The resolution ask is the important one:
-  // without it browsers hand back 640×480, and a deck sticker at arm's
-  // length spans too few of those pixels for any decoder to read.
+  // facingMode is a preference, not a requirement — a laptop with only a
+  // front camera still gets a working scanner rather than a refusal.
   return navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: "environment",
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-    },
+    video: { facingMode: "environment" },
     audio: false,
   });
 }
 
 function makeDefaultDecoder(): (video: HTMLVideoElement) => Promise<string | null> {
-  // Native where the platform has it; the zxing wasm chunk otherwise —
-  // resolved once, and a failed load resolves to null so every later
-  // frame drops straight to jsQR instead of re-fetching a chunk that
-  // isn't coming.
-  const Native = window.BarcodeDetector;
-  const detectorPromise: Promise<QrDetector | null> = Native
-    ? Promise.resolve(new Native({ formats: ["qr_code"] }))
-    : import("./qr-zxing.ts")
-        .then((m) => m.createZxingDetector())
-        .catch(() => null);
-
-  // Every decoder reads the same reused canvas: the CENTER SQUARE of the
-  // frame — which is what the square viewfinder actually shows under
-  // object-fit: cover, so it is where the rider has been told to put the
-  // code — downscaled to a cap. Cropping concentrates the decoder's work
-  // on the pixels the rider is aiming, and the reuse avoids reallocating
-  // a backing store five times a second.
+  const Detector = window.BarcodeDetector;
+  if (Detector) {
+    const detector = new Detector({ formats: ["qr_code"] });
+    return async (video) => {
+      const codes = await detector.detect(video);
+      return codes[0]?.rawValue || null;
+    };
+  }
+  // jsQR path: sample the frame through a canvas. The canvas is reused
+  // across frames — allocating a fresh backing store five times a second
+  // is exactly the kind of churn a mid-ride phone doesn't need.
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   return async (video) => {
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if (!ctx || !vw || !vh) return null;
-    const side = Math.min(vw, vh);
-    const target = Math.min(side, MAX_DECODE_SIDE);
-    // Resizing reallocates the buffer and resets context state, so only on
-    // a real dimension change (camera switch, orientation flip).
-    if (canvas.width !== target) canvas.width = target;
-    if (canvas.height !== target) canvas.height = target;
-    ctx.drawImage(
-      video,
-      (vw - side) / 2,
-      (vh - side) / 2,
-      side,
-      side,
-      0,
-      0,
-      target,
-      target,
-    );
-    const detector = await detectorPromise;
-    if (detector) {
-      try {
-        const codes = await detector.detect(canvas);
-        return codes[0]?.rawValue || null;
-      } catch {
-        /* a mid-stream detector failure falls through to jsQR below */
-      }
-    }
-    const image = ctx.getImageData(0, 0, target, target);
-    const code = jsQR(image.data, target, target);
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!ctx || !w || !h) return null;
+    // Resizing reallocates the backing store and resets context state, so
+    // only do it when the stream's dimensions actually changed (camera
+    // switch, orientation flip) — not five times a second.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    ctx.drawImage(video, 0, 0, w, h);
+    const image = ctx.getImageData(0, 0, w, h);
+    const code = jsQR(image.data, w, h);
     return code?.data || null;
   };
 }
@@ -192,17 +154,7 @@ export function openQrScanner(options: QrScannerOptions): () => void {
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
 
-  // Always shown, because it is the fix for the most common real-world
-  // failure: phone main cameras can't focus closer than ~20cm (the iPhone
-  // 14 Pro's is worse than most), and the instinctive move — closer! — is
-  // exactly wrong.
-  const focusHint = el(
-    "p",
-    `${ROOT_CLASS}__hint`,
-    "Blurry? Pull back a few inches — phone cameras can't focus up close.",
-  );
-
-  card.append(head, promptLine, viewport, focusHint, status);
+  card.append(head, promptLine, viewport, status);
   backdrop.append(card);
 
   function close(): void {
@@ -248,41 +200,6 @@ export function openQrScanner(options: QrScannerOptions): () => void {
         void Promise.resolve(video.play()).catch(() => {});
       } catch {
         /* see above */
-      }
-
-      // Camera niceties, both best-effort and both non-standard enough to
-      // be absent from TS's lib and from most test doubles — hence the
-      // optional chaining and casts. Continuous autofocus stops the lens
-      // hunting at sticker distance; the torch button only appears when
-      // the track says it has one (glare and shade are real on a street).
-      const track = stream.getVideoTracks?.()[0];
-      const caps = track?.getCapabilities?.() as
-        | (MediaTrackCapabilities & { torch?: boolean; focusMode?: string[] })
-        | undefined;
-      if (caps?.focusMode?.includes("continuous")) {
-        void track
-          ?.applyConstraints({
-            advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet],
-          })
-          .catch(() => {});
-      }
-      if (caps?.torch) {
-        let torchOn = false;
-        const torchBtn = el("button", `${ROOT_CLASS}__torch`, "🔦");
-        torchBtn.type = "button";
-        torchBtn.setAttribute("aria-label", "Toggle flashlight");
-        torchBtn.setAttribute("aria-pressed", "false");
-        torchBtn.addEventListener("click", () => {
-          torchOn = !torchOn;
-          torchBtn.setAttribute("aria-pressed", torchOn ? "true" : "false");
-          torchBtn.classList.toggle("is-on", torchOn);
-          void track
-            ?.applyConstraints({
-              advanced: [{ torch: torchOn } as MediaTrackConstraintSet],
-            })
-            .catch(() => {});
-        });
-        viewport.append(torchBtn);
       }
 
       // Recursive setTimeout rather than setInterval so a slow decode
