@@ -39,6 +39,7 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
@@ -793,7 +794,11 @@ export class RideHud {
     return ALL_MODELS
       .map((m) => {
         const on = this.rideModels.has(m);
-        const label = m[0].toUpperCase() + m.slice(1);
+        // MODEL_NAMES, never a capitalized key: the raw "trike" key is how
+        // Rovers leaked out as "Trike" (model-catalog.ts) — this chip row
+        // was the one surface PR 63's sweep missed, disagreeing with the
+        // Rover note right beside it.
+        const label = MODEL_NAMES[m] ?? m[0].toUpperCase() + m.slice(1);
         return `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="dev" data-model="${m}" aria-pressed="${on}">${label}</button>`;
       })
       .join("");
