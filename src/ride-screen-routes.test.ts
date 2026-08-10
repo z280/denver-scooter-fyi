@@ -30,24 +30,25 @@ import {
   type RideSessionStore,
 } from "./ride-session.ts";
 import {
+  FALLBACK_PROFILE_INFO,
+  FALLBACK_PROFILES,
   PROFILE_COLORS,
-  buildPointsFeatureCollection,
-  buildRouteFeatureCollection,
+  buildPreviewFeatureCollection,
   clearNavigationForRide,
   colorForProfile,
   computeBounds,
   formatMiles,
   formatMinutes,
   lineStringLengthMeters,
-  resolveFlavor,
+  profileInfoText,
   resolveOrigin,
   wireRideScreenRoutes,
   type DevicesLike,
   type LocateLike,
   type RideScreenRoutesDeps,
-  type RouteMapLike,
   type RouteState,
 } from "./ride-screen-routes.ts";
+import type { RoutePreviewHandle } from "./route-preview.ts";
 
 // ---------------------------------------------------------------------------
 // fixtures / helpers
@@ -138,55 +139,27 @@ const ROUTE_COORDS: [number, number][] = [
   [DEST.lon, DEST.lat],
 ];
 
-/** A working fake map — captures every call this screen makes so tests can
- *  assert on source/layer wiring and `setData`/`fitBounds` traffic without
- *  a real WebGL context (unavailable under happy-dom). */
-function fakeRouteMap(): { map: RouteMapLike; calls: FakeMapCalls } {
-  const calls: FakeMapCalls = {
-    addSourceIds: [],
-    addLayerIds: [],
-    setDataCalls: [],
-    fitBoundsCalls: [],
-    resizeCalls: 0,
-    removeCalls: 0,
+/** A recording fake for the main-map preview handle — captures every
+ *  `set`/`clear` so tests can assert on what the screen draws without a
+ *  real MapLibre instance (unavailable under happy-dom). */
+function fakePreview(): { preview: RoutePreviewHandle; calls: PreviewCalls } {
+  const calls: PreviewCalls = { sets: [], clears: 0 };
+  return {
+    preview: {
+      set: (fc, bounds) => {
+        calls.sets.push({ fc, bounds });
+      },
+      clear: () => {
+        calls.clears += 1;
+      },
+    },
+    calls,
   };
-  const sources = new Set<string>();
-  const map = {
-    addSource: (id: string) => {
-      calls.addSourceIds.push(id);
-      sources.add(id);
-    },
-    getSource: (id: string) => {
-      if (!sources.has(id)) return undefined;
-      return {
-        setData: (data: GeoJSON.FeatureCollection) => {
-          calls.setDataCalls.push({ source: id, data });
-        },
-      };
-    },
-    addLayer: (layer: { id: string }) => {
-      calls.addLayerIds.push(layer.id);
-    },
-    fitBounds: (bounds: unknown) => {
-      calls.fitBoundsCalls.push(bounds);
-    },
-    resize: () => {
-      calls.resizeCalls += 1;
-    },
-    remove: () => {
-      calls.removeCalls += 1;
-    },
-  } as unknown as RouteMapLike;
-  return { map, calls };
 }
 
-interface FakeMapCalls {
-  addSourceIds: string[];
-  addLayerIds: string[];
-  setDataCalls: { source: string; data: GeoJSON.FeatureCollection }[];
-  fitBoundsCalls: unknown[];
-  resizeCalls: number;
-  removeCalls: number;
+interface PreviewCalls {
+  sets: { fc: GeoJSON.FeatureCollection; bounds: unknown }[];
+  clears: number;
 }
 
 function deferred<T>(): {
@@ -218,7 +191,7 @@ function baseDeps(
   return {
     session,
     locate: fakeLocate(ORIGIN),
-    createMap: async () => fakeRouteMap().map,
+    routePreview: fakePreview().preview,
     ...overrides,
   };
 }
@@ -507,7 +480,7 @@ describe("Screen 4 — total failure (graceful degrade)", () => {
 
     // Every fallback profile got a real /route call — never hardcoded past
     // a working /route/profiles response, but never a dead end either.
-    expect(fetchRoute).toHaveBeenCalledTimes(4);
+    expect(fetchRoute).toHaveBeenCalledTimes(FALLBACK_PROFILES.length);
     expect(rideModalRoot()?.querySelectorAll(".ride-route-option").length).toBeGreaterThan(0);
   });
 });
@@ -516,45 +489,133 @@ describe("Screen 4 — total failure (graceful degrade)", () => {
 // map wiring (light — presentational, but the source/layer contract matters)
 // ---------------------------------------------------------------------------
 
-describe("Screen 4 — map preview wiring", () => {
-  it("adds the route + point sources/layers and feeds them origin/dest immediately, routes as they arrive", async () => {
-    const { map, calls } = fakeRouteMap();
+describe("Screen 4 — the bottom drawer over the main map", () => {
+  it("renders as a sheet: the wizard root carries the sheet class on Screen 4", async () => {
+    const { preview } = fakePreview();
     const session = sessionOnScreen4(baseOptions());
     const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
     const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
     wireRideScreenRoutes(
-      baseDeps(session, { fetchRouteProfiles, fetchRoute, createMap: async () => map }),
+      baseDeps(session, { fetchRouteProfiles, fetchRoute, routePreview: preview }),
+    );
+    openRideModal({ fastForwardTo: "4" });
+    expect(rideModalRoot()?.classList.contains("ride-modal--sheet")).toBe(true);
+  });
+
+  it("draws origin/dest immediately and the SELECTED route as a colored line when it arrives", async () => {
+    const { preview, calls } = fakePreview();
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(
+      baseDeps(session, { fetchRouteProfiles, fetchRoute, routePreview: preview }),
+    );
+    openRideModal({ fastForwardTo: "4" });
+    // The very first render already frames origin + destination…
+    expect(calls.sets.length).toBeGreaterThan(0);
+    expect(
+      calls.sets[0].fc.features.map((f) => f.properties?.kind).filter(Boolean).sort(),
+    ).toEqual(["dest", "origin"]);
+    await flush();
+    // …and once "safe" arrives (and auto-selects), its line joins them,
+    // solid in the profile color.
+    const last = calls.sets.at(-1)!;
+    const line = last.fc.features.find((f) => f.geometry.type === "LineString");
+    expect(line?.properties?.profile).toBe("safe");
+    expect(line?.properties?.color).toBe(PROFILE_COLORS.safe);
+    expect(last.bounds).toBeTruthy();
+  });
+
+  it("switching cards swaps which route's line is drawn", async () => {
+    const { preview, calls } = fakePreview();
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() =>
+      Promise.resolve(profilesResponse(["safe", "express"])),
+    );
+    const fetchRoute = vi.fn((q: { profile?: string }) =>
+      Promise.resolve(fakeRoute(q.profile ?? "safe", ROUTE_COORDS)),
+    );
+    wireRideScreenRoutes(
+      baseDeps(session, { fetchRouteProfiles, fetchRoute, routePreview: preview }),
     );
     openRideModal({ fastForwardTo: "4" });
     await flush();
-
-    expect(calls.addSourceIds).toEqual(
-      expect.arrayContaining(["ride-route-lines", "ride-route-points"]),
+    const expressCard = document.querySelector<HTMLButtonElement>(
+      '[data-profile="express"]',
     );
-    expect(calls.addLayerIds.length).toBe(2);
-    const pointsCall = calls.setDataCalls.find((c) => c.source === "ride-route-points");
-    expect(pointsCall?.data.features.length).toBe(2);
-    const routesCall = calls.setDataCalls
-      .filter((c) => c.source === "ride-route-lines")
-      .at(-1);
-    expect(routesCall?.data.features.length).toBe(1);
-    expect(calls.fitBoundsCalls.length).toBeGreaterThan(0);
+    expressCard!.click();
+    const last = calls.sets.at(-1)!;
+    const lines = last.fc.features.filter((f) => f.geometry.type === "LineString");
+    expect(lines.length).toBe(1);
+    expect(lines[0].properties?.profile).toBe("express");
+    expect(lines[0].properties?.color).toBe(PROFILE_COLORS.express);
   });
 
-  it("removes the map on screen teardown", async () => {
-    const { map, calls } = fakeRouteMap();
+  it("clears the preview on screen teardown", async () => {
+    const { preview, calls } = fakePreview();
     const session = sessionOnScreen4(baseOptions());
     wireRideScreenRoutes(
       baseDeps(session, {
         fetchRouteProfiles: () => new Promise(() => {}),
         fetchRoute: () => new Promise(() => {}),
-        createMap: async () => map,
+        routePreview: preview,
       }),
     );
     openRideModal({ fastForwardTo: "4" });
     await flush();
     resetRideModal();
-    expect(calls.removeCalls).toBe(1);
+    expect(calls.clears).toBe(1);
+  });
+});
+
+describe("Screen 4 — the per-profile \u2139 explainer", () => {
+  async function openWithSafe(): Promise<void> {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteProfiles = vi.fn(() => Promise.resolve(profilesResponse(["safe"])));
+    const fetchRoute = vi.fn(() => Promise.resolve(fakeRoute("safe", ROUTE_COORDS)));
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteProfiles, fetchRoute }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+  }
+
+  it("every route card carries an \u2139 that opens the profile's purpose copy", async () => {
+    await openWithSafe();
+    const info = document.querySelector<HTMLButtonElement>(
+      '[data-profile-info="safe"]',
+    );
+    expect(info).not.toBeNull();
+    info!.click();
+    const modal = document.querySelector(".ranks-modal");
+    expect(modal?.textContent).toContain("High Injury Network");
+    expect(modal?.textContent).toContain(LABELS.safe);
+  });
+
+  it("\u00d7 closes it; teardown closes a still-open one", async () => {
+    await openWithSafe();
+    document.querySelector<HTMLButtonElement>('[data-profile-info="safe"]')!.click();
+    document
+      .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")!
+      .click();
+    expect(document.querySelector(".ranks-modal")).toBeNull();
+
+    document.querySelector<HTMLButtonElement>('[data-profile-info="safe"]')!.click();
+    expect(document.querySelector(".ranks-modal")).not.toBeNull();
+    resetRideModal();
+    expect(document.querySelector(".ranks-modal")).toBeNull();
+  });
+
+  it("profileInfoText falls back honestly for an unknown profile", () => {
+    expect(profileInfoText("hoverboard")).toBe(FALLBACK_PROFILE_INFO);
+    expect(profileInfoText("safe")).toContain("High Injury Network");
+  });
+
+  it("Night Owl explains dark-hours street preference, in its own color", () => {
+    // The live deployment's fifth profile (config.json key "night") — the
+    // generic fallback line here was a field-reported bug.
+    expect(profileInfoText("night")).toContain("after dark");
+    expect(profileInfoText("night")).toContain("streets");
+    expect(colorForProfile("night")).toBe(PROFILE_COLORS.night);
+    expect(PROFILE_COLORS.night).not.toBe(colorForProfile("hoverboard"));
   });
 });
 
@@ -611,29 +672,6 @@ describe("resolveOrigin", () => {
   });
 });
 
-describe("resolveFlavor", () => {
-  it("passes light/dark through unchanged", () => {
-    expect(resolveFlavor("light")).toBe("light");
-    expect(resolveFlavor("dark")).toBe("dark");
-  });
-
-  it("auto follows the app's live data-theme, not the OS preference", () => {
-    // The preview must match the modal around it: theme.ts keeps data-theme
-    // current on the root element, and a dark preview inside a light modal
-    // reads as a broken render.
-    document.documentElement.dataset.theme = "dark";
-    expect(resolveFlavor("auto")).toBe("dark");
-    document.documentElement.dataset.theme = "light";
-    expect(resolveFlavor("auto")).toBe("light");
-    delete document.documentElement.dataset.theme;
-  });
-
-  it("resolves auto against the OS preference when no live theme is set", () => {
-    delete document.documentElement.dataset.theme;
-    expect(["light", "dark"]).toContain(resolveFlavor("auto"));
-  });
-});
-
 describe("format helpers", () => {
   it("formatMiles", () => {
     expect(formatMiles(30)).toBe("<0.1 mi");
@@ -661,35 +699,36 @@ describe("format helpers", () => {
   });
 });
 
-describe("buildRouteFeatureCollection / buildPointsFeatureCollection / computeBounds", () => {
+describe("buildPreviewFeatureCollection / computeBounds", () => {
   function readyState(key: string, coords: [number, number][]): RouteState {
     return { key, label: LABELS[key] ?? key, status: "ready", response: fakeRoute(key, coords) };
   }
 
-  it("sorts the selected route last so it paints on top", () => {
+  it("draws ONLY the selected route, solid in its profile color, plus the two dots", () => {
     const results = new Map<string, RouteState>([
       ["safe", readyState("safe", ROUTE_COORDS)],
       ["express", readyState("express", ROUTE_COORDS)],
     ]);
-    const fc = buildRouteFeatureCollection(results, "safe");
-    expect(fc.features.at(-1)?.properties?.profile).toBe("safe");
-    expect(fc.features.every((f) => "profile" in (f.properties ?? {}))).toBe(true);
+    const fc = buildPreviewFeatureCollection(ORIGIN, DEST, results, "safe");
+    const lines = fc.features.filter((f) => f.geometry.type === "LineString");
+    expect(lines.length).toBe(1);
+    expect(lines[0].properties?.profile).toBe("safe");
+    expect(lines[0].properties?.color).toBe(PROFILE_COLORS.safe);
+    expect(
+      fc.features.map((f) => f.properties?.kind).filter(Boolean).sort(),
+    ).toEqual(["dest", "origin"]);
   });
 
-  it("omits loading/error entries entirely", () => {
-    const results = new Map<string, RouteState>([
-      ["safe", readyState("safe", ROUTE_COORDS)],
-      ["range", { key: "range", label: "Range", status: "loading" }],
-      ["shade", { key: "shade", label: "Shade", status: "error" }],
+  it("nothing selected (or selected not ready) draws just origin + dest", () => {
+    const loading = new Map<string, RouteState>([
+      ["safe", { key: "safe", label: "Safe", status: "loading" }],
     ]);
-    const fc = buildRouteFeatureCollection(results, "safe");
-    expect(fc.features.length).toBe(1);
-  });
-
-  it("buildPointsFeatureCollection emits exactly origin + dest", () => {
-    const fc = buildPointsFeatureCollection(ORIGIN, DEST);
-    expect(fc.features.length).toBe(2);
-    expect(fc.features.map((f) => f.properties?.kind).sort()).toEqual(["dest", "origin"]);
+    expect(
+      buildPreviewFeatureCollection(ORIGIN, DEST, loading, "safe").features.length,
+    ).toBe(2);
+    expect(
+      buildPreviewFeatureCollection(ORIGIN, DEST, new Map(), null).features.length,
+    ).toBe(2);
   });
 
   it("computeBounds always covers at least origin and destination", () => {
@@ -699,6 +738,21 @@ describe("buildRouteFeatureCollection / buildPointsFeatureCollection / computeBo
     expect(maxLng).toBeGreaterThanOrEqual(Math.max(ORIGIN.lng, DEST.lon));
     expect(minLat).toBeLessThanOrEqual(Math.min(ORIGIN.lat, DEST.lat));
     expect(maxLat).toBeGreaterThanOrEqual(Math.max(ORIGIN.lat, DEST.lat));
+  });
+
+  it("computeBounds with a selection ignores unselected routes' shapes", () => {
+    const wide: [number, number][] = [
+      [ORIGIN.lng, ORIGIN.lat],
+      [-105.2, 39.9], // far outside the selected route's box
+      [DEST.lon, DEST.lat],
+    ];
+    const results = new Map<string, RouteState>([
+      ["safe", readyState("safe", ROUTE_COORDS)],
+      ["express", readyState("express", wide)],
+    ]);
+    const bounds = computeBounds(ORIGIN, DEST, results, "safe");
+    const [[minLng]] = bounds as [[number, number], [number, number]];
+    expect(minLng).toBeGreaterThan(-105.2);
   });
 });
 

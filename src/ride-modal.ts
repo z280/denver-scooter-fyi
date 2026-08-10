@@ -176,6 +176,12 @@ export interface RideScreen {
   secondary?: HTMLElement | null;
   /** Defaults to `even`. Screen 4 wants `40-60`. */
   split?: RidePaneSplit;
+  /** `"sheet"` docks the card as a bottom half-drawer and makes the rest of
+   *  the shell transparent AND click-through, so the main map shows (and
+   *  pans) behind it — Screen 4 draws its route choices there. Everything
+   *  else about the shell (header, focus trap, Escape, screen router) works
+   *  unchanged. Omitted → the usual full-screen card. */
+  presentation?: "sheet";
   /** Focused when the screen mounts; otherwise the first focusable element. */
   initialFocus?: HTMLElement | null;
   /** What the header's Next button does when tapped (it is only tappable
@@ -480,6 +486,13 @@ class RideModal {
     this.screen = screen;
 
     this.root.dataset.screen = id;
+    // Toggled per screen, so navigating sheet ⇄ full-screen (Screen 4 back
+    // to Screen 3, say) restores the right chrome without any screen
+    // having to clean up after another.
+    this.root.classList.toggle(
+      "ride-modal--sheet",
+      screen.presentation === "sheet",
+    );
     this.setTitle(screen.title);
     this.setSplit(screen.split ?? "even");
     this.slot(screen.primary, screen.secondary ?? null);
