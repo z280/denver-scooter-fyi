@@ -1167,6 +1167,53 @@ export function postSurvey(
   );
 }
 
+// --- Route feedback without a tracked ride (private rides) -----------------
+
+/** The survey's navigation vocabulary with the route described inline —
+ *  a private ("My own Device" / guest) ride has no tracked_rides row for
+ *  `postSurvey` to key on and no ride_routes row to link, so the profile
+ *  and the client's own distance/duration figures ride along instead. */
+export interface RouteFeedbackIn {
+  route_profile: string;
+  distance_m?: number | null;
+  duration_s?: number | null;
+  nav_route_rating?: number | null;
+  nav_deviated?: boolean | null;
+  nav_deviated_needs_improvement?: boolean | null;
+  nav_nps?: number | null;
+  nav_qualitative?: string | null;
+}
+
+/** Submit navigation feedback for a ride the survey can't reach. Anonymous
+ *  is allowed — guests are signed out, so there may be no auth token to
+ *  send at all (auth here, not the ride-session doc: that is a different
+ *  "session" this function never touches); a bearer token rides along when
+ *  signed in, for attribution only — nothing is awarded either way,
+ *  because private rides are never points-eligible. */
+export async function postRouteFeedback(
+  body: RouteFeedbackIn,
+  signal?: AbortSignal,
+): Promise<{ id: number; created_at: string }> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  const auth = getAuth();
+  if (auth) headers.Authorization = `Bearer ${auth.token}`;
+  const res = await fetch(`${API_BASE}/api/v1/route-feedback`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await apiErrorFrom(res, `HTTP ${res.status}`);
+    trackApiError("/api/v1/route-feedback", res.status, err.errorKey);
+    throw err;
+  }
+  return (await res.json()) as { id: number; created_at: string };
+}
+
 // --- Chosen route persistence (Screen 4) ----------------------------------
 
 /** `[lat, lon]` — the order `POST /ride-routes` expects, and the reverse of
