@@ -191,13 +191,18 @@ export function geoJsonFilename(summary: LocalTrackSummary): string {
 function defaultDownload(filename: string, text: string): void {
   const blob = new Blob([text], { type: "application/geo+json" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  // finally, so a throw anywhere in the DOM work can't strand an
+  // unrevoked object URL for the life of the session.
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }
 
 function formatDuration(ms: number | null): string {
@@ -477,7 +482,10 @@ export function buildLocalDataPanel(
           );
         })
         .catch(() => {
-          if (!disposed) rowStatus.set("Couldn't read this ride.", true);
+          // Umbrella copy: this chain can fail reading the store, building
+          // the JSON, or handing off the download, and "couldn't read"
+          // would misdescribe the latter two.
+          if (!disposed) rowStatus.set("Couldn't export this ride.", true);
         })
         .then(() => {
           if (!disposed) exportBtn.disabled = false;
