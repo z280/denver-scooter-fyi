@@ -38,7 +38,9 @@ import {
 } from "./ride-modal.ts";
 import type { LngLat, Locate } from "./locate.ts";
 import { markUndoFree } from "./ios-shake-undo.ts";
-import type { GeocodeKind, GeocodeResult } from "./api.ts";
+import { fetchProfile, type GeocodeKind, type GeocodeResult } from "./api.ts";
+import { isAuthenticated } from "./map-auth.js";
+import type { HomeWorkPoints } from "./home-work-pins.ts";
 import type { RideSessionDest, RideSessionStore } from "./ride-session.ts";
 import { track } from "./telemetry.ts";
 import {
@@ -154,10 +156,39 @@ export interface RideScreenDestDeps {
    *  has its own dedicated test file — a test here can fake the client
    *  wholesale and just assert on what this screen does with its callbacks. */
   createSearch?(handlers: GeocodeSearchHandlers): GeocodeSearchClient;
+  /** The rider's saved home/work locations, for the Saved-places rows above
+   *  the recents. Injected for tests; defaults to reading the signed-in
+   *  profile, resolving all-null when signed out or the fetch fails — the
+   *  suggestions are a bonus, never a reason the screen can't render. */
+  getHomeWork?(): Promise<HomeWorkPoints>;
 }
 
 function defaultCreateSearch(handlers: GeocodeSearchHandlers): GeocodeSearchClient {
   return createGeocodeSearch(handlers);
+}
+
+const NO_HOME_WORK: HomeWorkPoints = { home: null, work: null };
+
+/** Same profile→points mapping `account.ts`'s `publishLocations` uses. A
+ *  signed-out rider is the common case and not an error — skip the fetch
+ *  entirely rather than burning a guaranteed 401. */
+async function defaultGetHomeWork(): Promise<HomeWorkPoints> {
+  if (!isAuthenticated()) return NO_HOME_WORK;
+  try {
+    const p = await fetchProfile();
+    return {
+      home:
+        p.home_lat != null && p.home_lng != null
+          ? { lat: p.home_lat, lng: p.home_lng }
+          : null,
+      work:
+        p.work_lat != null && p.work_lng != null
+          ? { lat: p.work_lat, lng: p.work_lng }
+          : null,
+    };
+  } catch {
+    return NO_HOME_WORK;
+  }
 }
 
 /** Register Screen 3. Call once at startup; returns an unregister function
@@ -199,6 +230,10 @@ function buildDestScreen(
 ): RideScreen {
   let destroyed = false;
   let recents = loadRecentDests();
+  /** Saved home/work, all-null until (and unless) the async load lands —
+   *  the screen renders immediately either way, and the rows appear on the
+   *  re-render when the profile answers. */
+  let saved: HomeWorkPoints = { home: null, work: null };
   let results: GeocodeResult[] = [];
   let status: SearchStatus = "idle";
   /** The trimmed text the live `results`/`status` belong to — guards a
@@ -263,16 +298,24 @@ function buildDestScreen(
     return input.value.trim() === "";
   }
 
-  function selectDest(dest: RideDestWithCoverage): void {
+  function selectDest(
+    dest: RideDestWithCoverage,
+    opts: { record?: boolean } = {},
+  ): void {
     if (destroyed) return;
     track("geocode_search", { outcome: "picked" });
     deps.session.dispatch({ type: "setDest", dest });
-    recents = recordRecentDest({
-      label: dest.label,
-      lat: dest.lat,
-      lon: dest.lon,
-      inCoverage: dest.inCoverage ?? true,
-    });
+    // Saved-places picks skip the recents ledger (record: false): Home and
+    // Work are already permanent rows on this screen, and echoing them into
+    // "Recent destinations" would show the same place twice forever.
+    if (opts.record !== false) {
+      recents = recordRecentDest({
+        label: dest.label,
+        lat: dest.lat,
+        lon: dest.lon,
+        inCoverage: dest.inCoverage ?? true,
+      });
+    }
     ctx.next();
   }
 
@@ -308,6 +351,35 @@ function buildDestScreen(
     statusEl.hidden = true;
 
     if (isEmpty()) {
+      // Saved places first: Home/Work are the two destinations a rider
+      // picks most and typed least, so they outrank the recents. The dest
+      // label stays the bare word — it is what Screens 4/6 echo back
+      // ("to Home") — while the row shows the glyph. Coverage is unknown
+      // for a stored coordinate pair; Screen 4 already degrades gracefully
+      // off the routing call's own out_of_coverage error, so no flag here.
+      const savedRows: { display: string; dest: RideDestWithCoverage }[] = [];
+      if (saved.home) {
+        savedRows.push({
+          display: "🏠 Home",
+          dest: { label: "Home", lat: saved.home.lat, lon: saved.home.lng },
+        });
+      }
+      if (saved.work) {
+        savedRows.push({
+          display: "💼 Work",
+          dest: { label: "Work", lat: saved.work.lat, lon: saved.work.lng },
+        });
+      }
+      if (savedRows.length > 0) {
+        listEl.append(el("li", "ride-screen-dest__section", "Saved places"));
+        for (const s of savedRows) {
+          listEl.append(
+            renderRow(s.display, null, false, () =>
+              selectDest(s.dest, { record: false }),
+            ),
+          );
+        }
+      }
       if (recents.length === 0) return;
       listEl.append(
         el("li", "ride-screen-dest__section", "Recent destinations"),
@@ -346,6 +418,24 @@ function buildDestScreen(
     }
   }
   render();
+
+  // Fire-and-forget: the screen is already interactive on recents/search,
+  // and the Saved-places rows appear whenever the profile answers — but
+  // only if the rider is still on the empty-input suggestion view; a
+  // mid-typing re-render would stomp live search results. Wrapped so that
+  // neither a rejecting nor a synchronously-throwing loader (an injected
+  // one — the default can do neither) can break the screen build or leak
+  // an unhandled rejection; either failure just means no saved rows.
+  void Promise.resolve()
+    .then(() => (deps.getHomeWork ?? defaultGetHomeWork)())
+    .then((points) => {
+      if (destroyed) return;
+      saved = points;
+      if (isEmpty()) render();
+    })
+    .catch(() => {
+      /* the suggestions are a bonus — recents and search carry the screen */
+    });
 
   input.addEventListener("input", () => {
     const raw = input.value;

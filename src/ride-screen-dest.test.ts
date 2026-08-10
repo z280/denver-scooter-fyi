@@ -313,6 +313,126 @@ describe("Screen 3 — search", () => {
 // Recent destinations — rendering
 // ---------------------------------------------------------------------------
 
+describe("Screen 3 — saved places (home/work)", () => {
+  const HOME = { lat: 39.71, lng: -104.98 };
+  const WORK = { lat: 39.75, lng: -104.99 };
+
+  function flush(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("suggests Home and Work above the recents once the profile answers", async () => {
+    localStorage.setItem(
+      RECENT_DESTS_KEY,
+      JSON.stringify({
+        v: 1,
+        dests: [{ label: "Union Station", lat: 39.75, lon: -105.0, inCoverage: true }],
+      }),
+    );
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("Saved places");
+    expect(text.indexOf("🏠 Home")).toBeLessThan(text.indexOf("Union Station"));
+    expect(text).toContain("💼 Work");
+  });
+
+  it("picking Home dispatches the saved coordinates and advances", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: HOME, work: null }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const row = optionRows().find((r) => r.textContent?.includes("Home"));
+    row!.click();
+    // The bare word, not the glyph — it is what Screens 4/6 echo back.
+    expect(session.current()?.dest).toMatchObject({
+      label: "Home",
+      lat: HOME.lat,
+      lon: HOME.lng,
+    });
+    expect(currentRideScreen()).toBe("4");
+    // Permanent rows don't echo into the recents ledger — the same place
+    // twice forever would be the only possible outcome.
+    expect(loadRecentDests()).toEqual([]);
+  });
+
+  it("renders no Saved-places section when the profile has neither", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: null, work: null }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    expect(rideModalRoot()?.textContent).not.toContain("Saved places");
+  });
+
+  it("only Work set: no Home row, and the section still renders", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: null, work: WORK }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("Saved places");
+    expect(text).toContain("💼 Work");
+    expect(text).not.toContain("🏠 Home");
+  });
+
+  it("a rejecting or throwing loader costs only the rows, never the screen", async () => {
+    const session = sessionAt("3");
+    wire(session, {
+      getHomeWork: () => Promise.reject(new Error("profile down")),
+    });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    // The screen is intact and searchable; there is just no Saved section.
+    expect(input()).not.toBeNull();
+    expect(rideModalRoot()?.textContent).not.toContain("Saved places");
+
+    resetRideModal();
+    document.body.replaceChildren();
+    const session2 = sessionAt("3");
+    wire(session2, {
+      getHomeWork: () => {
+        throw new Error("sync throw");
+      },
+    });
+    // A synchronously-throwing loader must not break the screen build.
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    expect(input()).not.toBeNull();
+  });
+
+  it("a late profile answer does not stomp live search results", async () => {
+    // The rider starts typing before the profile fetch lands: the answer
+    // must be held for the next empty-input view, not re-rendered over the
+    // results list.
+    let resolveHomeWork: (p: { home: typeof HOME | null; work: null }) => void = () => {};
+    const session = sessionAt("3");
+    const fs = fakeSearch();
+    wire(session, {
+      createSearch: fs.createSearch,
+      getHomeWork: () =>
+        new Promise((resolve) => {
+          resolveHomeWork = resolve;
+        }),
+    });
+    openRideModal({ fastForwardTo: "3" });
+    // Let the (deliberately still-pending) loader be invoked so its
+    // resolver is captured, then start typing before it answers.
+    await flush();
+    typeInto("colfax");
+    fs.emitResults([result("1 Colfax Ave")], "colfax");
+    resolveHomeWork({ home: HOME, work: null });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("1 Colfax Ave");
+    expect(text).not.toContain("Saved places");
+    // …but clearing the field brings the saved rows straight back.
+    typeInto("");
+    expect(rideModalRoot()?.textContent).toContain("🏠 Home");
+  });
+});
+
 describe("Screen 3 — recent destinations", () => {
   it("renders recent destinations when the field is empty", () => {
     localStorage.setItem(
