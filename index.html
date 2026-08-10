@@ -220,6 +220,9 @@
         </svg>
         <span class="drawer-tab__label">Tools</span>
       </button>
+      <!-- Hidden, not removed: wireDrawers still manages the compliance
+           drawer through this tab, and the Tools drawer's Equity Compliance
+           button opens it with a programmatic click. -->
       <button
         class="drawer-tab"
         type="button"
@@ -227,6 +230,7 @@
         aria-pressed="false"
         aria-controls="drawer-compliance"
         title="Equity Compliance"
+        hidden
       >
         <!-- Double check -->
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -706,6 +710,49 @@
           </p>
           <button id="tools-confirm-qr" class="preset-btn" type="button">
             📷 Scan &amp; confirm features
+          </button>
+        </section>
+
+        <section class="control-group" aria-labelledby="tools-compliance-label">
+          <h3 id="tools-compliance-label" class="control-label">Equity Compliance</h3>
+          <p class="control-hint">
+            Daily SLA compliance status and the equity-rank estimator.
+          </p>
+          <button id="tools-open-compliance" class="preset-btn" type="button">
+            ✅ Open Equity Compliance
+          </button>
+        </section>
+
+        <section class="control-group" aria-labelledby="tools-devices-label">
+          <h3 id="tools-devices-label" class="control-label">Devices over time</h3>
+          <p class="control-hint">
+            The fleet by hour over the past two weeks — total, available,
+            reserved, and out of service, for all devices or any one model.
+          </p>
+          <button id="tools-devices-history" class="preset-btn" type="button">
+            🛴 Devices over time
+          </button>
+        </section>
+
+        <!-- Admin-only: revealed by main.ts when the server calls this
+             session an admin; the analytics endpoints behind the buttons
+             are require_admin regardless. -->
+        <section
+          class="control-group"
+          id="tools-admin"
+          aria-labelledby="tools-admin-label"
+          hidden
+        >
+          <h3 id="tools-admin-label" class="control-label">Admin tools</h3>
+          <p class="control-hint">
+            Traffic analytics from the daily telemetry rollups — aggregate
+            only, same data as the admin dashboard.
+          </p>
+          <button id="tools-admin-traffic" class="preset-btn" type="button">
+            📈 Traffic overview
+          </button>
+          <button id="tools-admin-events" class="preset-btn" type="button">
+            📊 Events by day
           </button>
         </section>
 
