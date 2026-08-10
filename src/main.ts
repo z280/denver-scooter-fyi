@@ -1325,7 +1325,11 @@ function wireToggleGroup<T extends string>(
   };
   for (const btn of btns) {
     btn.addEventListener("click", () => {
-      if (trackId) track("control_change", { control: trackId });
+      // Synthetic clicks from setToggleGroup are state-driving, not
+      // gestures — see drivingToggleGroup's comment.
+      if (trackId && !drivingToggleGroup) {
+        track("control_change", { control: trackId });
+      }
       const v = valueOf(btn);
       if (enabled.has(v)) enabled.delete(v);
       else enabled.add(v);
@@ -1375,7 +1379,20 @@ function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
       ...MODELS_BY_RIDE_TYPE[t],
     ]),
   );
-  setToggleGroup("#model-filter", "model", want);
+  // A narrower model pick that can still produce the enabled ride types
+  // SURVIVES the sync — expanding it wholesale re-showed models the user
+  // deliberately hid (Apollo-only + "Seated" is a perfectly live filter).
+  // Only the actual dead-filter case this sync exists for — none of the
+  // picked models can produce any enabled type — expands to the full
+  // per-type set.
+  const compatible = new Set<string>(
+    [...modelsOn].filter((m) => want.has(m)),
+  );
+  setToggleGroup(
+    "#model-filter",
+    "model",
+    compatible.size > 0 ? compatible : want,
+  );
 }
 
 /** Drive the Availability checkbox through its normal change path. */
@@ -1535,17 +1552,37 @@ function snapshotFilters(): FilterSnapshot {
 
 /** Click each multi-toggle member into the wanted state so the group's own
  *  handler (and the whole map→clusters→chips sync path) runs normally. */
+/** True while setToggleGroup is driving buttons programmatically, so
+ *  wireToggleGroup can tell a synthetic click from a rider's tap and skip
+ *  the `control_change` telemetry for it — the same programmatic-replay
+ *  suppression wireSeg already does for its setter. Without this, one
+ *  ride-type tap also recorded a phantom "models" gesture (via
+ *  syncModelsToRideTypes), and every quick filter recorded a burst of
+ *  control_change events for controls the rider never touched. */
+let drivingToggleGroup = false;
+
 function setToggleGroup(
   rootSel: string,
   key: "ride" | "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
-  for (const btn of document.querySelectorAll<HTMLButtonElement>(
-    `${rootSel} button`,
-  )) {
-    const value = btn.dataset[key];
-    if (!value) continue;
-    if (btn.classList.contains("is-active") !== want.has(value)) btn.click();
+  // Save/restore rather than set/clear: setToggleGroup re-enters itself
+  // (a Quick Filter drives the ride-type buttons, whose click handler runs
+  // syncModelsToRideTypes → setToggleGroup for the models), and an inner
+  // call blanking the flag would unsuppress telemetry for the rest of the
+  // outer drive.
+  const wasDriving = drivingToggleGroup;
+  drivingToggleGroup = true;
+  try {
+    for (const btn of document.querySelectorAll<HTMLButtonElement>(
+      `${rootSel} button`,
+    )) {
+      const value = btn.dataset[key];
+      if (!value) continue;
+      if (btn.classList.contains("is-active") !== want.has(value)) btn.click();
+    }
+  } finally {
+    drivingToggleGroup = wasDriving;
   }
 }
 

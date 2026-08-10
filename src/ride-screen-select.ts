@@ -694,10 +694,18 @@ function buildSelectScreen(
   }
 
   function buildOptionsPanel(): void {
-    // See the `optionsPanelKey` note above: skip the rebuild when neither
+    // See the `optionsPanelKey` note above: skip the rebuild when no
     // input the panel renders from has changed, so a GPS fix or feed
     // refresh can never close an open ℹ modal or steal focus mid-toggle.
-    const key = `${nextEnabled()}|${usualsAvailable}`;
+    // doc.private IS such an input: the production builder captures it
+    // into the panel's cascade context at build time, and switching
+    // between "My Scooter/Bike" and a real Veo device flips it while
+    // canProceed stays true — a key without it left the panel applying
+    // cascades against a stale privacy state (forcing trophy options
+    // off on a tracked ride, or leaving them on for a private one).
+    const key = `${nextEnabled()}|${usualsAvailable}|${
+      deps.session.current()?.private ?? false
+    }`;
     if (optionsPanelKey === key) return;
     optionsPanelKey = key;
     optionsPanelHandle?.dispose?.();

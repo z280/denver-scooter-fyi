@@ -709,6 +709,41 @@ describe("Screen 2 — selection and session sync", () => {
     expect(disposes[1]).toHaveBeenCalledTimes(1);
   });
 
+  it("flipping device ⇄ My Scooter/Bike rebuilds the panel — doc.private is a panel input", () => {
+    // canProceed stays true across this switch, but the production panel
+    // builder captures doc.private into its cascade context at build time —
+    // a memo key without it left the panel cascading against a stale
+    // privacy state (trophy options forced off on a tracked ride, or left
+    // on for a private one).
+    const buildOptionsPanel = vi.fn(() => ({ dispose: vi.fn() }));
+    // Signed in — a guest's ride is private whichever device they pick,
+    // which would hide exactly the flip this test exists to observe.
+    setAuthed(true);
+    // A device 3 m away + an accurate fix → auto-preselect on mount, so the
+    // panel is already in the canProceed=true, private=false state.
+    const devices = fakeDevices([feature("near", V1, metersNorth(3))]);
+    const locate = fakeLocate({ ...metersNorth(0), accuracy: 5 } as LngLat);
+    const session = newSession();
+    wireRideScreenSelect({
+      devices,
+      locate,
+      session,
+      plates: fakePlates(),
+      buildOptionsPanel,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    expect(session.current()?.private).toBe(false);
+    const before = buildOptionsPanel.mock.calls.length;
+
+    const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("My Scooter/Bike"),
+    ) as HTMLButtonElement;
+    ownBtn.click();
+
+    expect(session.current()?.private).toBe(true);
+    expect(buildOptionsPanel.mock.calls.length).toBe(before + 1);
+  });
+
   it("a GPS fix or feed refresh never rebuilds the panel — an open ℹ modal survives", () => {
     // The field bug this pins: with the wizard up, fixes arrive ~1/second,
     // and every one used to dispose-and-rebuild the options panel — whose
