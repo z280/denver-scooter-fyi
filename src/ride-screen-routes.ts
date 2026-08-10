@@ -138,11 +138,18 @@ export function wireRideScreenRoutes(deps: RideScreenRoutesDeps): () => void {
 
 /** Colorblind-safe (Okabe–Ito), one per deployed Valhalla profile — see
  *  `colorForProfile` for the fallback an unrecognized future key gets. */
+/** One Okabe–Ito color per profile, assigned for SEMANTIC fit: green for
+ *  the tree canopy, the palette's one purple for the night ride, deep blue
+ *  for safety, orange for the express hustle, sky blue for range (the
+ *  neutral leftover — nothing about battery is a color). All five stay
+ *  inside the palette, so every pair remains distinguishable under
+ *  color-vision deficiency; the two blues also differ strongly in
+ *  lightness. */
 export const PROFILE_COLORS: Record<string, string> = {
   safe: "#0072B2",
-  range: "#009E73",
-  shade: "#CC79A7",
-  night: "#56B4E9",
+  range: "#56B4E9",
+  shade: "#009E73",
+  night: "#CC79A7",
   express: "#E69F00",
 };
 export const FALLBACK_PROFILE_COLOR = "#8a8f98";
