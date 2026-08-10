@@ -662,12 +662,13 @@ describe("Screen 2 — selection and session sync", () => {
     ).toBe(true);
   });
 
-  it("disposes the injected options-panel handle both on rebuild and on screen teardown", () => {
+  it("disposes the injected options-panel handle on a real rebuild and on screen teardown", () => {
     // `RideOptionsPanelHandle.destroy()`'s own doc (ride-settings.ts) requires
     // its caller to invoke it from screen-teardown; this screen also rebuilds
-    // the panel from scratch on every render() (selection change, re-rank,
-    // etc.), so the PREVIOUS handle must be disposed before each rebuild too
-    // — otherwise an open ℹ modal from a stale panel is never told to close.
+    // the panel when one of the panel's inputs (canProceed / hasUsuals)
+    // changes, and the PREVIOUS handle must be disposed before each such
+    // rebuild — otherwise an open ℹ modal from a stale panel is never told
+    // to close.
     const disposes: ReturnType<typeof vi.fn>[] = [];
     const buildOptionsPanel = vi.fn(() => {
       const dispose = vi.fn();
@@ -686,29 +687,58 @@ describe("Screen 2 — selection and session sync", () => {
     });
     openRideModal({ fastForwardTo: "2" });
 
-    // Mount fires two synchronous rebuilds (the screen's own initial
-    // `rerank()` plus `devices.onCountsChange`'s "fires synchronously with
-    // the current counts" contract — `devices.ts`'s own doc) — every build
-    // but the very last must already have been disposed by the next one.
-    const mountBuilds = disposes.length;
-    expect(mountBuilds).toBeGreaterThanOrEqual(2);
-    for (const d of disposes.slice(0, -1)) expect(d).toHaveBeenCalledTimes(1);
-    expect(disposes[disposes.length - 1]).not.toHaveBeenCalled();
+    // Mount builds exactly once: the initial render plus
+    // `devices.onCountsChange`'s synchronous callback both run, but the
+    // second is memoized away (nothing the panel renders from changed).
+    expect(disposes.length).toBe(1);
+    expect(disposes[0]).not.toHaveBeenCalled();
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
       b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     ownBtn.click();
 
-    // The rebuild triggered by selecting "My Scooter/Bike" must dispose the
-    // panel handle from the previous build before replacing it.
-    expect(disposes.length).toBe(mountBuilds + 1);
-    expect(disposes[mountBuilds - 1]).toHaveBeenCalledTimes(1);
-    expect(disposes[mountBuilds]).not.toHaveBeenCalled();
+    // Selecting "My Scooter/Bike" flips canProceed — a REAL input change —
+    // so the panel rebuilds, disposing the previous handle first.
+    expect(disposes.length).toBe(2);
+    expect(disposes[0]).toHaveBeenCalledTimes(1);
+    expect(disposes[1]).not.toHaveBeenCalled();
 
     closeRideModal();
 
-    expect(disposes[mountBuilds]).toHaveBeenCalledTimes(1);
+    expect(disposes[1]).toHaveBeenCalledTimes(1);
+  });
+
+  it("a GPS fix or feed refresh never rebuilds the panel — an open ℹ modal survives", () => {
+    // The field bug this pins: with the wizard up, fixes arrive ~1/second,
+    // and every one used to dispose-and-rebuild the options panel — whose
+    // destroy() closes any open ℹ info modal. Riders saw the modal close
+    // by itself moments after opening it.
+    const disposes: ReturnType<typeof vi.fn>[] = [];
+    const buildOptionsPanel = vi.fn(() => {
+      const dispose = vi.fn();
+      disposes.push(dispose);
+      return { dispose };
+    });
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    const session = newSession();
+    wireRideScreenSelect({
+      devices,
+      locate,
+      session,
+      plates: fakePlates(),
+      buildOptionsPanel,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    const builds = buildOptionsPanel.mock.calls.length;
+
+    locate.emitFix({ lng: -104.99, lat: 39.74, accuracy: 5 });
+    locate.emitFix({ lng: -104.98, lat: 39.75, accuracy: 5 });
+    devices.emitCounts();
+
+    expect(buildOptionsPanel.mock.calls.length).toBe(builds);
+    for (const d of disposes) expect(d).not.toHaveBeenCalled();
   });
 });
 
