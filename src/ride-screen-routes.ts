@@ -3,39 +3,25 @@
 // rule exactly — ride-modal.ts's module doc: "Screens 3/4 return true when
 // navigation is off"). Fires the deployed Valhalla profiles' `/route` calls
 // in parallel with `maneuvers=true`; tombstone loading cards with a
-// left-to-right shimmer wipe while they're in flight; on load, a 40/60 split
-// — route toggle cards on the 40 side, all loaded routes drawn on a map
-// colored by profile on the 60 side. Selecting a card re-emphasizes it on the
-// map (others dimmed, never hidden). On NEXT, persists the chosen route via
-// `POST /ride-routes` when `nav_improvement` is on — non-blocking, a
-// tolerated 404 until API phase A3 deploys the endpoint.
+// left-to-right shimmer wipe while they're in flight. The screen renders as
+// a BOTTOM HALF-DRAWER over the real map (`presentation: "sheet"` —
+// ride-modal.ts): route cards in the drawer, and the SELECTED route drawn on
+// the main map as a solid line in its profile color via the injected
+// `routePreview` handle (`route-preview.ts`), re-framed into the strip above
+// the drawer. Each card carries an ℹ that explains what its routing profile
+// optimizes for. On NEXT, persists the chosen route via `POST /ride-routes`
+// when `nav_improvement` is on — non-blocking, a tolerated 404 until API
+// phase A3 deploys the endpoint.
 //
 // ---------------------------------------------------------------------------
-// DEVIATION 1 — no shared MapLibre instance; this screen builds its own.
-//
-// `ride-modal.ts`'s `RideScreenContext`/`RideModalHooks` (read in full before
-// writing this file) expose NO map handle today — `jumpToDevice` is the only
-// map-adjacent hook, and it's a callback into `devices.ts`'s map, not a
-// reference this screen could add layers to. Neither sibling F2 screen module
-// (`ride-screen-select.ts`, `ride-screen-dest.ts`) takes a map dependency
-// either. Adding a `map` field to `RideModalHooks` would mean editing
-// `ride-modal.ts`, which this lane does not own (file-ownership rule), and
-// code that referenced a hook that doesn't exist yet would fail
-// `tsc --noEmit` against the CURRENT repo state.
-//
-// So: this screen constructs its OWN small MapLibre instance (real
-// `maplibre-gl`, a runtime dep already in the app) inside the secondary pane,
-// dependency-injected via `deps.createMap` exactly like `ride-screen-dest.ts`
-// injects `deps.createSearch` — production gets a real map, tests get a
-// fake. It deliberately does NOT reuse `map.ts`'s Protomaps/pmtiles style
-// (that would double-load the same vector tiles a second time for a modal
-// preview, and re-register the `pmtiles://` protocol from a second call
-// site): a flat, theme-matched background color is enough context for "here
-// are your route choices," and it keeps this preview map fast, dependency-
-// light, and fully self-contained. A `shared_file_edits` entry proposes the
-// small `RideModalHooks.map` addition for the integrator, so a future pass
-// can swap this out for the shared instance if that's preferred — this
-// lane's shipped behavior does not depend on that landing.
+// DEVIATION 1 — RESOLVED. This screen originally built its own small
+// MapLibre instance inside the secondary pane (the modal shell exposed no
+// map handle, and this lane couldn't edit ride-modal.ts). The sheet
+// presentation dissolves the problem from the other side: the MAIN map is
+// simply visible behind the drawer, and the integrator (main.ts) injects a
+// `RoutePreviewHandle` bound to it — no second MapLibre instance, no
+// double-loaded tiles, and the rider inspects their route on the same map
+// they'll ride it on.
 //
 // DEVIATION 2 — route origin ("the resolved device/start position").
 //
@@ -91,21 +77,15 @@ import {
   postRideRoute as defaultPostRideRoute,
   type PostRideRouteIn,
   type PostRideRouteResponse,
-  type RideThemeChoice,
   type RouteProfile,
   type RouteProfilesResponse,
   type RouteQuery,
   type RouteResponse,
 } from "./api.ts";
 import { encodePolyline } from "./polyline-encode.ts";
-import { emptyFC } from "./util.ts";
-import { previewBasemapStyle } from "./map.ts";
-import maplibregl, {
-  type ExpressionSpecification,
-  type GeoJSONSource,
-  type LngLatBoundsLike,
-  type Map as MLMap,
-} from "maplibre-gl";
+import { rideModalRoot } from "./ride-modal.ts";
+import type { RoutePreviewHandle } from "./route-preview.ts";
+import type { LngLatBoundsLike } from "maplibre-gl";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -121,16 +101,6 @@ export type LocateLike = Pick<Locate, "current">;
  *  see DEVIATION 2 above. */
 export type DevicesLike = Pick<Devices, "allFeatures">;
 
-export type RouteMapFlavor = "light" | "dark";
-
-/** The subset of `maplibre-gl`'s `Map` this screen actually calls — narrow on
- *  purpose so a test double doesn't have to fake the whole class (the
- *  `DevicesLike`/`LocateLike` idiom sibling F2 screens already use). */
-export type RouteMapLike = Pick<
-  MLMap,
-  "addSource" | "getSource" | "addLayer" | "fitBounds" | "resize" | "remove"
->;
-
 export interface RideScreenRoutesDeps {
   session: SessionLike;
   locate: LocateLike;
@@ -145,14 +115,11 @@ export interface RideScreenRoutesDeps {
    *  with an abort signal tied to this screen's lifetime — see the NEXT
    *  handler: the POST must outlive the screen (non-blocking ≠ discarded). */
   postRideRoute?(body: PostRideRouteIn): Promise<PostRideRouteResponse>;
-  /** Injected for tests; production default builds a real, tile-free
-   *  MapLibre instance (DEVIATION 1). Resolves once the style has loaded
-   *  and the container has a real (non-zero) size. */
-  createMap?(
-    container: HTMLElement,
-    flavor: RouteMapFlavor,
-    signal?: AbortSignal,
-  ): Promise<RouteMapLike>;
+  /** The main map's route-preview layers (`route-preview.ts`), injected by
+   *  the integrator. Optional so the screen still works with nothing behind
+   *  the drawer (a test, or a headless build) — the cards and their ℹ
+   *  copy carry the choice on their own. */
+  routePreview?: RoutePreviewHandle;
 }
 
 /** Register Screen 4. Call once at startup; returns an unregister function
@@ -196,6 +163,28 @@ export const FALLBACK_PROFILES: RouteProfile[] = [
 ];
 
 const TOMBSTONE_COUNT = 4;
+
+/** What each routing profile optimizes for — the ℹ copy on every route
+ *  card. Grounded in the Screen 2 "Destination Navigation" modal's own
+ *  description of the four styles; an unrecognized future profile gets the
+ *  honest generic line rather than silence. */
+export const PROFILE_INFO: Record<string, string> = {
+  safe:
+    "Prioritizes protected bike lanes, trails, and calm streets, and specifically avoids roads on the City of Denver's High Injury Network. The safest way there, even when it isn't the shortest.",
+  range:
+    "Avoids hills and stop-start climbs to stretch your battery — the route that gets there on the fewest percentage points.",
+  shade:
+    "Prefers tree cover and shadowed streets to keep you out of the sun as much as possible. Best on hot, bright afternoons.",
+  express:
+    "The most direct route — fewest detours, fastest arrival, traded against the safety, battery, and shade the other styles optimize for.",
+};
+
+export const FALLBACK_PROFILE_INFO =
+  "A routing style from our directions engine — select it to see its shape on the map.";
+
+export function profileInfoText(key: string): string {
+  return PROFILE_INFO[key] ?? FALLBACK_PROFILE_INFO;
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for direct unit tests)
@@ -271,43 +260,10 @@ export function resolveOrigin(
   return null;
 }
 
-/** `auto` follows the app's LIVE theme first — `data-theme` on the root
- *  element, kept current by theme.ts (manual toggle or sun-sync) — so the
- *  preview map can never sit dark inside a light modal (or vice versa),
- *  which reads as a broken render, not a preference. The OS preference is
- *  only the fallback for the no-DOM/test case. Ride-scoped only: this never
- *  touches `setManualTheme`/the durable preference, exactly like the HUD's
- *  own ☀/☾ toggle. */
-export function resolveFlavor(theme: RideThemeChoice): RouteMapFlavor {
-  if (theme === "light" || theme === "dark") return theme;
-  try {
-    const live =
-      typeof document !== "undefined"
-        ? document.documentElement.dataset.theme
-        : undefined;
-    if (live === "light" || live === "dark") return live;
-    return typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  } catch {
-    return "light";
-  }
-}
-
-export function buildPointsFeatureCollection(
-  origin: LngLat,
-  dest: RideDestWithCoverage,
-): GeoJSON.FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: [
-      pointFeature(origin.lng, origin.lat, "origin"),
-      pointFeature(dest.lon, dest.lat, "dest"),
-    ],
-  };
-}
+/** Screen 4's origin/destination marker colors on the main-map preview —
+ *  the same pair the old embedded map used. */
+export const ORIGIN_MARKER_COLOR = "#0072B2";
+export const DEST_MARKER_COLOR = "#D55E00";
 
 function pointFeature(
   lng: number,
@@ -316,40 +272,49 @@ function pointFeature(
 ): GeoJSON.Feature {
   return {
     type: "Feature",
-    properties: { kind },
+    properties: {
+      kind,
+      color: kind === "origin" ? ORIGIN_MARKER_COLOR : DEST_MARKER_COLOR,
+    },
     geometry: { type: "Point", coordinates: [lng, lat] },
   };
 }
 
-/** All READY routes, colored by profile; the selected one sorted last so it
- *  paints on top of the dimmed others (never hidden — "selecting a route
- *  toggles which one is visually emphasized, others dimmed"). */
-export function buildRouteFeatureCollection(
+/** What the main map draws while the drawer is up: origin + destination
+ *  dots, and THE SELECTED ROUTE (only) as a solid line in its profile
+ *  color — a route's shape appears when the rider selects its card, and
+ *  swaps when they pick another. Nothing selected (still loading, or every
+ *  profile failed) draws just the two dots. */
+export function buildPreviewFeatureCollection(
+  origin: LngLat,
+  dest: RideDestWithCoverage,
   results: ReadonlyMap<string, RouteState>,
   selected: string | null,
 ): GeoJSON.FeatureCollection {
-  const ready: { key: string; response: RouteResponse }[] = [];
-  for (const state of results.values()) {
-    if (state.status === "ready") ready.push({ key: state.key, response: state.response });
-  }
-  ready.sort((a, b) => Number(a.key === selected) - Number(b.key === selected));
-  return {
-    type: "FeatureCollection",
-    features: ready.map(({ key, response }) => ({
+  const features: GeoJSON.Feature[] = [
+    pointFeature(origin.lng, origin.lat, "origin"),
+    pointFeature(dest.lon, dest.lat, "dest"),
+  ];
+  const state = selected ? results.get(selected) : undefined;
+  if (state?.status === "ready") {
+    features.push({
       type: "Feature",
-      properties: { profile: key, selected: key === selected },
-      geometry: response.geometry,
-    })),
-  };
+      properties: { profile: state.key, color: colorForProfile(state.key) },
+      geometry: state.response.geometry,
+    });
+  }
+  return { type: "FeatureCollection", features };
 }
 
-/** Bounding box of origin + destination + every loaded route's shape — always
- *  at least the two points, since `buildLoadedScreen` only runs once both
- *  exist. */
+/** Bounding box of origin + destination + the SELECTED route's shape (the
+ *  only one drawn) — always at least the two points, since
+ *  `buildLoadedScreen` only runs once both exist. Pass `selected: null` to
+ *  frame every loaded route instead. */
 export function computeBounds(
   origin: LngLat,
   dest: RideDestWithCoverage,
   results: ReadonlyMap<string, RouteState>,
+  selected: string | null = null,
 ): LngLatBoundsLike {
   let minLng = Infinity;
   let minLat = Infinity;
@@ -365,6 +330,7 @@ export function computeBounds(
   extend(dest.lon, dest.lat);
   for (const state of results.values()) {
     if (state.status !== "ready") continue;
+    if (selected !== null && state.key !== selected) continue;
     for (const [lng, lat] of state.response.geometry.coordinates) extend(lng, lat);
   }
   return [
@@ -459,11 +425,6 @@ function buildDegradeScreen(
 
 // ---------------- loaded screen (normal path) -------------------------------
 
-const ROUTE_SRC = "ride-route-lines";
-const ROUTE_LAYER = "ride-route-lines-layer";
-const POINTS_SRC = "ride-route-points";
-const POINTS_LAYER = "ride-route-points-layer";
-
 function buildLoadedScreen(
   ctx: RideScreenContext,
   deps: RideScreenRoutesDeps,
@@ -476,7 +437,10 @@ function buildLoadedScreen(
 
   let results = new Map<string, RouteState>();
   let selectedProfile: string | null = null;
-  let mapHandle: RouteMapLike | null = null;
+  /** Close function for the open profile-ℹ modal, if any — closed on
+   *  re-open (one at a time) and on screen teardown, same discipline as
+   *  ride-settings.ts's options panel. */
+  let closeInfoModal: (() => void) | null = null;
 
   // ---------------- primary pane (toggle list) ----------------
   const statusEl = el("p", "ride-modal__hint ride-route-status");
@@ -504,66 +468,16 @@ function buildLoadedScreen(
     controls,
   );
 
-  // ---------------- secondary pane (map preview) ----------------
-  const mapContainer = el("div", "ride-route-map");
-  mapContainer.setAttribute("aria-hidden", "true");
-  const secondary = el("div", "ride-route-overview");
-  secondary.append(mapContainer);
-
-  // ---------------- map lifecycle ----------------
-  void (async () => {
-    try {
-      const flavor = resolveFlavor(doc.options.theme);
-      const handle = await (deps.createMap ?? defaultCreateMap)(
-        mapContainer,
-        flavor,
-        abort.signal,
-      );
-      if (destroyed) {
-        safeRemoveMap(handle);
-        return;
-      }
-      mapHandle = handle;
-      ensureRouteLayers(mapHandle);
-      renderMap();
-    } catch (e) {
-      if (destroyed || isAbortError(e)) return;
-      console.error("ride route map failed to initialize", e);
-      renderMapFallback();
-    }
-  })();
-
-  function renderMapFallback(): void {
-    mapContainer.replaceChildren();
-    mapContainer.setAttribute("aria-hidden", "false");
-    mapContainer.classList.add("ride-route-map--fallback");
-    mapContainer.append(
-      el(
-        "p",
-        "ride-modal__hint",
-        "Map preview unavailable — pick a route from the list.",
-      ),
+  // ---------------- main-map preview ----------------
+  // The drawer covers the bottom half; the selected route draws on the real
+  // map above it through the injected handle. Every render pushes the fresh
+  // FeatureCollection (selected route only, solid, profile-colored) plus
+  // the bounds to frame in the visible strip.
+  function renderPreview(): void {
+    deps.routePreview?.set(
+      buildPreviewFeatureCollection(origin, dest, results, selectedProfile),
+      computeBounds(origin, dest, results, selectedProfile),
     );
-  }
-
-  function renderMap(): void {
-    if (!mapHandle) return;
-    const pointsSrc = mapHandle.getSource(POINTS_SRC) as GeoJSONSource | undefined;
-    pointsSrc?.setData(buildPointsFeatureCollection(origin, dest));
-    const routesSrc = mapHandle.getSource(ROUTE_SRC) as GeoJSONSource | undefined;
-    routesSrc?.setData(buildRouteFeatureCollection(results, selectedProfile));
-    try {
-      mapHandle.fitBounds(computeBounds(origin, dest, results), {
-        padding: 48,
-        maxZoom: 16,
-        duration: 0,
-      });
-    } catch (e) {
-      // A degenerate (zero-area, single-point) bounds can throw in some
-      // MapLibre builds — the preview still shows at whatever framing
-      // resulted, which is harmless; this is cosmetic, never fatal.
-      console.error("ride route map fitBounds failed", e);
-    }
   }
 
   // ---------------- data loading ----------------
@@ -712,7 +626,7 @@ function buildLoadedScreen(
     // committed to the session whichever button the rider reaches for.
     ctx.setNextEnabled(!nextBtn.disabled);
 
-    renderMap();
+    renderPreview();
   }
 
   function tombstoneRow(): HTMLElement {
@@ -728,7 +642,10 @@ function buildLoadedScreen(
   }
 
   function routeRow(state: Extract<RouteState, { status: "ready" }>): HTMLElement {
-    const li = el("li");
+    // The select button and the ℹ button are SIBLINGS in a flex row — a
+    // button nested inside a button is invalid HTML and double-fires the
+    // outer click on some engines.
+    const li = el("li", "ride-route-item");
     const btn = el("button", "ride-option ride-route-option");
     btn.type = "button";
     btn.dataset.profile = state.key;
@@ -751,8 +668,82 @@ function buildLoadedScreen(
 
     btn.append(title, meta);
     btn.addEventListener("click", () => select(state.key));
-    li.append(btn);
+
+    const infoBtn = el("button", "ride-route-info", "ℹ");
+    infoBtn.type = "button";
+    infoBtn.dataset.profileInfo = state.key;
+    infoBtn.setAttribute("aria-label", `About the ${state.label} route style`);
+    infoBtn.setAttribute("aria-haspopup", "dialog");
+    infoBtn.addEventListener("click", () => openProfileInfo(state.key, state.label));
+
+    li.append(btn, infoBtn);
     return li;
+  }
+
+  // ---------------- profile ℹ modal ----------------
+  // Reuses the shared `.ranks-modal` floating shell (the same classes the
+  // Screen 2 ℹ modals and devices.ts's Details modal use) — ride-modal.ts's
+  // own Escape handling explicitly defers to an open `.ranks-modal`, which
+  // is what lets Escape close THIS without also closing the wizard.
+  // Appended into `rideModalRoot()` so the wizard's focus trap tolerates
+  // focus landing on the close button.
+  function openProfileInfo(key: string, label: string): void {
+    closeInfoModal?.();
+
+    const backdrop = el("div", "ranks-modal");
+    const card = el("div", "ranks-modal__card");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-labelledby", "ride-route-info-title");
+
+    const head = el("div", "ranks-modal__head");
+    const heading = el("h3", undefined, label);
+    heading.id = "ride-route-info-title";
+    const closeBtn = el("button", "ranks-modal__close", "×");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    head.append(heading, closeBtn);
+
+    const body = el("div", "ride-info-modal__body");
+    body.append(el("p", undefined, profileInfoText(key)));
+    card.append(head, body);
+    backdrop.append(card);
+
+    const previouslyFocused = document.activeElement;
+    let closed = false;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") close();
+    };
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      if (closeInfoModal === close) closeInfoModal = null;
+      document.removeEventListener("keydown", onKey);
+      backdrop.remove();
+      if (
+        previouslyFocused instanceof HTMLElement &&
+        previouslyFocused.isConnected
+      ) {
+        try {
+          previouslyFocused.focus();
+        } catch {
+          /* the launching control went away — nothing to restore to */
+        }
+      }
+    };
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+
+    (rideModalRoot() ?? document.body).append(backdrop);
+    try {
+      closeBtn.focus();
+    } catch {
+      /* not focusable yet — the modal still works, just not pre-focused */
+    }
+    closeInfoModal = close;
   }
 
   render();
@@ -760,19 +751,19 @@ function buildLoadedScreen(
   return {
     title: "Choose your route",
     primary,
-    secondary,
-    split: "40-60",
+    // Bottom half-drawer over the real map — the preview lines above are
+    // this screen's "secondary pane" now.
+    presentation: "sheet",
     onHeaderNext: advance,
-    onOrientationChange() {
-      // The pane's pixel box changes shape on the flip (2-column ⇄ stacked);
-      // wait a frame for the CSS grid to settle before resizing the canvas.
-      if (mapHandle) requestAnimationFrame(() => mapHandle?.resize());
-    },
     destroy() {
       destroyed = true;
       abort.abort();
-      if (mapHandle) safeRemoveMap(mapHandle);
-      mapHandle = null;
+      closeInfoModal?.();
+      closeInfoModal = null;
+      // Whatever the rider does next (Screen 6, back to 3, close) the
+      // preview belongs to this screen alone — the ride's own route line
+      // is ride-route-line.ts's job, drawn fresh by the HUD.
+      deps.routePreview?.clear();
     },
   };
 }
@@ -831,142 +822,6 @@ async function persistRoute(
 
 function isAbortError(e: unknown): boolean {
   return e instanceof Error && e.name === "AbortError";
-}
-
-// ---------------------------------------------------------------------------
-// Map layers
-// ---------------------------------------------------------------------------
-
-function ensureRouteLayers(map: RouteMapLike): void {
-  if (!map.getSource(ROUTE_SRC)) {
-    map.addSource(ROUTE_SRC, { type: "geojson", data: emptyFC() });
-    map.addLayer({
-      id: ROUTE_LAYER,
-      type: "line",
-      source: ROUTE_SRC,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": [
-          "match",
-          ["get", "profile"],
-          "safe",
-          PROFILE_COLORS.safe,
-          "range",
-          PROFILE_COLORS.range,
-          "shade",
-          PROFILE_COLORS.shade,
-          "express",
-          PROFILE_COLORS.express,
-          FALLBACK_PROFILE_COLOR,
-        ] as ExpressionSpecification,
-        "line-width": ["case", ["==", ["get", "selected"], true], 6, 3] as ExpressionSpecification,
-        "line-opacity": [
-          "case",
-          ["==", ["get", "selected"], true],
-          0.95,
-          0.35,
-        ] as ExpressionSpecification,
-      },
-    });
-  }
-  if (!map.getSource(POINTS_SRC)) {
-    map.addSource(POINTS_SRC, { type: "geojson", data: emptyFC() });
-    map.addLayer({
-      id: POINTS_LAYER,
-      type: "circle",
-      source: POINTS_SRC,
-      paint: {
-        "circle-radius": 7,
-        "circle-color": [
-          "match",
-          ["get", "kind"],
-          "origin",
-          "#0072B2",
-          "dest",
-          "#D55E00",
-          "#666666",
-        ] as ExpressionSpecification,
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 2,
-      },
-    });
-  }
-}
-
-function safeRemoveMap(map: RouteMapLike): void {
-  try {
-    map.remove();
-  } catch {
-    /* already removed / never fully initialized — nothing to clean up */
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Default map factory (production) — see DEVIATION 1 above.
-// ---------------------------------------------------------------------------
-
-async function defaultCreateMap(
-  container: HTMLElement,
-  flavor: RouteMapFlavor,
-  signal?: AbortSignal,
-): Promise<RouteMapLike> {
-  // Real streets under the route lines (revising DEVIATION 1's original
-  // flat-background compromise — riders read an unlabeled colored line on a
-  // blank panel as a broken render, not a preview). The pmtiles:// protocol
-  // is already registered globally by map.ts's createMap(), which always
-  // runs long before this modal can open, and previewBasemapStyle() shares
-  // the main map's self-hosted archive/glyphs/sprites, so the extra cost is
-  // a handful of cached tile reads for one modal-sized viewport.
-  const map = new maplibregl.Map({
-    container,
-    style: previewBasemapStyle(flavor),
-    // Denver center — replaced by fitBounds() the instant origin/dest are
-    // known, which is immediately after this promise resolves.
-    center: [-104.9903, 39.7392],
-    zoom: 12,
-    attributionControl: false,
-    // A static preview: the route layers repaint via setData/fitBounds, and
-    // an accidentally-pannable aria-hidden pane inside a modal is a trap.
-    interactive: false,
-  });
-  await waitForLoadAndSize(map, container);
-  if (signal?.aborted) {
-    map.remove();
-    throw new DOMException("aborted", "AbortError");
-  }
-  return map;
-}
-
-/** Resolves once the style has loaded AND the container has a real
- *  (non-zero) size — copies `map.ts`'s own "start at 0×0, poll each frame
- *  until sized" fix for the same class of bug (a modal pane isn't laid out
- *  yet at the instant this screen's factory runs). Resolves early if the map
- *  is removed before either condition lands, so a fast teardown never hangs
- *  the caller. */
-function waitForLoadAndSize(map: MLMap, container: HTMLElement): Promise<void> {
-  return new Promise((resolve) => {
-    let loaded = false;
-    let settled = false;
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    map.once("remove", finish);
-    map.once("load", () => {
-      loaded = true;
-    });
-    const poll = (): void => {
-      if (settled) return;
-      if (loaded && container.clientWidth > 0 && container.clientHeight > 0) {
-        map.resize();
-        finish();
-        return;
-      }
-      requestAnimationFrame(poll);
-    };
-    requestAnimationFrame(poll);
-  });
 }
 
 // ---------------------------------------------------------------------------

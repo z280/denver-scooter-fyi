@@ -5033,6 +5033,28 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 .ride-modal__card:focus {
   outline: none;
 }
+/* Sheet presentation (RideScreen.presentation === "sheet"): the card docks
+   as a bottom half-drawer and the shell above it becomes transparent AND
+   click-through, so the main map is visible and pannable behind — Screen 4
+   draws its route choices there. pointer-events re-enable on the card so
+   the drawer itself still works. */
+.ride-modal--sheet {
+  background: transparent;
+  pointer-events: none;
+  align-items: flex-end;
+}
+.ride-modal--sheet .ride-modal__card {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 50vh;
+  max-height: 60vh;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 28px rgba(20, 30, 50, 0.28);
+  padding-top: 0;
+}
 .ride-modal__header {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -5288,29 +5310,38 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
   }
 }
 
-/* Secondary pane: the route-preview map (a small standalone MapLibre
-   instance — see ride-screen-routes.ts's DEVIATION 1 comment for why it
-   isn't the app's shared map). */
-.ride-route-overview {
+/* Each list row: the route card and its ℹ button as SIBLINGS in a flex row
+   (a button inside a button is invalid HTML). The card keeps .ride-option's
+   own styling; the ℹ matches ride-settings' info affordance sizing. The
+   drawn preview lives on the main map behind the sheet (route-preview.ts)
+   — there is no embedded map pane anymore. */
+.ride-route-item {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 220px;
+  align-items: stretch;
+  gap: 8px;
 }
-.ride-route-map {
+.ride-route-item .ride-route-option {
   flex: 1;
-  min-height: 200px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  min-width: 0;
 }
-.ride-route-map--fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  text-align: center;
+.ride-route-info {
+  appearance: none;
+  flex: none;
+  align-self: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ride-route-info:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 
 /* Graceful-degrade message (every profile out of coverage / erroring, or no

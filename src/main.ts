@@ -97,6 +97,7 @@ import { createMapPick } from "./map-pick.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
+import { createRoutePreview } from "./route-preview.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -196,6 +197,9 @@ const rideTrail = createRideTrail(map);
 // Screen 7 nav overlay is guiding along, drawn beneath `rideTrail`'s live
 // breadcrumb so where-you've-been covers where-you-should-go.
 const rideRouteLine = createRideRouteLine(map);
+// Screen 4's route choices, drawn on this same map behind the wizard's
+// bottom sheet (ride-screen-routes.ts's sheet presentation).
+const routePreview = createRoutePreview(map);
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -1037,7 +1041,7 @@ map.on("load", async () => {
     buildOptionsPanel: buildRideOptionsPanel,
   });
   wireRideScreenDest({ session: rideSession, locate });
-  wireRideScreenRoutes({ session: rideSession, locate, devices });
+  wireRideScreenRoutes({ session: rideSession, locate, devices, routePreview });
   wireRideScreenStart({
     session: rideSession,
     locate,
