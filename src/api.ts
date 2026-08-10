@@ -1263,6 +1263,15 @@ export function fetchAnalyticsEventDaily(
 
 // --- Fleet history (Tools → Devices over time) -----------------------------
 
+/** Per-model slice of one hourly sample — the same three status counts the
+ *  fleet-level fields carry, so every metric breaks down by model. A
+ *  model's total is the three summed. */
+export interface DeviceModelCounts {
+  available: number;
+  reserved: number;
+  out_of_service: number;
+}
+
 /** One hourly fleet sample from `GET /devices/history/hourly` — the LAST
  *  observation cycle in that hour, Denver-core scope. The status/model
  *  breakdowns are null for hours predating the snapshot table (or an
@@ -1275,7 +1284,8 @@ export interface DeviceHistoryHour {
   available: number | null;
   reserved: number | null;
   out_of_service: number | null;
-  models_available: Record<string, number> | null;
+  /** Keyed by the feed's own model display names ("Astro", "Rover", …). */
+  models: Record<string, DeviceModelCounts> | null;
 }
 
 /** Public — the same aggregate fleet count the map footer already shows,

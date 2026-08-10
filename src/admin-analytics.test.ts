@@ -12,7 +12,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DAY_RANGES,
   DEVICE_DAY_RANGES,
-  MAX_MODEL_SERIES,
   SERIES_COLORS_DARK,
   SERIES_COLORS_LIGHT,
   dayExtent,
@@ -30,6 +29,7 @@ import type {
   AnalyticsDailyRow,
   AnalyticsEventDailyRow,
   DeviceHistoryHour,
+  DeviceModelCounts,
 } from "./api.ts";
 
 beforeEach(() => {
@@ -151,7 +151,9 @@ describe("shortDay + ranges", () => {
 function hourRow(
   hour: string,
   total: number,
-  models: Record<string, number> | null = { Astro: total },
+  models: Record<string, DeviceModelCounts> | null = {
+    Astro: { available: total - 2, reserved: 1, out_of_service: 1 },
+  },
 ): DeviceHistoryHour {
   const rich = models !== null;
   return {
@@ -160,8 +162,16 @@ function hourRow(
     available: rich ? total - 2 : null,
     reserved: rich ? 1 : null,
     out_of_service: rich ? 1 : null,
-    models_available: models,
+    models,
   };
+}
+
+function modelCounts(
+  available: number,
+  reserved = 0,
+  out_of_service = 0,
+): DeviceModelCounts {
+  return { available, reserved, out_of_service };
 }
 
 describe("fillHourGaps", () => {
@@ -227,10 +237,14 @@ describe("linePath with nulls", () => {
 });
 
 describe("rankModels + pointLabel", () => {
-  it("ranks models by windowed available total", () => {
+  it("ranks models by windowed total across ALL statuses, not availability", () => {
     const rows = [
-      hourRow("2026-08-10T12:00:00+00:00", 10, { Astro: 2, Rover: 9 }),
-      hourRow("2026-08-10T13:00:00+00:00", 10, { Astro: 3 }),
+      hourRow("2026-08-10T12:00:00+00:00", 10, {
+        // Astro leads on availability, but Rover's fleet slice is bigger.
+        Astro: modelCounts(4),
+        Rover: modelCounts(2, 3, 3),
+      }),
+      hourRow("2026-08-10T13:00:00+00:00", 10, { Rover: modelCounts(3) }),
     ];
     expect(rankModels(rows)).toEqual(["Rover", "Astro"]);
   });
@@ -374,31 +388,36 @@ describe("openAdminAnalytics", () => {
     expect(document.querySelector(".admin-analytics")).toBeNull();
   });
 
-  it("devices: fleet-by-status and by-model charts, nulls as dashes in the table", async () => {
+  it("devices: fleet-by-status chart with nulls as dashes in the table", async () => {
     const fetchDeviceHistory = vi.fn(async () => ({
       days: 14,
       hours: [
         hourRow("2026-08-10T12:00:00+00:00", 480, null), // backfilled
-        hourRow("2026-08-10T13:00:00+00:00", 500, { Astro: 300, Rover: 198 }),
+        hourRow("2026-08-10T13:00:00+00:00", 500, {
+          Astro: modelCounts(300, 20, 30),
+          Rover: modelCounts(120, 10, 20),
+        }),
       ],
     }));
     openAdminAnalytics("devices", { fetchDeviceHistory });
     await flush();
     expect(fetchDeviceHistory).toHaveBeenCalledWith(14);
     const charts = document.querySelectorAll(".admin-analytics__chart");
-    expect(charts.length).toBe(2);
+    expect(charts.length).toBe(1);
     expect(charts[0].textContent).toContain("Fleet by status");
-    expect(charts[1].textContent).toContain("Available by model");
-    // Both charts are multi-series → both carry legends.
     expect(charts[0].querySelector(".admin-analytics__legend")?.textContent)
       .toContain("Out of service");
-    expect(charts[1].querySelector(".admin-analytics__legend")?.textContent)
-      .toContain("Rover");
-    // The devices range selector offers the snapshot-backed windows only.
-    const range = document.querySelector<HTMLSelectElement>(
+    // The devices range selector offers the snapshot-backed windows only,
+    // and the Model selector lists the window's models ranked by size.
+    const selects = document.querySelectorAll<HTMLSelectElement>(
       ".admin-analytics__control select",
-    )!;
-    expect([...range.options].map((o) => o.value)).toEqual(
+    );
+    expect([...selects[0].options].map((o) => o.textContent)).toEqual([
+      "All models",
+      "Astro",
+      "Rover",
+    ]);
+    expect([...selects[1].options].map((o) => o.value)).toEqual(
       DEVICE_DAY_RANGES.map(String),
     );
     // Table view: the backfilled hour prints "–" for the unknown
@@ -407,7 +426,7 @@ describe("openAdminAnalytics", () => {
       .querySelector<HTMLButtonElement>(".admin-analytics__table-toggle")!
       .click();
     const rows = document.querySelectorAll(
-      ".admin-analytics__chart:first-child tbody tr",
+      ".admin-analytics__chart tbody tr",
     );
     // Newest first: 13:00 (rich) then 12:00 (backfilled).
     expect(rows[0].textContent).toContain("500");
@@ -415,22 +434,37 @@ describe("openAdminAnalytics", () => {
     expect(rows[1].textContent).toContain("–");
   });
 
-  it("devices: beyond five models the remainder folds into Other", async () => {
-    const models: Record<string, number> = {};
-    for (let i = 0; i < MAX_MODEL_SERIES + 2; i += 1) models[`M${i}`] = 10 - i;
+  it("devices: the Model filter scopes ALL metrics without refetching", async () => {
     const fetchDeviceHistory = vi.fn(async () => ({
       days: 14,
-      hours: [hourRow("2026-08-10T13:00:00+00:00", 60, models)],
+      hours: [
+        hourRow("2026-08-10T12:00:00+00:00", 480, null), // backfilled
+        hourRow("2026-08-10T13:00:00+00:00", 500, {
+          Astro: modelCounts(300, 20, 30),
+          Rover: modelCounts(120, 10, 20),
+        }),
+      ],
     }));
     openAdminAnalytics("devices", { fetchDeviceHistory });
     await flush();
-    const legend = document.querySelectorAll(
-      ".admin-analytics__chart",
-    )[1].querySelector(".admin-analytics__legend")!;
-    const labels = [...legend.querySelectorAll(".admin-analytics__legend-item")]
-      .map((n) => n.textContent);
-    expect(labels).toHaveLength(MAX_MODEL_SERIES);
-    expect(labels[labels.length - 1]).toContain("Other (3 models)");
+    const model = document.querySelector<HTMLSelectElement>(
+      ".admin-analytics__control select",
+    )!;
+    model.value = "Rover";
+    model.dispatchEvent(new Event("change"));
+    expect(fetchDeviceHistory).toHaveBeenCalledTimes(1); // local recompute
+    const chart = document.querySelector(".admin-analytics__chart")!;
+    expect(chart.textContent).toContain("Rover by status");
+    document
+      .querySelector<HTMLButtonElement>(".admin-analytics__table-toggle")!
+      .click();
+    const rows = document.querySelectorAll(".admin-analytics__chart tbody tr");
+    // Rover's 13:00 slice: total 150, available 120; the backfilled hour
+    // is unknown for a single model — every cell an en dash.
+    expect(rows[0].textContent).toContain("150");
+    expect(rows[0].textContent).toContain("120");
+    expect(rows[1].textContent).not.toMatch(/480/);
+    expect(rows[1].textContent).toContain("–");
   });
 
   it("opens at most one at a time", async () => {

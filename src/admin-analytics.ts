@@ -13,13 +13,14 @@
 //   events   — one event name's per-day count, with an optional SECOND
 //              event overlaid for comparison (same day range, same axis —
 //              both series are "events per day", so one scale is honest).
-//   devices  — PUBLIC: the fleet by hour over up to 14 days. Chart one is
-//              total/available/reserved/out-of-service; chart two is the
-//              available count per model (top models, the rest folded into
-//              "Other"). Hours whose breakdown predates the snapshot table
-//              come back null from the API — a null BREAKS the line
-//              (see linePath) and prints "–" in the table; plotting zero
-//              would chart a fleet collapse that never happened.
+//   devices  — PUBLIC: the fleet by hour over up to 14 days —
+//              total/available/reserved/out-of-service, with a Model
+//              selector that scopes ALL four metrics to one device model
+//              (the API carries the same status counts per model). Hours
+//              whose breakdown predates the snapshot table come back null
+//              from the API — a null BREAKS the line (see linePath) and
+//              prints "–" in the table; plotting zero would chart a fleet
+//              collapse that never happened.
 //
 // Chart discipline (the dataviz method, applied):
 //   * line charts for change-over-time; 2px lines; one y-axis per chart;
@@ -80,11 +81,6 @@ export const DAY_RANGES = [7, 30, 90, 365] as const;
 /** The devices report ranges — the snapshot table keeps 30 days, the API
  *  serves at most 14. */
 export const DEVICE_DAY_RANGES = [1, 3, 7, 14] as const;
-
-/** Most model series a chart carries; beyond this the remainder folds into
- *  one "Other" series — five validated colors is the palette's honest
- *  ceiling, and a 12-line chart is unreadable anyway. */
-export const MAX_MODEL_SERIES = 5;
 
 // ---------------------------------------------------------------------------
 // Pure data shaping (exported for unit tests)
@@ -273,13 +269,20 @@ export function fillHourGaps(
   return points;
 }
 
-/** Model names ranked by their summed available count over the window —
- *  the order the "Available by model" chart assigns its colors in. */
+/** Model names ranked by their summed device-count over the window (all
+ *  three statuses) — the order the Model selector lists them in, biggest
+ *  slice of the fleet first. */
 export function rankModels(rows: readonly DeviceHistoryHour[]): string[] {
   const totals = new Map<string, number>();
   for (const r of rows) {
-    for (const [model, count] of Object.entries(r.models_available ?? {})) {
-      totals.set(model, (totals.get(model) ?? 0) + count);
+    for (const [model, counts] of Object.entries(r.models ?? {})) {
+      totals.set(
+        model,
+        (totals.get(model) ?? 0) +
+          counts.available +
+          counts.reserved +
+          counts.out_of_service,
+      );
     }
   }
   return [...totals.entries()]
@@ -356,6 +359,11 @@ export function openAdminAnalytics(
   let days: number = kind === "devices" ? 14 : 30;
   let eventName: string = "page_load";
   let compareName: string = "";
+  /** Devices report: "" = the whole fleet; else one model display name. */
+  let modelFilter: string = "";
+  /** Devices report: the last fetched window, so switching the model
+   *  filter recomputes locally instead of refetching. */
+  let deviceHours: DeviceHistoryHour[] | null = null;
 
   const backdrop = el("div", ROOT_CLASS);
   const card = el("div", `${ROOT_CLASS}__card`);
@@ -410,6 +418,26 @@ export function openAdminAnalytics(
   );
   const eventOptions = TELEMETRY_EVENTS.map((e) => ({ value: e, label: e }));
 
+  /** Devices report only: repopulated from each fetched window's model
+   *  names (the feed's, ranked biggest first) — the selection survives a
+   *  range change when the model still exists. */
+  let modelSelect: HTMLSelectElement | null = null;
+  if (kind === "devices") {
+    const wrap = makeSelect(
+      "Model",
+      [{ value: "", label: "All models" }],
+      "",
+      (v) => {
+        modelFilter = v;
+        if (deviceHours) {
+          buildDeviceCharts();
+          render();
+        }
+      },
+    );
+    modelSelect = wrap.querySelector("select");
+    controls.append(wrap);
+  }
   if (kind === "events") {
     controls.append(
       makeSelect("Event", eventOptions, eventName, (v) => {
@@ -471,14 +499,87 @@ export function openAdminAnalytics(
   document.addEventListener("keydown", onKey);
   cleanupFns.push(() => document.removeEventListener("keydown", onKey));
 
+  // ---- devices report: model filter + chart building ----
+
+  /** Rebuild the Model selector from the fetched window's names. The
+   *  current pick survives when it still exists; a model that vanished
+   *  from the window falls back to the whole fleet. */
+  function updateModelOptions(ranked: readonly string[]): void {
+    if (!modelSelect) return;
+    if (!ranked.includes(modelFilter)) modelFilter = "";
+    modelSelect.replaceChildren();
+    for (const o of [{ value: "", label: "All models" }, ...ranked.map((m) => ({ value: m, label: m }))]) {
+      const opt = el("option", undefined, o.label) as HTMLOptionElement;
+      opt.value = o.value;
+      modelSelect.append(opt);
+    }
+    modelSelect.value = modelFilter;
+  }
+
+  /** The one devices chart, from the cached window and the model filter.
+   *  Fleet scope reads the top-level fields; a model scope reads that
+   *  model's slice — null when the hour's breakdown is unknown (backfill),
+   *  an honest ZERO when the breakdown is known and the model simply had
+   *  no devices in that status. */
+  function buildDeviceCharts(): void {
+    const hours = deviceHours ?? [];
+    const palette = seriesColors();
+    const pick = (
+      h: DeviceHistoryHour,
+      field: "available" | "reserved" | "out_of_service",
+    ): number | null => {
+      if (modelFilter === "") return h[field];
+      if (h.models === null) return null;
+      return h.models[modelFilter]?.[field] ?? 0;
+    };
+    const total = (h: DeviceHistoryHour): number | null => {
+      if (modelFilter === "") return h.total;
+      if (h.models === null) return null;
+      const m = h.models[modelFilter];
+      return m ? m.available + m.reserved + m.out_of_service : 0;
+    };
+    // Semantic colors from the validated palette: total wears the brand
+    // blue, available the green, reserved the amber "paused",
+    // out-of-service the red-leaning pink.
+    charts = [
+      {
+        title:
+          modelFilter === ""
+            ? "Fleet by status"
+            : `${modelFilter} by status`,
+        series: [
+          {
+            label: "Total",
+            color: palette[0],
+            points: fillHourGaps(hours, total),
+          },
+          {
+            label: "Available",
+            color: palette[2],
+            points: fillHourGaps(hours, (h) => pick(h, "available")),
+          },
+          {
+            label: "Reserved",
+            color: palette[1],
+            points: fillHourGaps(hours, (h) => pick(h, "reserved")),
+          },
+          {
+            label: "Out of service",
+            color: palette[4],
+            points: fillHourGaps(hours, (h) => pick(h, "out_of_service")),
+          },
+        ],
+      },
+    ];
+  }
+
   // ---- data loading ----
   async function load(): Promise<void> {
     const seq = ++requestSeq;
     status = "Loading…";
     charts = [];
     render();
-    const palette = seriesColors();
-    const [colorA, colorB] = palette;
+    const [colorA, colorB] = seriesColors();
     try {
       if (kind === "devices") {
         const resp = await fetchDeviceHistory(days);
@@ -488,64 +589,9 @@ export function openAdminAnalytics(
           render();
           return;
         }
-        // Semantic colors from the validated palette: total wears the
-        // brand blue, available the green, reserved the amber "paused",
-        // out-of-service the red-leaning pink.
-        const statusSeries: ChartSeries[] = [
-          {
-            label: "Total",
-            color: palette[0],
-            points: fillHourGaps(resp.hours, (h) => h.total),
-          },
-          {
-            label: "Available",
-            color: palette[2],
-            points: fillHourGaps(resp.hours, (h) => h.available),
-          },
-          {
-            label: "Reserved",
-            color: palette[1],
-            points: fillHourGaps(resp.hours, (h) => h.reserved),
-          },
-          {
-            label: "Out of service",
-            color: palette[4],
-            points: fillHourGaps(resp.hours, (h) => h.out_of_service),
-          },
-        ];
-        const ranked = rankModels(resp.hours);
-        const top =
-          ranked.length > MAX_MODEL_SERIES
-            ? ranked.slice(0, MAX_MODEL_SERIES - 1)
-            : ranked;
-        const folded = ranked.slice(top.length);
-        const modelSeries: ChartSeries[] = top.map((model, i) => ({
-          label: model,
-          color: palette[i % palette.length],
-          points: fillHourGaps(resp.hours, (h) =>
-            h.models_available === null
-              ? null
-              : (h.models_available[model] ?? 0),
-          ),
-        }));
-        if (folded.length > 0) {
-          modelSeries.push({
-            label: `Other (${folded.length} models)`,
-            color: palette[MAX_MODEL_SERIES - 1],
-            points: fillHourGaps(resp.hours, (h) =>
-              h.models_available === null
-                ? null
-                : folded.reduce(
-                    (sum, m) => sum + (h.models_available?.[m] ?? 0),
-                    0,
-                  ),
-            ),
-          });
-        }
-        charts = [{ title: "Fleet by status", series: statusSeries }];
-        if (modelSeries.length > 0) {
-          charts.push({ title: "Available by model", series: modelSeries });
-        }
+        deviceHours = resp.hours;
+        updateModelOptions(rankModels(resp.hours));
+        buildDeviceCharts();
         status = null;
       } else if (kind === "traffic") {
         const resp = await fetchDaily(days);
