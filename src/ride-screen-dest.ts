@@ -422,12 +422,20 @@ function buildDestScreen(
   // Fire-and-forget: the screen is already interactive on recents/search,
   // and the Saved-places rows appear whenever the profile answers — but
   // only if the rider is still on the empty-input suggestion view; a
-  // mid-typing re-render would stomp live search results.
-  void (deps.getHomeWork ?? defaultGetHomeWork)().then((points) => {
-    if (destroyed) return;
-    saved = points;
-    if (isEmpty()) render();
-  });
+  // mid-typing re-render would stomp live search results. Wrapped so that
+  // neither a rejecting nor a synchronously-throwing loader (an injected
+  // one — the default can do neither) can break the screen build or leak
+  // an unhandled rejection; either failure just means no saved rows.
+  void Promise.resolve()
+    .then(() => (deps.getHomeWork ?? defaultGetHomeWork)())
+    .then((points) => {
+      if (destroyed) return;
+      saved = points;
+      if (isEmpty()) render();
+    })
+    .catch(() => {
+      /* the suggestions are a bonus — recents and search carry the screen */
+    });
 
   input.addEventListener("input", () => {
     const raw = input.value;

@@ -377,6 +377,31 @@ describe("Screen 3 — saved places (home/work)", () => {
     expect(text).not.toContain("🏠 Home");
   });
 
+  it("a rejecting or throwing loader costs only the rows, never the screen", async () => {
+    const session = sessionAt("3");
+    wire(session, {
+      getHomeWork: () => Promise.reject(new Error("profile down")),
+    });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    // The screen is intact and searchable; there is just no Saved section.
+    expect(input()).not.toBeNull();
+    expect(rideModalRoot()?.textContent).not.toContain("Saved places");
+
+    resetRideModal();
+    document.body.replaceChildren();
+    const session2 = sessionAt("3");
+    wire(session2, {
+      getHomeWork: () => {
+        throw new Error("sync throw");
+      },
+    });
+    // A synchronously-throwing loader must not break the screen build.
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    expect(input()).not.toBeNull();
+  });
+
   it("a late profile answer does not stomp live search results", async () => {
     // The rider starts typing before the profile fetch lands: the answer
     // must be held for the next empty-input view, not re-rendered over the
@@ -392,6 +417,9 @@ describe("Screen 3 — saved places (home/work)", () => {
         }),
     });
     openRideModal({ fastForwardTo: "3" });
+    // Let the (deliberately still-pending) loader be invoked so its
+    // resolver is captured, then start typing before it answers.
+    await flush();
     typeInto("colfax");
     fs.emitResults([result("1 Colfax Ave")], "colfax");
     resolveHomeWork({ home: HOME, work: null });
