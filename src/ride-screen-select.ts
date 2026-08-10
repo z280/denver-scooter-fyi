@@ -385,7 +385,19 @@ function buildSelectScreen(
   // "from the consumer's screen-teardown (ctx.onCleanup)" so an open ℹ modal
   // closes with the screen; also disposed before every rebuild below, since
   // each `buildOptionsPanel()` call replaces the previous panel's DOM.
+  //
+  // REBUILDS ARE MEMOIZED on the panel's actual inputs (`optionsPanelKey`).
+  // render() runs on every GPS fix (~1/sec with the wizard up) and every
+  // devices-feed refresh, and an unconditional dispose-and-rebuild here is
+  // how the ℹ info modals used to close BY THEMSELVES moments after
+  // opening: the fix-driven rebuild disposed the panel, and the panel's
+  // destroy() dutifully closed its open modal. Nothing the panel renders
+  // depends on the fix or the feed — only on whether [NEXT >>] should be
+  // enabled and whether [Usuals] exists — so a rebuild outside those two
+  // changing is pure destruction: it also stole focus from any panel
+  // control the rider was touching.
   let optionsPanelHandle: { dispose?(): void } | undefined;
+  let optionsPanelKey: string | null = null;
 
   // ---------------- confirm strip ----------------
   // Plate-only now — no Battery % field (see the module's FRICTION-REDUCTION
@@ -682,6 +694,12 @@ function buildSelectScreen(
   }
 
   function buildOptionsPanel(): void {
+    // See the `optionsPanelKey` note above: skip the rebuild when neither
+    // input the panel renders from has changed, so a GPS fix or feed
+    // refresh can never close an open ℹ modal or steal focus mid-toggle.
+    const key = `${nextEnabled()}|${usualsAvailable}`;
+    if (optionsPanelKey === key) return;
+    optionsPanelKey = key;
     optionsPanelHandle?.dispose?.();
     optionsPanelHandle = undefined;
     optionsPanelEl.replaceChildren();
