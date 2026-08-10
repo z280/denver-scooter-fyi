@@ -260,11 +260,13 @@ export interface SurveyPaneGates {
   navigation: boolean;
 }
 
-/** Master Risk 16: Screen 9 as a whole needs a tracked Veo ride, then the two
- *  panes gate individually. Left = the Screen 2 "End ride survey" toggle, which
- *  exists to control exactly this pane (and is meaningless on own device, which
- *  has no GBFS ground truth). Right = a selected route, without which
- *  "How was the ${selectedRoute}?" is unanswerable. */
+/** Master Risk 16 (amended): the two Screen 9 panes gate individually, and
+ *  only the LEFT one needs a tracked Veo ride. Left = tracked + the Screen 2
+ *  "End ride survey" toggle, which exists to control exactly this pane (and
+ *  is meaningless on own device, which has no GBFS ground truth). Right = a
+ *  selected route and nothing else — without one, "How was the
+ *  ${selectedRoute}?" is unanswerable; with one, the question is answerable
+ *  on ANY ride, tracked or private (see the inline note below). */
 export function surveyPanes(doc: RideSessionDoc): SurveyPaneGates {
   const tracked = !doc.private && doc.rideId !== null;
   return {

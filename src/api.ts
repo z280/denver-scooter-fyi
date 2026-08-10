@@ -1185,9 +1185,11 @@ export interface RouteFeedbackIn {
 }
 
 /** Submit navigation feedback for a ride the survey can't reach. Anonymous
- *  is allowed (a guest ride has no session at all); a bearer token rides
- *  along when signed in, for attribution only — nothing is awarded either
- *  way, because private rides are never points-eligible. */
+ *  is allowed — guests are signed out, so there may be no auth token to
+ *  send at all (auth here, not the ride-session doc: that is a different
+ *  "session" this function never touches); a bearer token rides along when
+ *  signed in, for attribution only — nothing is awarded either way,
+ *  because private rides are never points-eligible. */
 export async function postRouteFeedback(
   body: RouteFeedbackIn,
   signal?: AbortSignal,
