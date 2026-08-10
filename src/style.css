@@ -1700,14 +1700,6 @@ body.is-map-picking .drawer--right {
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
-/* Genuinely inert, and styled to say so — there is no click handler behind
-   this at all, only a promise that there will be one. */
-.is-coming-soon {
-  opacity: 0.5;
-  cursor: not-allowed;
-  font-size: 12.5px;
-  color: var(--fg-muted);
-}
 .track-warning {
   color: var(--warn-fg, var(--fg-muted));
 }

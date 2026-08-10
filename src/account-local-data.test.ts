@@ -462,20 +462,87 @@ describe("donate", () => {
   });
 });
 
-// ---------- export scaffold ----------
+// ---------- export ----------
 
-describe("GeoJSON export scaffold", () => {
-  it("is inert and announced as unavailable", async () => {
-    const store = await fakeStore([ride()]);
-    const panel = mount({ getTrackStore: async () => store });
+describe("GeoJSON export", () => {
+  it("downloads the ride as a FeatureCollection with parallel times", async () => {
+    const b0 = await batch(0, [
+      [0, 39.75, -104.99, 5],
+      [1000, 39.76, -104.98, 5],
+    ]);
+    const store = await fakeStore([ride()], [b0]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
     await panel.refresh();
 
-    const ex = rows()[0].querySelector<HTMLElement>(".track-row__export")!;
-    // Not a button: nothing here should look like it might work.
-    expect(ex.tagName).toBe("SPAN");
-    expect(ex.getAttribute("aria-disabled")).toBe("true");
-    expect(ex.tabIndex).toBe(-1);
-    expect(ex.title).toContain("coming soon");
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+
+    const [filename, text] = download.mock.calls[0] as [string, string];
+    expect(filename).toMatch(/^scooter-fyi-ride-\d{4}-\d{2}-\d{2}-\d{4}\.geojson$/);
+    const doc = JSON.parse(text);
+    expect(doc.type).toBe("FeatureCollection");
+    const feature = doc.features[0];
+    expect(feature.geometry).toEqual({
+      type: "LineString",
+      coordinates: [
+        [-104.99, 39.75],
+        [-104.98, 39.76],
+      ],
+    });
+    expect(feature.properties.track_id).toBe("ride-a");
+    expect(feature.properties.waypoint_count).toBe(2);
+    expect(feature.properties.coordinate_times).toEqual([
+      new Date(b0.t0).toISOString(),
+      new Date(b0.t0 + 1000).toISOString(),
+    ]);
+    expect(rows()[0].textContent).toContain("Exported.");
+  });
+
+  it("exports a single surviving waypoint as a Point", async () => {
+    // RFC 7946 requires two positions for a LineString; a one-fix ride is
+    // still the rider's data and still exports.
+    const b0 = await batch(0, [[0, 39.75, -104.99, 5]]);
+    const store = await fakeStore([ride()], [b0]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+    const doc = JSON.parse(download.mock.calls[0][1] as string);
+    expect(doc.features[0].geometry).toEqual({
+      type: "Point",
+      coordinates: [-104.99, 39.75],
+    });
+  });
+
+  it("refuses to download an empty file for a ride with no waypoints", async () => {
+    const store = await fakeStore([ride()]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => {
+      expect(rows()[0].textContent).toContain("No waypoints were recorded");
+    });
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("says when damaged segments were left out of the file", async () => {
+    const good = await batch(0, [[0, 39.75, -104.99, 5], [1000, 39.76, -104.98, 5]]);
+    const bad = { ...(await batch(1, [[0, 1, 1, 1]])), jws: "not-a-jws" };
+    const store = await fakeStore([ride()], [good, bad]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+    expect(rows()[0].textContent).toContain("1 damaged segment(s) skipped");
+    const doc = JSON.parse(download.mock.calls[0][1] as string);
+    expect(doc.features[0].properties.skipped_batches).toBe(1);
   });
 });
 
