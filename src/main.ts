@@ -98,6 +98,7 @@ import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
 import { createRoutePreview } from "./route-preview.ts";
+import { openAdminAnalytics } from "./admin-analytics.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -295,6 +296,21 @@ need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
     requireQr: true,
     status: "needs_features_confirmed",
   });
+});
+// Equity Compliance moved off the ribbon into Tools: the (hidden) ribbon
+// tab still owns the drawer via wireDrawers, so opening it is one
+// programmatic click — which also closes the Tools drawer, exactly like a
+// visible tab switch would.
+need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () => {
+  document
+    .querySelector<HTMLButtonElement>('.drawer-tab[data-drawer="compliance"]')
+    ?.click();
+});
+need<HTMLButtonElement>("tools-admin-traffic").addEventListener("click", () => {
+  openAdminAnalytics("traffic");
+});
+need<HTMLButtonElement>("tools-admin-events").addEventListener("click", () => {
+  openAdminAnalytics("events");
 });
 // Mode switches sweep every open floating surface (closeAllPopups).
 registerPopupCloser(() => devices.closePopup());
@@ -2847,7 +2863,13 @@ function wireAccount(): void {
 
       if (auth) {
         signedIn = renderSignedInAccount(tabs.panel("login"), auth, {
-          setAdminSession: (on2) => devices.setAdminSession(on2),
+          setAdminSession: (on2) => {
+            devices.setAdminSession(on2);
+            // The Tools drawer's Admin tools section exists only for a
+            // session the server has called an admin; the analytics
+            // endpoints behind its buttons are require_admin regardless.
+            need("tools-admin").hidden = !on2;
+          },
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
@@ -2872,6 +2894,10 @@ function wireAccount(): void {
         });
       } else {
         buildSignedOut();
+        // A signed-out map must not keep showing the previous session's
+        // admin affordances — same reasoning as the home/work pin clear.
+        devices.setAdminSession(false);
+        need("tools-admin").hidden = true;
       }
 
       if (tabs.isEnabled("local")) {

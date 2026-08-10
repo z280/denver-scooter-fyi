@@ -1214,6 +1214,53 @@ export async function postRouteFeedback(
   return (await res.json()) as { id: number; created_at: string };
 }
 
+// --- Admin analytics (telemetry_daily rollups) -----------------------------
+// Both endpoints are require_admin server-side; the client only offers the
+// Admin Tools buttons to a session the server has already called an admin
+// (isAdminSession), but the endpoints enforce it regardless.
+
+/** One `GET /private/analytics/daily` row — all-events per-day totals.
+ *  `max_event_visitors` is a LOWER bound (per-event-name distinct counts
+ *  can't be summed across names); page_load's count is the practical
+ *  daily-active figure, which is what MAX picks up in practice. */
+export interface AnalyticsDailyRow {
+  day: string;
+  events: number;
+  max_event_visitors: number;
+  max_event_sessions: number;
+}
+
+export function fetchAnalyticsDaily(
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ days: number; daily: AnalyticsDailyRow[] }> {
+  return authedFetchJSON(`/api/v1/private/analytics/daily?days=${days}`, {
+    signal,
+  });
+}
+
+/** One `GET /private/analytics/events` row. May be several rows per day
+ *  (the rollup is per city_id) — sum per day before charting. */
+export interface AnalyticsEventDailyRow {
+  day: string;
+  city_id: number | null;
+  events: number;
+  visitors: number;
+  sessions: number;
+  prop_summary: unknown;
+}
+
+export function fetchAnalyticsEventDaily(
+  name: string,
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ name: string; days: number; daily: AnalyticsEventDailyRow[] }> {
+  return authedFetchJSON(
+    `/api/v1/private/analytics/events?name=${encodeURIComponent(name)}&days=${days}`,
+    { signal },
+  );
+}
+
 // --- Chosen route persistence (Screen 4) ----------------------------------
 
 /** `[lat, lon]` — the order `POST /ride-routes` expects, and the reverse of

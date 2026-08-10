@@ -6582,3 +6582,163 @@ input[data-ride-keypad="on"] {
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
+
+/* ---------- admin-analytics.ts: Admin Tools chart modals ---------- */
+.admin-analytics {
+  position: fixed;
+  inset: 0;
+  z-index: 72; /* same tier as .device-features — one floating modal deep */
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.admin-analytics__card {
+  width: min(760px, 96vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.admin-analytics__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.admin-analytics__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.admin-analytics__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.admin-analytics__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.admin-analytics__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+.admin-analytics__control {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.admin-analytics__table-toggle {
+  appearance: none;
+  margin-left: auto;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.admin-analytics__table-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.admin-analytics__status {
+  margin: 8px 0 0;
+  min-height: 1em;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.admin-analytics__chart {
+  position: relative;
+  margin: 14px 0 0;
+}
+.admin-analytics__chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.admin-analytics__svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.admin-analytics__grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.admin-analytics__tick {
+  fill: var(--fg-muted);
+  font-size: 10px;
+}
+.admin-analytics__crosshair {
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.admin-analytics__tooltip {
+  position: absolute;
+  top: 28px;
+  pointer-events: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--fg);
+  min-width: 110px;
+}
+.admin-analytics__legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.admin-analytics__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.admin-analytics__legend-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.admin-analytics__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.admin-analytics__table th,
+.admin-analytics__table td {
+  text-align: right;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.admin-analytics__table th:first-child,
+.admin-analytics__table td:first-child {
+  text-align: left;
+}
+
+/* Ribbon tabs pulled off the strip (Compliance moved into Tools) stay in
+   the DOM so wireDrawers keeps managing their drawer. */
+.drawer-tab[hidden] {
+  display: none;
+}
