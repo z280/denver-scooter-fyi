@@ -391,11 +391,16 @@ describe("non-linear transitions the buttons imply", () => {
     expect(
       surveyPanes({ ...base, options: { ...OPTIONS, own_device: true } }),
     ).toMatchObject({ scooter: false });
-    // A private ride has no tracked_rides row at all.
+    // A private ride has no tracked_rides row to survey — but the rider
+    // still rode the chosen route, so the NAV pane stays up (it submits to
+    // POST /route-feedback instead of the ride survey).
     expect(surveyPanes({ ...base, private: true, rideId: null })).toEqual({
       scooter: false,
-      navigation: false,
+      navigation: true,
     });
+    expect(
+      surveyPanes({ ...base, private: true, rideId: null, route: null }),
+    ).toEqual({ scooter: false, navigation: false });
     expect(
       shouldShowEligibility({ ...base, private: true }, { hasWaypoints: true }),
     ).toBe(false);

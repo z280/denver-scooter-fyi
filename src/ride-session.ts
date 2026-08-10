@@ -267,7 +267,13 @@ export function surveyPanes(doc: RideSessionDoc): SurveyPaneGates {
   const tracked = !doc.private && doc.rideId !== null;
   return {
     scooter: tracked && doc.options.end_survey && !doc.options.own_device,
-    navigation: tracked && doc.route !== null,
+    // The navigation pane needs only a chosen route, NOT a tracked ride: a
+    // private ("My own Device" / guest) ride has no tracked_rides row to
+    // survey, but the rider still rode the routing we proposed and their
+    // opinion of it is exactly as real — for those rides Screen 9 submits
+    // the pane to POST /route-feedback instead of the ride survey, and no
+    // points are promised (private rides are never points-eligible).
+    navigation: doc.route !== null,
   };
 }
 

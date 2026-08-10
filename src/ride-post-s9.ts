@@ -54,9 +54,11 @@
 
 import {
   ApiError,
+  postRouteFeedback as apiPostRouteFeedback,
   postSurvey as apiPostSurvey,
   type RideSurveyIn,
   type RideSurveyResponse,
+  type RouteFeedbackIn,
   type SurveyIssue,
   type SurveyModelBonus,
 } from "./api.ts";
@@ -354,6 +356,41 @@ export function buildSurveyPayload(
   return payload;
 }
 
+/** The nav pane's answers as a `POST /route-feedback` body — the private
+ *  ride path, where there is no tracked ride for `postSurvey` to key on.
+ *  Same field derivations as `buildSurveyPayload`'s navigation half (the
+ *  follow-up dies with a non-Yes deviation, whitespace-only text is null),
+ *  with the route described inline since no ride_routes row exists. */
+export function buildRouteFeedbackPayload(
+  state: RidePostS9FormState,
+  route: { profile: string; distanceM: number; durationS: number },
+): RouteFeedbackIn {
+  const trimmed = state.navQualitative.trim();
+  return {
+    route_profile: route.profile,
+    distance_m: route.distanceM,
+    duration_s: route.durationS,
+    nav_route_rating: state.navRouteRating,
+    nav_deviated: state.navDeviated,
+    nav_deviated_needs_improvement:
+      state.navDeviated === true ? state.navDeviatedNeedsImprovement : null,
+    nav_nps: state.navNps,
+    nav_qualitative: trimmed.length > 0 ? trimmed : null,
+  };
+}
+
+/** Has the rider answered anything the nav pane asks? The route-feedback
+ *  endpoint 422s a body with no substantive answer, and stopping the rider
+ *  at a visible message beats surfacing that 422 after Submit. */
+export function hasNavAnswers(state: RidePostS9FormState): boolean {
+  return (
+    state.navRouteRating !== null ||
+    state.navDeviated !== null ||
+    state.navNps !== null ||
+    state.navQualitative.trim().length > 0
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Host-facing gate — call BEFORE building the screen. Both panes gated off
 // means Screen 9 must be skipped entirely (master Risk 16), never rendered
@@ -391,6 +428,9 @@ export interface RidePostS9Deps {
   getGateFacts(): RideGateFacts | Promise<RideGateFacts>;
   /** Injected for tests; defaults to `api.ts`'s `postSurvey`. */
   postSurvey?: typeof apiPostSurvey;
+  /** Injected for tests; defaults to `api.ts`'s `postRouteFeedback` — the
+   *  private-ride path, where no tracked ride exists to survey. */
+  postRouteFeedback?: typeof apiPostRouteFeedback;
   /** Resolved point values for the pane headers, live from
    *  `GET /points/schedule` — same "copy can never drift" discipline as
    *  Screen 2's ℹ modals (`ride-settings.ts`'s `loadRideModePoints`). The
@@ -479,8 +519,14 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
     ? surveyPanes(doc)
     : { scooter: false, navigation: false };
   const model = doc ? (selectedDevice(doc.device)?.model ?? null) : null;
-  const routeProfile = doc?.route?.profile ?? null;
-  const rideRouteId = doc?.route?.rideRouteId ?? null;
+  const route = doc?.route ?? null;
+  const routeProfile = route?.profile ?? null;
+  const rideRouteId = route?.rideRouteId ?? null;
+  /** A private ("My own Device" / guest) ride: no tracked ride to survey,
+   *  so the nav pane submits to POST /route-feedback, promises no points
+   *  (private rides are never points-eligible), and the scooter pane is
+   *  already gated off by `surveyPanes`. */
+  const isPrivate = doc ? doc.private || doc.rideId === null : false;
 
   const state: RidePostS9FormState = blankSurveyFormState();
 
@@ -634,7 +680,12 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
       el(
         "h4",
         "ride-post-s9__pane-title",
-        `Navigation Feedback (up to ${upToPts} pts + distance bonus)`,
+        // No points promise on a private ride — none will be paid, and a
+        // header advertising an award Submit doesn't deliver is worse than
+        // no header math at all.
+        isPrivate
+          ? "Navigation Feedback"
+          : `Navigation Feedback (up to ${upToPts} pts + distance bonus)`,
       ),
     );
     const routeLabel = routeProfile ? routeProfileLabel(routeProfile) : "route";
@@ -706,10 +757,15 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
     const hint = el("p", "ride-post-s9__char-hint ride-modal__hint");
     hint.setAttribute("aria-live", "polite");
     function syncHint(): void {
-      hint.textContent = describeQualitativeProgress(
-        state.navQualitative,
-        points.navQualitativeFeedback,
-      ).message;
+      // The character-count hint exists to coach toward the qualitative
+      // bonus; a private ride pays none, so the coaching would be a false
+      // promise there and the hint simply stays empty.
+      hint.textContent = isPrivate
+        ? ""
+        : describeQualitativeProgress(
+            state.navQualitative,
+            points.navQualitativeFeedback,
+          ).message;
     }
     textarea.addEventListener("input", () => {
       state.navQualitative = textarea.value;
@@ -757,10 +813,42 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
   async function handleSubmit(): Promise<void> {
     if (submitting || destroyed) return;
     const current = deps.session.current();
+
+    // The private-ride path: no tracked ride to survey, so the nav pane's
+    // answers go to POST /route-feedback with the route described inline.
+    // Only reachable with the nav pane up (surveyPanes gates the scooter
+    // pane off for every private ride), so nothing here is dropped.
     if (!current || !current.rideId) {
-      setStatus("No active ride to submit a survey for — try Skip instead.");
+      if (!gates.navigation || !route) {
+        setStatus("No active ride to submit a survey for — try Skip instead.");
+        return;
+      }
+      if (!hasNavAnswers(state)) {
+        // The endpoint 422s an empty body; a visible nudge beats that.
+        setStatus("Nothing to submit yet — answer a question, or Skip.");
+        return;
+      }
+      setBusy(true);
+      setStatus("Submitting…");
+      try {
+        const post = deps.postRouteFeedback ?? apiPostRouteFeedback;
+        await post(buildRouteFeedbackPayload(state, route));
+        if (destroyed) return;
+        const facts = await Promise.resolve(deps.getGateFacts());
+        if (destroyed) return;
+        finish(facts);
+        setStatus(null);
+        // The host's response handling reads only `points`, and a private
+        // ride pays none — an empty award list is the honest echo.
+        deps.onSubmitted?.({ points: [] });
+      } catch (err) {
+        if (destroyed) return;
+        setStatus(describeSurveySubmitError(err));
+        setBusy(false);
+      }
       return;
     }
+
     setBusy(true);
     setStatus("Submitting…");
     try {
