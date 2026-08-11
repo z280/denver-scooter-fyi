@@ -25,6 +25,7 @@ import {
   type WizardScreenId,
 } from "./ride-session.ts";
 import type { GeocodeSearchClient, GeocodeSearchHandlers } from "./geocode-search.ts";
+import { loadFavorites, recordFavorite } from "./favorites.ts";
 import {
   MAX_RECENT_DESTS,
   RECENT_DESTS_KEY,
@@ -542,5 +543,141 @@ describe("recordRecentDest / loadRecentDests — persisted round trip", () => {
     });
     expect(loadRecentDests()).toEqual([]);
     Storage.prototype.getItem = real;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Saved places (favorites.ts) — the local list, the star, the map-pick row
+// ---------------------------------------------------------------------------
+
+describe("wireRideScreenDest — saved places", () => {
+  function openAt3(overrides: Partial<Omit<RideScreenDestDeps, "session">> = {}) {
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: fakeSearch().createSearch, ...overrides });
+    openRideModal({ fastForwardTo: "3" });
+    return session;
+  }
+
+  function rowByText(text: string): HTMLButtonElement | undefined {
+    return optionRows().find((r) => r.textContent?.includes(text));
+  }
+
+  /** The pick promise threads through several microtask hops before the
+   *  naming form lands; a macrotask clears all of them regardless of how many
+   *  there are, so the test asserts on the outcome rather than on the shape of
+   *  the chain. */
+  const flush = (): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, 0));
+
+  function actions(): HTMLButtonElement[] {
+    return [...document.querySelectorAll<HTMLButtonElement>(".ride-screen-dest__action")];
+  }
+
+  it("shows a locally saved place with no account and no network", () => {
+    // The whole reason this store is local: the profile's home/work need an
+    // account and a round trip, so a signed-out rider had no saved places.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    expect(rowByText("🏠 Home")).toBeTruthy();
+  });
+
+  it("rides to the rider's own name for the place, not the address", () => {
+    // Screens 4 and 6 echo this label back ("to Home"), which is the entire
+    // point of letting a rider name somewhere.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    const session = openAt3();
+    rowByText("🏠 Home")?.click();
+    expect(session.current()?.dest?.label).toBe("Home");
+  });
+
+  it("does not echo a saved place into recent destinations", () => {
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    rowByText("🏠 Home")?.click();
+    // It is already a permanent row; showing it twice forever is the bug.
+    expect(loadRecentDests()).toEqual([]);
+  });
+
+  it("shows one Home when the profile and the local list agree", () => {
+    // Same doorstep, two sources. A rider seeing their own house twice would
+    // reasonably conclude one of them is wrong.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74001, lon: -104.99001 });
+    openAt3({
+      getHomeWork: () =>
+        Promise.resolve({ home: { lat: 39.74, lng: -104.99 }, work: null }),
+    });
+    return Promise.resolve().then(() => {
+      expect(optionRows().filter((r) => r.textContent?.includes("Home"))).toHaveLength(1);
+    });
+  });
+
+  it("offers to save a search result, and stops the row from advancing", () => {
+    const search = fakeSearch();
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: search.createSearch });
+    openRideModal({ fastForwardTo: "3" });
+    typeInto("1226 e 10th");
+    search.emitResults([result("1226 E 10th Ave, Denver", { kind: "house" })], "1226 e 10th");
+
+    actions()[0].click();
+    // Tapping the star must not select the destination underneath it.
+    expect(session.current()?.dest ?? null).toBeNull();
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]');
+    expect(name?.value).toBe("1226 E 10th Ave, Denver");
+  });
+
+  it("saves under the name the rider typed and shows it straight away", () => {
+    const search = fakeSearch();
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: search.createSearch });
+    openRideModal({ fastForwardTo: "3" });
+    typeInto("1226 e 10th");
+    search.emitResults([result("1226 E 10th Ave, Denver", { kind: "house" })], "1226 e 10th");
+    actions()[0].click();
+
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]')!;
+    name.value = "Home";
+    rowByText("Save")?.click();
+
+    expect(loadFavorites().map((f) => f.label)).toEqual(["Home"]);
+    // Saved in order to be used — the rider should not have to search again.
+    expect(input().value).toBe("");
+    expect(rowByText("Home")).toBeTruthy();
+  });
+
+  it("forgets a saved place", () => {
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    actions()[0].click();
+    expect(loadFavorites()).toEqual([]);
+    expect(rowByText("🏠 Home")).toBeFalsy();
+  });
+
+  it("offers the map-pick failsafe only when a map is wired", () => {
+    openAt3();
+    expect(rowByText("Pick a point on the map")).toBeFalsy();
+    resetRideModal();
+    document.body.replaceChildren();
+    openAt3({ pickOnMap: () => Promise.resolve(null) });
+    expect(rowByText("Pick a point on the map")).toBeTruthy();
+  });
+
+  it("names a dropped pin, so an unaddressable place can be saved", async () => {
+    // The gazebo in City Park: a real destination no geocoder will return.
+    openAt3({ pickOnMap: () => Promise.resolve({ lat: 39.7485, lng: -104.9498 }) });
+    rowByText("Pick a point on the map")?.click();
+    await flush();
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]')!;
+    name.value = "The gazebo";
+    rowByText("Save")?.click();
+    expect(loadFavorites()[0]).toMatchObject({ label: "The gazebo", lat: 39.7485 });
+  });
+
+  it("a cancelled map pick leaves the screen alone", async () => {
+    openAt3({ pickOnMap: () => Promise.resolve(null) });
+    rowByText("Pick a point on the map")?.click();
+    await flush();
+    expect(document.querySelector('[aria-label="Name for this place"]')).toBeNull();
+    expect(loadFavorites()).toEqual([]);
   });
 });

@@ -1065,7 +1065,16 @@ map.on("load", async () => {
     session: rideSession,
     buildOptionsPanel: buildRideOptionsPanel,
   });
-  wireRideScreenDest({ session: rideSession, locate });
+  wireRideScreenDest({
+    session: rideSession,
+    locate,
+    // The same one-shot picker the Profile tab uses for home/work. Its
+    // `onModeChange` already dims the drawer and suppresses device popups;
+    // the wizard's own sheet is hidden by the `is-map-picking` body class
+    // (style.css), since the map has to be visible to tap it.
+    pickOnMap: () =>
+      mapPick.pick({ hint: "Tap the map to drop a pin on your destination" }),
+  });
   wireRideScreenRoutes({ session: rideSession, locate, devices, routePreview });
   wireRideScreenStart({
     session: rideSession,

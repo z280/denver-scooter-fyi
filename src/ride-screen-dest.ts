@@ -48,6 +48,16 @@ import {
   type GeocodeSearchClient,
   type GeocodeSearchHandlers,
 } from "./geocode-search.ts";
+import {
+  QUICK_NAMES,
+  defaultEmoji,
+  forgetFavorite,
+  isFavorited,
+  isSamePlace,
+  loadFavorites,
+  recordFavorite,
+  type Favorite,
+} from "./favorites.ts";
 
 // ---------------------------------------------------------------------------
 // `RideSessionDest` + the geocode coverage flag — see the DEVIATION note above.
@@ -161,6 +171,16 @@ export interface RideScreenDestDeps {
    *  profile, resolving all-null when signed out or the fetch fails — the
    *  suggestions are a bonus, never a reason the screen can't render. */
   getHomeWork?(): Promise<HomeWorkPoints>;
+  /** Drop a pin by tapping the map, for destinations that have no address to
+   *  type. A friend's meetup spot — the gazebo in City Park — is a real
+   *  destination that no geocoder will ever return, and without this the
+   *  rider's only options are a nearby address that is not the place, or
+   *  giving up on navigation. Optional: when absent the row is simply not
+   *  offered, so the screen still works wherever no map is wired (tests, and
+   *  any future non-map surface).
+   *
+   *  Resolves null when the rider cancels; never rejects. */
+  pickOnMap?(): Promise<{ lat: number; lng: number } | null>;
 }
 
 function defaultCreateSearch(handlers: GeocodeSearchHandlers): GeocodeSearchClient {
@@ -234,6 +254,14 @@ function buildDestScreen(
    *  the screen renders immediately either way, and the rows appear on the
    *  re-render when the profile answers. */
   let saved: HomeWorkPoints = { home: null, work: null };
+  /** Locally saved places — available immediately and to everyone, unlike the
+   *  profile's home/work, which need an account and a round trip. */
+  let favorites: Favorite[] = loadFavorites();
+  /** The place currently being named, or null. Non-null takes over the list:
+   *  naming is a decision, and leaving the search results visible underneath
+   *  invites the rider to tap one and lose what they were saving. */
+  let naming: { label: string; lat: number; lon: number; emoji: string } | null =
+    null;
   let results: GeocodeResult[] = [];
   let status: SearchStatus = "idle";
   /** The trimmed text the live `results`/`status` belong to — guards a
@@ -319,13 +347,24 @@ function buildDestScreen(
     ctx.next();
   }
 
+  /** A trailing control on a row — saving it, or forgetting it. Rendered as a
+   *  SIBLING of the row button, never inside it: a button within a button is
+   *  invalid markup that browsers resolve by dropping the inner one, and the
+   *  row is the bigger tap target of the two. */
+  interface RowAction {
+    glyph: string;
+    title: string;
+    onClick: () => void;
+  }
+
   function renderRow(
     label: string,
     meta: string | null,
     outOfCoverage: boolean,
     onClick: () => void,
+    action?: RowAction,
   ): HTMLElement {
-    const li = el("li");
+    const li = el("li", action ? "ride-screen-dest__row" : "");
     const row = el("button", "ride-option");
     row.type = "button";
     row.classList.toggle("is-out-of-coverage", outOfCoverage);
@@ -343,21 +382,171 @@ function buildDestScreen(
     }
     row.addEventListener("click", () => onClick());
     li.append(row);
+    if (action) {
+      const btn = el("button", "ride-screen-dest__action", action.glyph);
+      btn.type = "button";
+      btn.title = action.title;
+      btn.setAttribute("aria-label", action.title);
+      btn.addEventListener("click", (e) => {
+        // The row underneath would otherwise select the destination and
+        // advance the wizard — the rider asked to save it, not to ride to it.
+        e.stopPropagation();
+        action.onClick();
+      });
+      li.append(btn);
+    }
     return li;
+  }
+
+  /** The save affordance for a place that is not saved yet, or nothing at all
+   *  when it already is — a star that does nothing is worse than no star. */
+  function saveAction(place: {
+    label: string;
+    lat: number;
+    lon: number;
+    kind?: GeocodeKind;
+  }): RowAction | undefined {
+    if (isFavorited(favorites, place)) return undefined;
+    return {
+      glyph: "☆",
+      title: `Save ${place.label}`,
+      onClick: () => {
+        naming = {
+          label: place.label,
+          lat: place.lat,
+          lon: place.lon,
+          emoji: defaultEmoji(place.kind),
+        };
+        render();
+      },
+    };
+  }
+
+  /** Naming a place, inline. Deliberately NOT a dialog on top of the wizard:
+   *  the rider is four screens into a flow that is about to put them on a
+   *  scooter, and a second modal over a modal is the point where people back
+   *  out. Pre-filled with the address so "just save it" is one tap, and the
+   *  two names anybody actually uses are one tap each. */
+  function renderNaming(place: NonNullable<typeof naming>): void {
+    listEl.append(el("li", "ride-screen-dest__section", "Save this place"));
+
+    const li = el("li", "ride-screen-dest__naming");
+    li.append(el("p", "ride-modal__hint", place.label));
+
+    const field = el("input", "select ride-screen-dest__input") as HTMLInputElement;
+    field.type = "text";
+    field.value = place.label;
+    field.setAttribute("aria-label", "Name for this place");
+    field.placeholder = "Name this place";
+    markUndoFree(field);
+
+    const chips = el("div", "ride-screen-dest__chips");
+    for (const quick of QUICK_NAMES) {
+      const chip = el("button", "text-btn", `${quick.emoji} ${quick.label}`);
+      chip.type = "button";
+      chip.addEventListener("click", () => {
+        place.emoji = quick.emoji;
+        field.value = quick.label;
+        field.focus();
+      });
+      chips.append(chip);
+    }
+
+    const save = el("button", "ride-option ride-screen-dest__save", "Save");
+    save.type = "button";
+    const cancel = el("button", "text-btn", "Cancel");
+    cancel.type = "button";
+
+    const commit = (): void => {
+      const name = field.value.trim();
+      if (!name) {
+        field.focus();
+        return;
+      }
+      favorites = recordFavorite({
+        emoji: place.emoji,
+        label: name,
+        lat: place.lat,
+        lon: place.lon,
+      });
+      naming = null;
+      // Back to an empty input, where the new favorite is now a row: the
+      // rider saved it in order to use it, and making them retype the search
+      // to find it again would be absurd.
+      input.value = "";
+      liveQuery = "";
+      results = [];
+      status = "idle";
+      search.cancel();
+      render();
+    };
+
+    save.addEventListener("click", commit);
+    cancel.addEventListener("click", () => {
+      naming = null;
+      render();
+    });
+    field.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+      }
+    });
+
+    li.append(field, chips, el("div", "ride-screen-dest__naming-actions"));
+    (li.lastElementChild as HTMLElement).append(save, cancel);
+    listEl.append(li);
+    field.focus();
+    field.select();
+  }
+
+  /** Tap the map, then name what you tapped. The two halves are one gesture
+   *  from the rider's point of view, so a cancelled pick cancels the whole
+   *  thing rather than dropping them into a naming form for nowhere. */
+  function startMapPick(): void {
+    const pick = deps.pickOnMap;
+    if (!pick) return;
+    void Promise.resolve()
+      .then(() => pick())
+      .then((point) => {
+        if (destroyed || !point) return;
+        naming = {
+          label: "Dropped pin",
+          lat: point.lat,
+          lon: point.lng,
+          emoji: "📍",
+        };
+        render();
+      })
+      .catch(() => {
+        /* a failed pick is a cancelled pick — the screen is unchanged */
+      });
   }
 
   function render(): void {
     listEl.replaceChildren();
     statusEl.hidden = true;
 
+    if (naming) {
+      renderNaming(naming);
+      return;
+    }
+
     if (isEmpty()) {
-      // Saved places first: Home/Work are the two destinations a rider
-      // picks most and typed least, so they outrank the recents. The dest
-      // label stays the bare word — it is what Screens 4/6 echo back
-      // ("to Home") — while the row shows the glyph. Coverage is unknown
-      // for a stored coordinate pair; Screen 4 already degrades gracefully
-      // off the routing call's own out_of_coverage error, so no flag here.
-      const savedRows: { display: string; dest: RideDestWithCoverage }[] = [];
+      // Saved places first: they are the destinations a rider picks most and
+      // types least, so they outrank the recents. The dest label stays the
+      // bare name — it is what Screens 4/6 echo back ("to Home") — while the
+      // row shows the glyph. Coverage is unknown for a stored coordinate
+      // pair; Screen 4 already degrades gracefully off the routing call's own
+      // out_of_coverage error, so no flag here.
+      const savedRows: {
+        display: string;
+        dest: RideDestWithCoverage;
+        action?: RowAction;
+      }[] = [];
+      // The profile's home/work come first and keep their fixed glyphs.
+      // Anything the rider ALSO saved locally at the same spot is dropped
+      // rather than shown twice: one doorstep, one row.
       if (saved.home) {
         savedRows.push({
           display: "🏠 Home",
@@ -370,15 +559,47 @@ function buildDestScreen(
           dest: { label: "Work", lat: saved.work.lat, lon: saved.work.lng },
         });
       }
-      if (savedRows.length > 0) {
+      for (const f of favorites) {
+        if (savedRows.some((s) => isSamePlace(s.dest, f))) continue;
+        savedRows.push({
+          display: `${f.emoji} ${f.label}`.trim(),
+          dest: { label: f.label, lat: f.lat, lon: f.lon },
+          action: {
+            glyph: "✕",
+            title: `Forget ${f.label}`,
+            onClick: () => {
+              favorites = forgetFavorite(f.id);
+              render();
+            },
+          },
+        });
+      }
+      if (savedRows.length > 0 || deps.pickOnMap) {
         listEl.append(el("li", "ride-screen-dest__section", "Saved places"));
-        for (const s of savedRows) {
-          listEl.append(
-            renderRow(s.display, null, false, () =>
-              selectDest(s.dest, { record: false }),
-            ),
-          );
-        }
+      }
+      for (const s of savedRows) {
+        listEl.append(
+          renderRow(
+            s.display,
+            null,
+            false,
+            // Saved picks skip the recents ledger: they are already permanent
+            // rows here, and echoing them into "Recent destinations" would
+            // show the same place twice forever.
+            () => selectDest(s.dest, { record: false }),
+            s.action,
+          ),
+        );
+      }
+      if (deps.pickOnMap) {
+        listEl.append(
+          renderRow(
+            "📍 Pick a point on the map",
+            "For somewhere with no address — a trailhead, a gazebo, a corner of the park.",
+            false,
+            () => startMapPick(),
+          ),
+        );
       }
       if (recents.length === 0) return;
       listEl.append(
@@ -386,7 +607,13 @@ function buildDestScreen(
       );
       for (const r of recents) {
         listEl.append(
-          renderRow(r.label, null, !r.inCoverage, () => selectDest(fromRecent(r))),
+          renderRow(
+            r.label,
+            null,
+            !r.inCoverage,
+            () => selectDest(fromRecent(r)),
+            saveAction(r),
+          ),
         );
       }
       return;
@@ -411,8 +638,12 @@ function buildDestScreen(
     }
     for (const r of results) {
       listEl.append(
-        renderRow(r.label, KIND_LABEL[r.kind], !r.in_coverage, () =>
-          selectDest(fromResult(r)),
+        renderRow(
+          r.label,
+          KIND_LABEL[r.kind],
+          !r.in_coverage,
+          () => selectDest(fromResult(r)),
+          saveAction({ label: r.label, lat: r.lat, lon: r.lon, kind: r.kind }),
         ),
       );
     }
