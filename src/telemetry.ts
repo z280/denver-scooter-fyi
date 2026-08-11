@@ -3,8 +3,11 @@
 // Everything here answers to the promise in README.md's "On tracking"
 // section: no third-party scripts, no cookies, no persistent identifier.
 // Events carry a per-tab session id (sessionStorage — dies with the tab)
-// and nothing else; daily-unique counting happens server-side with a
-// salt that is destroyed after two days (scooter-fyi-api sql/061).
+// and, when the tab was opened from a link we published tagged
+// ?utm_campaign=<code>, that campaign code (also sessionStorage, first
+// touch wins; the server only accepts codes from its admin-managed
+// registry) — nothing else; daily-unique counting happens server-side
+// with a salt that is destroyed after two days (scooter-fyi-api sql/061).
 //
 // The event-name allowlist below is mirrored by hand in the API's
 // src/api_telemetry.py ALLOWED_EVENTS — update both together. The server
@@ -63,6 +66,9 @@ export const OPT_OUT_KEY = "scooter-fyi-telemetry";
 // app state (docs/PLAN_RIDE_MODE_FRONTEND.md naming convention).
 const SESSION_KEY = "scooter_fyi.tsid";
 const DAY_STAMP_KEY = "scooter_fyi.tday";
+// First-touch campaign code for this tab session (?utm_campaign=<code> on
+// a link we published). Same lifetime as the session id: dies with the tab.
+const CAMPAIGN_KEY = "scooter_fyi.tcmp";
 
 const ENDPOINT = "/api/v1/telemetry/events";
 const FLUSH_AT = 20;
@@ -192,6 +198,38 @@ function referrerHost(): string {
   }
 }
 
+// Server-side (api_telemetry.py) the code is validated against the admin
+// campaign registry — anything unknown collapses to 'other' — so this
+// only needs to keep obvious junk off the wire, not be authoritative.
+const CAMPAIGN_CODE_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+
+/**
+ * Capture ?utm_campaign=<code> once per tab session, first touch wins:
+ * a mid-session navigation carrying a different tag must not rewrite the
+ * attribution of a session that already started somewhere else.
+ */
+function captureCampaign(): void {
+  try {
+    const raw = new URLSearchParams(location.search).get("utm_campaign");
+    if (!raw) return;
+    const code = raw.trim().toLowerCase();
+    if (!CAMPAIGN_CODE_RE.test(code)) return;
+    if (!sessionStorage.getItem(CAMPAIGN_KEY)) {
+      sessionStorage.setItem(CAMPAIGN_KEY, code);
+    }
+  } catch {
+    // Storage blocked or bad URL — attribution is best-effort.
+  }
+}
+
+function campaignCode(): string | null {
+  try {
+    return sessionStorage.getItem(CAMPAIGN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 function currentTheme(): string {
   const t = document.documentElement.dataset.theme;
   return t === "light" || t === "dark" ? t : "other";
@@ -228,6 +266,7 @@ function sampledOut(name: TelemetryEventName): boolean {
 }
 
 function batchBody(): string {
+  const cmp = campaignCode();
   return JSON.stringify({
     v: 1,
     page: {
@@ -236,6 +275,7 @@ function batchBody(): string {
       ref: referrerHost(),
       theme: currentTheme(),
       auth: authState,
+      ...(cmp ? { cmp } : {}),
     },
     events: queue,
   });
@@ -386,6 +426,7 @@ export function initTelemetry(): void {
     });
     window.addEventListener("pagehide", () => flush(true));
 
+    captureCampaign();
     track("page_load", { first_of_day: firstOfDay() });
   } catch {
     // Telemetry init failure is invisible by design.
