@@ -194,6 +194,47 @@ describe("lifecycle", () => {
   });
 });
 
+describe("campaign attribution", () => {
+  function loadWithQuery(query: string): void {
+    history.replaceState(null, "", `/${query}`);
+    initTelemetry();
+    fill(19); // 1 page_load + 19 → flush
+  }
+
+  afterEach(() => {
+    history.replaceState(null, "", "/");
+  });
+
+  it("captures ?utm_campaign into the batch page context", () => {
+    loadWithQuery("?utm_campaign=sticker-2026");
+    expect(sentBatch().page.cmp).toBe("sticker-2026");
+    expect(sessionStorage.getItem("scooter_fyi.tcmp")).toBe("sticker-2026");
+  });
+
+  it("lowercases the code and omits cmp entirely when untagged", () => {
+    loadWithQuery("?utm_campaign=STICKER-2026");
+    expect(sentBatch().page.cmp).toBe("sticker-2026");
+
+    _resetTelemetryForTests();
+    sessionStorage.clear();
+    fetchMock.mockClear();
+    loadWithQuery("?zoom=12");
+    expect("cmp" in sentBatch().page).toBe(false);
+  });
+
+  it("drops malformed codes instead of sending junk", () => {
+    loadWithQuery("?utm_campaign=" + encodeURIComponent("not a slug!"));
+    expect("cmp" in sentBatch().page).toBe(false);
+    expect(sessionStorage.getItem("scooter_fyi.tcmp")).toBeNull();
+  });
+
+  it("first touch wins: a later tag cannot rewrite the session", () => {
+    sessionStorage.setItem("scooter_fyi.tcmp", "original-camp");
+    loadWithQuery("?utm_campaign=hijack-camp");
+    expect(sentBatch().page.cmp).toBe("original-camp");
+  });
+});
+
 describe("api errors", () => {
   it("normalizes ids out of paths", () => {
     expect(normalizePath("/api/v1/devices/123456")).toBe(
