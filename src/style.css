@@ -629,7 +629,7 @@ body:not(.ribbon-open) .drawer-tabs {
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: var(--bg);
+  background: var(--bg-subtle);
 }
 .theme-modes__btn {
   appearance: none;
@@ -1550,15 +1550,15 @@ body.ride-active .dibs-toast {
 /* Normal size. It was inheriting the 34px certificate ✕, which is fine on a
    document you dismiss once and wrong on the control a rider taps to get out
    of a live flow with a thumb. */
+/* Position only. Shape, size and centring come from the shared round-✕ rule
+   below, which this was NOT part of — which is exactly why it rendered as a
+   44px rounded square with its glyph sitting off-centre while every other
+   dismiss in the app was a circle. */
 .arrival__close {
   position: absolute;
-  top: 9px;
-  right: 9px;
+  top: 10px;
+  right: 10px;
   z-index: 2;
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  font-size: 22px;
   cursor: pointer;
 }
 
@@ -1585,18 +1585,19 @@ body.ride-active .dibs-toast {
   text-decoration: none;
   border: 1px solid var(--border);
   border-radius: 14px;
-  /* An action INSIDE a panel wears the panel's button, not the map chrome's
-     silver. */
-  /* Metal, like the chip that holds them. */
-  background: var(--metal-bg);
-  color: var(--metal-fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  /* FLAT. These sat on the brushed gradient, which put a texture behind
+     ordinary text on the one control the rider is being asked to press —
+     it read as a disabled or half-loaded button rather than the next step.
+     The panel around them keeps its finish; the buttons are buttons. */
+  background: var(--bg-elev);
+  color: var(--fg);
   cursor: pointer;
 }
 .arrival__action:hover,
 .arrival__action:focus-visible {
   color: var(--fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8),
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 0 transparent,
     0 0 0 1px var(--metal-active-border);
 }
 /* The one thing the rider came here to do, and the only action that works
@@ -1646,6 +1647,17 @@ body.ride-active .dibs-toast {
 body.arrival-open .home-bar {
   display: none;
 }
+/* ...including the map's own. The arrival panel is centred and nearly the
+   full width, so on a phone it lands squarely on top of the zoom control and
+   leaves half a "−" poking out from behind its corner — two surfaces
+   claiming one corner, and the one underneath is unusable anyway.
+   Hidden rather than shuffled: any lift would be a guess at the panel's
+   height, which changes with its state, and pinch-zoom is untouched — this
+   costs the buttons, not the ability to zoom. They return when the panel
+   closes. */
+body.arrival-open .maplibregl-ctrl-bottom-left {
+  display: none;
+}
 body.ride-active .arrival {
   display: none;
 }
@@ -1676,6 +1688,7 @@ body.ride-active .arrival {
    is a circle at every font size — these carry a glyph, not a line of text,
    and padding-derived roundness drifts into an oval the moment one of them
    uses a different ×. */
+.arrival__close,
 .home-bar__close,
 .qr-scan__close,
 .device-features__close,
@@ -1893,7 +1906,7 @@ body.ride-active .arrival {
   padding: 13px 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--surface-2, var(--surface));
+  background: var(--bg-elev);
   color: var(--fg);
   font: inherit;
   font-weight: 600;
