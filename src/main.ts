@@ -102,7 +102,7 @@ import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
-import { dibsOn, recordProgress, saveDibs } from "./dibs.ts";
+import { dibsOn, dropDibs, recordProgress, saveDibs } from "./dibs.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -1074,7 +1074,15 @@ map.on("load", async () => {
       // exactly: a guest's real-device pick is still a private ride, because
       // `POST /tracked-rides` is session-authed and there is no account to
       // attribute a row to.
-      if (entry.preflight && entry.vehicleIdentifier) {
+      // ...OR when the rider walked to it. `deviceConfirmed` says they
+      // committed to this vehicle; without setting the device here the doc
+      // stayed empty, Screen 2 refused to skip, and somebody who had just
+      // walked three blocks to a specific scooter was asked which scooter —
+      // with the navigation and save-tracks toggles alongside it, which is
+      // how a rider ends up with navigation off on a trip they chose a
+      // destination for. Same shape as the own-device bug: an entry that
+      // means "device known" has to actually put the device on the doc.
+      if ((entry.preflight || entry.deviceConfirmed) && entry.vehicleIdentifier) {
         const want = entry.vehicleIdentifier.toLowerCase();
         const feat = devices
           .allFeatures()
@@ -2541,6 +2549,10 @@ function wireModes(): void {
     },
   });
 
+  exitFindWheels = () => {
+    if (rideActive) exitRide();
+  };
+
   const exitRide = (): void => {
     if (!rideActive) return;
     closeAllPopups();
@@ -2724,6 +2736,12 @@ let walkLeg: WalkLegHandle | null = null;
 let arrivalPanel: ArrivalPanelHandle | null = null;
 let deviceWatch: DeviceWatchHandle | null = null;
 
+/** Close the find-a-scooter panel and its ranked list. Exported from the
+ *  mode wiring via a module-level handle because `wireModes` owns the wizard
+ *  and the drawer, and the walk flow is the only other thing that needs to
+ *  put them away. */
+let exitFindWheels: () => void = () => {};
+
 function endWalkFlow(): void {
   deviceWatch?.stop();
   deviceWatch = null;
@@ -2753,6 +2771,10 @@ function beginWalkToVehicle(info: {
 
   endWalkFlow();
   closeAllPopups();
+  // The choice is made. Leaving the chooser open behind the walk is two
+  // surfaces arguing about one decision, and the ranked list is stale the
+  // moment a scooter is picked out of it.
+  exitFindWheels();
   document.body.classList.add("arrival-open");
 
   const panel = createArrivalPanel(need("arrival-panel"), {
@@ -2772,7 +2794,16 @@ function beginWalkToVehicle(info: {
         fastForwardTo: "4",
       });
     },
-    onCancel: () => endWalkFlow(),
+    onCancel: () => {
+      // BACKING OUT RELEASES THE CLAIM. A rider who closes this has stopped
+      // walking towards the scooter, and dibs nobody is honouring is exactly
+      // the hoarding the ten-minute rule exists to prevent — it would just
+      // take ten minutes to expire instead of going immediately. Dropping it
+      // here also means the next person sees the scooter free the moment it
+      // is free.
+      if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
+      endWalkFlow();
+    },
     // Re-read each update rather than closing over a copy: the claim gains
     // its "started walking" stamp as the rider moves, and a stale copy would
     // keep telling them to set off after they had.

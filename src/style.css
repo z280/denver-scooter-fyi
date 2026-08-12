@@ -369,6 +369,14 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
   transition: background 0.12s ease, color 0.12s ease;
 }
+/* `hidden` has to actually hide. `.drawer-tab` sets display: inline-flex,
+   which outranks the attribute's UA `display: none` — so the Compliance tab
+   carried `hidden` in the markup and showed anyway. It was only ever
+   invisible because a mode rule happened to be hiding it as well, and when
+   that rule went with the mode, the tab came back. */
+.drawer-tab[hidden] {
+  display: none;
+}
 .drawer-tab:hover {
   background: var(--accent-soft);
   color: var(--fg);
@@ -1228,6 +1236,10 @@ body.ride-active .dibs-toast {
    It replaces a run of full-screen wizard steps, so it must never feel like
    one: it covers as little of the map as it can, and the map underneath stays
    draggable — a rider walking to a scooter is looking at the map, not at us. */
+/* THE CHIP IS A MAP FUNCTION, so it wears the map's finish rather than a
+   panel's. It sits over the map, it is about where you are and where the
+   scooter is, and it is operated the way the zoom and the top bar are — with
+   a thumb, while looking at the map. */
 .arrival {
   position: fixed;
   left: 50%;
@@ -1239,14 +1251,17 @@ body.ride-active .dibs-toast {
   z-index: 29;
   width: min(94vw, 460px);
   padding: 14px 14px 12px;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
+  background: var(--metal-bg);
+  color: var(--metal-fg);
   border: 1px solid var(--border);
   border-radius: 18px;
-  box-shadow: var(--shadow);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--shadow);
+}
+.arrival__title {
+  color: var(--fg);
 }
 .arrival__head {
-  padding-right: 40px;
+  padding-right: 52px;
 }
 .arrival__title {
   font-size: 17px;
@@ -1258,13 +1273,21 @@ body.ride-active .dibs-toast {
   font-size: 13px;
   color: var(--fg-muted);
 }
+/* Normal size. It was inheriting the 34px certificate ✕, which is fine on a
+   document you dismiss once and wrong on the control a rider taps to get out
+   of a live flow with a thumb. */
 .arrival__close {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 9px;
+  right: 9px;
   z-index: 2;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  font-size: 22px;
   cursor: pointer;
 }
+
 .arrival__body {
   display: flex;
   flex-direction: column;
@@ -1290,14 +1313,17 @@ body.ride-active .dibs-toast {
   border-radius: 14px;
   /* An action INSIDE a panel wears the panel's button, not the map chrome's
      silver. */
-  background: var(--bg-elev);
-  color: var(--fg);
+  /* Metal, like the chip that holds them. */
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   cursor: pointer;
 }
 .arrival__action:hover,
 .arrival__action:focus-visible {
-  background: var(--accent-soft);
-  border-color: var(--fg-muted);
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 0 0 1px var(--metal-active-border);
 }
 /* The one thing the rider came here to do, and the only action that works
    whether or not Veo cooperates. */
@@ -4609,22 +4635,26 @@ body.landscape-hint-dismissed .hud-note--landscape {
 
 /* ---------- Find-a-ride wizard ---------- */
 
+/* The find-a-scooter panel sits where every other sheet in this app sits:
+   bottom centre, same width, same radius. It used to float at the 75% line,
+   vertically centred and 40vw wide — the only surface in the product with
+   that geometry, which is what made it read as wonky rather than as part of
+   the app. Nothing else asks the eye to travel to the middle-right of the
+   screen. */
 .ride-wizard {
   position: fixed;
-  /* Desktop: centered on the 75% line of the page, ~40% wide, floating over
-     the map and leaving a thick-ish strip of map along the right edge. */
-  left: 75%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 40vw;
-  max-width: 560px;
-  max-height: 86dvh;
+  left: 50%;
+  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(94vw, 460px);
+  max-height: min(78dvh, 720px);
   overflow-y: auto;
-  z-index: 28; /* over the map (0), mode bar and freshness pill (27); under drawers (30/31) */
+  overscroll-behavior: contain;
+  z-index: 28; /* over the map (0) and the freshness pill (27); under drawers */
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 18px;
   box-shadow: var(--shadow);
 }
 .ride-wizard__header {
@@ -4953,37 +4983,13 @@ body.landscape-hint-dismissed .hud-note--landscape {
   text-align: center;
 }
 
-/* Limited room (mobile): the wizard becomes a right-side panel and the map
-   keeps the left of the screen — beside the panel, not underneath it. The
-   shrink is gated on `wizard-open`, so once the wizard
-   closes (interview done → ranked list) the map reclaims the full width
-   instead of stranding an empty strip on the right. main.ts calls
-   map.resize() whenever the wizard docks or undocks. */
+/* Narrow screens need nothing special from the wizard any more: it is the
+   same bottom sheet at every width. */
 @media (max-width: 720px) {
-  .ride-wizard {
-    left: auto;
-    right: env(safe-area-inset-right);
-    top: var(--topbar-h); /* docks under the fixed top bar */
-    bottom: env(safe-area-inset-bottom);
-    transform: none;
-    width: min(320px, 78vw);
-    max-width: none;
-    max-height: none;
-    border-radius: 0;
-    border-top: 0;
-    border-right: 0;
-    border-bottom: 0;
-  }
-  /* `wizard-open` alone now — there is no mode to also be in. */
-  body.wizard-open #map {
-    width: auto;
-    right: min(320px, 78vw);
-  }
-  /* The home bar stays reachable beside the docked panel. */
-  body.wizard-open .home-bar {
-    left: max(12px, env(safe-area-inset-left));
-    transform: translateX(0);
-  }
+  /* No side-docking any more. The panel is a bottom sheet at every width, so
+     the map keeps its full width and there is nothing to shrink or restore —
+     which also retires the reserved-strip bug where the map stayed narrow
+     after the wizard closed. */
 }
 
 /* ---------- Filter controls: toggle groups, battery slider, clear-all ---------- */
