@@ -232,6 +232,11 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     listEl.replaceChildren();
     footEl.replaceChildren();
     statusEl.hidden = true;
+    // The search box has nothing to do on the wheels step — the destination
+    // is chosen and echoed back two lines below it. Leaving an empty
+    // "Where are you going?" above the answer to that very question reads as
+    // an unfinished form. "change" is how you go back to it.
+    input.hidden = phase === "wheels";
 
     if (phase === "wheels") {
       renderWheels();

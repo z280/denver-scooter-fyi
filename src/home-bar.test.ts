@@ -390,3 +390,29 @@ describe("storage degradation", () => {
     getItem.mockRestore();
   });
 });
+
+describe("the search box knows when it is done", () => {
+  it("is gone once a destination is chosen", () => {
+    // An empty "Where are you going?" sitting above the answer to that very
+    // question reads as an unfinished form.
+    const search = fakeSearch();
+    mount({ createSearch: search.createSearch });
+    pill().click();
+    expect(input().hidden).toBe(false);
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    expect(input().hidden).toBe(true);
+  });
+
+  it("comes back when the rider changes their mind", () => {
+    const search = fakeSearch();
+    mount({ createSearch: search.createSearch });
+    pill().click();
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    root.querySelector<HTMLButtonElement>(".home-bar__linkbtn")!.click();
+    expect(input().hidden).toBe(false);
+  });
+});
