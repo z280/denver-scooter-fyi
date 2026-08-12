@@ -15,15 +15,20 @@
 //
 //   WALKING   the routed walk, its ETA, the vehicle's name, and a way to say
 //             "I'm here" before GPS agrees.
-//   ARRIVED   the three things a rider does at the scooter: start navigation,
-//             open Veo to unlock it, or say it's already unlocked.
+//   ARRIVED   one thing: choose the route.
 //
-// The arrived face is deliberately not a countdown. Screen 6 counted down from
-// tapping "Open in Veo" because it had no other way to know the ride began; a
-// rider standing at the scooter can just say so, and the button that says so
-// is the same size as the one that opens Veo.
+// WHY THE ARRIVED FACE DOES NOT UNLOCK THE SCOOTER. It used to offer Open in
+// Veo alongside everything else, which meant a rider could start the meter and
+// then spend two minutes reading route options. Veo bills from unlock. So the
+// unlock belongs strictly after the route is settled, and it already lives
+// there — Screen 6 is downstream of Screen 4's route choice, and this panel
+// hands off into that.
+//
+// This is a deliberate reversal: the panel was specified with the Veo buttons
+// on it. Charging a rider for the time they spend deciding is the more
+// expensive mistake, so the later rule wins and the buttons moved rather than
+// being duplicated in two places.
 
-import { veoDeepLink } from "./config.ts";
 import { track } from "./telemetry.ts";
 import { formatWalkLeg, type WalkState } from "./walk-leg.ts";
 
@@ -39,10 +44,9 @@ export interface ArrivalPanelDeps {
   /** Where they're headed, echoed so the panel is self-explanatory if the
    *  rider put the phone away during the walk. */
   destinationLabel: string;
-  /** Enter the 3D follow-cam and start the ride. */
-  onStartNavigation(): void;
-  /** "It's unlocked, I'm on it." */
-  onConfirmStarted(): void;
+  /** Hand off to route selection. Unlocking and starting navigation both
+   *  happen downstream of it — see the module header. */
+  onChooseRoute(): void;
   /** Dismiss the whole thing — changed my mind. */
   onCancel(): void;
 }
@@ -103,49 +107,27 @@ export function createArrivalPanel(
     sub.textContent = `Heading to ${deps.destinationLabel}`;
     body.replaceChildren();
 
-    // ORDER IS THE ARGUMENT. Starting navigation is what the rider came here
-    // to do and is the only button that works whether or not Veo cooperates,
-    // so it leads. Unlocking is a Veo problem, not ours; it sits below,
-    // full-width but quieter.
-    const nav = el("button", "arrival__action arrival__action--primary");
-    nav.type = "button";
-    nav.append(
+    const go = el("button", "arrival__action arrival__action--primary");
+    go.type = "button";
+    go.append(
       el("span", "arrival__action-glyph", "🧭"),
-      el("span", "", "Start 3D navigation"),
+      el("span", "", "Choose your route"),
     );
-    nav.addEventListener("click", () => {
-      track("arrival_panel", { action: "start_nav" });
-      deps.onStartNavigation();
+    go.addEventListener("click", () => {
+      track("arrival_panel", { action: "choose_route" });
+      deps.onChooseRoute();
     });
+    body.append(go);
 
-    const started = el("button", "arrival__action", "✅ It's unlocked — let's go");
-    started.type = "button";
-    started.addEventListener("click", () => {
-      track("arrival_panel", { action: "confirm_started" });
-      deps.onConfirmStarted();
-    });
-
-    body.append(nav, started);
-
-    const href = deps.vehicle.plate ? veoDeepLink(deps.vehicle.plate) : null;
-    if (href) {
-      const veo = el("a", "arrival__action arrival__action--veo", "▶️ Open in Veo");
-      veo.href = href;
-      veo.rel = "noopener";
-      veo.addEventListener("click", () => {
-        track("arrival_panel", { action: "open_veo" });
-      });
-      body.append(veo);
-      body.append(
-        el("p", "arrival__note",
-          "Unlock it in Veo, then come back and tap “It's unlocked”."),
-      );
-    } else {
-      body.append(
-        el("p", "arrival__note",
-          "Unlock it in the Veo app, then tap “It's unlocked”."),
-      );
-    }
+    // Said plainly, because a rider standing at a scooter with the Veo app one
+    // tap away needs a reason not to open it yet. "Veo starts charging when
+    // you unlock" is that reason, and it is true.
+    body.append(
+      el("p", "arrival__note",
+        deps.vehicle.plate
+          ? `Pick your route first — you'll unlock ${deps.vehicle.name} in Veo on the next step, so the meter doesn't run while you decide.`
+          : "Pick your route first — unlocking comes next, so the meter doesn't run while you decide."),
+    );
   }
 
   function setArrived(): void {

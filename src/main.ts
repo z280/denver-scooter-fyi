@@ -2717,25 +2717,16 @@ function beginWalkToVehicle(info: {
   const panel = createArrivalPanel(need("arrival-panel"), {
     vehicle: { name: info.name, plate: info.plate ?? undefined },
     destinationLabel: trip.dest.label,
-    onStartNavigation: () => {
+    onChooseRoute: () => {
       endWalkFlow();
-      // The wizard still owns starting a ride — it is where the session doc,
-      // the track store and the HUD handoff live. It just no longer asks the
-      // three questions this flow already answered: entry names the device,
-      // and the pending trip seeds the destination in onOpen.
+      // Straight to route triage. The wizard still owns starting a ride — it
+      // is where the session doc, the track store and the Veo handoff live —
+      // and Screen 6's unlock sits downstream of Screen 4's route choice,
+      // which is exactly the order the meter demands.
       openRideModal({
         vehicleIdentifier: info.vehicleIdentifier ?? undefined,
         plate: info.plate ?? undefined,
         // They walked to it. There is nothing left to confirm.
-        deviceConfirmed: true,
-        fastForwardTo: "4",
-      });
-    },
-    onConfirmStarted: () => {
-      endWalkFlow();
-      openRideModal({
-        vehicleIdentifier: info.vehicleIdentifier ?? undefined,
-        plate: info.plate ?? undefined,
         deviceConfirmed: true,
         fastForwardTo: "4",
       });

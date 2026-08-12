@@ -21,8 +21,7 @@ function mount(over: Partial<Parameters<typeof createArrivalPanel>[1]> = {}) {
   panel = createArrivalPanel(root, {
     vehicle: { name: "Lunar 🐸 928", plate: "ABC123" },
     destinationLabel: "Home",
-    onStartNavigation: () => void calls.push("nav"),
-    onConfirmStarted: () => void calls.push("started"),
+    onChooseRoute: () => void calls.push("route"),
     onCancel: () => void calls.push("cancel"),
     ...over,
   });
@@ -61,7 +60,7 @@ describe("while walking", () => {
     const p = mount();
     p.update(BASE);
     named("I'm at the scooter")!.click();
-    expect(named("Start 3D navigation")).toBeTruthy();
+    expect(named("Choose your route")).toBeTruthy();
   });
 
   it("a routing failure reads as a note, not a failure", () => {
@@ -86,53 +85,51 @@ describe("at the scooter", () => {
     expect(root.querySelector(".arrival__sub")?.textContent).toContain("Home");
   });
 
-  it("leads with navigation, which is the only action that cannot fail on Veo", () => {
+  it("DOES NOT OFFER TO UNLOCK THE SCOOTER YET", () => {
+    // Veo bills from unlock. Offering it here let a rider start the meter and
+    // then spend two minutes reading route options.
     arrive();
-    expect(buttons()[0].textContent).toContain("Start 3D navigation");
+    expect(named("Open in Veo")).toBeFalsy();
+    expect(named("It's unlocked")).toBeFalsy();
   });
 
-  it("offers all three things a rider does at a scooter", () => {
+  it("says why unlocking is not on this screen", () => {
+    // A rider standing at a scooter with the Veo app one tap away needs a
+    // reason not to open it yet, and "the meter starts at unlock" is one.
     arrive();
-    expect(named("Start 3D navigation")).toBeTruthy();
-    expect(named("It's unlocked")).toBeTruthy();
-    expect(named("Open in Veo")).toBeTruthy();
+    expect(root.querySelector(".arrival__note")?.textContent).toMatch(/meter/i);
   });
 
-  it("deep-links Veo by plate", () => {
+  it("offers exactly one way forward", () => {
     arrive();
-    const veo = named("Open in Veo") as HTMLAnchorElement;
-    expect(veo.tagName).toBe("A");
-    expect(veo.href).toContain("ABC123");
+    expect(buttons()).toHaveLength(1);
+    expect(buttons()[0].textContent).toContain("Choose your route");
   });
 
-  it("still works for a vehicle with no plate", () => {
-    // No deep link possible — say what to do instead of showing a dead button.
+  it("hands off to route selection", () => {
+    arrive();
+    named("Choose your route")!.click();
+    expect(calls).toEqual(["route"]);
+  });
+
+  it("still explains itself for a vehicle with no plate", () => {
     const p = createArrivalPanel(root, {
       vehicle: { name: "Lunar 🐸 928" },
       destinationLabel: "Home",
-      onStartNavigation: () => {},
-      onConfirmStarted: () => {},
+      onChooseRoute: () => {},
       onCancel: () => {},
     });
     p.update({ ...BASE, arrived: true });
-    expect(named("Open in Veo")).toBeFalsy();
-    expect(root.querySelector(".arrival__note")?.textContent).toContain("Veo app");
+    expect(root.querySelector(".arrival__note")?.textContent).toMatch(/meter/i);
     p.destroy();
-  });
-
-  it("reports the two outcomes separately", () => {
-    arrive();
-    named("Start 3D navigation")!.click();
-    named("It's unlocked")!.click();
-    expect(calls).toEqual(["nav", "started"]);
   });
 
   it("does not fall back to the walking face on a later fix", () => {
     // GPS drifts. Having arrived, drifting 40 m must not un-arrive the rider
-    // and yank the buttons out from under their thumb.
+    // and yank the button out from under their thumb.
     const p = arrive();
     p.update({ ...BASE, arrived: false, remainingMeters: 42 });
-    expect(named("Start 3D navigation")).toBeTruthy();
+    expect(named("Choose your route")).toBeTruthy();
   });
 
   it("can be abandoned", () => {
