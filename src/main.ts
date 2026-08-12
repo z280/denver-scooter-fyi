@@ -64,12 +64,11 @@ import { consumePendingMagicLink } from "./auth-magic-link.ts";
 import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
-import { isRideModalOpen, openRideModal, wireRideModal } from "./ride-modal.ts";
+import { openRideModal, wireRideModal } from "./ride-modal.ts";
 import { wireRideDeepLink } from "./ride-deeplink.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
-  selectedDevice,
   recoveryForServerConflict,
   type RideRecoveryDeps,
   type RideRecoveryNote,
@@ -99,11 +98,11 @@ import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
 import { createTripPins } from "./trip-pins.ts";
-import { createActiveVehicle, type ActiveVehicleHandle } from "./active-vehicle.ts";
-import { formatWalkLeg, startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
+import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
+import { dibsOn, recordProgress, saveDibs } from "./dibs.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -874,11 +873,6 @@ map.on("load", async () => {
   // After wireModes: the home bar drives the (now hidden) mode buttons, so
   // their listeners have to exist before it can hand a trip to one.
   homeBar = wireHomeBar();
-  activeVehicle = wireActiveVehicle();
-  // The strip only ever renders what the session already says, so it follows
-  // the session rather than being written to from every place that changes it.
-  rideSession.subscribe(() => syncActiveVehicle());
-  syncActiveVehicle();
   // 🧭 Use in Ride Mode goes to the walk flow when a destination is already
   // known, and falls through to the preflight survey when it is not.
   devices.setRideInterceptor(beginWalkToVehicle);
@@ -1055,6 +1049,16 @@ map.on("load", async () => {
           type: "setDest",
           dest: { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon },
         });
+        // AND THE DEVICE, for an own-device trip. `own_device: true` in the
+        // OPTIONS is not the same as a device on the doc, and Screen 6 skips
+        // itself on `doc.device === null` — so setting only the option made
+        // Screen 2 skip (correctly) and Screen 6 skip (fatally), and the flow
+        // ran off the end without ever dispatching `rideStarted`. A rider who
+        // said "got my own" and picked a route watched the wizard close and
+        // nothing happen.
+        if (trip.wheels === "own") {
+          rideSession.dispatch({ type: "setDevice", device: { own: true } });
+        }
       }
 
       // The survey path also pre-selects the DEVICE, which is normally
@@ -2710,51 +2714,6 @@ function wireHomeBar(): HomeBarHandle {
   return bar;
 }
 
-// ---------- The strip under the map ----------
-
-// What the rider is on, kept visible whenever anything is running — a Veo
-// they are walking to or riding, or their own scooter. Set from exactly two
-// places: the walk flow below, and the ride session's own state.
-let activeVehicle: ActiveVehicleHandle | null = null;
-
-function wireActiveVehicle(): ActiveVehicleHandle {
-  return createActiveVehicle(need("active-vehicle"), {
-    onOpen: () => {
-      // Back to whatever owns this vehicle right now: the HUD once a ride is
-      // running, the wizard while one is still being set up.
-      if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
-        rideHud.open();
-      } else if (!isRideModalOpen()) {
-        openRideModal();
-      }
-    },
-  });
-}
-
-/** Reflect the session onto the strip. Called on every session change, so the
- *  strip is never a second source of truth about what is running — it only
- *  ever renders what the ride session already says. */
-function syncActiveVehicle(): void {
-  const doc = rideSession.current();
-  if (!doc || !isLiveRideEntry(rideHud.isPaused(), doc.state)) {
-    // A walk in progress keeps its own strip (see beginWalkToVehicle); only
-    // clear when nothing at all is running.
-    if (!walkLeg) activeVehicle?.set(null);
-    map.resize();
-    return;
-  }
-  const sel = selectedDevice(doc.device);
-  const own = doc.device !== null && sel === null;
-  activeVehicle?.set({
-    name: sel ? (sel.plate ? `Plate ${sel.plate}` : "Your ride") : "My scooter",
-    model: sel?.model ?? null,
-    batteryPercent: sel?.batteryConfirmed ?? null,
-    own,
-    detail: doc.state === "countdown" ? "starting…" : "riding",
-  });
-  map.resize();
-}
-
 // ---------- Walk to the scooter, then ride ----------
 
 // The flow that replaced a run of wizard screens for the case where the app
@@ -2774,9 +2733,6 @@ function endWalkFlow(): void {
   arrivalPanel = null;
   walkLine.clear();
   document.body.classList.remove("arrival-open");
-  // Hand the strip back to the session: if a ride is now running it repaints
-  // itself, and if nothing is it clears.
-  syncActiveVehicle();
 }
 
 function beginWalkToVehicle(info: {
@@ -2817,6 +2773,10 @@ function beginWalkToVehicle(info: {
       });
     },
     onCancel: () => endWalkFlow(),
+    // Re-read each update rather than closing over a copy: the claim gains
+    // its "started walking" stamp as the rider moves, and a stale copy would
+    // keep telling them to set off after they had.
+    dibs: () => (info.vehicleIdentifier ? dibsOn(info.vehicleIdentifier) : null),
   });
   arrivalPanel = panel;
 
@@ -2831,19 +2791,22 @@ function beginWalkToVehicle(info: {
         else walkLine.set(coords, { color: "#2f9e44", dest: [info.lng, info.lat] });
       },
       onChange: (state) => {
+        // Rule 1 is satisfied by MOVEMENT, and this is the only place that
+        // sees it: fold each fresh distance into the claim so "started
+        // walking" gets stamped and the grace stops applying.
+        const vid = info.vehicleIdentifier;
+        if (vid && state.remainingMeters !== null) {
+          const held = dibsOn(vid);
+          if (held) {
+            const next = recordProgress(held, state.remainingMeters);
+            if (next !== held) saveDibs(next);
+          }
+        }
         panel.update(state);
-        // The strip carries the walk too, so backing out to look at the map
-        // does not lose the thread of what is happening.
-        activeVehicle?.set({
-          name: info.name,
-          detail: state.arrived ? "you're here" : formatWalkLeg(state),
-        });
       },
     },
   );
   panel.update(walkLeg.state());
-  activeVehicle?.set({ name: info.name, detail: "walking to it" });
-  map.resize();
 
   // WATCH IT WHILE THEY WALK. Somebody standing next to the scooter can
   // unlock it at any moment, and every second between that happening and the
@@ -2875,10 +2838,6 @@ function beginWalkToVehicle(info: {
         // Say it where the rider is already looking, and stop pointing them
         // at a scooter that is not there.
         walkLine.clear();
-        activeVehicle?.set({
-          name: info.name,
-          detail: goneMessage(info.name, reason),
-        });
         arrivalPanel?.reportGone(goneMessage(info.name, reason));
       },
     });

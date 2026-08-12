@@ -31,6 +31,11 @@
 
 import { track } from "./telemetry.ts";
 import { formatWalkLeg, type WalkState } from "./walk-leg.ts";
+import {
+  DIBS_START_GRACE_MS,
+  dibsMsLeft,
+  type Dibs,
+} from "./dibs.ts";
 
 export interface ArrivalVehicle {
   /** "Lunar 🐸 928" — the rider-facing identity, not a 16-hex id. */
@@ -50,6 +55,9 @@ export interface ArrivalPanelDeps {
   onChooseRoute(): void;
   /** Dismiss the whole thing — changed my mind. */
   onCancel(): void;
+  /** The rider's claim on this vehicle, if they called dibbs. Re-read on each
+   *  update so the panel reflects progress rather than a stale copy. */
+  dibs?(): Dibs | null;
 }
 
 export interface ArrivalPanelHandle {
@@ -84,10 +92,46 @@ export function createArrivalPanel(
   panel.append(head, close, body);
   root.replaceChildren(panel);
 
+  /** The two clocks that matter while walking, and only when they matter.
+   *
+   *  Before they set off, the one that can lose them the scooter is the
+   *  ten-minute grace — so that is the one shown, and it is the only one they
+   *  can do anything about. Once they are moving, the grace is satisfied and
+   *  irrelevant, so it is replaced by when the claim actually ends. Showing
+   *  both at once would be two countdowns competing for the same glance, and
+   *  the rider would have to work out which one was about to hurt them. */
+  function dibsLine(): HTMLElement | null {
+    const d = deps.dibs?.() ?? null;
+    if (!d) return null;
+    const left = dibsMsLeft(d);
+    if (left <= 0) return el("p", "arrival__dibs is-urgent", "✋ Your dibbs expired");
+
+    const mins = (ms: number): string => {
+      const m = Math.floor(ms / 60_000);
+      return m < 1 ? "under a minute" : `${m} min`;
+    };
+    if (d.startedWalkingAt === null) {
+      const graceLeft = Math.max(0, d.claimedAt + DIBS_START_GRACE_MS - Date.now());
+      return el(
+        "p",
+        `arrival__dibs${graceLeft <= 3 * 60_000 ? " is-urgent" : ""}`,
+        `✋ Start walking within ${mins(graceLeft)} or your dibbs expire`,
+      );
+    }
+    return el(
+      "p",
+      `arrival__dibs${left <= 5 * 60_000 ? " is-urgent" : ""}`,
+      `✋ Dibbs hold for another ${mins(left)}`,
+    );
+  }
+
   function renderWalking(state: WalkState): void {
     title.textContent = `🚶 ${formatWalkLeg(state)}`;
     sub.textContent = `to ${deps.vehicle.name}`;
     body.replaceChildren();
+
+    const dibs = dibsLine();
+    if (dibs) body.append(dibs);
 
     if (state.error) {
       // Not an error state to the rider: the scooter is on the map and they

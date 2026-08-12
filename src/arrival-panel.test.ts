@@ -138,3 +138,51 @@ describe("at the scooter", () => {
     expect(calls).toEqual(["cancel"]);
   });
 });
+
+describe("the dibbs clock on the chip", () => {
+  const claim = (over: Partial<import("./dibs.ts").Dibs> = {}) => ({
+    vehicleIdentifier: "abc",
+    vehicleName: "Lunar 🐸 928",
+    plate: null,
+    claimedBy: "Resourceful 🌈",
+    claimedAt: Date.now(),
+    startMeters: 600,
+    bestMeters: 600,
+    startedWalkingAt: null,
+    registration: null,
+    ...over,
+  });
+
+  const line = () => root.querySelector(".arrival__dibs")?.textContent ?? "";
+
+  it("counts the grace down while they have not set off", () => {
+    // The only clock they can do anything about before they move.
+    mount({ dibs: () => claim() }).update(BASE);
+    expect(line()).toMatch(/Start walking within \d+ min/);
+  });
+
+  it("switches to the hold once they ARE moving", () => {
+    // The grace is satisfied and irrelevant; showing both would be two
+    // countdowns competing for one glance.
+    mount({ dibs: () => claim({ startedWalkingAt: Date.now() }) }).update(BASE);
+    expect(line()).toMatch(/Dibbs hold for another/);
+    expect(line()).not.toMatch(/Start walking/);
+  });
+
+  it("goes urgent when the grace is nearly gone", () => {
+    mount({ dibs: () => claim({ claimedAt: Date.now() - 8 * 60_000 }) }).update(BASE);
+    expect(root.querySelector(".arrival__dibs")?.classList.contains("is-urgent")).toBe(true);
+  });
+
+  it("says so plainly once the claim is dead", () => {
+    mount({ dibs: () => claim({ claimedAt: Date.now() - 60 * 60_000 }) }).update(BASE);
+    expect(line()).toContain("expired");
+  });
+
+  it("says nothing at all when the rider never called dibbs", () => {
+    // Most walks are not claims, and a clock for a claim that does not exist
+    // is noise on the one surface that has to stay glanceable.
+    mount().update(BASE);
+    expect(root.querySelector(".arrival__dibs")).toBeNull();
+  });
+});
