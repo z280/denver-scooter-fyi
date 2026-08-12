@@ -2695,6 +2695,15 @@ function wireModes(): void {
     // Recommendations are still scoped to one Find-a-ride session: drop them
     // so re-entering never shows a stale list from the prior answers.
     recommended?.clear();
+    // ...and close the drawer they were in, if it is the one open. Picking a
+    // scooter off the ranked list is the moment that list stops being useful,
+    // and leaving it open parks a panel over the map right when the rider
+    // wants to see where they are walking. Only `recommended` — a rider who
+    // deliberately opened Filters or Areas keeps it.
+    const openDrawer = document.querySelector<HTMLButtonElement>(
+      ".drawer-tab.is-active",
+    );
+    if (openDrawer?.dataset.drawer === "recommended") setDrawer(null);
   };
 
   const enterRide = (): void => {

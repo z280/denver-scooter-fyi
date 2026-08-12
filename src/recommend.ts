@@ -34,6 +34,14 @@ export interface RecommendContext {
 
 export interface RankedOption {
   id: string;
+  /** The 16-hex vehicle identifier, when the payload carries one.
+   *
+   *  Carried because DIBS IS KEYED ON IT. Without it a scooter chosen off
+   *  this list reaches the walk flow anonymous: no claim can be made on it,
+   *  no existing claim can be shown, and the arrival panel silently drops
+   *  every dibs affordance. `id` is the device_id, which is a different
+   *  thing and is not what any of that keys off. */
+  vehicleIdentifier: string | null;
   name: string;
   /** Recognized Veo model — drives the row's badge glyph. */
   model: ModelKey | null;
@@ -112,6 +120,9 @@ export function rankDevices(
 
     out.push({
       id: p.device_id,
+      vehicleIdentifier: p.vehicle_identifier
+        ? String(p.vehicle_identifier)
+        : null,
       name: deviceName(p),
       model: modelKeyOf(p),
       desc: `${walkMinutes(meters)} min away`,
@@ -258,11 +269,13 @@ export class RecommendedDevices {
       // reach the one you picked.
       this.walkTo?.({
         name: sel.name,
-        // The ranked row carries no plate or identifier; the walk only needs
-        // somewhere to go, and the arrival panel's Veo handoff is downstream
-        // of the ride flow, which resolves both from the map.
+        // The plate genuinely is not needed here — it is resolved from GBFS
+        // at the scooter, where it is actually used. The IDENTIFIER is a
+        // different matter: dibs is keyed on it, so passing null meant a
+        // scooter picked off this list arrived at the walk flow anonymous
+        // and lost every dibs affordance on the way.
         plate: null,
-        vehicleIdentifier: null,
+        vehicleIdentifier: sel.vehicleIdentifier,
         lat: sel.lat,
         lng: sel.lng,
       });
