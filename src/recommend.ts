@@ -181,8 +181,23 @@ export class RecommendedDevices {
     this.render();
   }
 
+  /** Told whether this drawer currently has a ranked list to show, so its
+   *  tab can stay out of the menu until it does. A tab whose whole content is
+   *  "go and do something else first" is a dead end wearing the same clothes
+   *  as the seven tabs that aren't. */
+  setAvailabilityListener(fn: (hasList: boolean) => void): void {
+    this.onAvailability = fn;
+    fn(this.ctx !== null);
+  }
+  private onAvailability: ((hasList: boolean) => void) | null = null;
+
   private render(): void {
     this.body.replaceChildren();
+    // Fired on every render, including the empty ones: a re-rank that drops
+    // to zero results is still a list the rider asked for and can act on
+    // ("loosen a filter"), so the tab stays. It is the ABSENCE OF A CONTEXT —
+    // never having run Find wheels — that hides it.
+    this.onAvailability?.(this.ctx !== null);
     if (!this.ctx) {
       const p = el(
         "p",

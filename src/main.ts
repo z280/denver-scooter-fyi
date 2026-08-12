@@ -845,6 +845,20 @@ function wireRecommended(): void {
   // Apple Maps — the app ranked these for you; handing you to a different app
   // to reach the one you picked was the odd part.
   recommended.setWalkTo((req) => void beginWalkToVehicle(req));
+  // The Recommended tab stays out of the menu until there is something in it.
+  // `hidden` alone is not enough here — `.drawer-tab` sets
+  // `display: inline-flex`, which has beaten `hidden` in this codebase
+  // before — so the class carries it and `.drawer-tab[hidden]` backs it up.
+  {
+    const tab = document.querySelector<HTMLButtonElement>(
+      '.drawer-tab[data-drawer="recommended"]',
+    );
+    if (tab) {
+      recommended.setAvailabilityListener((hasList) => {
+        tab.hidden = !hasList;
+      });
+    }
+  }
 }
 
 map.on("load", async () => {
@@ -1776,7 +1790,13 @@ function wireClearFilters(): void {
     clearFeatureFilter();
     clearBatteryMin();
     clearQualityFilter();
-    setHideUnavailableControl(false);
+    // RESET, not clear — restores the DEFAULT, which is hiding reserved and
+    // out-of-service vehicles, rather than turning every constraint off.
+    // `false` here meant a rider who tapped this to get out of a narrow
+    // filter got the whole broken fleet dumped onto their map, which is not
+    // what anyone means by "start again". Showing those is an opt-in
+    // (the "+ Unavailable" chip), so un-opting-in is the reset.
+    setHideUnavailableControl(true);
     const areaCb = need<HTMLInputElement>("area-filter-enable");
     if (areaCb.checked) {
       areaCb.checked = false;
@@ -2944,8 +2964,12 @@ function wireEquityRanks(): void {
   const rankBtns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#rank-toggles .rank-btn"),
   );
+  // ONE checkbox now, not two. The Areas drawer carried a mirrored copy of
+  // this control, which put equity ranking in front of every rider looking at
+  // boundary outlines — a compliance-analysis feature advertising itself from
+  // a general map surface. The remaining one lives beside the rank toggles it
+  // belongs to, inside Equity Compliance.
   const overlayInputs = [
-    need<HTMLInputElement>("equity-selected-overlay"),
     need<HTMLInputElement>("equity-selected-overlay-mirror"),
   ];
 

@@ -513,6 +513,20 @@ body:not(.ribbon-open) .drawer-tabs {
    Deliberately NOT metal: that finish belongs to controls that move you
    around the map, and this is a preference about the app. It wears the
    surface's own buttons, like everything else inside a drawer. */
+/* Controls that must exist for wiring but must never be seen or reached.
+   Not `display: none`: a display-none button cannot be clicked
+   programmatically in every engine, and wireDrawers()/the Tools drawer both
+   drive the Equity Compliance tab that way. Pulled out of the layout and out
+   of the accessibility tree instead. */
+.offscreen-controls {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
 /* The founder's note, collapsed (index.html `about-founder`). A native
    <details>, so the only styling needed is to stop the summary looking like
    a bullet and start looking like something you tap. */
@@ -1589,46 +1603,24 @@ body.ride-active .arrival {
 }
 
 /* ---------- Metal: the finish on NAVIGATION, and nothing else ---------- */
-/* The brushed-silver face (gunmetal in dark) belongs to the controls that
-   move you around the MAP: locate, recenter, zoom. That is the whole list.
+/* NO BRUSHED-SILVER IN THE TOP BAR. Not on the hamburger, not on Profile,
+   and not on locate or zoom either.
 
-   It spread further than that once — the menu tabs, every dismiss button, the
-   wizard's Back/Next, panel actions — and at that point it stopped meaning
-   anything. A finish that is on everything is not a cue, it is a texture. The
-   things it came off are actions INSIDE a surface, and they wear that
-   surface's own buttons.
+   The finish was meant to mark "this moves you around the map", and locate
+   and zoom genuinely do — but they sit shoulder to shoulder with two flat
+   buttons in a single 40px-tall row, and a row where half the buttons are
+   brushed metal and half are flat does not read as a meaningful distinction.
+   It reads as two buttons that failed to load their styling. A cue that
+   needs a paragraph to explain which of four adjacent controls it applies to
+   is not doing any work.
 
-   IT WAS STILL TOO WIDE. `.topbar__btn` matched every button in the top bar,
-   which is a PLACE, not a category — so the hamburger (which opens a drawer)
-   and Profile (which opens another) wore the navigation finish purely for
-   standing next to the locate button. Being in the top bar is not what earns
-   the metal; moving the map is. Dropping the selector is the whole fix —
-   `.topbar__btn` already carries a plain transparent face with an
-   accent-soft hover, which those two simply fall back to. Theme left the bar
-   entirely (see `mountThemeModes`).
+   So the top bar is uniformly flat, and the metal survives only where it
+   still means something: whole surfaces that ARE navigation — the arrival
+   panel, the home bar's pill, the mode switch. There it covers everything in
+   view, so it reads as the surface's material rather than as one button
+   being different from its neighbour.
 
-   The gradient and its ink live in the token block near the top; --metal-fg
-   exists because --fg-muted fails AA against the gradient's darkest stop. */
-.maplibregl-ctrl-group button,
-.topbar .maplibregl-ctrl button {
-  background: var(--metal-bg);
-  color: var(--metal-fg);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
-}
-/* Hover lifts the highlight rather than tinting the face — a colour wash over
-   a gradient reads as a rendering bug, not as feedback. */
-.maplibregl-ctrl-group button:hover,
-.topbar .maplibregl-ctrl button:hover {
-  color: var(--fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75),
-    0 0 0 1px var(--metal-active-border);
-}
-.topbar .maplibregl-ctrl button.maplibregl-ctrl-geolocate-active {
-  color: var(--fg);
-  box-shadow: 0 0 0 2px var(--metal-active-border),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
+   --metal-bg / --metal-fg stay defined in the token block for those. */
 
 /* ---------- ✕ buttons are round ---------- */
 /* A dismiss is the one control that is the same shape everywhere in the app,

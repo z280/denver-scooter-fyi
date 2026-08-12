@@ -231,25 +231,6 @@
         </svg>
         <span class="drawer-tab__label">Tools</span>
       </button>
-      <!-- Hidden, not removed: wireDrawers still manages the compliance
-           drawer through this tab, and the Tools drawer's Equity Compliance
-           button opens it with a programmatic click. -->
-      <button
-        class="drawer-tab"
-        type="button"
-        data-drawer="compliance"
-        aria-pressed="false"
-        aria-controls="drawer-compliance"
-        title="Equity Compliance"
-        hidden
-      >
-        <!-- Double check -->
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M18 6 7 17l-5-5" />
-          <path d="m22 10-7.5 7.5L13 16" />
-        </svg>
-        <span class="drawer-tab__label">Compliance</span>
-      </button>
       <button
         class="drawer-tab"
         type="button"
@@ -288,6 +269,36 @@
         <span class="drawer-tab__label">Analysis</span>
       </button>
     </nav>
+
+    <!-- The Equity Compliance tab lives HERE, outside the tab strip, not
+         inside it with `hidden` on. It kept reappearing in the menu: `hidden`
+         is one CSS rule away from being defeated (`.drawer-tab` sets
+         `display: inline-flex`, which has beaten it before), and a control
+         that must never be in the menu should not be in the menu's markup.
+
+         Still a real button, because wireDrawers() finds tabs with a
+         document-wide `.drawer-tab` query and the Tools drawer's "Open Equity
+         Compliance" button opens this drawer with a programmatic click. Out
+         of the flow and out of the accessibility tree; nothing can reveal it
+         by accident. -->
+    <div class="offscreen-controls" aria-hidden="true">
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="compliance"
+        aria-pressed="false"
+        aria-controls="drawer-compliance"
+        title="Equity Compliance"
+        hidden
+      >
+        <!-- Double check -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 7 17l-5-5" />
+          <path d="m22 10-7.5 7.5L13 16" />
+        </svg>
+        <span class="drawer-tab__label">Compliance</span>
+      </button>
+    </div>
 
     <!-- ---------- Filters drawer (internal id "devices") ---------- -->
     <aside class="drawer" id="drawer-devices" aria-labelledby="drawer-devices-h" aria-hidden="true">
@@ -454,7 +465,10 @@
           </div>
         </details>
 
-        <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
+        <!-- "Reset", not "Clear": it restores the defaults (which include
+             hiding reserved and out-of-service vehicles), rather than
+             switching every constraint off. -->
+        <button id="clear-filters" class="clear-filters-btn" type="button">Reset Filters</button>
       </div>
     </aside>
 
@@ -594,14 +608,6 @@
           <ul class="layer-list" id="layer-list">
             <!-- populated by JS -->
           </ul>
-          <!-- Union of the equity ranks selected in the Equity Compliance
-               drawer. Not a single boundary layer, so it lives outside the
-               JS-built list. -->
-          <label class="layer-item">
-            <input type="checkbox" id="equity-selected-overlay" />
-            <span class="layer-item__swatch" style="background: #7b1fa2"></span>
-            <span class="layer-item__label">Equity Ranking (Selected)</span>
-          </label>
         </section>
 
         <section class="control-group" aria-labelledby="choropleth-label">
