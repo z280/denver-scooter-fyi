@@ -65,9 +65,17 @@
      the bar's offset is derived rather than a literal that drifts the moment
      the logo is resized. */
   --brand-h: 60px;
-  --float-top: max(var(--float-inset), env(safe-area-inset-top));
-  --float-side-l: max(var(--float-inset), env(safe-area-inset-left));
-  --float-side-r: max(var(--float-inset), env(safe-area-inset-right));
+  /* ADDITIVE, NOT max(). The safe-area inset is where the SCREEN becomes
+     usable, not where our chrome should sit — taking the max meant that on
+     any device with a cutout the gap collapsed to exactly zero and the top
+     bar came to rest flush against the status bar. An island that touches
+     the edge it is meant to float away from reads as a bar with rounded
+     corners, which is the worst of both.
+     Adding the inset instead guarantees the same visible gap everywhere: a
+     phone with a 59px notch gets 59 + 12, a laptop gets 0 + 12. */
+  --float-top: calc(env(safe-area-inset-top) + var(--float-inset));
+  --float-side-l: calc(env(safe-area-inset-left) + var(--float-inset));
+  --float-side-r: calc(env(safe-area-inset-right) + var(--float-inset));
   /* --topbar-band-h is the bar itself; --topbar-h is still "everything the
      top strip occupies" (the gap above it plus the bar), so every downstream
      offset — ribbon, drawers, chips — keeps deriving from one place. */
@@ -1011,7 +1019,7 @@ body:not(.ribbon-open) .drawer-tabs {
   position: fixed;
   left: 50%;
   bottom: calc(
-    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+    calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
       var(--float-inset)
   );
   transform: translateX(-50%);
@@ -1510,7 +1518,7 @@ body.ride-active .dibs-toast {
   position: fixed;
   left: 50%;
   bottom: calc(
-    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+    calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
       var(--float-inset)
   );
   transform: translateX(-50%);
@@ -1759,7 +1767,7 @@ body.ride-active .arrival {
      both are centred and neither overlaps the other. Derived from --brand-h
      rather than hardcoded, so resizing the logo moves the bar with it. */
   bottom: calc(
-    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+    calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
       var(--float-inset)
   );
   left: 50%;
@@ -2071,7 +2079,7 @@ body.is-map-picking .home-bar {
 /* ---------- Intent-mode presets (bottom center) ---------- */
 .mode-switch {
   position: fixed;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   left: 50%;
   /* --freshness-lift (set from main.ts's wireFreshnessCollapse, measured
      against the freshness pill's own live rect) pushes the pill up while
@@ -2511,7 +2519,7 @@ body.is-map-picking .home-bar {
    zoom control, and here it has the middle of the edge to itself. */
 .brand-link {
   position: fixed;
-  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
@@ -3464,8 +3472,8 @@ body.is-map-picking .ride-modal {
      an element like any other and gets map on all four sides. MapLibre's own
      ~10px control margin sits inside this, so the visible gap is the
      library's margin measured from here, not from the viewport edge. */
-  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
-  left: max(var(--float-inset), env(safe-area-inset-left));
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
+  left: calc(env(safe-area-inset-left) + var(--float-inset));
 }
 /* Rounded and shadowed to match every other floating surface — the default
    is a hard-cornered slab that reads as chrome bolted to the frame. */
@@ -3680,7 +3688,7 @@ body.is-map-picking .ride-modal {
 /* ---------- Freshness footer ---------- */
 .freshness {
   position: fixed;
-  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   right: var(--float-side-r);
   /* A passive status readout: below the wizard (28) and drawers (30/31),
      like the mode bar (27) — any open panel wins the overlap. (It sat at
@@ -5025,7 +5033,7 @@ body.landscape-hint-dismissed .hud-note--landscape {
     max-width: 360px;
   }
   .freshness {
-    bottom: max(12px, env(safe-area-inset-bottom));
+    bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   }
   /* Chips hug the ribbon instead of centering — centering would tuck
      them behind an open drawer on narrow screens. */
@@ -5144,7 +5152,7 @@ body.landscape-hint-dismissed .hud-note--landscape {
 .ride-wizard {
   position: fixed;
   left: 50%;
-  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   transform: translateX(-50%);
   width: min(94vw, 460px);
   max-height: min(78dvh, 720px);
