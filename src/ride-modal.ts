@@ -98,6 +98,15 @@ export interface RideModalEntry {
    *  these into the fresh session doc's `RideOptions` in `onOpen`; nothing
    *  in this module reads them. */
   preflight?: RidePreflightChoices;
+  /** Free ride from the top bar: no vehicle, no destination, no timer.
+   *
+   *  Seeds an own-device, navigation-off, cost-HUD-off session and lands on
+   *  Screen 6, which auto-starts an own-device ride. That screen is where
+   *  `rideStarted` legally happens, and it is also what mints the private
+   *  track key, opens the local recorder and hands off to the HUD — so a free
+   *  ride reuses the machinery instead of re-implementing four steps of it
+   *  and getting three right. */
+  freeRide?: boolean;
   /** Screen 6 should start the ride the moment it mounts, rather than
    *  rendering its Open-in-Veo buttons and countdown.
    *

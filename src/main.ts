@@ -13,7 +13,6 @@ import {
 import { createMap } from "./map.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
-import { savesTracks } from "./track-preference.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -1102,9 +1101,18 @@ map.on("load", async () => {
       const fromHomeBar = trip
         ? { own_device: trip.wheels === "own", navigation: true }
         : {};
+      // A free ride answers all three of the wizard's questions by declining
+      // them: whatever you are riding is your own, there is nowhere to
+      // navigate to, and there is no Veo meter to price.
+      const fromFreeRide = entry.freeRide
+        ? { own_device: true, navigation: false, cost_hud: false }
+        : {};
       const options = entry.preflight
-        ? applyCascades({ ...base, ...entry.preflight, ...fromHomeBar }, context)
-        : applyCascades({ ...base, ...fromHomeBar }, context);
+        ? applyCascades(
+            { ...base, ...entry.preflight, ...fromHomeBar, ...fromFreeRide },
+            context,
+          )
+        : applyCascades({ ...base, ...fromHomeBar, ...fromFreeRide }, context);
       homeBar?.collapse();
       rideSession.dispatch({ type: "open", options });
       // The rider already said where they are going, so Screen 3 opens with
@@ -1149,6 +1157,13 @@ map.on("load", async () => {
       // how a rider ends up with navigation off on a trip they chose a
       // destination for. Same shape as the own-device bug: an entry that
       // means "device known" has to actually put the device on the doc.
+      // Same rule as the own-device home-bar trip above: `own_device: true`
+      // in the OPTIONS is not a device on the DOC, and Screen 6 skips itself
+      // on `doc.device === null` — which is exactly how a "started" ride ends
+      // up with no HUD and no recorder.
+      if (entry.freeRide) {
+        rideSession.dispatch({ type: "setDevice", device: { own: true } });
+      }
       if ((entry.preflight || entry.deviceConfirmed) && entry.vehicleIdentifier) {
         const want = entry.vehicleIdentifier.toLowerCase();
         const feat = devices
@@ -3114,6 +3129,12 @@ function wireFilterAccordion(): void {
  *  alone is not enough — `wizard` covers both "just opened, asked nothing"
  *  and "chose a scooter and a destination". */
 function hasAnswers(doc: RideSessionDoc): boolean {
+  // A FINISHED ride is not an unfinished one. `done` and `idle` docs keep
+  // their device and `startedAtMs` — that is the record of the ride that just
+  // happened — so answering this on the fields alone made every tap after the
+  // first reopen the last ride's wizard instead of starting a new one. The
+  // second through nth attempt "broke" for exactly this reason.
+  if (doc.state === "idle" || doc.state === "done") return false;
   return (
     doc.device !== null ||
     doc.dest !== null ||
@@ -3150,35 +3171,19 @@ function wireFreeRide(): void {
     // refusing to begin would lose the first seconds of the ride, which is
     // exactly the part a rider cannot go back for. Ask for one anyway.
     locate.trigger();
-
-    const context = { private: true, authenticated: isAuthenticated() };
-    const options = applyCascades(
-      {
-        ...defaultRideOptionsFor(context),
-        own_device: true,
-        // Nothing to navigate to, and no Veo meter to price.
-        navigation: false,
-        cost_hud: false,
-        // The rider's standing answer — a free ride is a track or it is
-        // nothing, but that is still their call to have made in Settings.
-        save_tracks: savesTracks(),
-      },
-      context,
-    );
-
-    rideSession.dispatch({ type: "open", options });
-    rideSession.dispatch({ type: "setDevice", device: { own: true } });
-    // Straight to the one screen that owns `rideStarted` — the reducer only
-    // accepts it from `countdown` or `wizard:6`, and there is no countdown
-    // here because there is no Veo app to coordinate with.
-    rideSession.dispatch({ type: "goto", screen: "6" });
-    rideSession.dispatch({
-      type: "rideStarted",
-      rideId: null,
-      startedAtMs: Date.now(),
-      trackKeyId: null,
-      private: true,
-    });
+    // Through the wizard's own Screen 6, not four hand-written dispatches.
+    //
+    // The hand-written version set `state: "riding"` on the doc and stopped
+    // there — and a doc that says "riding" is not a ride. Screen 6 is where
+    // `rideStarted` legally happens AND where the private track key is
+    // minted, the local recorder opened, the transition checked for
+    // acceptance, and the HUD handed off. Reimplementing that got the state
+    // change and none of the rest: no HUD, and — on a feature whose entire
+    // point is "GPS track on" — no recording at all.
+    //
+    // Screen 6 auto-starts an own-device ride on mount, so this is still one
+    // tap; the rider sees the HUD, not a wizard.
+    openRideModal({ freeRide: true, deviceConfirmed: true, fastForwardTo: "6" });
   });
 }
 

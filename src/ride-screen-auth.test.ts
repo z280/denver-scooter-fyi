@@ -351,3 +351,27 @@ describe("Screen 1 — sign-in doors", () => {
     expect(document.querySelector(".account-google")).toBeTruthy();
   });
 });
+
+describe("Screen 1 and the free ride", () => {
+  it("skips itself entirely for a free ride, signed out and with no fix", () => {
+    // A free ride is private, local and own-device: no account to attribute
+    // it to, no destination, no Veo to unlock. Both of this screen's gates
+    // are about things it does not do, and the button's whole promise is one
+    // tap. Asserted in the WORST case — signed out AND no location — because
+    // that is the case that used to park a rider on a sign-in screen after
+    // they tapped Ride Mode.
+    setAuthed(false);
+    wire({ locate: fakeLocate(null) });
+    // Screen "2" is unregistered here, so landing past a skipped screen 1
+    // surfaces as the next flow id — the same trick the tests above use.
+    expect(resolveStartScreen({ freeRide: true, fastForwardTo: "1" })).toBe("2");
+  });
+
+  it("still gates an ORDINARY entry with no fix", () => {
+    // The exemption is for `freeRide` alone — it must not become a hole that
+    // every entry falls through.
+    setAuthed(false);
+    wire({ locate: fakeLocate(null) });
+    expect(resolveStartScreen({ fastForwardTo: "1" })).toBe("1");
+  });
+});

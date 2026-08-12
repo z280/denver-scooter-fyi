@@ -163,7 +163,18 @@ export function wireRideScreenAuth(deps: RideScreenAuthDeps): () => void {
     //
     // The sign-in offer is not lost — the profile button is always on screen,
     // and the post-ride screens ask when there is something to attribute.
-    skip: () => {
+    skip: (ctx) => {
+      // A FREE RIDE HAS NOTHING TO GATE. It is a private, local, own-device
+      // ride: there is no account to attribute it to, no destination to
+      // navigate to, and no Veo to unlock. Both gates below are about things
+      // it does not do, and the whole promise of the button is one tap — so
+      // stopping a rider on a sign-in screen here would be asking them to
+      // answer a question that has no bearing on what happens next.
+      //
+      // Location is not required either: the recorder starts and the watch
+      // fills in. Refusing to begin until a fix lands would lose the first
+      // seconds of the ride, which is the part a rider cannot go back for.
+      if (ctx.entry.freeRide) return true;
       const located = gpsGranted || deps.locate.current() !== null;
       if (!located) return false;
       return isAuthenticated() || hasDestination();
