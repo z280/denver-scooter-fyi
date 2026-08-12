@@ -416,3 +416,42 @@ describe("the search box knows when it is done", () => {
     expect(input().hidden).toBe(false);
   });
 });
+
+describe("the start line knows when it is noise", () => {
+  function toWheels(over: Partial<HomeBarDeps> = {}) {
+    const search = fakeSearch();
+    const out = mount({ createSearch: search.createSearch, ...over });
+    pill().click();
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    return out;
+  }
+
+  it("says nothing about the start when GPS already answers it", () => {
+    // "Starting from your location" answers a question nobody asked on a
+    // screen about how you are getting there.
+    toWheels({ locate: fakeLocate({ lat: 39.74, lng: -104.99 }) });
+    expect(q(".home-bar__hint")).toBeNull();
+  });
+
+  it("still speaks up when nobody knows where the trip starts", () => {
+    // This is the last screen before a route gets planned from that point.
+    toWheels({ locate: fakeLocate(null) });
+    expect(q(".home-bar__hint")?.textContent).toContain("Turn on location");
+  });
+
+  it("says nothing once a start point has been named", () => {
+    const search = fakeSearch();
+    mount({ createSearch: search.createSearch, locate: fakeLocate(null) });
+    pill().click();
+    q<HTMLButtonElement>(".home-bar__pin")!.click();
+    typeInto("union");
+    search.emitResults([result("Union Station", { lat: 39.75, lon: -105.0 })], "union");
+    rowNamed("Union Station")!.click();
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    expect(q(".home-bar__hint")).toBeNull();
+  });
+});

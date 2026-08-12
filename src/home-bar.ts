@@ -421,7 +421,12 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
       choices.append(btn);
     }
     listEl.append(choices);
-    renderStartLine();
+    // The start line only earns its place here when there is something to DO
+    // about it. "Starting from your location" answers a question nobody asked
+    // on a screen about how you are getting there — but "we don't know where
+    // you are starting from" is worth saying before a route is planned from
+    // it, and this is the last screen before that happens.
+    if (!start && !deps.locate.current()) renderStartLine();
   }
 
   function startMapPick(): void {
