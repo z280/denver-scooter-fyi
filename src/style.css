@@ -1485,7 +1485,13 @@ body.ride-active .dibs-toast {
   margin: 0 auto;
   color: #2b2418;
 }
-.dibs-cert__qr svg {
+/* `img` AS WELL AS `svg`. The modal renders the QR as <img src=…> and this
+   rule only ever matched an inline <svg>, so even once the image loaded it
+   came in at its intrinsic 57px instead of filling the 128px frame. The
+   backend serves the ink baked in now — an <img> is an isolated document, so
+   the `color` above cannot reach it. */
+.dibs-cert__qr svg,
+.dibs-cert__qr img {
   display: block;
   width: 100%;
   height: auto;

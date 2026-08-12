@@ -215,6 +215,10 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
     `${DIBS_MAX_WALK_MINUTES} minutes' walk, maximum. You can't call dibs on something you couldn't plausibly reach.`,
     `${DIBS_MAX_TOTAL_MS / 60_000} minutes and it's over, however well you walked.`,
     "A certificate only counts while it's moving. A screenshot doesn't.",
+    // Deliberately "will try". The watch depends on Veo's feed refreshing
+    // and on this device still being awake to hear it, and a promise the app
+    // cannot keep is worse than a hedge a rider can plan around.
+    "Scooter.fyi will try to notify you if the device you have dibs on is no longer available.",
   ]) {
     list.append(el("li", "", rule));
   }
@@ -314,9 +318,16 @@ export function showDibsConfirmation(dibs: Dibs): void {
  *  what did I just get, and what do I have to do about it — rather than
  *  reciting the feature.
  *
- *  The rules are the same five the certificate carries, because a rider who
- *  reads them here and then shows somebody the certificate should not find
- *  two different accounts of what dibs are. */
+ *  The rules match the certificate's, because a rider who reads them here and
+ *  then shows somebody the certificate should not find two different accounts
+ *  of what dibs are.
+ *
+ *  They are NOT a shared constant, and that is a standing hazard: this list
+ *  is phrased as (bold claim, explanation) pairs while the certificate's is
+ *  full sentences, and the backend's certificate page carries a third copy in
+ *  HTML. Three hand-maintained lists of the same rules WILL drift. Unifying
+ *  them means picking one voice for all three surfaces, which is a product
+ *  decision, not a refactor — so for now: change one, change all three. */
 export function openDibsExplainer(): void {
   const backdrop = el("div", "dibs-explain");
   const card = el("div", "dibs-explain__card");
@@ -345,6 +356,7 @@ export function openDibsExplainer(): void {
     [`${DIBS_MAX_TOTAL_MS / 60_000} minutes in total.`, " However well you walk, that's the ceiling."],
     ["Other riders see your name on it.", " The app stops offering them the scooter and tells them who called it."],
     ["Your certificate proves when.", " Show it, don't screenshot it — a still one isn't valid."],
+    ["We'll try to warn you.", " Scooter.fyi will try to notify you if the device you have dibs on is no longer available."],
   ] as [string, string][]) {
     const li = el("li");
     li.append(el("strong", "", strong), document.createTextNode(rest));
