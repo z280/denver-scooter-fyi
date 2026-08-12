@@ -78,6 +78,9 @@ export interface RideScreenAuthDeps {
    *  unavailable (older Safari). Defaults to the real thing; injected for
    *  tests (happy-dom has no Permissions API). */
   queryGeoPermission?(): Promise<GeoPermissionState>;
+  /** True when the rider arrived here mid-task — they named a destination on
+   *  the home bar and are on their way. See the skip rule below. */
+  hasDestination?(): boolean;
 }
 
 async function defaultQueryGeoPermission(): Promise<GeoPermissionState> {
@@ -142,9 +145,29 @@ export function wireRideScreenAuth(deps: RideScreenAuthDeps): () => void {
     });
   }
 
+  const hasDestination = deps.hasDestination ?? (() => false);
+
   const unregister = registerRideScreen("1", {
-    skip: () =>
-      isAuthenticated() && (gpsGranted || deps.locate.current() !== null),
+    // TWO GATES, AND ONLY ONE OF THEM IS A GATE.
+    //
+    // Location is a real prerequisite: navigation without a fix is not a
+    // degraded experience, it is no experience. Signing in is not — this
+    // screen's own copy offers "Ride as Guest", so the account was always
+    // optional and this screen was pitching, not gating.
+    //
+    // Pitching is fine to a rider who opened the wizard cold. It is not fine
+    // to one who has already typed a destination into the home bar and picked
+    // how they are getting there: they are mid-task, standing somewhere, and
+    // the app answered "take me here" with "sign in first". So once a
+    // destination is on the session, location alone decides.
+    //
+    // The sign-in offer is not lost — the profile button is always on screen,
+    // and the post-ride screens ask when there is something to attribute.
+    skip: () => {
+      const located = gpsGranted || deps.locate.current() !== null;
+      if (!located) return false;
+      return isAuthenticated() || hasDestination();
+    },
     factory: (ctx: RideScreenContext): RideScreen =>
       buildScreen(ctx, {
         locate: deps.locate,

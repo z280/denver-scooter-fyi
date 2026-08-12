@@ -1095,7 +1095,12 @@ map.on("load", async () => {
   // id), but auth is wired first so its GPS-permission priming has the most
   // lead time before the rider can reach it (ride-screen-auth.ts's own
   // module note).
-  wireRideScreenAuth({ locate });
+  wireRideScreenAuth({
+    locate,
+    // A rider with a destination on the session is mid-task; Screen 1 stops
+    // pitching an account at them and gates on location alone.
+    hasDestination: () => (rideSession.current()?.dest ?? null) !== null,
+  });
   wireRideScreenSelect({
     devices,
     locate,
@@ -2721,6 +2726,8 @@ function beginWalkToVehicle(info: {
       openRideModal({
         vehicleIdentifier: info.vehicleIdentifier ?? undefined,
         plate: info.plate ?? undefined,
+        // They walked to it. There is nothing left to confirm.
+        deviceConfirmed: true,
         fastForwardTo: "4",
       });
     },
@@ -2729,6 +2736,7 @@ function beginWalkToVehicle(info: {
       openRideModal({
         vehicleIdentifier: info.vehicleIdentifier ?? undefined,
         plate: info.plate ?? undefined,
+        deviceConfirmed: true,
         fastForwardTo: "4",
       });
     },

@@ -82,6 +82,14 @@ export interface RideModalEntry {
   /** A plate that either resolved the identifier above, or (on a reverse-lookup
    *  miss) prefills Screen 2's manual-plate path — never a dead end. */
   plate?: string;
+  /** The rider has already committed to this specific vehicle — they answered
+   *  the popup's survey, or they walked to it. Screen 2 skips.
+   *
+   *  Deliberately NOT inferred from `doc.device` being set: a `?ride=plate:`
+   *  deep link also names a device, and that is a weaker signal — somebody
+   *  followed a link, they did not stand in front of the thing. They still get
+   *  Screen 2 to confirm or change it. */
+  deviceConfirmed?: boolean;
   /** Landing screen for a fast-forward; defaults to Screen 2 when a device is
    *  named, Screen 1 otherwise. Screens registered *before* the target still
    *  run when their `skip()` says they must (Screen 1's gates). */

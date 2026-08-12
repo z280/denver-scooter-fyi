@@ -351,7 +351,19 @@ export function wireRideScreenSelect(deps: RideScreenSelectDeps): () => void {
       // if that dispatch somehow didn't land, the rider gets this screen
       // rather than a flow that reaches Screen 6 with nothing selected and
       // silently runs off the end.
-      return ctx.entry.preflight !== undefined && doc?.device != null;
+      // Nothing to select. "My Scooter/Bike" is one of this screen's own
+      // options, and `own_device` IS that answer — a rider who told the home
+      // bar they had their own wheels has already given it. Asking again,
+      // with a list of six Cosmos they cannot ride, is the friction the home
+      // bar exists to remove.
+      if (doc?.options.own_device) return true;
+      // A device the rider has actually committed to: the popup's survey, or
+      // the walk flow, which routed them to it on foot. Gated on the device
+      // being on the doc too: if that dispatch didn't land, the rider gets
+      // this screen rather than a flow that reaches Screen 6 with nothing
+      // selected and silently runs off the end.
+      const committed = ctx.entry.preflight !== undefined || ctx.entry.deviceConfirmed === true;
+      return committed && doc?.device != null;
     },
     factory: (ctx) => buildSelectScreen(ctx, resolved),
   });

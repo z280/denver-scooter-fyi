@@ -218,7 +218,16 @@ export function wireRideScreenDest(deps: RideScreenDestDeps): () => void {
     // Master Part 0: "shown IF navigation on." No session doc (shouldn't
     // happen mid-wizard, but a throwing/missing read must not strand the
     // rider on a screen with nothing to search against) also skips.
-    skip: () => !(deps.session.current()?.options.navigation ?? false),
+    skip: () => {
+      const doc = deps.session.current();
+      if (!(doc?.options.navigation ?? false)) return true;
+      // ALREADY ANSWERED. The home bar asks "where are you going?" before
+      // anything else, so by the time the wizard opens the destination is on
+      // the session. Showing this screen anyway made the rider type it a
+      // second time — and, worse, made the app look like it had forgotten.
+      // Back still reaches it, which is the right way to change your mind.
+      return doc?.dest != null;
+    },
     factory: (ctx) => buildDestScreen(ctx, deps),
   });
 }
