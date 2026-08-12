@@ -1083,11 +1083,14 @@ export class Devices {
       // alternative so the rider can decide before burning the walk.
       let walkBlock = "";
       if (user) {
-        const meters = distanceMeters(user, here);
+        // No distance readout. "12 min" was a straight-line estimate that
+        // the walk flow immediately contradicts with a routed one — two
+        // numbers for one question, and the one shown first is the wrong
+        // one. Tapping through gives the real answer, so the button is left
+        // to make its own offer.
         walkBlock = `
           <div class="device-popup__walk">
-            🚶 ${escapeHtml(formatWalk(meters))}
-            <button type="button" class="device-popup__action" data-action="walk-here">Walk me there</button>
+            <button type="button" class="device-popup__action" data-action="walk-here">🚶 Walk me there</button>
           </div>`;
         if (relTier !== "ok") {
           const alt = this.nearestReliable(
@@ -1303,13 +1306,26 @@ export class Devices {
       // the vehicle, so it needs (1) a live GPS fix and (2) sight distance.
       // When those aren't met we say why instead of offering the action —
       // same pattern as the unlock block above.
+      //
+      // ADMINS ARE EXEMPT, from both halves. The gate is a CREDIBILITY check,
+      // not a data dependency: the report is built from the DEVICE's
+      // coordinates (`coords` below), never the reporter's, so a distant
+      // admin files exactly the same report a nearby rider would. An admin
+      // working a compliance queue is reviewing parking across the city from
+      // a desk, which is the job — and requiring them to be standing next to
+      // each scooter would make the queue unworkable while adding nothing to
+      // the report. Same exemption `startAllowed` already grants for unlock.
       const parkNearEnough =
-        user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M;
+        this.adminSession ||
+        (user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M);
       // Hoisted so the async reverse-geocode below can rebuild the URL with a
       // street address once it resolves.
       let parkingInput: ParkingReportInput | null = null;
       let veoParkReportBlock: string;
-      if (user && parkNearEnough) {
+      // `parkNearEnough` alone, not `user && parkNearEnough`: an admin with
+      // no location fix at all still gets the action, which is the whole
+      // point of exempting them.
+      if (parkNearEnough) {
         parkingInput = {
           lat: coords[1],
           lng: coords[0],
@@ -1490,11 +1506,17 @@ export class Devices {
         });
       }
 
-      // Dashed orientation line user → device while the popup is open.
-      if (user) {
-        this.locate.showLineTo(here);
-        popup.on("close", () => this.locate.clearLine());
-      }
+      // NO DASHED LINE. A straight line from the rider to the scooter was an
+      // orientation aid back when tapping a scooter told you nothing about
+      // getting to it. It now competes with a real walking route — the walk
+      // flow draws the path you actually take — and a crow-flies line beside
+      // a routed one reads as a second, contradicting suggestion. Worse, it
+      // cuts through buildings and the Platte, which is exactly the shape a
+      // rider must not follow.
+      //
+      // `Locate.showLineTo`/`clearLine` stay: recommend.ts still draws one
+      // for the ranked list, where nothing has been committed to yet and
+      // "roughly that way, roughly that far" is the whole question.
 
       const popupEl = this.popup.getElement();
 

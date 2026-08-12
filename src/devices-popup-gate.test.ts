@@ -726,3 +726,50 @@ describe("device popup — Open in Veo and Confirm Features share a row", () => 
     }
   });
 });
+
+describe("device popup — reporting bad parking from a distance", () => {
+  /** The parking block lives inside the ⚠️ Report modal, not the popup body,
+   *  so the popup HTML alone never carries it — open the modal and read
+   *  THAT. Discovered by the first version of these tests failing on the
+   *  case that should obviously have passed. */
+  const openReportModal = (opts: Parameters<typeof openPopup>[0]): string => {
+    openPopup(opts);
+    // Through the popup ELEMENT the harness captured — the report button's
+    // listener is bound to that node, which is not in the document.
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
+      ?.click();
+    return document.body.innerHTML;
+  };
+  const canReport = (html: string): boolean =>
+    html.includes('data-action="report-parking"');
+
+  it("is offered to a rider standing at the scooter", () => {
+    expect(canReport(openReportModal({ fix: NEAR }))).toBe(true);
+  });
+
+  it("is refused to a rider across town, with a reason", () => {
+    const html = openReportModal({ fix: FAR });
+    expect(canReport(html)).toBe(false);
+    expect(html).toContain("Walk within sight");
+  });
+
+  it("IS offered to an admin across town", () => {
+    // The gate is a credibility check, not a data dependency — the report is
+    // built from the DEVICE's coordinates, never the reporter's, so a distant
+    // admin files exactly the report a nearby rider would. An admin working a
+    // compliance queue reviews parking city-wide from a desk.
+    expect(canReport(openReportModal({ fix: FAR, admin: true }))).toBe(true);
+  });
+
+  it("IS offered to an admin with no location fix at all", () => {
+    // Both halves of the gate are waived, not just the distance one.
+    expect(canReport(openReportModal({ fix: null, admin: true }))).toBe(true);
+  });
+
+  it("is still refused to a signed-out rider with no fix", () => {
+    const html = openReportModal({ fix: null });
+    expect(canReport(html)).toBe(false);
+    expect(html).toContain("Turn on your location");
+  });
+});
