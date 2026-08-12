@@ -513,6 +513,52 @@ body:not(.ribbon-open) .drawer-tabs {
    Deliberately NOT metal: that finish belongs to controls that move you
    around the map, and this is a preference about the app. It wears the
    surface's own buttons, like everything else inside a drawer. */
+/* The founder's note, collapsed (index.html `about-founder`). A native
+   <details>, so the only styling needed is to stop the summary looking like
+   a bullet and start looking like something you tap. */
+.about-founder {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 12px;
+}
+.about-founder__summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 15px;
+  font-weight: 700;
+  /* The default triangle is replaced by our own, which can be positioned and
+     rotated; ::-webkit-details-marker covers older Safari. */
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.about-founder__summary::-webkit-details-marker {
+  display: none;
+}
+.about-founder__summary::before {
+  content: "▸";
+  color: var(--fg-muted);
+  transition: transform 0.15s ease;
+}
+.about-founder[open] .about-founder__summary::before {
+  transform: rotate(90deg);
+}
+.about-founder__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.about-founder > p {
+  margin-top: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .about-founder__summary::before {
+    transition: none;
+  }
+}
+
 .theme-modes {
   display: flex;
   gap: 2px;
@@ -556,15 +602,29 @@ body:not(.ribbon-open) .drawer-tabs {
   outline-offset: 2px;
 }
 .theme-modes__glyph {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
 }
-/* Narrow phones: the words are what make the modes unguessable-proof, so the
-   GLYPHS go first when space runs out, never the labels. */
-@media (max-width: 380px) {
-  .theme-modes__glyph {
-    display: none;
-  }
+/* ONLY THE ACTIVE MODE IS SPELLED OUT. Three words side by side is a lot of
+   header for a setting most riders touch once, and the one that has to be
+   unambiguous is the one you are in — the other two are destinations, and
+   their glyphs plus the group's own label carry them.
+
+   Visually hidden, NOT removed: the word stays in the accessibility tree, so
+   a screen reader still reads "Dark, radio, not checked" rather than an
+   emoji. `clip-path` over `display:none` for exactly that reason. */
+.theme-modes__btn:not(.is-active) .theme-modes__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* With the labels gone the inactive buttons are glyph-only, so they get an
+   even box rather than the label's asymmetric padding. */
+.theme-modes__btn:not(.is-active) {
+  padding: 4px 7px;
 }
 
 .drawer-close {
@@ -3733,7 +3793,11 @@ body.is-map-picking .ride-modal {
   /* Cancel the popup content's padding so the turquoise bleeds to the edges;
      extra right padding clears the × close button (44px wide — see
      .maplibregl-popup-close-button). */
-  margin: -12px -14px 10px;
+  /* No bottom margin: the verdict bar sits directly beneath and the two are
+     meant to read as one block, turquoise running straight into the verdict
+     colour with no seam of popup background between them. The bar owns the
+     gap below the pair. */
+  margin: -12px -14px 0;
   padding: 12px 48px 12px 14px;
   background: #17b9ab; /* Veo turquoise */
   color: #fff;
@@ -3960,6 +4024,11 @@ body.is-map-picking .ride-modal {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Same negative side margins as the header, so the two bars are exactly
+     the same width and both bleed to the popup's edges. No top margin — it
+     butts straight against the turquoise. A few px below, which is the only
+     gap in the pair. */
+  margin: 0 -14px 8px;
   padding: 9px 14px;
   font-size: 13px;
   font-weight: 700;

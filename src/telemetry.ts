@@ -49,6 +49,10 @@ export const TELEMETRY_EVENTS = [
   // The watched scooter went while the rider was walking to it, and why.
   "device_gone",
   "drawer_open",
+  // The founder's note on the About page is collapsed by default; this is
+  // the OPEN only, never the close, so the count reads as "people who chose
+  // to read it" rather than "people who poked at it".
+  "about_founder_open",
   "account_tab",
   "theme_change",
   // features

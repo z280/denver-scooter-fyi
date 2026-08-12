@@ -853,7 +853,14 @@
           </button>
         </section>
 
-        <h3>Message from Founder</h3>
+        <!-- Collapsed by default: this is the longest block on the page and
+             the one fewest readers came for, so it should not push "A few
+             things worth knowing" (which is the part that actually sets
+             expectations about a beta) below the fold. Native <details>, so
+             it works before JS and is announced correctly without ARIA of
+             our own. The open event is tracked in main.ts. -->
+        <details class="about-founder" id="about-founder">
+          <summary class="about-founder__summary">Message from Founder</summary>
         <p>
           Hey there! I'm <a href="https://zneill.com" target="_blank" rel="noopener">Zeke Neill</a>,
           the Denverite responsible for Scooter.fyi. This project originally
@@ -869,6 +876,7 @@
           you do — or there's a feature you'd like to see — please don't
           hesitate to reach out.
         </p>
+        </details>
 
         <h3>A few things worth knowing</h3>
         <p>
@@ -945,6 +953,12 @@
           <p class="control-hint">
             Neither the City of Denver nor OpenStreetMap endorses this app,
             and any mistakes in how their data is used here are ours.
+          </p>
+          <p class="control-hint">
+            Veo, Veo Cosmo, Veo Astro, Veo Rover, and Veo Apollo may be
+            trademarks of VeoRide, Inc. These are used only for
+            educational/descriptive purposes, VeoRide, Inc is not affiliated
+            with and does not endorse this website.
           </p>
         </section>
       </div>

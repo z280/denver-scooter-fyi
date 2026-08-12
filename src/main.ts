@@ -880,6 +880,19 @@ map.on("load", async () => {
   // a control that reset itself each time a rider signed in or out would be
   // the kind of flicker the header exists to avoid.
   mountThemeModes(need("theme-modes"));
+  // The founder's note is collapsed by default; opening it is a real signal
+  // about what people read on the About page, so it goes through our own
+  // telemetry like every other interaction. `toggle` fires on close too —
+  // only the open is interesting, and counting both would make the number
+  // mean "interactions" rather than "reads".
+  {
+    const founder = document.getElementById("about-founder");
+    if (founder instanceof HTMLDetailsElement) {
+      founder.addEventListener("toggle", () => {
+        if (founder.open) track("about_founder_open", {});
+      });
+    }
+  }
   // Ride-flow text fields apply their own edits so nothing lands in WebKit's
   // undo queue — see ios-shake-undo.ts for why a queue left non-empty means
   // an "Undo Typing" alert on every bump for the rest of the ride. One
