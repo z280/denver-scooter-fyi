@@ -1,10 +1,14 @@
 // What to call a scooter.
 //
-// The API derives "Lunar 🐸" from the vehicle identifier (sql/073) and puts it
-// on the public payload. It deliberately does NOT add the plate suffix that
-// tells two Lunar 🐸s apart, because the public payload carries no plate — but
-// this app resolves its own plates from Veo's GBFS feed, so the disambiguating
-// digits are ours to add once we already have them.
+// The API derives "Lunar 🐸" from the vehicle identifier (sql/073) and now
+// ships the disambiguating digits with it, as `plate_suffix`.
+//
+// It used to withhold them, and this app recovered them by joining Veo's
+// public GBFS feed client-side. That join still exists as a fallback, but it
+// needs a GPS fix AND a CORS-reachable feed and fails silently without both —
+// so the rider standing in a cluster of four identically-named scooters, who
+// is the entire reason the digits exist, was the one most likely not to get
+// them. Preferring the server's copy is what makes them reliable.
 //
 // WHY A NAME AT ALL. "Cosmo" is what a scooter IS; "Lunar 🐸 928" is WHICH
 // one. Which one is the thing a rider says out loud, shows on a certificate,
@@ -27,9 +31,13 @@ export function vehicleDisplayName(
   publicName: string | null | undefined,
   plate: string | null | undefined,
   modelName: string | null | undefined,
+  /** The server's `plate_suffix`, preferred over deriving one from a plate we
+   *  resolved ourselves — it is present whenever the API knows the vehicle,
+   *  where the GBFS-derived plate needs a GPS fix and a reachable feed. */
+  serverSuffix?: string | null,
 ): string {
   if (!publicName) return modelName || "Veo Unknown";
-  const suffix = plateSuffix(plate);
+  const suffix = serverSuffix || plateSuffix(plate);
   return suffix ? `${publicName} ${suffix}` : publicName;
 }
 

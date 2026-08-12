@@ -799,8 +799,16 @@ export class Devices {
         props.public_name ?? null,
         namePlate,
         model ? model.name : null,
+        props.plate_suffix ? String(props.plate_suffix) : null,
       );
-      const headerDesc = model ? model.desc : "Tell us!";
+      // THE MODEL STAYS IN THE HEADER. The line above answers "which one";
+      // this one answers "what is it", and a rider deciding whether to walk
+      // to it needs both — an Apollo and an Astro are not interchangeable.
+      // The model was displaced from here when the name moved in, leaving
+      // only the description, which describes the model without naming it.
+      const headerDesc = model
+        ? `${model.name} · ${model.desc}`
+        : "Tell us!";
       const reportUi = model
         ? ""
         : `<button type="button" class="device-popup__report-btn" data-action="report-model">📸 Tell us what this is</button>
@@ -2504,6 +2512,8 @@ interface PopupProps {
   vehicle_identifier?: string | null;
   /** "Lunar 🐸" — see vehicle-name.ts. */
   public_name?: string | null;
+  /** "928" — the digits on the deck, from the payload. See vehicle-name.ts. */
+  plate_suffix?: string | null;
   is_disabled?: boolean | string | null;
   is_reserved?: boolean | string | null;
   current_range_meters?: number | string | null;

@@ -37,10 +37,15 @@ export interface DeviceProperties {
   // ----- Public per-device fields (always potentially present on
   // /api/v1/devices/current; values may still be null when upstream omits them).
   /** "Lunar 🐸" — a label a rider can say out loud, derived from the
-   *  identifier and never stored (sql/073). The plate suffix that
-   *  disambiguates two Lunar 🐸s is added client-side where the plate is
-   *  already known, since the public payload deliberately omits it. */
+   *  identifier and never stored (sql/073). */
   public_name?: string | null;
+  /** "928" — the last three characters of the plate, as printed on the deck.
+   *  This is what tells two Lunar 🐸s apart when you are standing between
+   *  them, so it is on the public payload. The RAW plate is still admin-only;
+   *  the suffix is public because Veo publishes the whole plate themselves in
+   *  free_bike_status, keyed by the same id we emit as `device_id`.
+   *  Null for a device whose plate we have never resolved. */
+  plate_suffix?: string | null;
   /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
   vehicle_identifier?: string | null;
   /** True when the scooter is out of service (low battery, fault, impound). */

@@ -43,3 +43,36 @@ describe("not saying Veo three times", () => {
     expect(bareModelName(null)).toBe("");
   });
 });
+
+describe("the server's plate suffix", () => {
+  it("is preferred over one derived from a locally-resolved plate", () => {
+    // The payload's copy is present whenever the API knows the vehicle. The
+    // GBFS-derived plate needs a GPS fix and a reachable feed, so it is the
+    // fallback, not the source of truth.
+    expect(vehicleDisplayName("Lunar 🐸", "1025111", "Veo Cosmo", "899")).toBe(
+      "Lunar 🐸 899",
+    );
+  });
+
+  it("still falls back to the local plate when the payload has none", () => {
+    // An older payload, or a device whose plate we have never resolved
+    // server-side. The client join is why this path exists at all.
+    expect(vehicleDisplayName("Lunar 🐸", "1025899", "Veo Cosmo", null)).toBe(
+      "Lunar 🐸 899",
+    );
+    expect(vehicleDisplayName("Lunar 🐸", "1025899", "Veo Cosmo")).toBe(
+      "Lunar 🐸 899",
+    );
+  });
+
+  it("names the scooter without digits when neither source has them", () => {
+    // Honest: a name with no disambiguator beats a fabricated one.
+    expect(vehicleDisplayName("Lunar 🐸", null, "Veo Cosmo", null)).toBe("Lunar 🐸");
+  });
+
+  it("treats an empty-string suffix as absent, not as a suffix", () => {
+    expect(vehicleDisplayName("Lunar 🐸", "1025899", "Veo Cosmo", "")).toBe(
+      "Lunar 🐸 899",
+    );
+  });
+});
