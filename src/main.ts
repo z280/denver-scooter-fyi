@@ -95,6 +95,7 @@ import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
+import { createTripPins } from "./trip-pins.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -203,6 +204,8 @@ const rideRouteLine = createRideRouteLine(map);
 // Screen 4's route choices, drawn on this same map behind the wizard's
 // bottom sheet (ride-screen-routes.ts's sheet presentation).
 const routePreview = createRoutePreview(map);
+// The destination/start pins the home bar puts on the map.
+const tripPins = createTripPins(map);
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -2625,6 +2628,16 @@ let homeBar: HomeBarHandle | null = null;
 function wireHomeBar(): HomeBarHandle {
   const bar = createHomeBar(need("home-bar"), {
     locate,
+    onPlacesChange: ({ dest, start }) => {
+      tripPins.set({ dest, start });
+      // Show it, not just draw it: a pin outside the current viewport is the
+      // same as no pin. Ease rather than jump, and only when there is
+      // somewhere to go — an ease to nowhere on every clear would fight the
+      // rider for control of the map.
+      const focus = dest ?? start;
+      if (!focus) return;
+      map.easeTo({ center: [focus.lon, focus.lat], zoom: Math.max(map.getZoom(), 14), duration: 600 });
+    },
     // The same one-shot picker the profile's home/work and Screen 3 use.
     pickOnMap: (hint) => mapPick.pick({ hint }),
     onPlanTrip: ({ dest, wheels, start }) => {

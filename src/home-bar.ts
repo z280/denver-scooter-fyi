@@ -64,6 +64,15 @@ export interface HomeBarDeps {
   pickOnMap?(hint?: string): Promise<{ lat: number; lng: number } | null>;
   /** The rider answered both questions. */
   onPlanTrip(trip: { dest: TripPlace; wheels: TripWheels; start: TripPlace | null }): void;
+  /** Every change to the chosen points, so the map can draw them.
+   *
+   *  Picking a point used to do nothing visible: you tapped the map, the app
+   *  took the coordinate and moved on, and the map looked exactly as it had
+   *  before — the one interaction with no address to confirm it was also the
+   *  one with no confirmation at all. Fires on choose, on change-your-mind
+   *  and on close, so the map never keeps a pin for a trip that is no longer
+   *  being planned. */
+  onPlacesChange?(places: { dest: TripPlace | null; start: TripPlace | null }): void;
 }
 
 export interface HomeBarHandle {
@@ -159,6 +168,10 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     if (!destroyed && phase !== "collapsed") render();
   });
 
+  function emitPlaces(): void {
+    deps.onPlacesChange?.({ dest, start });
+  }
+
   function open(): void {
     if (destroyed) return;
     phase = "destination";
@@ -170,8 +183,16 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     input.focus();
   }
 
-  function collapse(): void {
+  function collapse(opts: { keepPlaces?: boolean } = {}): void {
     if (destroyed) return;
+    // A trip that was handed to a flow keeps its pins — that flow is now
+    // showing the rider the route to them. Backing out of planning drops
+    // them, so the map does not keep a destination nobody is going to.
+    if (!opts.keepPlaces) {
+      dest = null;
+      start = null;
+      emitPlaces();
+    }
     phase = "collapsed";
     input.value = "";
     liveQuery = "";
@@ -198,6 +219,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     status = "idle";
     search.cancel();
     track("home_bar", { action: "dest_chosen" });
+    emitPlaces();
     render();
   }
 
@@ -209,6 +231,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     liveQuery = "";
     results = [];
     search.cancel();
+    emitPlaces();
     render();
   }
 
@@ -388,9 +411,9 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
         if (!dest) return;
         track("home_bar", { action: "plan", wheels: choice.value });
         deps.onPlanTrip({ dest, wheels: choice.value, start });
-        // The chosen flow owns the screen now.
-        dest = null;
-        collapse();
+        // The chosen flow owns the screen now — but the pins stay, because
+        // that flow is about to route to them.
+        collapse({ keepPlaces: true });
       });
       choices.append(btn);
     }

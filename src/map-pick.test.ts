@@ -49,6 +49,24 @@ afterEach(() => {
 // ---------- picking ----------
 
 describe("picking", () => {
+  it("stays in pick mode for the rest of the click that ended it", async () => {
+    // THE BUG: onModeChange(false) fired synchronously inside the click, and
+    // devices.ts registers its own click handler LATER (main.ts calls
+    // addLayers() long after createMapPick), so MapLibre ran it next — with
+    // popup suppression already lifted. Tapping the map to drop a pin on a
+    // dense block opened a scooter popup over the pin.
+    const map = fakeMap();
+    const seen: boolean[] = [];
+    const pick = createMapPick(map, { onModeChange: (on) => void seen.push(on) });
+    const pending = pick.pick();
+    map.emitClick(1, 2);
+    // Same tick as the click: still suppressing.
+    expect(seen).toEqual([true]);
+    await pending;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toEqual([true, false]);
+  });
+
   it("resolves with the tapped point and restores the cursor", async () => {
     const map = fakeMap();
     const pick = createMapPick(map);
@@ -86,6 +104,12 @@ describe("picking", () => {
     expect(onModeChange).toHaveBeenLastCalledWith(true);
     map.emitClick(1, 2);
     await pending;
+    // Leaving pick mode is deferred one task on purpose (see teardown): the
+    // device layers' click handler is registered after this one and would
+    // otherwise open a popup on top of the point just chosen. So the promise
+    // resolves BEFORE the mode is announced as over.
+    expect(onModeChange).toHaveBeenLastCalledWith(true);
+    await new Promise((r) => setTimeout(r, 0));
     expect(onModeChange).toHaveBeenLastCalledWith(false);
   });
 

@@ -745,6 +745,64 @@ body:not(.ribbon-open) .drawer-tabs {
   border-radius: 50%;
 }
 
+
+/* ---------- Close buttons ---------- */
+/* One rule, five surfaces that each had their own near-identical copy.
+   Pinned to the top-right CORNER of the card and taken OUT OF FLOW, so a long
+   title can never push the × onto a second row or squeeze it to nothing — the
+   failure this replaces. Each head reserves the corner with padding instead of
+   by holding a flex child, which also means the head keeps its height (and the
+   × its place) on a step that has no title at all.
+
+   The ride wizard is deliberately excluded: its × sits beside the primary Next
+   button in a three-part header, and lifting it out of flow would drop it on
+   top of Next. It is already in the top-right corner; all it needs is a
+   promise not to wrap, which it gets below. */
+.qr-scan__card,
+.device-features__card,
+.ride-preflight__card,
+.admin-analytics__card,
+.home-bar__sheet {
+  position: relative;
+}
+.qr-scan__close,
+.device-features__close,
+.ride-preflight__close,
+.admin-analytics__close,
+.home-bar__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+.qr-scan__head,
+.device-features__head,
+.ride-preflight__head,
+.admin-analytics__head {
+  padding-right: 40px;
+  flex-wrap: nowrap;
+}
+/* The home bar's head holds the search input, which is hidden on the wheels
+   step — min-height keeps the corner reserved so nothing slides under the ×
+   when the input goes away. */
+.home-bar__head {
+  min-height: 40px;
+  padding-right: 44px;
+  flex-wrap: nowrap;
+}
+.home-bar__close {
+  top: 12px;
+  right: 12px;
+}
+/* Never wrap, never shrink away — this is the whole "avoid row breaks" rule. */
+.ride-modal__header-end {
+  flex-wrap: nowrap;
+}
+.ride-modal__close,
+.ride-modal__next {
+  flex: 0 0 auto;
+}
+
 /* ---------- The home bar: "Where are you going?" (home-bar.ts) ---------- */
 /* Bottom centre, where the three-way mode bar used to be. At rest it is a
    single wide pill; open, it grows upward into a sheet. It deliberately does
