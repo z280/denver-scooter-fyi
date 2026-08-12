@@ -1461,6 +1461,68 @@ export function fetchWalkRoute(
   );
 }
 
+/** One genuinely different road to the destination (`GET /route/options`).
+ *
+ *  The server routes every profile and groups by the shape that comes back, so
+ *  this list has one entry per ROAD rather than one per profile name. `also`
+ *  names the other profiles that produce this same road — folded, not hidden,
+ *  so a rider looking for "the shaded one" can see that it is this one. */
+export interface RouteOption {
+  key: string;
+  label: string;
+  also: { key: string; label: string }[];
+  distance_meters: number | null;
+  duration_seconds: number;
+  elevation_gain_meters: number | null;
+  battery_percent_estimate: number | null;
+  battery_percent_low: number | null;
+  battery_percent_high: number | null;
+  battery_model: string;
+  /** What is left in the battery on arrival, given the charge that was passed
+   *  in. Named by what the rider HAS on arrival, so `_low` is the bad case. */
+  arrival_percent: number | null;
+  arrival_percent_low: number | null;
+  arrival_percent_high: number | null;
+  /** Null when no starting charge was supplied — there is no honest answer
+   *  without it, and a cheerful default would be the dishonest one. */
+  will_make_it: boolean | null;
+  reserve_percent: number;
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+}
+
+export interface RouteOptionsResponse {
+  graph_bbox: [number, number, number, number];
+  beta_warning?: string;
+  /** Profiles that could not be routed at all — the High Injury Network
+   *  exclusions mean `safe` can legitimately find nothing where `express`
+   *  does. Reported rather than silently dropped. */
+  profiles_unavailable: string[];
+  options: RouteOption[];
+}
+
+export function fetchRouteOptions(
+  q: {
+    from: [number, number];
+    to: [number, number];
+    vehicle_model?: string;
+    battery_percent?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<RouteOptionsResponse> {
+  return getJSON<RouteOptionsResponse>(
+    `/api/v1/route/options${query({
+      from: `${q.from[0]},${q.from[1]}`,
+      to: `${q.to[0]},${q.to[1]}`,
+      vehicle_model: q.vehicle_model,
+      battery_percent:
+        q.battery_percent === null || q.battery_percent === undefined
+          ? undefined
+          : String(q.battery_percent),
+    })}`,
+    signal,
+  );
+}
+
 export interface RouteProfile {
   key: string;
   label: string;

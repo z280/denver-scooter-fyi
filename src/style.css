@@ -751,6 +751,25 @@ body:not(.ribbon-open) .drawer-tabs {
 
 
 
+/* ---------- Route rows: folded names + arrival battery ---------- */
+.ride-route-also {
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+.ride-route-battery {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+/* The one row state that is worth interrupting for: this route may strand
+   the rider. Colour AND a glyph, never colour alone. */
+.ride-route-battery.is-warning {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 /* ---------- Arrival panel (arrival-panel.ts) ---------- */
 /* Floats above the home bar's slot, over the map the rider is walking across.
    It replaces a run of full-screen wizard steps, so it must never feel like
