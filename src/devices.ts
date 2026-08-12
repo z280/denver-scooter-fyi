@@ -45,7 +45,7 @@ import {
   type LngLat,
 } from "./locate.ts";
 import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
-import { vehicleDisplayName } from "./vehicle-name.ts";
+import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
 import {
   askAboutSecondDibs,
@@ -904,11 +904,37 @@ export class Devices {
              </div>
              <p class="device-popup__report-status" role="status" aria-live="polite"></p>
            </form>`;
+      // A LARGER VERSION OF THE MAP'S OWN BADGE, top-left of the card. The
+      // marker a rider just tapped is 30-odd pixels of art; this is the same
+      // identity at a size you can actually read, and it anchors the card to
+      // the dot it came from.
+      //
+      // It follows the Iconography setting rather than picking one: a rider
+      // who chose letters on the map chose letters, and showing them comic
+      // art here would be the app overruling them in the one place they are
+      // looking hardest. `setModelIcon` rebuilds an open popup so the switch
+      // lands immediately.
+      const headerModelKey = modelKeyOf(props);
+      const headerIcon = (() => {
+        if (!headerModelKey) return "";
+        if (this.modelIcon === "letter") {
+          const tint = MODEL_COLOR[headerModelKey];
+          return `<span class="device-popup__badge device-popup__badge--letter"
+                    style="background:${escapeHtml(tint)}" aria-hidden="true"
+                  >${escapeHtml(MODEL_LETTER[headerModelKey])}</span>`;
+        }
+        return `<img class="device-popup__badge" aria-hidden="true" alt=""
+                  src="${escapeHtml(MODEL_ICON_URL[headerModelKey])}" />`;
+      })();
+
       const headerBlock = `
         <div class="device-popup__header${model ? "" : " device-popup__header--unknown"}">
-          <div class="device-popup__model">${escapeHtml(headerName)}</div>
-          <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
-          ${reportUi}
+          ${headerIcon}
+          <div class="device-popup__headtext">
+            <div class="device-popup__model">${escapeHtml(headerName)}</div>
+            <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
+            ${reportUi}
+          </div>
         </div>`;
 
       // Rating verdict — the headline answer to "worth the walk?".
@@ -981,6 +1007,64 @@ export class Devices {
       // rows are built first.
       const featureStatus = asFeatureStatus(props.feature_status);
       const knownFeatures = readDeviceFeatures(props.device_features);
+
+      // ---- Feature pills: what this scooter actually has, right under its
+      // name and above the verdict.
+      //
+      // These are the details a rider chooses BETWEEN two nearby scooters
+      // with — a basket decides a grocery run, a phone holder decides
+      // whether you can navigate — and they were buried in the Details
+      // modal, behind a tap most people never make.
+      //
+      // CONDITION IS PART OF THE FACT, not a footnote. A bell that does not
+      // ring is not a bell, and Veo's bells are broken often enough that
+      // listing one unqualified would be the app telling a small lie. So a
+      // feature someone has reported as broken renders visibly degraded and
+      // says so when tapped, rather than quietly disappearing (which would
+      // lose the information that it is THERE and BUST) or appearing intact
+      // (which would be worse).
+      //
+      // Everything here is crowdsourced, so every explanation is hedged —
+      // "or so we've been informed" is doing real work, not being cute.
+      const FEATURE_PILLS: readonly {
+        key: "bell" | "cup_holder" | "phone_holder" | "basket";
+        glyph: string;
+        label: string;
+        /** Reads after "This Astro has …". */
+        phrase: string;
+      }[] = [
+        { key: "bell", glyph: "🛎️", label: "Bell", phrase: "a bell" },
+        { key: "basket", glyph: "🧺", label: "Basket", phrase: "a basket" },
+        { key: "phone_holder", glyph: "📱", label: "Phone holder", phrase: "a phone holder" },
+        { key: "cup_holder", glyph: "🥤", label: "Cup holder", phrase: "a cup holder" },
+      ];
+      const featureSubject = model ? bareModelName(model.name) : "scooter";
+      const poorSet = new Set(knownFeatures?.poor_condition ?? []);
+      const pills = knownFeatures
+        ? FEATURE_PILLS.filter((f) => knownFeatures[f.key])
+        : [];
+      const featureBlock = pills.length
+        ? `<div class="device-popup__features">
+             ${pills
+               .map((f) => {
+                 const broken = poorSet.has(f.key);
+                 const why = broken
+                   ? `This ${featureSubject} has ${f.phrase}, but a rider told us it's not working.`
+                   : `This ${featureSubject} has ${f.phrase}, and it actually works (or so we've been informed).`;
+                 return `<button type="button"
+                    class="device-popup__feature${broken ? " is-broken" : ""}"
+                    data-action="feature-why"
+                    data-why="${escapeHtml(why)}"
+                    aria-label="${escapeHtml(why)}">
+                    <span class="device-popup__feature-glyph" aria-hidden="true">${f.glyph}</span>
+                    <span class="device-popup__feature-label">${escapeHtml(f.label)}</span>
+                  </button>`;
+               })
+               .join("")}
+             <p class="device-popup__feature-why" role="status" aria-live="polite" hidden></p>
+           </div>`
+        : "";
+
 
       const user = this.locate.current();
 
@@ -1465,6 +1549,7 @@ export class Devices {
         .setHTML(
           `<div class="device-popup">
              ${headerBlock}
+             ${featureBlock}
              ${verdictBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
@@ -1574,6 +1659,30 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="ride-blocked"]')
         ?.addEventListener("click", () => showHint(rideHint));
+      // Tap a feature pill for the plain-English version. One shared line
+      // under the row rather than a tooltip per pill: tooltips do not exist
+      // on touch, and a modal for one sentence is a punishment.
+      const whyLine = popupEl?.querySelector<HTMLElement>(
+        ".device-popup__feature-why",
+      );
+      for (const pill of popupEl?.querySelectorAll<HTMLButtonElement>(
+        '[data-action="feature-why"]',
+      ) ?? []) {
+        pill.addEventListener("click", () => {
+          if (!whyLine) return;
+          const why = pill.dataset.why ?? "";
+          // Tapping the pill that is already explained puts it away again.
+          const same = whyLine.textContent === why && !whyLine.hidden;
+          whyLine.textContent = same ? "" : why;
+          whyLine.hidden = same;
+          for (const other of popupEl?.querySelectorAll(
+            '[data-action="feature-why"]',
+          ) ?? []) {
+            other.classList.toggle("is-open", other === pill && !same);
+          }
+        });
+      }
+
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
         ?.addEventListener("click", () => {
@@ -2302,8 +2411,15 @@ export class Devices {
 
   /** "Model" badge art: illustrated comic badges vs model-tinted letters. */
   setModelIcon(v: ModelIcon): void {
+    if (this.modelIcon === v) return;
     this.modelIcon = v;
     this.apply();
+    // The card's own icon follows the map's. Two renderings of the same
+    // choice disagreeing on screen at once is the app looking broken — and
+    // the rider changed the setting precisely to see it applied. Same
+    // in-place rebuild `setAdminSession` uses.
+    const open = this.openPopupFor;
+    if (open) this.openDevicePopup(open.props, open.coords);
   }
 
   /** Signal shown by the "Data" badge style. */

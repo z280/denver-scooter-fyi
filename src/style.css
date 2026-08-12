@@ -3821,6 +3821,34 @@ body.is-map-picking .ride-modal {
 }
 
 /* ---------- Popup Veo-brand header ---------- */
+/* The header is a row now: badge, then the text column. */
+.device-popup__headtext {
+  min-width: 0;
+  flex: 1;
+}
+/* A readable version of the marker the rider just tapped — comic art or the
+   model-tinted letter tag, whichever the map is set to. Sized to the header
+   text block rather than to the map marker: this is identity, not a dot. */
+.device-popup__badge {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.22);
+}
+.device-popup__badge--letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  /* The tints are chosen against a light map, and every one of them is dark
+     enough to carry white — which is also what the marker does. */
+  color: #fff;
+}
+
 .device-popup__header {
   /* Cancel the popup content's padding so the turquoise bleeds to the edges;
      extra right padding clears the × close button (44px wide — see
@@ -3831,6 +3859,9 @@ body.is-map-picking .ride-modal {
      gap below the pair. */
   margin: -12px -14px 0;
   padding: 12px 48px 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
   background: #17b9ab; /* Veo turquoise */
   color: #fff;
   border-top-left-radius: 10px;
@@ -4035,6 +4066,77 @@ body.is-map-picking .ride-modal {
   margin-top: 9px;
   font-size: 12.5px;
 }
+/* ---------- Feature pills (devices.ts `featureBlock`) ---------- */
+/* Between the name and the verdict: what this scooter HAS, which is what a
+   rider chooses between two nearby ones with.
+
+   Full-bleed like the two bars it sits between (same -14px side margins), so
+   the head of the card stays one block rather than three things at three
+   widths. */
+.device-popup__features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 -14px;
+  padding: 8px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.device-popup__feature {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.device-popup__feature:hover,
+.device-popup__feature.is-open {
+  border-color: var(--accent);
+}
+.device-popup__feature:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Reported broken. Dimmed and struck rather than removed: that it is THERE
+   and BUST is more useful than either half alone, and a rider who wanted a
+   bell should learn this before walking to it. Never colour alone — the
+   strike-through and the tapped explanation both carry it too. */
+.device-popup__feature.is-broken {
+  color: var(--fg-muted);
+  border-style: dashed;
+}
+.device-popup__feature.is-broken .device-popup__feature-label {
+  text-decoration: line-through;
+}
+.device-popup__feature.is-broken .device-popup__feature-glyph {
+  opacity: 0.55;
+}
+.device-popup__feature-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+/* One shared explanation line under the row — tooltips do not exist on
+   touch, and a modal for one sentence is a punishment. */
+.device-popup__feature-why {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+.device-popup__feature-why[hidden] {
+  display: none;
+}
+
 /* ---------- The verdict bar (devices.ts `verdictBlock`) ---------- */
 /* Full width, directly under the name and model, first thing in the popup —
    "is this one worth walking to?" is the only question a rider opens this
