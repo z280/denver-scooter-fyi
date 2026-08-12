@@ -13,7 +13,6 @@ import {
   distanceMeters,
   walkMinutes,
   formatWalk,
-  walkingDirectionsUrl,
   type Locate,
   type LngLat,
 } from "./locate.ts";
@@ -129,9 +128,24 @@ export function rankDevices(
   return out.slice(0, RESULT_COUNT);
 }
 
+export interface WalkToRequest {
+  name: string;
+  plate: string | null;
+  vehicleIdentifier: string | null;
+  lat: number;
+  lng: number;
+}
+
 export class RecommendedDevices {
   private ctx: RecommendContext | null = null;
   private selectedId: string | null = null;
+  /** Start the in-app walk to the selected scooter. Injected by main.ts;
+   *  absent in tests, where the button is simply inert. */
+  private walkTo: ((req: WalkToRequest) => void) | null = null;
+
+  setWalkTo(fn: (req: WalkToRequest) => void): void {
+    this.walkTo = fn;
+  }
 
   constructor(
     private readonly body: HTMLElement,
@@ -221,11 +235,19 @@ export class RecommendedDevices {
     routeBtn.addEventListener("click", () => {
       const sel = ranked.find((o) => o.id === this.selectedId);
       if (!sel) return;
-      window.open(
-        walkingDirectionsUrl({ lng: sel.lng, lat: sel.lat }),
-        "_blank",
-        "noopener",
-      );
+      // In-app. This used to window.open() Google or Apple Maps — the app
+      // ranking scooters for you and then handing you to a different app to
+      // reach the one you picked.
+      this.walkTo?.({
+        name: sel.name,
+        // The ranked row carries no plate or identifier; the walk only needs
+        // somewhere to go, and the arrival panel's Veo handoff is downstream
+        // of the ride flow, which resolves both from the map.
+        plate: null,
+        vehicleIdentifier: null,
+        lat: sel.lat,
+        lng: sel.lng,
+      });
     });
 
     const rows: HTMLButtonElement[] = [];

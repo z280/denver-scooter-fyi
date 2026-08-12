@@ -364,15 +364,23 @@ let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let setQualityFilter: (value: QualityFilter) => void = () => {};
 let resetAllFilters: () => void = () => {};
+// The lean payload (the API's low-end-phone diet) is for 3D NAVIGATION — the
+// one remaining mode, where the phone is doing follow-cam work and nothing on
+// screen can use the h3 or rank extras anyway. It used to follow the invisible
+// find-a-ride mode instead, which meant merely opening the wizard silently
+// changed what the map knew, and leaving it needed a refresh to get the fields
+// back. Read live off the body class the HUD owns, so there is no second flag
+// to keep in step.
+
+/** Put the map's iconography back to its defaults. Kept — and now reachable
+ *  only from the Analysis preset, which is a deliberate, rider-chosen action.
+ *  It used to fire from `applyNormal()` whenever somebody merely LEFT the
+ *  find-a-ride flow, which is how a rider's chosen icon style disappeared
+ *  without them asking. Assigned by wireIconography. */
 let resetIconography: () => void = () => {};
-// Ride mode fetches the lean payload (the API's low-end-phone diet); the
-// analysis surface needs the h3 + rank extras. Assigned by wireModes /
-// startRefreshLoop.
-let leanFetch = false;
-let requestRefresh: () => void = () => {};
 
 function fetchIncludes(): DeviceInclude[] {
-  return leanFetch ? [] : ["h3", "ranks"];
+  return document.body.classList.contains("ride-active") ? [] : ["h3", "ranks"];
 }
 
 const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
@@ -815,6 +823,10 @@ function wireRecommended(): void {
     locate,
     map,
   );
+  // The ranked list's Route button walks in-app rather than opening Google or
+  // Apple Maps — the app ranked these for you; handing you to a different app
+  // to reach the one you picked was the odd part.
+  recommended.setWalkTo((req) => void beginWalkToVehicle(req));
 }
 
 map.on("load", async () => {
@@ -2189,6 +2201,7 @@ function wireIconography(): void {
     }
   };
 
+
   // Model badges decode async — refresh previews once they land.
   void whenModelIconsReady().then(renderAll);
   renderAll();
@@ -2398,13 +2411,6 @@ function wireModes(): void {
       b.setAttribute("aria-pressed", String(on));
     }
   };
-  const setChecked = (id: string, on: boolean): void => {
-    const cb = need<HTMLInputElement>(id);
-    if (cb.checked !== on) {
-      cb.checked = on;
-      cb.dispatchEvent(new Event("change"));
-    }
-  };
   const setSelect = (id: string, value: string): void => {
     const sel = need<HTMLSelectElement>(id);
     if (sel.value !== value) {
@@ -2426,54 +2432,40 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
-  const clearOverlays = (): void => {
-    for (const input of layerInputs.values()) {
-      if (input.checked) {
-        input.checked = false;
-        input.dispatchEvent(new Event("change"));
-      }
-    }
-  };
 
   // Fresh-load defaults. Exiting ride mode runs this so the map comes back
   // "normal": every filter cleared, iconography back to its defaults
   // (device-use badges, battery gauge on), overlays and the walk line gone.
-  const applyNormal = (): void => {
-    resetAllFilters();
-    resetIconography();
-    setSelect("choropleth-select", "");
-    clearHexDensity();
-    clearOverlays();
-    setDrawer(null);
-    locate.clearLine();
-  };
-
   // Map preset behind the wizard: a clean slate showing available devices.
-  const applyRide = (): void => {
-    resetAllFilters();
-    setChecked("hide-unavailable", true);
-    setSelect("choropleth-select", "");
-    clearOverlays();
-    setDrawer(null);
-  };
+  // ONE MAP. Finding a ride used to switch the map into a third mode nobody
+  // could see or choose: it wiped the rider's filters, forced
+  // hide-unavailable on, cleared the choropleth and overlays, hid the Areas,
+  // Tools and Compliance tabs, revealed a Recommended tab that existed
+  // nowhere else, and fetched a leaner payload. None of that was visible as a
+  // mode, none of it was switchable, and all of it had to be snapshotted and
+  // undone on the way out — which is where the "merely visiting Find wheels
+  // destroyed my analysis setup" bug came from.
+  //
+  // So there is no ride surface any more. The map keeps whatever the rider
+  // set, every tab stays where it is, and the only mode left is the one a
+  // rider actually chooses: 3D navigation, which takes the whole screen and
+  // announces itself.
 
   const applyAnalysis = (): void => {
     resetAllFilters();
+    resetIconography();
     setSelect("choropleth-select", "v1");
     setDrawer("compliance");
   };
 
-  /** Swap the visible surface: ride hides the analysis tabs (Account stays)
-   *  and reveals the HUD button; the map container also resizes when the
-   *  wizard docks as a side panel on small screens. */
+  /** Entering or leaving the find-a-ride flow. It no longer changes the MAP —
+   *  only what owns the bottom of the screen. */
   const setRideSurface = (on: boolean): void => {
-    // One surface owns the bottom of the screen at a time. Entering a ride
+    // One surface owns the bottom of the screen at a time: entering a ride
     // flow folds the home bar back to its pill rather than leaving a
     // "Where are you going?" sheet open underneath the answer to it.
     if (on) homeBar?.collapse();
     rideActive = on;
-    leanFetch = on; // riders get the lean payload; analysis gets extras
-    document.body.classList.toggle("mode-ride", on);
     map.resize();
   };
 
@@ -2486,16 +2478,15 @@ function wireModes(): void {
     map.resize();
   };
 
-  // Filters as they stood when ride mode was entered. Snapshotted BEFORE
-  // wizard.start() — onConsentGranted fires applyRide() (a resetAllFilters)
-  // at step one, so by interview time the live state is already gone. The
-  // summary string is captured alongside for the same reason. Restored by
-  // option 4 (before the ranking runs) and unconditionally on exit.
-  let rideEntrySnapshot: FilterSnapshot | null = null;
+  // The snapshot/restore dance is gone with the mode that made it necessary:
+  // nothing wipes the rider's filters on the way in, so nothing has to put
+  // them back on the way out. The summary string is still captured, because
+  // the wizard shows it ("ranking within your current filters").
   let rideEntrySummary = "";
 
   const wizard = new RideWizard(need("ride-wizard"), locate, {
-    onConsentGranted: () => applyRide(),
+    // Consent no longer rearranges the map behind the rider.
+    onConsentGranted: () => {},
     onExit: () => exitRide(),
     onLoginHint: () => {
       const tab = document.querySelector<HTMLButtonElement>(
@@ -2517,15 +2508,12 @@ function wireModes(): void {
         recommended?.setContext({ from, priority, typeChoice });
         setDrawer("recommended");
       };
-      if (carryOverFilters && rideEntrySnapshot) {
-        // Option 4: re-apply the mode-entry snapshot BEFORE the ranking
-        // runs — rankDevices() already ranks over visibleFeatures(), so
-        // restoring the filters is the whole feature.
-        const snap = rideEntrySnapshot;
-        void applyFilterSnapshot(snap).then(finish);
-      } else {
-        finish();
-      }
+      // "Carry over my filters" is now the only behaviour there is: nothing
+      // wiped them, so they are still applied and rankDevices() already ranks
+      // over visibleFeatures(). The option survives in the interview as a
+      // statement of intent; there is simply nothing left to restore.
+      void carryOverFilters;
+      finish();
     },
   });
 
@@ -2535,34 +2523,21 @@ function wireModes(): void {
     if (wizard.isOpen()) wizard.close();
     setWizardDocked(false);
     setRideSurface(false);
-    applyNormal();
-    // ALWAYS restore the filters as they stood on entry — option 4 or not.
-    // Merely visiting Find wheels must never destroy the analysis setup,
-    // and a wiped exit also poisons the next visit's snapshot (the likely
-    // shape of the option-4 bug reported on PR #37).
-    if (rideEntrySnapshot) {
-      void applyFilterSnapshot(rideEntrySnapshot);
-    }
-    rideEntrySnapshot = null;
-    // Recommendations are scoped to one Find-a-ride session: drop them so
-    // re-entering never shows a stale list from the prior location/answers.
+    // Nothing to undo. Leaving the flow leaves the map exactly as the rider
+    // had it — no applyNormal() wipe, no snapshot to restore, no refresh to
+    // recover fields a lean payload had dropped.
+    //
+    // Recommendations are still scoped to one Find-a-ride session: drop them
+    // so re-entering never shows a stale list from the prior answers.
     recommended?.clear();
-    setActive("analysis");
-    // Ride-mode ticks fetched the lean payload; refresh now so analysis
-    // tools (hex density, battery rankings) get their fields back promptly.
-    requestRefresh();
   };
 
   const enterRide = (): void => {
     closeAllPopups();
-    // Re-tapping the active Find-wheels button restarts the wizard, but
-    // must NOT re-snapshot: applyRide() already wiped the live state on
-    // first entry, so a second capture would replace the rider's analysis
-    // setup with the wipe — the exact loss the snapshot exists to prevent.
-    if (!rideActive) {
-      rideEntrySnapshot = snapshotFilters();
-      rideEntrySummary = filterSummary();
-    }
+    // The summary is what the wizard shows the rider ("ranking within your
+    // current filters"), so it is read at entry. There is no snapshot to take
+    // any more: nothing is about to overwrite what it describes.
+    if (!rideActive) rideEntrySummary = filterSummary();
     setDrawer(null);
     setRideSurface(true);
     setActive("ride");
@@ -2760,10 +2735,14 @@ function beginWalkToVehicle(info: {
   lat: number;
   lng: number;
 }): boolean {
+  // A destination is a bonus, not a prerequisite. Walking to a scooter is
+  // worth doing IN THIS APP whether or not the rider has said where they are
+  // going afterwards — the alternative was a link that opened Google Maps,
+  // which is the app admitting it cannot do the one thing it just asked the
+  // rider to do. Without a trip the arrival panel hands off to the ride flow,
+  // which asks for the destination itself, correctly, because it genuinely
+  // does not know it.
   const trip = peekPendingTrip();
-  // No destination means the rider tapped a scooter with no trip in mind —
-  // that is still the survey's and the wizard's job, so decline the intercept.
-  if (!trip) return false;
 
   endWalkFlow();
   closeAllPopups();
@@ -2771,7 +2750,7 @@ function beginWalkToVehicle(info: {
 
   const panel = createArrivalPanel(need("arrival-panel"), {
     vehicle: { name: info.name, plate: info.plate ?? undefined },
-    destinationLabel: trip.dest.label,
+    destinationLabel: trip?.dest.label ?? null,
     onChooseRoute: () => {
       endWalkFlow();
       // Straight to route triage. The wizard still owns starting a ride — it
@@ -3255,7 +3234,6 @@ function startRefreshLoop(): void {
     }
   };
 
-  requestRefresh = () => void tick();
   setInterval(tick, REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {

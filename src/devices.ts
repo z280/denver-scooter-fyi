@@ -40,7 +40,6 @@ import {
   distanceMeters,
   formatWalk,
   walkMinutes,
-  walkingDirectionsUrl,
   type Locate,
   type LngLat,
 } from "./locate.ts";
@@ -881,7 +880,7 @@ export class Devices {
         walkBlock = `
           <div class="device-popup__walk">
             🚶 ${escapeHtml(formatWalk(meters))}
-            <a class="device-popup__action" href="${escapeHtml(walkingDirectionsUrl(here))}" target="_blank" rel="noopener">Directions</a>
+            <button type="button" class="device-popup__action" data-action="walk-here">Walk me there</button>
           </div>`;
         if (relTier !== "ok") {
           const alt = this.nearestReliable(
@@ -1317,6 +1316,24 @@ export class Devices {
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
       // Screen 6 build a working Open-in-Veo deep link without a second
       // GBFS round trip.
+      // 🚶 Walk me there — the in-app walk. This used to be an <a> that opened
+      // Google or Apple Maps, which is the app admitting it cannot do the one
+      // thing it just offered. Same interceptor as Use in Ride Mode, so a
+      // rider with a destination in hand keeps it.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="walk-here"]')
+        ?.addEventListener("click", () => {
+          this.rideInterceptor?.({
+            name: headerName,
+            plate: effectivePlate,
+            vehicleIdentifier: props.vehicle_identifier
+              ? String(props.vehicle_identifier)
+              : null,
+            lat: coords[1],
+            lng: coords[0],
+          });
+          this.closePopup();
+        });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="use-in-ride-mode"]')
         ?.addEventListener("click", () => {

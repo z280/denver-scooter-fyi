@@ -42,8 +42,9 @@ export interface ArrivalVehicle {
 export interface ArrivalPanelDeps {
   vehicle: ArrivalVehicle;
   /** Where they're headed, echoed so the panel is self-explanatory if the
-   *  rider put the phone away during the walk. */
-  destinationLabel: string;
+   *  rider put the phone away during the walk. Null when they only asked to
+   *  be walked to the scooter — the ride flow will ask. */
+  destinationLabel: string | null;
   /** Hand off to route selection. Unlocking and starting navigation both
    *  happen downstream of it — see the module header. */
   onChooseRoute(): void;
@@ -104,14 +105,19 @@ export function createArrivalPanel(
 
   function renderArrived(): void {
     title.textContent = `You're at ${deps.vehicle.name}`;
-    sub.textContent = `Heading to ${deps.destinationLabel}`;
+    sub.textContent = deps.destinationLabel
+      ? `Heading to ${deps.destinationLabel}`
+      : "Ready when you are";
     body.replaceChildren();
 
     const go = el("button", "arrival__action arrival__action--primary");
     go.type = "button";
     go.append(
       el("span", "arrival__action-glyph", "🧭"),
-      el("span", "", "Choose your route"),
+      // Without a destination there is no route to choose yet, and saying
+      // "choose your route" would promise a screen that has to ask a question
+      // first.
+      el("span", "", deps.destinationLabel ? "Choose your route" : "Start your ride"),
     );
     go.addEventListener("click", () => {
       track("arrival_panel", { action: "choose_route" });

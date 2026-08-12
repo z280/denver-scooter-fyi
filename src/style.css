@@ -4263,12 +4263,11 @@ body.landscape-hint-dismissed .hud-note--landscape {
    (Areas), Tools, or Compliance menus; Analysis never shows the Recommended
    Devices list. Filters (Devices) and Iconography work in BOTH modes, and
    the Account (login) tab is the shared button across both. */
-body.mode-ride .drawer-tab[data-drawer="areas"],
-body.mode-ride .drawer-tab[data-drawer="tools"],
-body.mode-ride .drawer-tab[data-drawer="compliance"],
-body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
-  display: none;
-}
+/* ONE MAP: every tab is always reachable.
+   Areas, Tools and Compliance used to vanish while finding a ride, and
+   Recommended existed ONLY then — a set of tabs that appeared and disappeared
+   according to a mode the rider could not see or choose. Nothing hides now;
+   the ribbon is the same ribbon whatever the rider is doing. */
 
 /* ---------- Find-a-ride wizard ---------- */
 
@@ -4618,7 +4617,7 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 
 /* Limited room (mobile): the wizard becomes a right-side panel and the map
    keeps the left of the screen — beside the panel, not underneath it. The
-   shrink is gated on `wizard-open`, not `mode-ride`, so once the wizard
+   shrink is gated on `wizard-open`, so once the wizard
    closes (interview done → ranked list) the map reclaims the full width
    instead of stranding an empty strip on the right. main.ts calls
    map.resize() whenever the wizard docks or undocks. */
@@ -4637,14 +4636,15 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
     border-right: 0;
     border-bottom: 0;
   }
-  body.mode-ride.wizard-open #map {
+  /* `wizard-open` alone now — there is no mode to also be in. */
+  body.wizard-open #map {
     width: auto;
     right: min(320px, 78vw);
   }
-  /* Keep the mode pill reachable beside the docked panel. */
-  body.mode-ride.wizard-open .mode-switch {
+  /* The home bar stays reachable beside the docked panel. */
+  body.wizard-open .home-bar {
     left: max(12px, env(safe-area-inset-left));
-    transform: none;
+    transform: translateX(0);
   }
 }
 
