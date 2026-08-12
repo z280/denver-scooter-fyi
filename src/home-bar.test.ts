@@ -455,3 +455,21 @@ describe("the start line knows when it is noise", () => {
     expect(q(".home-bar__hint")).toBeNull();
   });
 });
+
+describe("there is always a way out", () => {
+  it("keeps the close button on the wheels step", () => {
+    // It used to live inside the head, which is hidden once the search box
+    // has nothing to do — taking the only exit with it.
+    const search = fakeSearch();
+    mount({ createSearch: search.createSearch });
+    pill().click();
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    const close = q<HTMLButtonElement>(".home-bar__close")!;
+    expect(close).toBeTruthy();
+    expect(close.hidden).toBe(false);
+    close.click();
+    expect(bar!.isOpen()).toBe(false);
+  });
+});

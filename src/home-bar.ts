@@ -131,7 +131,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   closeBtn.addEventListener("click", () => collapse());
 
   const head = el("div", "home-bar__head");
-  head.append(input, closeBtn);
+  head.append(input);
 
   const statusEl = el("p", "home-bar__status");
   statusEl.setAttribute("role", "status");
@@ -141,7 +141,11 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   const listEl = el("ul", "home-bar__list");
   const footEl = el("div", "home-bar__foot");
 
-  sheet.append(head, statusEl, listEl, footEl);
+  // The close button is a direct child of the sheet, not of the head: it is
+  // positioned against the sheet's corner regardless, and living inside the
+  // head meant it vanished with it on the wheels step — leaving a panel with
+  // no way out.
+  sheet.append(closeBtn, head, statusEl, listEl, footEl);
   root.append(sheet, pill);
 
   const search = (deps.createSearch ?? createGeocodeSearch)({
@@ -260,6 +264,9 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     // "Where are you going?" above the answer to that very question reads as
     // an unfinished form. "change" is how you go back to it.
     input.hidden = phase === "wheels";
+    // ...and the head with it: an empty 40px band above the answer is the
+    // most expensive thing on a surface floating over a map.
+    head.hidden = phase === "wheels";
 
     if (phase === "wheels") {
       renderWheels();
@@ -402,14 +409,14 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     for (const choice of WHEELS) {
       const btn = el("button", "home-bar__wheel");
       btn.type = "button";
-      // Glyph, then a stacked name/blurb, so the row fills its width instead
-      // of centring three things in a narrow column.
-      const text = el("span", "home-bar__wheel-text");
-      text.append(
+      // Glyph beside the name on one line, blurb under both: two lines, not
+      // three centred ones in a narrow column.
+      const head = el("span", "home-bar__wheel-head");
+      head.append(
+        el("span", "home-bar__wheel-glyph", choice.glyph),
         el("span", "home-bar__wheel-name", choice.name),
-        el("span", "home-bar__wheel-desc", choice.desc),
       );
-      btn.append(el("span", "home-bar__wheel-glyph", choice.glyph), text);
+      btn.append(head, el("span", "home-bar__wheel-desc", choice.desc));
       btn.addEventListener("click", () => {
         if (!dest) return;
         track("home_bar", { action: "plan", wheels: choice.value });

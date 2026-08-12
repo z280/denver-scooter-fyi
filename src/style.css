@@ -976,13 +976,17 @@ body.ride-active .arrival {
   padding-right: 40px;
   flex-wrap: nowrap;
 }
-/* The home bar's head holds the search input, which is hidden on the wheels
-   step — min-height keeps the corner reserved so nothing slides under the ×
-   when the input goes away. */
+/* The head holds the search input. On the wheels step that input is hidden,
+   and the head goes with it rather than standing there as a 40px empty band
+   reserving a corner for a × that is positioned against the SHEET anyway. The
+   first row of content takes over clearing that corner (see __to). */
 .home-bar__head {
   min-height: 40px;
   padding-right: 44px;
   flex-wrap: nowrap;
+}
+.home-bar__head[hidden] {
+  display: none;
 }
 .home-bar__close {
   top: 12px;
@@ -1151,7 +1155,8 @@ body.ride-active .arrival {
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 2px 2px 0;
+  /* Clears the ×, which the head used to reserve room for. */
+  padding: 2px 44px 0 2px;
   font-size: 15px;
 }
 .home-bar__to-label {
@@ -1166,29 +1171,24 @@ body.ride-active .arrival {
    recommended, no preselection. See home-bar.ts's header: this app serves
    people who already own a scooter as well as people looking to rent one,
    and a styled default tells one of them they are the wrong kind of user. */
-/* FULL-WIDTH ROWS, not two narrow columns. Side by side, each choice got
-   178px on a phone and spent it on gutters: a centred glyph over a centred
-   name over a centred one-liner, in a column narrower than the text wanted.
-   Laid out as rows the same words fill the width, the cards lose half their
-   height, and the tap targets roughly double — which is the argument that
-   matters, because this is answered one-handed in the street.
-
-   Stacking does not reintroduce a default: the two are styled identically and
-   neither is marked primary. Some order is unavoidable in any layout — left
-   and right is an order too. */
+/* SIDE BY SIDE, and short. This surface floats over the map the rider is
+   trying to look at, so its height is the budget that matters — stacking the
+   two choices as full-width rows spent 120px to say what fits in 58.
+   Within each card the glyph sits BESIDE the name on one line, with the blurb
+   under both: three centred lines in a 178px column was the actual waste,
+   vertically as well as horizontally. */
 .home-bar__wheels {
   display: flex;
-  flex-direction: column;
   gap: 8px;
 }
 .home-bar__wheel {
   appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 56px;
-  padding: 10px 14px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 10px;
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1196,29 +1196,30 @@ body.ride-active .arrival {
   color: var(--fg);
   cursor: pointer;
 }
+.home-bar__wheel-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
 .home-bar__wheel:hover,
 .home-bar__wheel:focus-visible {
   background: var(--accent-soft);
   border-color: var(--fg-muted);
 }
-.home-bar__wheel-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
 .home-bar__wheel-glyph {
   flex: 0 0 auto;
-  font-size: 24px;
+  font-size: 19px;
   line-height: 1;
 }
-/* Name and blurb stack against each other, filling the row's width. */
 .home-bar__wheel-name {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 700;
+  white-space: nowrap;
 }
 .home-bar__wheel-desc {
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 1.3;
   color: var(--fg-muted);
 }
 
