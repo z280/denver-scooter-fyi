@@ -62,11 +62,12 @@ import { consumePendingMagicLink } from "./auth-magic-link.ts";
 import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
-import { openRideModal, wireRideModal } from "./ride-modal.ts";
+import { isRideModalOpen, openRideModal, wireRideModal } from "./ride-modal.ts";
 import { wireRideDeepLink } from "./ride-deeplink.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
+  selectedDevice,
   recoveryForServerConflict,
   type RideRecoveryDeps,
   type RideRecoveryNote,
@@ -96,7 +97,8 @@ import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
 import { createTripPins } from "./trip-pins.ts";
-import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
+import { createActiveVehicle, type ActiveVehicleHandle } from "./active-vehicle.ts";
+import { formatWalkLeg, startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
@@ -855,6 +857,11 @@ map.on("load", async () => {
   // After wireModes: the home bar drives the (now hidden) mode buttons, so
   // their listeners have to exist before it can hand a trip to one.
   homeBar = wireHomeBar();
+  activeVehicle = wireActiveVehicle();
+  // The strip only ever renders what the session already says, so it follows
+  // the session rather than being written to from every place that changes it.
+  rideSession.subscribe(() => syncActiveVehicle());
+  syncActiveVehicle();
   // 🧭 Use in Ride Mode goes to the walk flow when a destination is already
   // known, and falls through to the preflight survey when it is not.
   devices.setRideInterceptor(beginWalkToVehicle);
@@ -2680,6 +2687,51 @@ function wireHomeBar(): HomeBarHandle {
   return bar;
 }
 
+// ---------- The strip under the map ----------
+
+// What the rider is on, kept visible whenever anything is running — a Veo
+// they are walking to or riding, or their own scooter. Set from exactly two
+// places: the walk flow below, and the ride session's own state.
+let activeVehicle: ActiveVehicleHandle | null = null;
+
+function wireActiveVehicle(): ActiveVehicleHandle {
+  return createActiveVehicle(need("active-vehicle"), {
+    onOpen: () => {
+      // Back to whatever owns this vehicle right now: the HUD once a ride is
+      // running, the wizard while one is still being set up.
+      if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
+        rideHud.open();
+      } else if (!isRideModalOpen()) {
+        openRideModal();
+      }
+    },
+  });
+}
+
+/** Reflect the session onto the strip. Called on every session change, so the
+ *  strip is never a second source of truth about what is running — it only
+ *  ever renders what the ride session already says. */
+function syncActiveVehicle(): void {
+  const doc = rideSession.current();
+  if (!doc || !isLiveRideEntry(rideHud.isPaused(), doc.state)) {
+    // A walk in progress keeps its own strip (see beginWalkToVehicle); only
+    // clear when nothing at all is running.
+    if (!walkLeg) activeVehicle?.set(null);
+    map.resize();
+    return;
+  }
+  const sel = selectedDevice(doc.device);
+  const own = doc.device !== null && sel === null;
+  activeVehicle?.set({
+    name: sel ? (sel.plate ? `Plate ${sel.plate}` : "Your ride") : "My scooter",
+    model: sel?.model ?? null,
+    batteryPercent: sel?.batteryConfirmed ?? null,
+    own,
+    detail: doc.state === "countdown" ? "starting…" : "riding",
+  });
+  map.resize();
+}
+
 // ---------- Walk to the scooter, then ride ----------
 
 // The flow that replaced a run of wizard screens for the case where the app
@@ -2696,6 +2748,9 @@ function endWalkFlow(): void {
   arrivalPanel = null;
   walkLine.clear();
   document.body.classList.remove("arrival-open");
+  // Hand the strip back to the session: if a ride is now running it repaints
+  // itself, and if nothing is it clears.
+  syncActiveVehicle();
 }
 
 function beginWalkToVehicle(info: {
@@ -2745,10 +2800,20 @@ function beginWalkToVehicle(info: {
         // on foot, and two lines in the same colour would read as one route.
         else walkLine.set(coords, { color: "#2f9e44", dest: [info.lng, info.lat] });
       },
-      onChange: (state) => panel.update(state),
+      onChange: (state) => {
+        panel.update(state);
+        // The strip carries the walk too, so backing out to look at the map
+        // does not lose the thread of what is happening.
+        activeVehicle?.set({
+          name: info.name,
+          detail: state.arrived ? "you're here" : formatWalkLeg(state),
+        });
+      },
     },
   );
   panel.update(walkLeg.state());
+  activeVehicle?.set({ name: info.name, detail: "walking to it" });
+  map.resize();
   return true;
 }
 

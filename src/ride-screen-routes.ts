@@ -780,9 +780,12 @@ function buildLoadedScreen(
       // looking for "the shaded one" can see that it is this one, without
       // being offered it twice.
       if (opt.also.length > 0) {
+        // "also the The Shaded Canopy route" — the labels are proper names
+        // and several already start with "The", so the sentence supplies no
+        // article of its own.
         btn.append(
           el("div", "ride-route-also",
-            `also the ${opt.also.map((a) => a.label).join(" and ")} route`),
+            `Also: ${opt.also.map((a) => a.label).join(" · ")}`),
         );
       }
       // What is in the battery on arrival — the number the rider wants and

@@ -388,8 +388,11 @@ describe("Screen 4 — route selection", () => {
     wireRideScreenRoutes(baseDeps(session, { fetchRouteOptions }));
     openRideModal({ fastForwardTo: "4" });
     await flush();
-    expect(rideModalRoot()?.querySelector(".ride-route-also")?.textContent)
-      .toContain("The Shaded Canopy");
+    const also = rideModalRoot()?.querySelector(".ride-route-also")?.textContent ?? "";
+    expect(also).toContain("The Shaded Canopy");
+    // The labels are proper names; several already begin with "The", so the
+    // sentence must not supply one of its own.
+    expect(also).not.toMatch(/the The/i);
   });
 
   it("accounts for profiles the server could not route", async () => {

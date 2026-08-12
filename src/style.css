@@ -183,7 +183,12 @@ body::before {
   inset: 0;
   width: 100vw;
   height: 100vh;
-  height: 100dvh;
+  /* --active-vehicle-h is 0 unless a ride (or a walk to one) is running, so
+     at rest this is exactly 100dvh. When the strip is up the map GIVES UP the
+     space rather than being covered by it — that is what makes it a reserved
+     region and not another floating panel, and it is why main.ts resizes the
+     map when the class flips. */
+  height: calc(100dvh - var(--active-vehicle-h, 0px));
   background: var(--bg-app);
 }
 
@@ -768,6 +773,116 @@ body:not(.ribbon-open) .drawer-tabs {
 .ride-route-battery.is-warning {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* ---------- Active vehicle strip (active-vehicle.ts) ---------- */
+/* A reserved region under the map, not an overlay: the map's own height is
+   computed against --active-vehicle-h. Once a ride is running the rider must
+   be able to look at the map without losing sight of what they are on. */
+:root {
+  --active-vehicle-h: 0px;
+}
+body.has-active-vehicle {
+  --active-vehicle-h: calc(62px + env(safe-area-inset-bottom));
+}
+#active-vehicle {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 33; /* over the drawers' backdrop, under the top bar (34) */
+  height: var(--active-vehicle-h);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 20px rgba(20, 30, 50, 0.12);
+}
+#active-vehicle[hidden] {
+  display: none;
+}
+.active-vehicle {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 62px;
+  padding: 8px max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
+}
+.active-vehicle__main {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+.active-vehicle__main:hover,
+.active-vehicle__main:focus-visible {
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 0 1px var(--metal-active-border);
+}
+.active-vehicle__glyph {
+  flex: 0 0 auto;
+  font-size: 20px;
+  line-height: 1;
+}
+.active-vehicle__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.active-vehicle__name {
+  font-size: 14.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-vehicle__meta {
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-vehicle__end {
+  appearance: none;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  font-size: 13.5px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.active-vehicle__end:hover,
+.active-vehicle__end:focus-visible {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+/* The strip owns the bottom edge while it is up. */
+body.has-active-vehicle .home-bar,
+body.has-active-vehicle .brand-link {
+  display: none;
+}
+body.has-active-vehicle .freshness,
+body.has-active-vehicle .maplibregl-ctrl-bottom-left {
+  bottom: calc(var(--active-vehicle-h) + var(--float-inset));
+}
+/* The full-screen HUD replaces it rather than stacking with it. */
+body.ride-active #active-vehicle {
+  display: none;
 }
 
 /* ---------- Arrival panel (arrival-panel.ts) ---------- */
