@@ -76,15 +76,18 @@
   /* 40px buttons + 6px padding + 1px border per side (border-box). */
   --ribbon-w: 54px;
   --ribbon-gutter: 0px;
-  /* Mode bar: stainless-silver gradient (gunmetal in dark) — the one
+  /* Metal: stainless-silver gradient (gunmetal in dark) — the one
      surface that can't theme by variable, so both hand-tuned stop sets
-     live here in the token blocks (plan §7). The label ink is its own
+     live here in the token blocks (plan §7). Named --metal-* rather than
+     --modebar-* because it is now the shared finish on every NAVIGATION
+     affordance — the things you press to go somewhere or change what you are
+     looking at — not one bar's private skin. The label ink is its own
      token because --fg-muted fails AA against the gradient's darkest stop
      (3.86:1 light / 3.33:1 dark); these hold >=4.5:1 at every stop, and
      the selected border stays >=3:1 against the gradient in both themes. */
-  --modebar-bg: linear-gradient(180deg, #f6f8fa 0%, #e0e5eb 45%, #ccd3dc 55%, #e4e8ee 100%);
-  --modebar-fg: #3d4754;
-  --modebar-active-border: #24303f;
+  --metal-bg: linear-gradient(180deg, #f6f8fa 0%, #e0e5eb 45%, #ccd3dc 55%, #e4e8ee 100%);
+  --metal-fg: #3d4754;
+  --metal-active-border: #24303f;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--fg);
 }
@@ -118,9 +121,9 @@
   --danger-soft: rgba(248, 81, 73, 0.16);
   --sos: #cdd6e0;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
-  --modebar-bg: linear-gradient(180deg, #47505c 0%, #353d48 45%, #29303a 55%, #343b45 100%);
-  --modebar-fg: #c3cdd6;
-  --modebar-active-border: #e6edf3;
+  --metal-bg: linear-gradient(180deg, #47505c 0%, #353d48 45%, #29303a 55%, #343b45 100%);
+  --metal-fg: #c3cdd6;
+  --metal-active-border: #e6edf3;
 }
 
 * {
@@ -746,6 +749,86 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 
 
+
+/* ---------- Metal: the finish on navigation affordances ---------- */
+/* Every control whose job is to MOVE you — open a menu, switch a drawer,
+   go back or next, zoom, dismiss — wears the same brushed-silver face
+   (gunmetal in dark). It is the one visual cue that separates "this changes
+   what you are looking at" from "this changes the data", which is what the
+   flat accent-tinted buttons inside the panels do.
+   The gradient and its ink live in the token block near the top; --metal-fg
+   exists because --fg-muted fails AA against the gradient's darkest stop. */
+.topbar__btn,
+.drawer-tab,
+.home-bar__close,
+.qr-scan__close,
+.device-features__close,
+.ride-preflight__close,
+.admin-analytics__close,
+.ride-modal__close,
+.ride-modal__back,
+.ride-modal__next,
+.maplibregl-ctrl-group button,
+.topbar .maplibregl-ctrl button {
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+/* Hover lifts the highlight rather than tinting the face — a colour wash over
+   a gradient reads as a rendering bug, not as feedback. */
+.topbar__btn:hover,
+.drawer-tab:hover,
+.home-bar__close:hover,
+.qr-scan__close:hover,
+.device-features__close:hover,
+.ride-preflight__close:hover,
+.admin-analytics__close:hover,
+.ride-modal__close:hover,
+.ride-modal__back:hover,
+.ride-modal__next:hover,
+.maplibregl-ctrl-group button:hover,
+.topbar .maplibregl-ctrl button:hover {
+  background: var(--metal-bg);
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 0 1px var(--metal-active-border);
+}
+/* The selected drawer tab / pressed toggle: the same outer ring the mode bar
+   used for its active item, kept >=3:1 against the gradient in both themes. */
+.drawer-tab.is-active,
+.topbar__btn.is-active,
+.topbar .maplibregl-ctrl button.maplibregl-ctrl-geolocate-active {
+  color: var(--fg);
+  box-shadow: 0 0 0 2px var(--metal-active-border),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* ---------- ✕ buttons are round ---------- */
+/* A dismiss is the one control that is the same shape everywhere in the app,
+   so it gets the one shape nothing else has. Fixed square box so the circle
+   is a circle at every font size — these carry a glyph, not a line of text,
+   and padding-derived roundness drifts into an oval the moment one of them
+   uses a different ×. */
+.home-bar__close,
+.qr-scan__close,
+.device-features__close,
+.ride-preflight__close,
+.admin-analytics__close,
+.ride-modal__close {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
 /* ---------- Close buttons ---------- */
 /* One rule, five surfaces that each had their own near-identical copy.
    Pinned to the top-right CORNER of the card and taken OUT OF FLOW, so a long
@@ -845,8 +928,8 @@ body:not(.ribbon-open) .drawer-tabs {
   padding: 13px 22px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--modebar-fg);
-  background: var(--modebar-bg);
+  color: var(--metal-fg);
+  background: var(--metal-bg);
   border: 1px solid var(--border);
   border-radius: 999px;
   box-shadow: var(--shadow);
@@ -894,18 +977,10 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg);
 }
 .home-bar__close {
+  /* Round face, metal finish and corner placement all come from the shared
+     rules above — this only says it is clickable. */
   flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 15px;
   cursor: pointer;
-}
-.home-bar__close:hover {
-  color: var(--fg);
 }
 
 .home-bar__status {
@@ -1098,7 +1173,7 @@ body.is-map-picking .home-bar {
   width: max-content;
   gap: 4px;
   padding: 5px;
-  background: var(--modebar-bg);
+  background: var(--metal-bg);
   border: 1px solid var(--border);
   /* Pill shape kept: the MODE: folder-tab notch was cut (plan §7 — it
      labelled the UI, not the content), which removed the reason to fight
@@ -1113,7 +1188,7 @@ body.is-map-picking .home-bar {
   padding: 7px 14px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--modebar-fg);
+  color: var(--metal-fg);
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
@@ -1127,7 +1202,7 @@ body.is-map-picking .home-bar {
   color: var(--accent-ink);
   /* The "clear border" on the selected item — drawn as an outer ring so
      selection doesn't shift layout. Token kept >=3:1 vs the gradient. */
-  box-shadow: 0 0 0 2px var(--modebar-active-border);
+  box-shadow: 0 0 0 2px var(--metal-active-border);
 }
 /* Bigger and more prominent where there's room; near current size below. */
 @media (min-width: 900px) {
@@ -5538,18 +5613,18 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ride-modal__back {
   justify-self: start;
+  cursor: pointer;
+  /* Text buttons, not icon buttons: they keep their pill sizing. The metal
+     face and ink come from the shared rule; only the box is theirs. */
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  color: var(--fg);
   font-size: 13px;
   line-height: 1;
-  padding: 7px 10px;
+  padding: 7px 12px;
   border-radius: 999px;
-  cursor: pointer;
 }
 .ride-modal__back:hover {
-  background: var(--accent-soft);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 .ride-modal__back[hidden] {
   display: none;
@@ -5570,37 +5645,28 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 /* The header's second Next — sits to the left of the ✕ on every screen,
    disabled while the screen's required information is missing. */
 .ride-modal__next {
+  cursor: pointer;
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  color: var(--fg);
   font-size: 13px;
   line-height: 1;
-  padding: 7px 10px;
+  padding: 7px 12px;
   border-radius: 999px;
-  cursor: pointer;
 }
 .ride-modal__next:hover:not(:disabled) {
-  background: var(--accent-soft);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 .ride-modal__next:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .ride-modal__close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font-size: 24px;
-  line-height: 1;
-  color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 8px;
-  border-radius: 8px;
+  appearance: none;
 }
 .ride-modal__close:hover {
-  background: var(--accent-soft);
-  color: var(--fg);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 /* Portrait default: stacked halves (owner's "top half / bottom half"). */
 .ride-modal__grid {
@@ -6275,20 +6341,12 @@ input[data-ride-keypad="on"] {
 }
 .ride-preflight__close,
 .device-features__close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
 }
 .ride-preflight__close:hover,
 .device-features__close:hover {
-  background: var(--accent-soft);
-  color: var(--fg);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 .ride-preflight__lede {
   margin: 4px 0 10px;
@@ -6374,8 +6432,6 @@ input[data-ride-keypad="on"] {
 }
 .ride-preflight__next {
   margin: 12px 0 4px;
-  font-size: 12px;
-  color: var(--fg-muted);
 }
 .ride-preflight__actions,
 .device-features__actions {
@@ -6581,19 +6637,11 @@ input[data-ride-keypad="on"] {
   font-size: 15px;
 }
 .qr-scan__close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
 }
 .qr-scan__close:hover {
-  background: var(--accent-soft);
-  color: var(--fg);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 .qr-scan__prompt {
   margin: 6px 0 10px;
@@ -7075,19 +7123,11 @@ input[data-ride-keypad="on"] {
   font-size: 15px;
 }
 .admin-analytics__close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--fg-muted);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
 }
 .admin-analytics__close:hover {
-  background: var(--accent-soft);
-  color: var(--fg);
+  /* face, shape and ink come from the shared metal +
+     round-✕ rules above */
 }
 .admin-analytics__controls {
   display: flex;
