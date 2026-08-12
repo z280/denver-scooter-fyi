@@ -46,7 +46,7 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   close.type = "button";
   close.setAttribute("aria-label", "Close");
 
-  const title = el("h2", "dibs-cert__title", "Certificate of Dibbs");
+  const title = el("h2", "dibs-cert__title", "Certificate of Dibs");
   title.id = "dibs-cert-title";
 
   const brand = el("div", "dibs-cert__brand");
@@ -67,7 +67,7 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   const claim = el("p", "dibs-cert__claim");
   claim.append(
     el("strong", "", dibs.claimedBy),
-    document.createTextNode(" has dibbs on "),
+    document.createTextNode(" has dibs on "),
     el("strong", "", dibs.vehicleName),
   );
   if (dibs.plate) {
@@ -92,6 +92,7 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   // the holder. It also keeps one QR encoder in the codebase instead of two.
   const qrWrap = el("div", "dibs-cert__qr");
   const qrCap = el("p", "dibs-cert__qr-cap");
+  let copyRow: HTMLElement | null = null;
   if (dibs.registration) {
     const img = el("img");
     img.src = dibs.registration.qrUrl;
@@ -100,6 +101,52 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
     qrWrap.append(img);
     qrCap.textContent = "Scan to verify";
     qrCap.title = dibs.registration.verifyUrl;
+
+    // NOT EVERY ARGUMENT HAPPENS FACE TO FACE. A QR needs the other person's
+    // camera pointed at your screen; a link works in a message, which is the
+    // other half of how people actually settle this.
+    const copy = el("button", "dibs-cert__copy", "Copy validation link");
+    copy.type = "button";
+    const url = dibs.registration.verifyUrl;
+    copy.addEventListener("click", () => {
+      track("dibs", { action: "copy_link" });
+      const done = (): void => {
+        copy.textContent = "Copied";
+        copy.classList.add("is-done");
+        window.setTimeout(() => {
+          copy.textContent = "Copy validation link";
+          copy.classList.remove("is-done");
+        }, 2200);
+      };
+      // The clipboard API needs a secure context and a permission that can be
+      // refused. The fallback is not a nicety — on a phone browser that says
+      // no, a button that silently does nothing is worse than no button.
+      const fallback = (): void => {
+        const field = document.createElement("input");
+        field.value = url;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.append(field);
+        field.select();
+        try {
+          document.execCommand("copy");
+          done();
+        } catch {
+          // Last resort: show it, so they can copy it themselves.
+          copy.textContent = url;
+          copy.classList.add("is-raw");
+        }
+        field.remove();
+      };
+      if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(url).then(done).catch(fallback);
+      } else {
+        fallback();
+      }
+    });
+    qrWrap.dataset.hasCopy = "true";
+    copyRow = copy;
   } else {
     // Said plainly. A certificate with a missing QR and no explanation looks
     // broken; one that says it could not be registered is merely honest, and
@@ -152,7 +199,7 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
     live.classList.toggle("is-expired", left <= 0);
     if (left <= 0) {
       // Say what it is rather than freezing on 0:00 and looking broken.
-      liveText.textContent = "these dibbs are null and void";
+      liveText.textContent = "these dibs are null and void";
       return;
     }
     raf = requestAnimationFrame(tick);
@@ -160,12 +207,12 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   tick();
 
   const rules = el("details", "dibs-cert__rules");
-  const summary = el("summary", "", "The rules of dibbs");
+  const summary = el("summary", "", "The rules of dibs");
   const list = el("ol");
   for (const rule of [
-    "Dibbs isn't a reservation. Veo doesn't offer one. This is a timestamp and whatever standing it earns you in person — nothing stops anyone riding anything.",
+    "Dibs isn't a reservation. Veo doesn't offer one. This is a timestamp and whatever standing it earns you in person — nothing stops anyone riding anything.",
     `${DIBS_START_GRACE_MS / 60_000} minutes to set off, or the claim is void. Not ${DIBS_START_GRACE_MS / 60_000} minutes to arrive — ${DIBS_START_GRACE_MS / 60_000} to move.`,
-    `${DIBS_MAX_WALK_MINUTES} minutes' walk, maximum. You can't call dibbs on something you couldn't plausibly reach.`,
+    `${DIBS_MAX_WALK_MINUTES} minutes' walk, maximum. You can't call dibs on something you couldn't plausibly reach.`,
     `${DIBS_MAX_TOTAL_MS / 60_000} minutes and it's over, however well you walked.`,
     "A certificate only counts while it's moving. A screenshot doesn't.",
   ]) {
@@ -173,7 +220,9 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   }
   rules.append(summary, list);
 
-  card.append(close, brand, title, body, live, qrWrap, qrCap, rules, fine);
+  card.append(close, brand, title, body, live, qrWrap, qrCap);
+  if (copyRow) card.append(copyRow);
+  card.append(rules, fine);
   backdrop.append(card);
   document.body.append(backdrop);
 
@@ -214,9 +263,9 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 
-/** "You've got dibbs" — the confirmation, with the certificate one tap away.
+/** "You've got dibs" — the confirmation, with the certificate one tap away.
  *
- *  Calling dibbs used to throw the full certificate over the map. That is the
+ *  Calling dibs used to throw the full certificate over the map. That is the
  *  wrong response to a confirmation: the rider tapped a small button and is
  *  probably about to start walking, and a full-screen document is something
  *  they now have to dismiss. This tells them it worked, names what they got,
@@ -232,7 +281,7 @@ export function showDibsConfirmation(dibs: Dibs): void {
 
   const text = el("div", "dibs-toast__text");
   text.append(
-    el("strong", "", "You've got dibbs"),
+    el("strong", "", "You've got dibs"),
     el("span", "dibs-toast__what", ` on ${dibs.vehicleName}`),
   );
 
@@ -255,4 +304,71 @@ export function showDibsConfirmation(dibs: Dibs): void {
       toast.remove();
     }
   });
+}
+
+
+/** "What are dibs?" — the ? beside "You've got dibs!".
+ *
+ *  Asked at the only moment anybody wonders: the first time the app tells
+ *  them they have some. So it answers the question they actually have —
+ *  what did I just get, and what do I have to do about it — rather than
+ *  reciting the feature.
+ *
+ *  The rules are the same five the certificate carries, because a rider who
+ *  reads them here and then shows somebody the certificate should not find
+ *  two different accounts of what dibs are. */
+export function openDibsExplainer(): void {
+  const backdrop = el("div", "dibs-explain");
+  const card = el("div", "dibs-explain__card");
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.setAttribute("aria-labelledby", "dibs-explain-title");
+
+  const close = el("button", "dibs-explain__close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close");
+
+  const title = el("h3", "dibs-explain__title", "You've got dibs");
+  title.id = "dibs-explain-title";
+
+  const lede = el(
+    "p",
+    "dibs-explain__lede",
+    "Veo has no way to reserve a scooter, so this is the next best thing: a " +
+      "timestamped claim, about as binding as calling dibs on the front seat.",
+  );
+
+  const list = el("ul", "dibs-explain__list");
+  for (const [strong, rest] of [
+    ["Nothing is held for you.", " Anyone can still ride it — including whoever is standing next to it right now."],
+    [`${DIBS_START_GRACE_MS / 60_000} minutes to set off.`, " Start walking towards it or your dibs expire. Not to arrive — to move."],
+    [`${DIBS_MAX_TOTAL_MS / 60_000} minutes in total.`, " However well you walk, that's the ceiling."],
+    ["Other riders see your name on it.", " The app stops offering them the scooter and tells them who called it."],
+    ["Your certificate proves when.", " Show it, don't screenshot it — a still one isn't valid."],
+  ] as [string, string][]) {
+    const li = el("li");
+    li.append(el("strong", "", strong), document.createTextNode(rest));
+    list.append(li);
+  }
+
+  card.append(close, title, lede, list);
+  backdrop.append(card);
+  document.body.append(backdrop);
+
+  const dismiss = (): void => {
+    document.removeEventListener("keydown", onKey, true);
+    backdrop.remove();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    dismiss();
+  };
+  document.addEventListener("keydown", onKey, true);
+  close.addEventListener("click", dismiss);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) dismiss();
+  });
+  close.focus();
 }

@@ -43,9 +43,13 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
-import { callDibs, dibsAge, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import { callDibs, dibsOn, saveDibs } from "./dibs.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
-import { openDibsCertificate, showDibsConfirmation } from "./dibs-certificate.ts";
+import {
+  openDibsCertificate,
+  openDibsExplainer,
+  showDibsConfirmation,
+} from "./dibs-certificate.ts";
 import {
   submitModelReport,
   submitDeviceReport,
@@ -145,7 +149,7 @@ const UNLOCK_PROXIMITY_M = 75;
  *  unreachable except from the one place you'd never need it.
  *
  *  The right limit is how far somebody will actually walk, which is already
- *  decided: dibbs allows a fifteen-minute walk, and this is that distance at
+ *  decided: dibs allows a fifteen-minute walk, and this is that distance at
  *  the 4.5 km/h pace the walk router quotes. Past it a claim is speculation
  *  and the walk is a hike. */
 const RIDE_MAX_WALK_M = Math.round((4.5 * 1000 / 60) * 15); // ~1125 m
@@ -329,7 +333,7 @@ export class Devices {
    *  a claim the rider cannot see is a claim they will make twice. */
   /** The live claims, pushed in by main.ts with each device refresh.
    *
-   *  Pushed rather than fetched here: dibbs are rare — a handful across the
+   *  Pushed rather than fetched here: dibs are rare — a handful across the
    *  fleet against thousands of vehicles — so one small response per refresh
    *  beats a request every time somebody taps a scooter, and the popup
    *  already knows the answer when it opens instead of gaining it a moment
@@ -938,7 +942,7 @@ export class Devices {
       } else if (reserved) {
         rideHint = "Reserved by another rider right now.";
       } else if (heldByOther) {
-        rideHint = `${heldByOther.claimed_by} called dibbs on this one.`;
+        rideHint = `${heldByOther.claimed_by} called dibs on this one.`;
       } else if (!rideAllowed) {
         rideHint = user
           ? `Too far to walk — that's ${formatWalk(walkMeters ?? 0)} away.`
@@ -1220,35 +1224,30 @@ export class Devices {
       // vehicle_identifier: the
       // API keys the report on it, and there is nothing useful to send
       // without one.
-      // SOMEBODY ELSE CALLED IT. Said above the buttons, in red, naming the
-      // person — not "unavailable", because that would be untrue: nothing
-      // here stops this scooter unlocking, and a rider who opens Veo directly
-      // is unaffected. What the app can honestly do is decline to help you
-      // take something somebody else is walking towards, and say who.
-      const dibsNotice = heldByOther
-        ? `<p class="device-popup__dibs-notice">✋ ${escapeHtml(heldByOther.claimed_by)} has dibbs!</p>`
-        : "";
       const rideBtn = rideOk
         ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🛴 I'll ride this one</button>`
-        : heldByOther
-        // The button becomes the useful thing instead of a dead one: the
-        // rider's actual question is "says who?", and the certificate answers
-        // it with a name and a timestamp they can check.
-        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="view-dibs">📜 View dibbs certificate</button>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🛴 I'll ride this one</button>`;
-      // DIBS. Veo has no reservation, so this is the honest substitute: a
-      // timestamped claim with exactly the standing of calling dibs on the
-      // front seat. It sits beside the ride button rather than inside the ride
-      // flow, because the moment a rider wants it is the moment they SPOT the
-      // scooter — four blocks out, before they have committed to anything.
+      // NO "CALL DIBS" BUTTON. Calling dibs is not a separate decision from
+      // going to get the scooter — it IS that decision, said out loud. So
+      // 🛴 I'll ride this one claims it and starts the walk in one tap, and
+      // the rider learns they have dibs from the confirmation rather than
+      // from having pressed a second button they had to know about.
+      //
+      // What survives as a button is the CERTIFICATE, and only when there is
+      // one to look at: their own to show somebody, or somebody else's to
+      // check.
       const heldDibs = vid ? dibsOn(vid) : null;
-      const dibsRow = vid
-        ? `<div class="device-popup__dibs">${
-            heldDibs
-              ? `<button type="button" class="device-popup__action" data-action="dibs-cert">📜 Your dibs · ${escapeHtml(dibsAge(heldDibs))}</button>` +
-                `<button type="button" class="device-popup__action" data-action="dibs-drop">Drop</button>`
-              : `<button type="button" class="device-popup__action" data-action="dibs-call">✋ Call dibs</button>`
-          }</div>`
+      const dibsNotice = heldByOther
+        ? `<p class="device-popup__dibs-notice">✋ ${escapeHtml(heldByOther.claimed_by)} has dibs!</p>`
+        : heldDibs
+        ? `<p class="device-popup__dibs-notice device-popup__dibs-notice--mine">` +
+          `✋ You've got dibs!` +
+          `<button type="button" class="device-popup__whatsthis" data-action="dibs-explain" aria-label="What are dibs?">?</button>` +
+          `<button type="button" class="device-popup__whatsthis" data-action="dibs-cert" aria-label="Open your dibs certificate" title="Your certificate">📄</button>` +
+          `</p>`
+        : "";
+      const certBtn = heldDibs || heldByOther
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-cert">📜 View dibs certificate</button>`
         : "";
       const featuresBtn =
         vid.length >= 16
@@ -1275,7 +1274,7 @@ export class Devices {
         <div class="device-popup__actionrow">
           ${dibsNotice}
           ${rideBtn}
-          ${dibsRow}
+          ${certBtn}
           ${startBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
@@ -1426,77 +1425,32 @@ export class Devices {
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
       // Screen 6 build a working Open-in-Veo deep link without a second
       // GBFS round trip.
-      // 📜 View dibbs certificate — the useful answer to "says who?" when
-      // somebody else has it.
+      // 📜 View dibs certificate — theirs to show, or somebody else's to
+      // check. Only rendered when there is one.
+      // Two of these now — the icon in the notice and the action row's
+      // button — so wire every match rather than the first.
       popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="view-dibs"]')
-        ?.addEventListener("click", () => {
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="dibs-cert"]')
+        .forEach((b) => b.addEventListener("click", () => {
+          const mine = dibsOn(vid);
+          if (mine) {
+            track("dibs", { action: "certificate" });
+            openDibsCertificate(mine);
+            return;
+          }
           const other = this.vehicleDibs[vid];
           if (!other) return;
           track("dibs", { action: "view_other" });
           window.open(other.certificate_url, "_blank", "noopener");
-        });
+        }));
 
-      // ✋ Dibs — claim it, drop it, or show the certificate.
+      // ? — what are dibs? Asked at the only moment anybody wonders: the
+      // first time the app tells them they have some.
       popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="dibs-call"]')
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-explain"]')
         ?.addEventListener("click", () => {
-          const here = this.locate.current();
-          const claim = callDibs({
-            vehicleIdentifier: vid,
-            vehicleName: headerName,
-            plate: effectivePlate,
-            claimedBy: this.dibsClaimant?.() ?? "Someone with the app",
-            // The baseline every progress check measures against (dibs rule 1).
-            startMeters: here ? distanceMeters(here, { lat: coords[1], lng: coords[0] }) : 0,
-          });
-          track("dibs", { action: "call" });
-          // TELL THEM, don't just open the certificate over the map. The
-          // rider tapped a small button and deserves to be told it worked —
-          // but throwing a full-screen document at somebody who is probably
-          // about to start walking is the wrong response to a confirmation.
-          // The notice carries the link; opening it is their choice.
-          showDibsConfirmation(claim);
-          this.refreshOpenPopup();
-          void registerDibs({
-            vehicle_identifier: claim.vehicleIdentifier,
-            vehicle_name: claim.vehicleName,
-            plate: claim.plate,
-            claimed_by: claim.claimedBy,
-            provider: "Veo",
-            device_type: model ? model.name : (props.vehicle_model_name ?? ""),
-            lat: coords[1],
-            lon: coords[0],
-          })
-            .then((reg) => {
-              saveDibs({
-                ...claim,
-                registration: {
-                  id: reg.id,
-                  verifyUrl: reg.verify_url,
-                  qrUrl: reg.qr_url,
-                },
-              });
-              // The notice is already up; nothing to re-open. When the rider
-              // taps through, dibsOn() reads the registered copy and the
-              // certificate has its QR.
-            })
-            .catch(() => {
-              /* the certificate already says the time is from this phone */
-            });
-        });
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="dibs-cert"]')
-        ?.addEventListener("click", () => {
-          const held = dibsOn(vid);
-          if (held) openDibsCertificate(held);
-        });
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="dibs-drop"]')
-        ?.addEventListener("click", () => {
-          dropDibs(vid);
-          track("dibs", { action: "drop" });
-          this.refreshOpenPopup();
+          track("dibs", { action: "explain" });
+          openDibsExplainer();
         });
 
       // 🚶 Walk me there — the in-app walk. This used to be an <a> that opened
@@ -1523,13 +1477,51 @@ export class Devices {
           // A rider who already told the home bar where they are going has
           // answered the survey's questions and the wizard's first three
           // screens. Walk them to the scooter instead of interviewing them.
+          // CLAIMING IS PART OF GOING. "I'll ride this one" is the sentence
+          // that calls dibs, so it does — there is no second button to know
+          // about, and the rider finds out they have dibs from the
+          // confirmation rather than from having pressed something.
+          if (vid) {
+            const here = this.locate.current();
+            const claim = callDibs({
+              vehicleIdentifier: vid,
+              vehicleName: headerName,
+              plate: effectivePlate,
+              claimedBy: this.dibsClaimant?.() ?? "Someone with the app",
+              startMeters: here
+                ? distanceMeters(here, { lat: coords[1], lng: coords[0] })
+                : 0,
+            });
+            showDibsConfirmation(claim);
+            void registerDibs({
+              vehicle_identifier: claim.vehicleIdentifier,
+              vehicle_name: claim.vehicleName,
+              plate: claim.plate,
+              claimed_by: claim.claimedBy,
+              provider: "Veo",
+              device_type: model ? model.name : (props.vehicle_model_name ?? ""),
+              lat: coords[1],
+              lon: coords[0],
+            })
+              .then((reg) => {
+                saveDibs({
+                  ...claim,
+                  registration: {
+                    id: reg.id,
+                    verifyUrl: reg.verify_url,
+                    qrUrl: reg.qr_url,
+                  },
+                });
+              })
+              .catch(() => {
+                /* the certificate says the time is from this phone */
+              });
+          }
           if (
             this.rideInterceptor?.({
               name: headerName,
               plate: effectivePlate,
-              vehicleIdentifier: props.vehicle_identifier
-                ? String(props.vehicle_identifier)
-                : null,
+              vehicleIdentifier: vid || null,
               lat: coords[1],
               lng: coords[0],
             })

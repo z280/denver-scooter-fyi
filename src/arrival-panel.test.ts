@@ -139,7 +139,7 @@ describe("at the scooter", () => {
   });
 });
 
-describe("the dibbs clock on the chip", () => {
+describe("the dibs clock on the chip", () => {
   const claim = (over: Partial<import("./dibs.ts").Dibs> = {}) => ({
     vehicleIdentifier: "abc",
     vehicleName: "Lunar 🐸 928",
@@ -165,7 +165,7 @@ describe("the dibbs clock on the chip", () => {
     // The grace is satisfied and irrelevant; showing both would be two
     // countdowns competing for one glance.
     mount({ dibs: () => claim({ startedWalkingAt: Date.now() }) }).update(BASE);
-    expect(line()).toMatch(/Dibbs hold for another/);
+    expect(line()).toMatch(/Dibs hold for another/);
     expect(line()).not.toMatch(/Start walking/);
   });
 
@@ -179,7 +179,7 @@ describe("the dibbs clock on the chip", () => {
     expect(line()).toContain("expired");
   });
 
-  it("says nothing at all when the rider never called dibbs", () => {
+  it("says nothing at all when the rider never called dibs", () => {
     // Most walks are not claims, and a clock for a claim that does not exist
     // is noise on the one surface that has to stay glanceable.
     mount().update(BASE);

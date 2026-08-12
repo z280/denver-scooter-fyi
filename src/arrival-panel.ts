@@ -55,7 +55,7 @@ export interface ArrivalPanelDeps {
   onChooseRoute(): void;
   /** Dismiss the whole thing — changed my mind. */
   onCancel(): void;
-  /** The rider's claim on this vehicle, if they called dibbs. Re-read on each
+  /** The rider's claim on this vehicle, if they called dibs. Re-read on each
    *  update so the panel reflects progress rather than a stale copy. */
   dibs?(): Dibs | null;
 }
@@ -104,7 +104,7 @@ export function createArrivalPanel(
     const d = deps.dibs?.() ?? null;
     if (!d) return null;
     const left = dibsMsLeft(d);
-    if (left <= 0) return el("p", "arrival__dibs is-urgent", "✋ Your dibbs expired");
+    if (left <= 0) return el("p", "arrival__dibs is-urgent", "✋ Your dibs expired");
 
     const mins = (ms: number): string => {
       const m = Math.floor(ms / 60_000);
@@ -115,13 +115,13 @@ export function createArrivalPanel(
       return el(
         "p",
         `arrival__dibs${graceLeft <= 3 * 60_000 ? " is-urgent" : ""}`,
-        `✋ Start walking within ${mins(graceLeft)} or your dibbs expire`,
+        `✋ Start walking within ${mins(graceLeft)} or your dibs expire`,
       );
     }
     return el(
       "p",
       `arrival__dibs${left <= 5 * 60_000 ? " is-urgent" : ""}`,
-      `✋ Dibbs hold for another ${mins(left)}`,
+      `✋ Dibs hold for another ${mins(left)}`,
     );
   }
 

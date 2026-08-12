@@ -2655,7 +2655,7 @@ let dibsClaimant = "Someone with the app";
  *  across a fleet this size, and this way a popup opens already knowing
  *  whether somebody has called it rather than gaining the notice a beat
  *  later. Failure is silent and total — no claims visible is the same as no
- *  claims, and a dibbs lookup must never be why the map stops updating. */
+ *  claims, and a dibs lookup must never be why the map stops updating. */
 function refreshLiveDibs(): void {
   void liveDibs()
     .then(({ dibs }) => devices.setVehicleDibs(dibs))

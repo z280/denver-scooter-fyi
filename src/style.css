@@ -802,7 +802,7 @@ body:not(.ribbon-open) .drawer-tabs {
   text-align: center;
 }
 
-/* "You've got dibbs" — a confirmation, not a document. */
+/* "You've got dibs" — a confirmation, not a document. */
 .dibs-toast {
   position: fixed;
   left: 50%;
@@ -867,6 +867,118 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 body.ride-active .dibs-toast {
   display: none;
+}
+
+/* The ? and the 📄 beside "You've got dibs!" — small, round, and inline in
+   the sentence they explain, because that is the moment anybody wonders. */
+.device-popup__whatsthis {
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+.device-popup__whatsthis:hover,
+.device-popup__whatsthis:focus-visible {
+  background: var(--accent-soft);
+}
+/* The rider's OWN claim is good news, not a warning — blue, not red. */
+.device-popup__dibs-notice--mine {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* "What are dibs?" */
+.dibs-explain {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 15, 25, 0.6);
+}
+.dibs-explain__card {
+  position: relative;
+  width: min(92vw, 400px);
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: 20px 18px 18px;
+  border-radius: 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.dibs-explain__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dibs-explain__title {
+  margin: 0 40px 6px 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+.dibs-explain__lede {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+.dibs-explain__list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.dibs-explain__list li {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Copy the link — not every argument happens face to face. */
+.dibs-cert__copy {
+  display: block;
+  margin: 10px auto 0;
+  padding: 9px 16px;
+  border: 1px solid #cbb98d;
+  border-radius: 999px;
+  background: transparent;
+  color: #6b5c3c;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dibs-cert__copy.is-done {
+  border-color: #12833c;
+  color: #12833c;
+}
+.dibs-cert__copy.is-raw {
+  font-size: 10.5px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 .dibs-badge {
@@ -1206,7 +1318,7 @@ body.ride-active .dibs-toast {
   font-size: 18px;
   line-height: 1;
 }
-/* The dibbs clock. One line, and only ever the clock that can currently cost
+/* The dibs clock. One line, and only ever the clock that can currently cost
    the rider the scooter — the grace before they set off, the hold after. */
 .arrival__dibs {
   margin: 0 0 4px;

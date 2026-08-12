@@ -1507,7 +1507,7 @@ export function registerDibs(
 
 /** Somebody's live claim on a vehicle, as anyone can see it.
  *
- *  Public and unauthenticated: the second person in a dibbs argument is
+ *  Public and unauthenticated: the second person in a dibs argument is
  *  exactly who needs this, and they may not have an account. Carries only the
  *  public handle the claimant chose — a name to argue with, not a way to find
  *  somebody. */
@@ -1523,7 +1523,7 @@ export interface VehicleDibs {
 /** Every live claim in the city, keyed by vehicle identifier.
  *
  *  One small response per device refresh rather than a request per popup:
- *  dibbs are rare, and this way the popup already knows the answer when it
+ *  dibs are rare, and this way the popup already knows the answer when it
  *  opens. */
 export function liveDibs(
   signal?: AbortSignal,

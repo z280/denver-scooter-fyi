@@ -170,7 +170,7 @@ describe("device popup — geographic gate on the two primary rows", () => {
   });
 
   it("blocks the ride row only once it is beyond a sane walk", () => {
-    // The threshold is the fifteen-minute walk dibbs allows, at the pace the
+    // The threshold is the fifteen-minute walk dibs allows, at the pace the
     // walk router quotes — past that a claim is speculation and the walk is
     // a hike.
     const html = openPopup({ fix: FAR });
