@@ -53,6 +53,12 @@ export const TELEMETRY_EVENTS = [
   // the OPEN only, never the close, so the count reads as "people who chose
   // to read it" rather than "people who poked at it".
   "about_founder_open",
+  // The crosshair button. Worth counting on its own: if it is tapped often,
+  // the map is losing riders more than it should.
+  "recenter",
+  // Free-ride mode from the top bar — GPS track on, no vehicle, no
+  // destination, no timer.
+  "ride_mode_free",
   "account_tab",
   "theme_change",
   // features

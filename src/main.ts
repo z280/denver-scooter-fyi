@@ -12,6 +12,8 @@ import {
 } from "./api.ts";
 import { createMap } from "./map.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
+import { RecenterControl } from "./recenter.ts";
+import { savesTracks } from "./track-preference.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -74,7 +76,7 @@ import {
   type RideRecoveryNote,
   type RideRecoveryOutcome,
   type RideSessionStore,
-} from "./ride-session.ts";
+  isRideLive,} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -204,6 +206,23 @@ initTelemetry();
 }
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
+
+// Recenter goes in the same top-left corner as geolocate, so chrome.ts adopts
+// both into the top bar's left cluster and they read as one pair: "am I
+// locating" and "put me back in the middle". It hides itself when it has
+// nothing to do — see recenter.ts.
+//
+// Registered AFTER `locate` exists, not up beside the map's other controls:
+// addControl runs onAdd synchronously, and onAdd subscribes to locate.onFix,
+// so registering it earlier hit the const's temporal dead zone and threw
+// before the map ever rendered. Typechecked fine; only running it showed it.
+map.addControl(
+  new RecenterControl({
+    current: () => locate.current(),
+    onFix: (cb) => locate.onFix(() => cb()),
+  }),
+  "top-left",
+);
 const devices = new Devices(map, locate);
 // Profile location picking. The drawer gets these as callbacks so account.ts
 // never imports maplibre — and so its tests never need a map.
@@ -894,6 +913,7 @@ map.on("load", async () => {
   // a control that reset itself each time a rider signed in or out would be
   // the kind of flicker the header exists to avoid.
   mountThemeModes(need("theme-modes"));
+  wireFreeRide();
   // The founder's note is collapsed by default; opening it is a real signal
   // about what people read on the About page, so it goes through our own
   // telemetry like every other interaction. `toggle` fires on close too —
@@ -3052,6 +3072,72 @@ function wireFilterAccordion(): void {
       }
     });
   }
+}
+
+/** Ride Mode from the top bar: one tap and you are recording.
+ *
+ *  No vehicle, no destination, no timer, and no wizard — the three questions
+ *  the flow normally asks are all "so we can do more for you", and this is
+ *  the mode for a rider who wants none of that and just wants the track.
+ *
+ *  It is a PRIVATE, LOCAL ride: `rideId: null`, signed with a client-random
+ *  key, recorded on this device. That is not a limitation dressed up as a
+ *  feature — a tracked server ride is a ride ON SOMETHING, keyed to a
+ *  vehicle we can correlate against GBFS, and a free ride has no vehicle to
+ *  key it to. Recording locally is the honest shape, and the rider can still
+ *  review, export or (for a vehicle ride) donate from Local Data.
+ *
+ *  The device is marked "own" because that is what it is: whatever you are
+ *  riding, we did not rent it to you.
+ */
+function wireFreeRide(): void {
+  const btn = document.getElementById("free-ride");
+  if (!(btn instanceof HTMLButtonElement)) return;
+
+  btn.addEventListener("click", () => {
+    // Already riding: this button does not become a second End Ride. The HUD
+    // owns ending, and two controls for one action is how a rider ends a
+    // ride they meant to keep.
+    const doc = rideSession.current();
+    if (doc && isRideLive(doc)) {
+      openRideModal({});
+      return;
+    }
+    track("ride_mode_free", {});
+    // A fix is not required to START — the watch may still be answering, and
+    // refusing to begin would lose the first seconds of the ride, which is
+    // exactly the part a rider cannot go back for. Ask for one anyway.
+    locate.trigger();
+
+    const context = { private: true, authenticated: isAuthenticated() };
+    const options = applyCascades(
+      {
+        ...defaultRideOptionsFor(context),
+        own_device: true,
+        // Nothing to navigate to, and no Veo meter to price.
+        navigation: false,
+        cost_hud: false,
+        // The rider's standing answer — a free ride is a track or it is
+        // nothing, but that is still their call to have made in Settings.
+        save_tracks: savesTracks(),
+      },
+      context,
+    );
+
+    rideSession.dispatch({ type: "open", options });
+    rideSession.dispatch({ type: "setDevice", device: { own: true } });
+    // Straight to the one screen that owns `rideStarted` — the reducer only
+    // accepts it from `countdown` or `wizard:6`, and there is no countdown
+    // here because there is no Veo app to coordinate with.
+    rideSession.dispatch({ type: "goto", screen: "6" });
+    rideSession.dispatch({
+      type: "rideStarted",
+      rideId: null,
+      startedAtMs: Date.now(),
+      trackKeyId: null,
+      private: true,
+    });
+  });
 }
 
 function wireDrawers(): void {

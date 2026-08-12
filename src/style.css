@@ -513,6 +513,46 @@ body:not(.ribbon-open) .drawer-tabs {
    Deliberately NOT metal: that finish belongs to controls that move you
    around the map, and this is a preference about the app. It wears the
    surface's own buttons, like everything else inside a drawer. */
+/* Recenter (recenter.ts). Sits beside the GPS button in the adopted
+   top-left cluster and wears the same flat face as the rest of the bar.
+   `hidden` does the showing/hiding; nothing here fights it. */
+.recenter-ctrl__btn {
+  appearance: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+.recenter-ctrl__btn:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.recenter-ctrl__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.recenter-ctrl__btn[hidden] {
+  display: none;
+}
+/* The control's own wrapper must collapse with the button, or the cluster
+   keeps a 40px hole where it used to be. */
+.recenter-ctrl:has(> .recenter-ctrl__btn[hidden]) {
+  display: none;
+}
+
+/* Free ride, in the top bar's right cluster. Monochrome and flat like its
+   neighbour: it is an action, not a status light, and a coloured button up
+   here would read as an alert. */
+#free-ride.is-live {
+  color: var(--accent);
+}
+
 /* Controls that must exist for wiring but must never be seen or reached.
    Not `display: none`: a display-none button cannot be clicked
    programmatically in every engine, and wireDrawers()/the Tools drawer both

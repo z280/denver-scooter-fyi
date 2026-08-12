@@ -111,6 +111,25 @@
         <span class="topbar__brand-name">Scooter.fyi</span>
       </div>
       <div class="topbar__right">
+        <!-- Free ride. Where the 🏆 used to be, and monochrome on purpose:
+             it starts something, it does not decorate. One tap records a
+             track with no vehicle, no destination and no timer — see
+             startFreeRide() in main.ts. -->
+        <button
+          id="free-ride"
+          class="topbar__btn"
+          type="button"
+          title="Ride Mode"
+          aria-label="Ride Mode — start recording a free ride"
+        >
+          <!-- Analog speedometer: dial arc, needle, hub -->
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 17a9 9 0 1 1 17 0" />
+            <path d="M12 13.5 16.5 9" />
+            <circle cx="12" cy="14.5" r="1.5" fill="currentColor" stroke="none" />
+          </svg>
+          <span class="sr-only">Ride Mode</span>
+        </button>
         <button
           class="topbar__btn drawer-tab drawer-tab--topbar"
           type="button"
