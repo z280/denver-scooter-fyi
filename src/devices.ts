@@ -875,6 +875,37 @@ export class Devices {
         .filter(Boolean)
         .join(" · ");
 
+      // THE VERDICT BAR — full width, directly under the name and model, and
+      // the first thing in the popup. "Is this one worth walking to?" is the
+      // only question a rider actually opens this for, and it used to be the
+      // first row of a definition list four items down, at the same weight as
+      // "Parked for".
+      //
+      // Colour is not the signal, it is the amplifier: every state also
+      // carries a distinct icon SHAPE and its own words, so the bar reads
+      // correctly in greyscale and to a screen reader (1.4.1). The ink is
+      // chosen per state rather than globally — white on the green and red,
+      // black on the yellow — which is what keeps all three past 4.5:1
+      // (measured: 4.63, 9.69, 5.62) while leaving the colours as strong as
+      // the owner asked for. White on that yellow would be 1.84:1.
+      //
+      // Icons are inline SVG on `currentColor`, matching the house 24x24
+      // stroke convention, so each one inherits exactly the ink that was
+      // contrast-checked against its own bar.
+      const VERDICT_ICON: Record<ReliabilityTier, string> = {
+        ok: `<circle cx="12" cy="12" r="10" /><path d="M8 12.5l2.5 2.5L16 9.5" />`,
+        unknown: `<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4" /><path d="M12 17h.01" />`,
+        risk: `<circle cx="12" cy="12" r="10" /><path d="M12 7v5" /><path d="M12 16h.01" />`,
+      };
+      const verdictBlock = `
+        <div class="device-popup__verdict device-popup__verdict--${relTier}">
+          <svg class="device-popup__verdict-icon" width="20" height="20"
+               viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">${VERDICT_ICON[relTier]}</svg>
+          <span class="device-popup__verdict-text">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
+        </div>`;
+
       // Crowdsourced equipment (API sql/055). Read up here because BOTH the
       // Features stat row and the action row below need it, and the stat
       // rows are built first.
@@ -1024,14 +1055,19 @@ export class Devices {
       // else moves to the "Full details" modal so the popup stays short.
       const batteryPct = asNumber(props.battery_percent);
       const statRows: string[] = [];
-      statRows.push(
-        `<dt>Rating</dt>
-         <dd>
-           <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
-           <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
-           ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
-         </dd>`,
-      );
+      // The verdict itself is the bar at the top now, so this row keeps only
+      // what the bar cannot say: WHY. Repeating the label here would be the
+      // same grade twice on one card, and the version in a stat list would
+      // be the quieter of the two — which is backwards.
+      if (ratingNotes) {
+        statRows.push(
+          `<dt>Why</dt>
+           <dd>
+             <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+             <span class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</span>
+           </dd>`,
+        );
+      }
       if (batteryPct !== null) {
         statRows.push(
           `<dt>Battery</dt><dd>${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</dd>`,
@@ -1326,6 +1362,7 @@ export class Devices {
         .setHTML(
           `<div class="device-popup">
              ${headerBlock}
+             ${verdictBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
                  ${actionRow}

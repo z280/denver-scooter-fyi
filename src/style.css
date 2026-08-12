@@ -3939,6 +3939,55 @@ body.is-map-picking .ride-modal {
   margin-top: 9px;
   font-size: 12.5px;
 }
+/* ---------- The verdict bar (devices.ts `verdictBlock`) ---------- */
+/* Full width, directly under the name and model, first thing in the popup —
+   "is this one worth walking to?" is the only question a rider opens this
+   card to answer.
+
+   THREE SIGNALS PER STATE, not one: the fill, the icon SHAPE (check in a
+   circle / triangle / bang in a circle), and the words. Colour is the
+   amplifier, never the message, so the bar survives greyscale, colour
+   blindness and a screen reader alike (1.4.1).
+
+   Ink is set per state rather than once, which is what lets the fills stay
+   as saturated as they are. Measured against each fill: white on green
+   4.63:1, black on yellow 9.69:1, white on red 5.62:1 — all past AA for
+   normal text, and the label is 13px bold, so past it comfortably.
+
+   White on that yellow would be 1.84:1 — not a close call, which is why the
+   ink is chosen per state instead of once for all three. */
+.device-popup__verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.device-popup__verdict-icon {
+  flex: none;
+}
+.device-popup__verdict--ok {
+  background: #238636;
+  color: #fff;
+}
+/* Black ink here, not white: on a fill this bright, white is the option that
+   fails. */
+.device-popup__verdict--unknown {
+  background: #f5b400;
+  color: #14181d;
+}
+.device-popup__verdict--risk {
+  background: #c62828;
+  color: #fff;
+}
+/* The fills are identical in both themes on purpose. A verdict is the one
+   thing on the card that must not change its mind with the lighting, and
+   these three are already the strongest legible version of themselves —
+   darkening them for dark mode would cost contrast against their own ink,
+   which is the only contrast that matters here. */
+
 .device-popup__rel-dot {
   display: inline-block;
   width: 9px;
