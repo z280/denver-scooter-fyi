@@ -170,11 +170,32 @@ function toggle(option: string): HTMLButtonElement {
 }
 
 describe("the survey UI", () => {
-  it("renders the three toggles in their default states", () => {
+  it("renders the two toggles in their default states", () => {
     open();
     expect(toggle("navigation").textContent).toBe("OFF");
-    expect(toggle("save_tracks").textContent).toBe("ON");
     expect(toggle("cost_hud").textContent).toBe("ON");
+  });
+
+  it("DOES NOT ask about saving tracks — that is a standing setting now", () => {
+    // It moved to Settings -> Local Data (`track-preference.ts`). A rider
+    // standing at a scooter should not be asked a question whose answer never
+    // varies between rides.
+    open();
+    expect(
+      document.querySelector('[data-option="save_tracks"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("Save Tracks");
+  });
+
+  it("carries the STANDING track preference into the ride it starts", () => {
+    localStorage.setItem("scooter-fyi-save-tracks", "0");
+    const { enterRideMode } = open();
+    document.querySelector<HTMLButtonElement>(".login-btn")!.click();
+    const entry = enterRideMode.mock.calls[0][0] as RideModalEntry;
+    // Not asked here, but still honoured: a rider who turned recording off in
+    // Settings must not have it silently back on for this ride.
+    expect(entry.preflight!.save_tracks).toBe(false);
+    localStorage.removeItem("scooter-fyi-save-tracks");
   });
 
   it("reports state to assistive tech, not just visually", () => {
@@ -260,12 +281,12 @@ describe("entering ride mode", () => {
   it("reflects toggles flipped before the rider commits", () => {
     const { enterRideMode } = open();
     toggle("navigation").click();
-    toggle("save_tracks").click();
     document.querySelector<HTMLButtonElement>(".login-btn")!.click();
     const entry = enterRideMode.mock.calls[0][0] as RideModalEntry;
     expect(entry.preflight).toEqual({
       navigation: true,
-      save_tracks: false,
+      // Default-on standing preference, untouched by this modal.
+      save_tracks: true,
       cost_hud: true,
     });
     expect(entry.fastForwardTo).toBe("3");

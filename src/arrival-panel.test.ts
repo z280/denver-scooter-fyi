@@ -20,7 +20,8 @@ const calls: string[] = [];
 function mount(over: Partial<Parameters<typeof createArrivalPanel>[1]> = {}) {
   panel = createArrivalPanel(root, {
     vehicle: { name: "Lunar 🐸 928", plate: "ABC123" },
-    destinationLabel: "Home",
+    destinationLabel: () => "Home",
+    onChangeDestination: () => void calls.push("change_dest"),
     onChooseRoute: () => void calls.push("route"),
     onCancel: () => void calls.push("cancel"),
     ...over,
@@ -82,7 +83,44 @@ describe("at the scooter", () => {
     // The rider may have pocketed the phone for the whole walk.
     arrive();
     expect(root.querySelector(".arrival__title")?.textContent).toContain("Lunar 🐸 928");
-    expect(root.querySelector(".arrival__sub")?.textContent).toContain("Home");
+    // The destination sits in the body, next to the control that changes it —
+    // it is the one fact here the rider can still act on, and a subtitle is
+    // where an app puts what it does not expect you to touch.
+    expect(root.querySelector(".arrival__dest-label")?.textContent).toContain("Home");
+  });
+
+  it("offers to change the destination BEFORE any route is computed", () => {
+    arrive();
+    const change = root.querySelector<HTMLButtonElement>(".arrival__dest-change");
+    expect(change?.textContent).toBe("Change");
+    change!.click();
+    expect(calls).toContain("change_dest");
+    // And it did NOT quietly hand the rider onward to route selection.
+    expect(calls).not.toContain("route");
+  });
+
+  it("asks for a destination when there isn't one, rather than hiding the row", () => {
+    // A rider who only asked to be walked to a scooter can still say where
+    // they are going, here, without backing all the way out.
+    let label: string | null = null;
+    const p = createArrivalPanel(root, {
+      vehicle: { name: "Lunar 🐸 928" },
+      destinationLabel: () => label,
+      onChangeDestination: () => {
+        label = "Villa Park Mini Mart";
+        p.refreshDestination();
+      },
+      onChooseRoute: () => {},
+      onCancel: () => {},
+    });
+    p.update({ ...BASE, arrived: true });
+    expect(root.querySelector(".arrival__dest-label")?.textContent).toBe("No destination set");
+    const set = root.querySelector<HTMLButtonElement>(".arrival__dest-change");
+    expect(set?.textContent).toBe("Set");
+    set!.click();
+    // Repainted against the new answer, not the one captured at mount.
+    expect(root.querySelector(".arrival__dest-label")?.textContent).toBe("Villa Park Mini Mart");
+    p.destroy();
   });
 
   it("DOES NOT OFFER TO UNLOCK THE SCOOTER YET", () => {
@@ -115,7 +153,8 @@ describe("at the scooter", () => {
   it("still explains itself for a vehicle with no plate", () => {
     const p = createArrivalPanel(root, {
       vehicle: { name: "Lunar 🐸 928" },
-      destinationLabel: "Home",
+      destinationLabel: () => "Home",
+      onChangeDestination: () => {},
       onChooseRoute: () => {},
       onCancel: () => {},
     });

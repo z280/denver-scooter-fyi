@@ -39,6 +39,8 @@ import {
   type GeocodeSearchHandlers,
 } from "./geocode-search.ts";
 import { isSamePlace, loadFavorites, type Favorite } from "./favorites.ts";
+import { fetchProfile } from "./api.ts";
+import { isAuthenticated } from "./map-auth.js";
 import {
   loadRecentDests,
   recordRecentDest,
@@ -73,6 +75,12 @@ export interface HomeBarDeps {
    *  and on close, so the map never keeps a pin for a trip that is no longer
    *  being planned. */
   onPlacesChange?(places: { dest: TripPlace | null; start: TripPlace | null }): void;
+  /** The rider's saved Home and Work, for the pinned row. Injected for tests;
+   *  defaults to the signed-in profile. Only coordinates are stored, so the
+   *  labels are "Home" and "Work" — which is what the rider calls them and
+   *  what should appear as the destination downstream. Never awaited by the
+   *  bar's own open path: the row appears when it appears. */
+  getHomeWork?(): Promise<{ home: TripPlace | null; work: TripPlace | null }>;
 }
 
 export interface HomeBarHandle {
@@ -80,6 +88,12 @@ export interface HomeBarHandle {
    *  (a ride starts, the wizard opens) so two things never claim the bottom
    *  of the screen at once. */
   collapse(): void;
+  /** Open straight to the destination search and answer exactly that one
+   *  question — no "need wheels / got my own" step, no trip dispatched. For
+   *  the rider who is already standing at a scooter and wants to correct
+   *  where they're headed before any route is computed. `onPicked` fires
+   *  once, on a choice; backing out simply never calls it. */
+  openForDestination(onPicked: (place: TripPlace) => void): void;
   isOpen(): boolean;
   destroy(): void;
 }
@@ -94,6 +108,31 @@ type Slot = "dest" | "start";
 
 const PLACEHOLDER = "Where are you going?";
 
+/** Home/Work off the signed-in profile. A signed-out rider is the common case
+ *  and not an error — skip the fetch rather than burning a guaranteed 401,
+ *  same as `ride-screen-dest.ts` does for the same two points. */
+async function defaultGetHomeWork(): Promise<{
+  home: TripPlace | null;
+  work: TripPlace | null;
+}> {
+  if (!isAuthenticated()) return { home: null, work: null };
+  try {
+    const p = await fetchProfile();
+    return {
+      home:
+        p.home_lat != null && p.home_lng != null
+          ? { label: "Home", lat: p.home_lat, lon: p.home_lng }
+          : null,
+      work:
+        p.work_lat != null && p.work_lng != null
+          ? { label: "Work", lat: p.work_lat, lon: p.work_lng }
+          : null,
+    };
+  } catch {
+    return { home: null, work: null };
+  }
+}
+
 export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHandle {
   let phase: Phase = "collapsed";
   let slot: Slot = "dest";
@@ -101,6 +140,13 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   let start: TripPlace | null = null;
   let favorites: Favorite[] = loadFavorites();
   let recents: RecentDest[] = loadRecentDests();
+  /** Home/Work from the signed-in profile. Starts empty and fills in when the
+   *  fetch lands — the bar must be usable the instant it opens, so this is
+   *  never awaited, and a signed-out rider simply never gets the row. */
+  let homeWork: { home: TripPlace | null; work: TripPlace | null } = {
+    home: null,
+    work: null,
+  };
   let results: GeocodeResult[] = [];
   let status: SearchStatus = "idle";
   let liveQuery = "";
@@ -176,8 +222,15 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     deps.onPlacesChange?.({ dest, start });
   }
 
+  /** Set while the bar is answering ONE question for another surface (the
+   *  arrival panel's "Change destination"), instead of planning a whole
+   *  trip. Cleared the moment it fires, and by `collapse`, so an abandoned
+   *  change can never leak into the next ordinary trip the bar plans. */
+  let destOnly: ((place: TripPlace) => void) | null = null;
+
   function open(): void {
     if (destroyed) return;
+    destOnly = null;
     phase = "destination";
     slot = "dest";
     favorites = loadFavorites();
@@ -185,10 +238,35 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     track("home_bar", { action: "open" });
     render();
     input.focus();
+    // Fire-and-forget, after the first paint. The bar is fully usable without
+    // it, and a rider who already knows where they are going should never
+    // wait on a profile fetch to start typing.
+    void loadHomeWork();
+  }
+
+  async function loadHomeWork(): Promise<void> {
+    const get = deps.getHomeWork ?? defaultGetHomeWork;
+    try {
+      const next = await get();
+      if (destroyed) return;
+      homeWork = next;
+      // Only repaint if there is something to add AND the rider is still
+      // looking at the list it belongs in — a late fetch must not stomp a
+      // sheet they have since typed into or moved past.
+      if ((next.home || next.work) && phase === "destination" && !input.value.trim()) {
+        render();
+      }
+    } catch {
+      /* no pinned row is a fine outcome; it is a shortcut, not a feature */
+    }
   }
 
   function collapse(opts: { keepPlaces?: boolean } = {}): void {
     if (destroyed) return;
+    // Whether the rider picked a destination or backed out, the one-question
+    // errand is over — a stale callback here would fire on some unrelated
+    // trip later and change a destination nobody asked to change.
+    destOnly = null;
     // A trip that was handed to a flow keeps its pins — that flow is now
     // showing the rider the route to them. Backing out of planning drops
     // them, so the map does not keep a destination nobody is going to.
@@ -215,6 +293,18 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
         lon: place.lon,
         inCoverage: true,
       });
+    }
+    // Destination-only: the rider is standing at a scooter, so "need wheels
+    // or got my own" is a question they have already answered with their
+    // feet. Asking it again would be the app forgetting where they are.
+    if (destOnly) {
+      const done = destOnly;
+      destOnly = null;
+      track("home_bar", { action: "dest_chosen_only" });
+      emitPlaces();
+      collapse({ keepPlaces: true });
+      done(place);
+      return;
     }
     phase = "wheels";
     input.value = "";
@@ -302,6 +392,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
 
     // Empty input: everything the rider has already told us, before we ask
     // them to type anything.
+    renderPinned();
     if (favorites.length > 0) {
       listEl.append(section("Saved places"));
       for (const f of favorites) {
@@ -337,6 +428,53 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     if (listEl.childElementCount === 0) {
       say("Type an address, a place, or a cross street.");
     }
+  }
+
+  /** Home and Work, pinned above everything else.
+   *
+   *  They are the two destinations a rider picks most and the two they should
+   *  never have to type, so they sit at the top as tap targets rather than in
+   *  the saved-places list — which is alphabetical-ish, unbounded, and makes
+   *  the two most likely answers findable rather than immediate.
+   *
+   *  LAYOUT RULE, and it is absolute: two set, they share the row; one set,
+   *  it takes the whole row. A lone half-width button next to dead space is
+   *  never rendered — it reads as a missing element or a broken layout, and
+   *  the grid below is written so that state cannot be expressed. Neither
+   *  set renders nothing at all, not an empty row or a pair of placeholders
+   *  prompting setup; that belongs in the profile, where they are set. */
+  function renderPinned(): void {
+    // Shown for the start slot too: "where are you starting from?" has the
+    // same two most-likely answers, and `pick` already routes by slot.
+    const pinned: { glyph: string; label: string; place: TripPlace }[] = [];
+    if (homeWork.home) {
+      pinned.push({ glyph: "🏠", label: "Home", place: homeWork.home });
+    }
+    if (homeWork.work) {
+      pinned.push({ glyph: "💼", label: "Work", place: homeWork.work });
+    }
+    if (pinned.length === 0) return;
+
+    const grid = el("div", "home-bar__pinned");
+    // The class carries the count, so CSS decides the widths and no branch
+    // here can accidentally produce a half-width single.
+    grid.classList.add(pinned.length === 1 ? "is-single" : "is-pair");
+    for (const p of pinned) {
+      const btn = el("button", "home-bar__quick");
+      btn.type = "button";
+      btn.append(
+        el("span", "home-bar__quick-glyph", p.glyph),
+        el("span", "home-bar__quick-label", p.label),
+      );
+      btn.addEventListener("click", () => {
+        track("home_bar", { action: "pinned_chosen" });
+        // Not recorded as a recent: it is already a permanent row, and
+        // echoing it below would show the same place twice.
+        pick(p.place, { record: false });
+      });
+      grid.append(btn);
+    }
+    listEl.append(grid);
   }
 
   /** The start-point line. Three states, and none of them is a demand:
@@ -515,6 +653,12 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
 
   return {
     collapse,
+    openForDestination(onPicked) {
+      open();
+      // After `open`, which clears it — this is the one caller that wants it
+      // set, and setting it first would just be undone.
+      destOnly = onPicked;
+    },
     isOpen: () => phase !== "collapsed",
     destroy: () => {
       destroyed = true;

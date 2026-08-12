@@ -26,6 +26,7 @@ import {
   isAlreadyDonatedError,
 } from "./ride-post-s10.ts";
 import type { TrackRouteHandle } from "./track-route.ts";
+import { savesTracks, setSavesTracks } from "./track-preference.ts";
 
 /** A track flattened back into something drawable. */
 export interface TrackPath {
@@ -289,7 +290,38 @@ export function buildLocalDataPanel(
   empty.hidden = true;
   const panelStatus = statusLine();
 
-  host.append(intro, warning, list, empty, panelStatus.node);
+  // The standing recording preference, above the rides it governs — this is
+  // the panel that explains what a track is and shows the ones you have, so
+  // it is the one place "do you want these at all?" reads as a real question
+  // rather than a toggle in a list. Used to be asked per ride on the pre-ride
+  // survey; see `track-preference.ts`.
+  const prefRow = el("label", "track-pref");
+  const prefBox = el("input", "track-pref__box") as HTMLInputElement;
+  prefBox.type = "checkbox";
+  prefBox.checked = savesTracks();
+  const prefText = el("span", "track-pref__text");
+  prefText.append(
+    el("span", "track-pref__label", "Save ride tracks on this device"),
+    el(
+      "span",
+      "track-pref__hint",
+      "On: every ride is recorded here for you to review, export, or donate. " +
+        "Off: nothing is recorded, and battery modelling and route improvement " +
+        "have no track to learn from.",
+    ),
+  );
+  prefRow.append(prefBox, prefText);
+  prefBox.addEventListener("change", () => {
+    setSavesTracks(prefBox.checked);
+    // Say what changed, in the same status line every other action here uses.
+    panelStatus.set(
+      prefBox.checked
+        ? "Ride tracks will be saved on this device."
+        : "Ride tracks will no longer be saved. Rides already here are kept.",
+    );
+  });
+
+  host.append(intro, prefRow, warning, list, empty, panelStatus.node);
 
   const row = (
     store: TrackStore,

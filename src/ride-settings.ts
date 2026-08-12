@@ -93,6 +93,7 @@ import {
   type RideUsualSettings,
 } from "./api.ts";
 import { rideModalRoot } from "./ride-modal.ts";
+import { savesTracks } from "./track-preference.ts";
 
 /** `${provider}` in the owner's copy — Veo today, written to be
  *  provider-parameterized (master plan, Part 0 preamble). Substituted only
@@ -129,7 +130,11 @@ export function defaultRideOptions(): RideOptions {
     speedometer: "classic",
     theme: "auto",
     navigation: false,
-    save_tracks: true,
+    // The rider's standing answer, not a per-ride default — see
+    // `track-preference.ts` for why it stopped being a question. Still
+    // `true` for anyone who has never touched it, so this is a move
+    // rather than a change of default.
+    save_tracks: savesTracks(),
     battery_modeling: true,
     nav_improvement: true,
     end_survey: true,

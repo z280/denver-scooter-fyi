@@ -48,8 +48,19 @@ export interface ArrivalPanelDeps {
   vehicle: ArrivalVehicle;
   /** Where they're headed, echoed so the panel is self-explanatory if the
    *  rider put the phone away during the walk. Null when they only asked to
-   *  be walked to the scooter — the ride flow will ask. */
-  destinationLabel: string | null;
+   *  be walked to the scooter — the ride flow will ask.
+   *
+   *  Read on every render rather than captured once: `onChangeDestination`
+   *  can change the answer while this panel is open, and a rider who just
+   *  corrected their destination must not be shown the old one on the very
+   *  screen they corrected it from. */
+  destinationLabel(): string | null;
+  /** Let the rider set or correct where they're going, from here, before any
+   *  route is computed. The destination was chosen minutes ago at the top of
+   *  the walk, and this is the last honest moment to fix it: one step later
+   *  the routes on screen are all computed against it, and a step after that
+   *  the Veo meter is running. */
+  onChangeDestination(): void;
   /** Hand off to route selection. Unlocking and starting navigation both
    *  happen downstream of it — see the module header. */
   onChooseRoute(): void;
@@ -62,6 +73,9 @@ export interface ArrivalPanelDeps {
 
 export interface ArrivalPanelHandle {
   update(state: WalkState): void;
+  /** Repaint against a destination that changed underneath us. No-op until
+   *  the rider has arrived, because that is the only face showing it. */
+  refreshDestination(): void;
   /** The scooter went while the rider was walking to it. Takes over the panel
    *  entirely — continuing to show a walk ETA to a scooter somebody else is
    *  riding is the app knowing something and not saying it. */
@@ -153,11 +167,40 @@ export function createArrivalPanel(
   }
 
   function renderArrived(): void {
+    const destination = deps.destinationLabel();
     title.textContent = `You're at ${deps.vehicle.name}`;
-    sub.textContent = deps.destinationLabel
-      ? `Heading to ${deps.destinationLabel}`
-      : "Ready when you are";
+    // The destination gets the body, not the subtitle. It is the one fact on
+    // this screen the rider can still act on, and a subtitle is where an app
+    // puts things it does not expect you to touch.
+    sub.textContent = "Ready when you are";
     body.replaceChildren();
+
+    // Named and changeable, before a single route is computed against it.
+    const destRow = el("div", "arrival__dest");
+    destRow.append(
+      el("span", "arrival__dest-glyph", "📍"),
+      el(
+        "span",
+        "arrival__dest-label",
+        destination ?? "No destination set",
+      ),
+    );
+    const changeDest = el(
+      "button",
+      "arrival__dest-change",
+      destination ? "Change" : "Set",
+    );
+    changeDest.type = "button";
+    changeDest.setAttribute(
+      "aria-label",
+      destination ? `Change destination, currently ${destination}` : "Set a destination",
+    );
+    changeDest.addEventListener("click", () => {
+      track("arrival_panel", { action: destination ? "change_dest" : "set_dest" });
+      deps.onChangeDestination();
+    });
+    destRow.append(changeDest);
+    body.append(destRow);
 
     const go = el("button", "arrival__action arrival__action--primary");
     go.type = "button";
@@ -166,7 +209,7 @@ export function createArrivalPanel(
       // Without a destination there is no route to choose yet, and saying
       // "choose your route" would promise a screen that has to ask a question
       // first.
-      el("span", "", deps.destinationLabel ? "Choose your route" : "Start your ride"),
+      el("span", "", destination ? "Choose your route" : "Start your ride"),
     );
     go.addEventListener("click", () => {
       track("arrival_panel", { action: "choose_route" });
@@ -197,6 +240,10 @@ export function createArrivalPanel(
       if (destroyed || gone) return;
       if (state.arrived) setArrived();
       else if (!arrived) renderWalking(state);
+    },
+    refreshDestination() {
+      if (destroyed || gone || !arrived) return;
+      renderArrived();
     },
     reportGone(message) {
       if (destroyed || gone) return;

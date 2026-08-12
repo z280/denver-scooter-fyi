@@ -473,3 +473,90 @@ describe("there is always a way out", () => {
     expect(bar!.isOpen()).toBe(false);
   });
 });
+
+describe("pinned Home and Work", () => {
+  const HOME = { label: "Home", lat: 39.7285, lon: -105.0345 };
+  const WORK = { label: "Work", lat: 39.7392, lon: -104.9903 };
+
+  const pins = (): HTMLButtonElement[] =>
+    [...root.querySelectorAll<HTMLButtonElement>(".home-bar__quick")];
+  const grid = (): HTMLElement | null => q<HTMLElement>(".home-bar__pinned");
+
+  it("shares one row when both are set", async () => {
+    mount({ getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(2));
+    expect(grid()!.classList.contains("is-pair")).toBe(true);
+    expect(pins().map((b) => b.textContent)).toEqual(["🏠Home", "💼Work"]);
+  });
+
+  it("NEVER renders a half-width lone button — one set takes the whole row", async () => {
+    // The owner's rule, verbatim: "if only one set, whole row, no weird half
+    // buttons allowed ever". Asserted on the class the grid template keys
+    // off, because that is the only thing that decides the width.
+    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(1));
+    expect(grid()!.classList.contains("is-single")).toBe(true);
+    expect(grid()!.classList.contains("is-pair")).toBe(false);
+  });
+
+  it("holds the same rule when it is Work that is set alone", async () => {
+    mount({ getHomeWork: async () => ({ home: null, work: WORK }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(1));
+    expect(pins()[0].textContent).toBe("💼Work");
+    expect(grid()!.classList.contains("is-single")).toBe(true);
+  });
+
+  it("renders no row at all when neither is set", async () => {
+    mount({ getHomeWork: async () => ({ home: null, work: null }) });
+    pill().click();
+    await new Promise((r) => setTimeout(r, 0));
+    // Not an empty row, and not a pair of "set your home" placeholders —
+    // they are set in the profile, and prompting here would be a second
+    // place to answer the same question.
+    expect(grid()).toBeNull();
+  });
+
+  it("picks the destination straight through, without a recents echo", async () => {
+    const { planned } = mount({ getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(2));
+    pins()[0].click();
+    // Destination answered; the wheels question is what comes next.
+    expect(planned).toHaveLength(0);
+    expect(root.textContent).toContain("Need wheels");
+  });
+
+  it("survives a profile fetch that fails, rather than breaking the sheet", async () => {
+    mount({
+      getHomeWork: async () => {
+        throw new Error("offline");
+      },
+    });
+    pill().click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(grid()).toBeNull();
+    // The bar still works — the pinned row is a shortcut, not a dependency.
+    expect(q(".home-bar__input")).toBeTruthy();
+  });
+
+  it("does not stomp a rider who has started typing before the fetch lands", async () => {
+    let release: (v: { home: typeof HOME; work: null }) => void = () => {};
+    mount({
+      getHomeWork: () =>
+        new Promise((res) => {
+          release = res;
+        }),
+    });
+    pill().click();
+    const input = q<HTMLInputElement>(".home-bar__input")!;
+    input.value = "villa park";
+    input.dispatchEvent(new Event("input"));
+    release({ home: HOME, work: null });
+    await new Promise((r) => setTimeout(r, 0));
+    // A late repaint here would wipe what they typed.
+    expect(input.value).toBe("villa park");
+  });
+});

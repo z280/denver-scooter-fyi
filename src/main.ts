@@ -2777,8 +2777,8 @@ function beginWalkToVehicle(info: {
   // which is the app admitting it cannot do the one thing it just asked the
   // rider to do. Without a trip the arrival panel hands off to the ride flow,
   // which asks for the destination itself, correctly, because it genuinely
-  // does not know it.
-  const trip = peekPendingTrip();
+  // does not know it. The panel reads the trip on each render rather than
+  // taking a copy here, so that "bonus" can also be added mid-walk.
 
   endWalkFlow();
   closeAllPopups();
@@ -2790,7 +2790,27 @@ function beginWalkToVehicle(info: {
 
   const panel = createArrivalPanel(need("arrival-panel"), {
     vehicle: { name: info.name, plate: info.plate ?? undefined },
-    destinationLabel: trip?.dest.label ?? null,
+    // Re-read, never captured: `onChangeDestination` below rewrites the
+    // pending trip while this panel is on screen.
+    destinationLabel: () => peekPendingTrip()?.dest.label ?? null,
+    onChangeDestination: () => {
+      // The one-question form. The wheels question is already answered —
+      // they walked to a scooter — so the bar answers only "where to?" and
+      // hands it straight back rather than dispatching a fresh trip that
+      // would tear down the walk flow the rider is standing in the middle of.
+      homeBar?.openForDestination((place) => {
+        const existing = peekPendingTrip();
+        setPendingTrip({
+          dest: place,
+          // Keep whatever the trip already said about the other two. A rider
+          // correcting their destination has not changed their mind about
+          // riding a scooter, or about where they set off from.
+          wheels: existing?.wheels ?? "need",
+          start: existing?.start ?? null,
+        });
+        panel.refreshDestination();
+      });
+    },
     onChooseRoute: () => {
       endWalkFlow();
       // Straight to route triage. The wizard still owns starting a ride — it
