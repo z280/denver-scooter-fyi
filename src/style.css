@@ -6306,6 +6306,25 @@ body.landscape-hint-dismissed .hud-note--landscape {
 .device-popup__actbtn:hover {
   background: var(--hover-neutral);
 }
+/* Open in Veo + Confirm Features, paired. The grid template is keyed off the
+   count, so a lone button takes the whole row rather than sitting at half
+   width next to nothing. Spans both of the action row's columns itself. */
+.device-popup__pair {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+.device-popup__pair.is-pair {
+  grid-template-columns: 1fr 1fr;
+}
+.device-popup__pair.is-single {
+  grid-template-columns: 1fr;
+}
+/* Inside the pair the two stop claiming the full width they used to own. */
+.device-popup__pair > .device-popup__actbtn {
+  grid-column: auto;
+}
+
 .device-popup__actbtn--start {
   /* Spans the 2-column action grid: it is the primary CTA, and the full
      width leaves Report + Details to share the next row instead of

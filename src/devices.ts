@@ -2,6 +2,7 @@ import maplibregl, {
   type Map,
   type GeoJSONSource,
   type ExpressionSpecification,
+  type Popup,
 } from "maplibre-gl";
 import { isAuthenticated } from "./map-auth.js";
 import type {
@@ -223,6 +224,75 @@ const VEO_MODELS: Record<ModelKey, { name: string; desc: string }> = {
  *  internal "trike"; a raw lookup missed it, and every Rover popup fell
  *  through to the "Veo Unknown / Tell us!" prompt. Exported for the
  *  model-key test file that pins the two-names-one-key mapping. */
+/** Pan the map so the whole popup is on screen.
+ *
+ *  A popup opens anchored to its marker and grows UPWARD, so a scooter in the
+ *  top half of the screen gets a card whose head is off the top, and one near
+ *  the bottom gets its details cut off by the edge. Either way the rider is
+ *  reading a partial answer to the question they just asked, and their only
+ *  recourse is to close it, drag the map, and tap again.
+ *
+ *  So the map comes to the popup. Overflow is measured on all four sides and
+ *  panned away in one move.
+ *
+ *  The insets are the app's own chrome, not the viewport: the map fills the
+ *  screen and the top bar and home bar float ON it, so a popup "inside the
+ *  viewport" can still be underneath either of them. These are what those two
+ *  actually occupy, plus a little air.
+ */
+const POPUP_INSET_TOP = 76;
+const POPUP_INSET_BOTTOM = 96;
+const POPUP_INSET_SIDE = 10;
+
+export function nudgePopupIntoView(map: Map, popup: Popup): void {
+  // One frame, so the popup has been laid out and measured with its real
+  // content — before that its rect is either empty or the previous card's.
+  requestAnimationFrame(() => {
+    // `getElement()` returning a laid-out node is the whole precondition: a
+    // closed or torn-down popup has none. Deliberately NOT calling
+    // `isOpen()` — this runs a frame late, by which point the popup may have
+    // been replaced, and requiring a method that not every caller's popup
+    // object carries turned a cosmetic nicety into a thrown error.
+    const el = popup.getElement();
+    if (!el || !el.isConnected) return;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    const box = map.getContainer().getBoundingClientRect();
+
+    const top = box.top + POPUP_INSET_TOP;
+    const bottom = box.bottom - POPUP_INSET_BOTTOM;
+    const left = box.left + POPUP_INSET_SIDE;
+    const right = box.right - POPUP_INSET_SIDE;
+
+    // panBy moves the VIEW by the offset, so the content moves the other
+    // way — which means these deltas are used as-is: a popup 40px above the
+    // top limit gives dy = -40, the view goes up 40, the popup comes down 40.
+    let dx = 0;
+    let dy = 0;
+    // A popup taller than the space available cannot satisfy both edges.
+    // Favour the TOP, which carries the name, the model and the verdict —
+    // the body below it scrolls on its own, the header does not.
+    if (r.height <= bottom - top) {
+      if (r.top < top) dy = r.top - top;
+      else if (r.bottom > bottom) dy = r.bottom - bottom;
+    } else if (r.top < top) {
+      dy = r.top - top;
+    }
+    if (r.width <= right - left) {
+      if (r.left < left) dx = r.left - left;
+      else if (r.right > right) dx = r.right - right;
+    }
+
+    if (dx === 0 && dy === 0) return;
+    map.panBy([dx, dy], {
+      duration: 260,
+      // Not a user gesture: this must not cancel the geolocate camera lock
+      // or read as the rider panning away from their own position.
+      essential: true,
+    });
+  });
+}
+
 export function veoModel(
   modelName: string | null | undefined,
 ): { name: string; desc: string } | null {
@@ -1339,15 +1409,32 @@ export class Devices {
              <button type="button" class="device-popup__actbtn" data-action="show-photos" aria-haspopup="dialog">🖼️ Show Photos</button>`
           : `<button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">📷 Take Photo</button>
              <button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">🖼️ Show Photos</button>`;
+      // Open in Veo and Confirm Features share a row. Both used to span the
+      // full width, which gave this card five stacked full-width bars before
+      // the rider reached anything they came for.
+      //
+      // They are paired in their own grid rather than just dropped into the
+      // action row's columns, so the count decides the widths and no branch
+      // here can produce a lone half-width button beside dead space — the
+      // same rule the pinned Home/Work row follows. Either one can be absent:
+      // Open in Veo needs a plate and proximity, Confirm Features disappears
+      // once the features are confirmed.
+      const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
+      const startFeatureRow = pairCount
+        ? `<div class="device-popup__pair ${pairCount === 1 ? "is-single" : "is-pair"}">
+             ${startBtn}
+             ${featuresBtn}
+           </div>`
+        : "";
+
       const actionRow = `
         <div class="device-popup__actionrow">
           ${dibsNotice}
           ${rideBtn}
           ${certBtn}
-          ${startBtn}
+          ${startFeatureRow}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
-          ${featuresBtn}
           ${photoRow}
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
@@ -1375,6 +1462,7 @@ export class Devices {
         )
         .addTo(map);
       this.popup = popup;
+      nudgePopupIntoView(map, popup);
       // Remembered so setAdminSession can rebuild this popup if the admin
       // flag lands while it is open — its gates captured the old value.
       this.openPopupFor = { props, coords };

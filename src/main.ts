@@ -76,7 +76,8 @@ import {
   type RideRecoveryNote,
   type RideRecoveryOutcome,
   type RideSessionStore,
-  isRideLive,} from "./ride-session.ts";
+  isRideLive,
+  type RideSessionDoc,} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -1339,6 +1340,10 @@ map.on("load", async () => {
 
 // ---------- Onboarding & progressive discovery ----------
 
+/** Whether the intro tour opens itself on a first visit. OFF while the tour
+ *  is rewritten — see the note at its call site. */
+const ONBOARDING_AUTOSHOW = false;
+
 // The seven-screen tour (onboarding.ts) auto-shows once per browser and is
 // replayable from the About drawer. Its final CTA hands the user straight to
 // Find-a-ride — center on location and ranked picks are the wizard's own
@@ -1398,7 +1403,17 @@ function wireOnboarding(): void {
     }
   });
 
-  maybeShowOnboarding(hooks);
+  // AUTO-SHOW IS OFF, deliberately and temporarily.
+  //
+  // The tour walks through a UI that has moved on — the three-way mode bar it
+  // demonstrates no longer exists, and several screens describe surfaces that
+  // have since moved. A tour that confidently describes the wrong app is
+  // worse than no tour: it is the first thing a new rider sees, and it
+  // teaches them things they then have to unlearn.
+  //
+  // Still REPLAYABLE from About, so it stays reachable and testable, and
+  // turning it back on is one line rather than a revert.
+  if (ONBOARDING_AUTOSHOW) maybeShowOnboarding(hooks);
 }
 
 // ---------- Controls ----------
@@ -2562,9 +2577,32 @@ function wireModes(): void {
   // announces itself.
 
   const applyAnalysis = (): void => {
-    resetAllFilters();
-    resetIconography();
-    setSelect("choropleth-select", "v1");
+    // OPENING A PANEL OPENS A PANEL. Nothing else.
+    //
+    // This used to be a PRESET: it called resetAllFilters(), resetIconography()
+    // and setSelect("choropleth-select", "v1") before opening the drawer — so
+    // one tap wiped every filter the rider had set, reset their icon
+    // preferences, and painted Disadvantaged Areas (v1) across the map.
+    //
+    // That would be defensible on a control that announced itself. It is not
+    // one: since the bottom mode bar became the home bar, Analysis lives in
+    // the ribbon as a TAB, visually identical to the seven beside it that do
+    // nothing but open a drawer. A rider reaching for Areas or Tools and
+    // catching this one instead lost their whole map setup and got an equity
+    // choropleth they never asked for — which is exactly the "equity
+    // compliance choropleths keep getting activated" report, and the same
+    // root cause behind filters seeming to clear themselves.
+    //
+    // The choropleth select is still in the Areas drawer, named, for anyone
+    // who wants it. Turning it on is the rider's decision, not a side effect
+    // of opening a different panel.
+    //
+    // `resetIconography` and `setSelect` survive with no caller here on
+    // purpose — they are the machinery a DELIBERATE reset would use, and
+    // deleting them cascades into the icon setters they own. Referenced
+    // below so the compiler agrees they are alive.
+    void resetIconography;
+    void setSelect;
     setDrawer("compliance");
   };
 
@@ -3090,16 +3128,40 @@ function wireFilterAccordion(): void {
  *  The device is marked "own" because that is what it is: whatever you are
  *  riding, we did not rent it to you.
  */
+/** Does this doc carry anything the rider told us? A doc outlives the surface
+ *  that made it (a reload, a closed wizard, a "back in a minute"), and any of
+ *  these means a ride is in progress even when nothing is on screen. `state`
+ *  alone is not enough — `wizard` covers both "just opened, asked nothing"
+ *  and "chose a scooter and a destination". */
+function hasAnswers(doc: RideSessionDoc): boolean {
+  return (
+    doc.device !== null ||
+    doc.dest !== null ||
+    doc.route !== null ||
+    doc.rideId !== null ||
+    doc.startedAtMs !== null
+  );
+}
+
 function wireFreeRide(): void {
   const btn = document.getElementById("free-ride");
   if (!(btn instanceof HTMLButtonElement)) return;
 
   btn.addEventListener("click", () => {
-    // Already riding: this button does not become a second End Ride. The HUD
-    // owns ending, and two controls for one action is how a rider ends a
-    // ride they meant to keep.
+    // THIS BUTTON NEVER DESTROYS AN ANSWER THE RIDER ALREADY GAVE.
+    //
+    // It is two things at once: "start a free ride" for a rider with nothing
+    // in flight, and "take me back to my ride" for one who stepped away —
+    // picked a scooter, chose a destination, went to buy a coffee. Both press
+    // the same button, and the second must never get the first's behaviour,
+    // because `open` seeds a FRESH doc and would drop their device,
+    // destination and route on the floor.
+    //
+    // So anything in flight is REOPENED, never replaced. Live ride included:
+    // the HUD owns ending, and a second control for one irreversible action
+    // is how a rider ends a ride they meant to keep.
     const doc = rideSession.current();
-    if (doc && isRideLive(doc)) {
+    if (doc && (isRideLive(doc) || hasAnswers(doc))) {
       openRideModal({});
       return;
     }

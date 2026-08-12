@@ -362,13 +362,18 @@ describe("device popup — the photo row", () => {
       fix: NEAR,
       props: { vehicle_identifier: PHOTO_VID },
     });
-    // Ride → Start → Report/Details → Features → Photos.
+    // Ride → [Start · Features] → Report/Details → Photos.
+    //
+    // Confirm Features moved UP, out of its own full-width bar and into a
+    // shared row with Open in Veo — the card had five stacked full-width
+    // bars before a rider reached anything they came for. The photo row is
+    // still last, which is what this test is actually about.
     const order = [
       'data-action="use-in-ride-mode"',
       "device-popup__actbtn--start",
+      'data-action="confirm-features"',
       'data-action="open-report"',
       'data-action="full-details"',
-      'data-action="confirm-features"',
       'data-action="take-photo"',
       'data-action="show-photos"',
     ].map((marker) => html.indexOf(marker));
@@ -684,5 +689,40 @@ describe("device popup — the photo gallery modal", () => {
     await vi.waitFor(() =>
       expect(grid?.textContent).toContain("Couldn't load photos"),
     );
+  });
+});
+
+describe("device popup — Open in Veo and Confirm Features share a row", () => {
+  const pairClass = (html: string): string | null =>
+    html.match(/device-popup__pair ([a-z-]+)/)?.[1] ?? null;
+
+  it("pairs them when both are offered", () => {
+    // Near enough for the unlock link, and a vehicle whose features are not
+    // yet confirmed — so both buttons exist.
+    // Confirm Features is gated on a 16-hex vehicle_identifier (it posts
+    // against that id), NOT on feature_status — the button is how you change
+    // the status, so gating it on the status would hide it exactly when it
+    // is needed.
+    const html = openPopup({
+      fix: NEAR,
+      props: { vehicle_identifier: PHOTO_VID },
+    });
+    expect(html).toContain("device-popup__actbtn--start");
+    expect(html).toContain('data-action="confirm-features"');
+    expect(pairClass(html)).toBe("is-pair");
+  });
+
+  it("NEVER leaves a lone half-width button — one alone takes the row", () => {
+    // Features already confirmed, so only Open in Veo remains. Asserted on
+    // the class the grid template keys off, because that is the only thing
+    // deciding the width. Same rule as the pinned Home/Work row.
+    // Short identifier: no Confirm Features, so Open in Veo stands alone.
+    const html = openPopup({
+      fix: NEAR,
+      props: { vehicle_identifier: "abc" },
+    });
+    if (html.includes("device-popup__pair")) {
+      expect(pairClass(html)).toBe("is-single");
+    }
   });
 });
