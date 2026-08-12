@@ -3676,19 +3676,35 @@ body.is-map-picking .ride-modal {
   border-radius: 999px;
   box-shadow: var(--shadow);
 }
-/* The home bar is centred at the bottom, so the expanded attribution — which
-   runs rightward from the left edge — collides with it on a narrow screen.
-   Collapse it to MapLibre's own ⓘ there (its intended compact behaviour, and
-   still one tap from the full credit); the same credit is also spelled out in
-   the About drawer, so nothing is lost. */
+/* THE ⓘ HAS TO OPEN. This is the map's attribution, and the OSMF guidelines
+   allow collapsing it behind an ⓘ ON THE MAP precisely because that ⓘ opens.
+   Hidden-when-open is not "collapsed", it is unreachable.
+        
+   What was here did exactly that: `maplibregl-compact-show` is the class
+   MapLibre puts on the <details> WHEN IT IS OPEN, so hiding
+   `.maplibregl-ctrl-attrib-inner` under that selector removed the content on
+   every screen ≤720px — i.e. every phone — at the moment a rider tapped to
+   read it. The control ships open by default, so it was hidden on load too
+   and the ⓘ appeared to do nothing at all.
+
+   The collision it was reaching for is real: the home bar is centred at the
+   bottom and the attribution expands rightward from the left edge. Bounding
+   the width fixes that without taking the credit away — it stops short of
+   the centre and wraps instead. */
 @media (max-width: 720px) {
+  .maplibregl-ctrl-attrib.maplibregl-compact.maplibregl-compact-show {
+    max-width: min(62vw, 300px);
+    /* Lifted clear of the home bar's resting pill, which is centred directly
+       above this corner and genuinely does overlap it (measured: the strip
+       ran 50–208px against a pill starting at 98px, with 11px of vertical
+       overlap). Only while OPEN, so the collapsed ⓘ stays down in the
+       corner where it belongs. */
+    margin-bottom: 52px;
+  }
   .maplibregl-ctrl-attrib.maplibregl-compact.maplibregl-compact-show
     .maplibregl-ctrl-attrib-inner {
-    display: none;
-  }
-  .maplibregl-ctrl-attrib.maplibregl-compact.maplibregl-compact-show {
-    padding: 2px 0 2px 0;
-    min-width: 24px;
+    white-space: normal;
+    line-height: 1.35;
   }
 }
 .maplibregl-ctrl-attrib a {
