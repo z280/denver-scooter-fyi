@@ -1428,6 +1428,39 @@ export function fetchRoute(
   );
 }
 
+/** The walk to the scooter — Valhalla pedestrian costing on the same tiles the
+ *  ride profiles use (`GET /api/v1/route/walk`).
+ *
+ *  Deliberately not one of the ride profiles: those exclude the High Injury
+ *  Network, which is a sensible thing to avoid riding along and a nonsense
+ *  thing to avoid walking along. */
+export interface WalkRoute {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+  properties: {
+    mode: "walk";
+    distance_meters: number;
+    duration_seconds: number;
+    maneuvers?: { instruction: string; begin_shape_index: number }[];
+  };
+}
+
+export function fetchWalkRoute(
+  from: [number, number],
+  to: [number, number],
+  opts: { maneuvers?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<WalkRoute> {
+  return getJSON<WalkRoute>(
+    `/api/v1/route/walk${query({
+      from: `${from[0]},${from[1]}`,
+      to: `${to[0]},${to[1]}`,
+      maneuvers: opts.maneuvers ? "true" : undefined,
+    })}`,
+    signal,
+  );
+}
+
 export interface RouteProfile {
   key: string;
   label: string;

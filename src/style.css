@@ -750,6 +750,117 @@ body:not(.ribbon-open) .drawer-tabs {
 
 
 
+
+/* ---------- Arrival panel (arrival-panel.ts) ---------- */
+/* Floats above the home bar's slot, over the map the rider is walking across.
+   It replaces a run of full-screen wizard steps, so it must never feel like
+   one: it covers as little of the map as it can, and the map underneath stays
+   draggable — a rider walking to a scooter is looking at the map, not at us. */
+.arrival {
+  position: fixed;
+  left: 50%;
+  bottom: calc(
+    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+      var(--float-inset)
+  );
+  transform: translateX(-50%);
+  z-index: 29;
+  width: min(94vw, 460px);
+  padding: 14px 14px 12px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+.arrival__head {
+  padding-right: 40px;
+}
+.arrival__title {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.arrival__sub {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.arrival__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  cursor: pointer;
+}
+.arrival__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+/* Full width and equal height: at a scooter, one-handed, in the street, is
+   the worst place in the app to ask for a precise tap. */
+.arrival__action {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+.arrival__action:hover,
+.arrival__action:focus-visible {
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 0 1px var(--metal-active-border);
+}
+/* The one thing the rider came here to do, and the only action that works
+   whether or not Veo cooperates. */
+.arrival__action--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  box-shadow: none;
+  font-size: 16px;
+  min-height: 54px;
+}
+.arrival__action--primary:hover,
+.arrival__action--primary:focus-visible {
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 2px var(--metal-active-border);
+}
+.arrival__action-glyph {
+  font-size: 18px;
+  line-height: 1;
+}
+.arrival__note {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+  text-align: center;
+}
+/* One surface owns the bottom of the screen at a time. */
+body.arrival-open .home-bar {
+  display: none;
+}
+body.ride-active .arrival {
+  display: none;
+}
+
 /* ---------- Metal: the finish on navigation affordances ---------- */
 /* Every control whose job is to MOVE you — open a menu, switch a drawer,
    go back or next, zoom, dismiss — wears the same brushed-silver face

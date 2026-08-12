@@ -32,6 +32,10 @@ export const TELEMETRY_EVENTS = [
   // answered. Worth its own event because the drop-off between those three is
   // the whole question the redesign is a bet on.
   "home_bar",
+  // The walk-to-scooter panel: manual arrival, start-nav, confirm-started,
+  // open-in-veo. The split between "started nav" and "opened Veo" is the
+  // measurable version of "did the handoff work".
+  "arrival_panel",
   "drawer_open",
   "account_tab",
   "theme_change",

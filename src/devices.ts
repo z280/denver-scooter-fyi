@@ -309,6 +309,20 @@ export class Devices {
     if (open) this.openDevicePopup(open.props, open.coords);
   }
 
+  /** Intercept 🧭 Use in Ride Mode. Returns true when something else has
+   *  taken the ride over — the home bar's walk-to-the-scooter flow does,
+   *  whenever a destination is already known — and false to fall through to
+   *  the preflight survey and the wizard, which is still the right path for a
+   *  rider who tapped a scooter with no trip in mind. */
+  private rideInterceptor:
+    | ((info: { name: string; plate: string | null; vehicleIdentifier: string | null;
+                lat: number; lng: number }) => boolean)
+    | null = null;
+
+  setRideInterceptor(fn: typeof Devices.prototype.rideInterceptor): void {
+    this.rideInterceptor = fn;
+  }
+
   constructor(
     private readonly map: Map,
     private readonly locate: Locate,
@@ -1306,6 +1320,23 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="use-in-ride-mode"]')
         ?.addEventListener("click", () => {
+          // A rider who already told the home bar where they are going has
+          // answered the survey's questions and the wizard's first three
+          // screens. Walk them to the scooter instead of interviewing them.
+          if (
+            this.rideInterceptor?.({
+              name: headerName,
+              plate: effectivePlate,
+              vehicleIdentifier: props.vehicle_identifier
+                ? String(props.vehicle_identifier)
+                : null,
+              lat: coords[1],
+              lng: coords[0],
+            })
+          ) {
+            this.closePopup();
+            return;
+          }
           openRidePreflight({
             deviceLabel: effectivePlate
               ? `${headerName} — plate ${effectivePlate}`

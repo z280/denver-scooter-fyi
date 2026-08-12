@@ -96,6 +96,9 @@ import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
 import { createTripPins } from "./trip-pins.ts";
+import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
+import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
+import { peekPendingTrip } from "./pending-trip.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -206,6 +209,9 @@ const rideRouteLine = createRideRouteLine(map);
 const routePreview = createRoutePreview(map);
 // The destination/start pins the home bar puts on the map.
 const tripPins = createTripPins(map);
+// The walk to the scooter, drawn with the same module as the ride route but
+// its own source ids and its own colour — see ride-route-line.ts's prefix.
+const walkLine = createRideRouteLine(map, "walk-route");
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -849,6 +855,9 @@ map.on("load", async () => {
   // After wireModes: the home bar drives the (now hidden) mode buttons, so
   // their listeners have to exist before it can hand a trip to one.
   homeBar = wireHomeBar();
+  // 🧭 Use in Ride Mode goes to the walk flow when a destination is already
+  // known, and falls through to the preflight survey when it is not.
+  devices.setRideInterceptor(beginWalkToVehicle);
   wireFilterPresets({
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
@@ -2648,15 +2657,100 @@ function wireHomeBar(): HomeBarHandle {
           .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
           ?.click();
       // "Need wheels" is a question about which vehicle, which is exactly what
-      // the find-a-ride ranker answers. "Got my own" has no vehicle to choose,
-      // so it goes straight into the ride flow — the destination is already
-      // known, so the wizard's own "Where to?" screen opens pre-answered
-      // rather than asking again.
-      if (wheels === "need") click("ride");
-      else click("riding");
+      // the find-a-ride ranker answers: the rider picks one on the map, and
+      // 🧭 Use in Ride Mode hands them to the walk flow rather than the
+      // wizard (see beginWalkToVehicle).
+      if (wheels === "need") {
+        click("ride");
+        return;
+      }
+      // "Got my own" has no vehicle to choose and nowhere to walk to. The
+      // rider is standing on their own scooter with a destination in hand, so
+      // there is nothing left to ask — go straight to route triage and the
+      // 3D navigation that follows it, skipping the gates, the device picker
+      // and the "Where to?" screen the home bar already answered.
+      openRideModal({ fastForwardTo: "4" });
     },
   });
   return bar;
+}
+
+// ---------- Walk to the scooter, then ride ----------
+
+// The flow that replaced a run of wizard screens for the case where the app
+// already knows everything they asked about: the rider named a destination on
+// the home bar and then tapped a specific scooter. All that is left is getting
+// them to it and getting them moving.
+let walkLeg: WalkLegHandle | null = null;
+let arrivalPanel: ArrivalPanelHandle | null = null;
+
+function endWalkFlow(): void {
+  walkLeg?.stop();
+  walkLeg = null;
+  arrivalPanel?.destroy();
+  arrivalPanel = null;
+  walkLine.clear();
+  document.body.classList.remove("arrival-open");
+}
+
+function beginWalkToVehicle(info: {
+  name: string;
+  plate: string | null;
+  vehicleIdentifier: string | null;
+  lat: number;
+  lng: number;
+}): boolean {
+  const trip = peekPendingTrip();
+  // No destination means the rider tapped a scooter with no trip in mind —
+  // that is still the survey's and the wizard's job, so decline the intercept.
+  if (!trip) return false;
+
+  endWalkFlow();
+  closeAllPopups();
+  document.body.classList.add("arrival-open");
+
+  const panel = createArrivalPanel(need("arrival-panel"), {
+    vehicle: { name: info.name, plate: info.plate ?? undefined },
+    destinationLabel: trip.dest.label,
+    onStartNavigation: () => {
+      endWalkFlow();
+      // The wizard still owns starting a ride — it is where the session doc,
+      // the track store and the HUD handoff live. It just no longer asks the
+      // three questions this flow already answered: entry names the device,
+      // and the pending trip seeds the destination in onOpen.
+      openRideModal({
+        vehicleIdentifier: info.vehicleIdentifier ?? undefined,
+        plate: info.plate ?? undefined,
+        fastForwardTo: "4",
+      });
+    },
+    onConfirmStarted: () => {
+      endWalkFlow();
+      openRideModal({
+        vehicleIdentifier: info.vehicleIdentifier ?? undefined,
+        plate: info.plate ?? undefined,
+        fastForwardTo: "4",
+      });
+    },
+    onCancel: () => endWalkFlow(),
+  });
+  arrivalPanel = panel;
+
+  walkLeg = startWalkLeg(
+    { lat: info.lat, lng: info.lng, label: info.name },
+    {
+      locate,
+      drawRoute: (coords) => {
+        if (!coords || coords.length < 2) walkLine.clear();
+        // Green, not the ride route's profile colour: this is the leg you do
+        // on foot, and two lines in the same colour would read as one route.
+        else walkLine.set(coords, { color: "#2f9e44", dest: [info.lng, info.lat] });
+      },
+      onChange: (state) => panel.update(state),
+    },
+  );
+  panel.update(walkLeg.state());
+  return true;
 }
 
 // ---------- Equity ranks ----------
