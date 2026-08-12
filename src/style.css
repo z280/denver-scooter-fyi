@@ -715,6 +715,268 @@ body:not(.ribbon-open) .drawer-tabs {
   border-radius: 50%;
 }
 
+/* ---------- The home bar: "Where are you going?" (home-bar.ts) ---------- */
+/* Bottom centre, where the three-way mode bar used to be. At rest it is a
+   single wide pill; open, it grows upward into a sheet. It deliberately does
+   NOT dim or block the map — a rider mid-search who wants to look at the map
+   should not have to close anything first. */
+.home-bar {
+  position: fixed;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
+  /* --freshness-lift: same variable, same reason, as the old mode bar — the
+     freshness pill's tap-expanded text must not be sat on. main.ts sets it on
+     #mode-switch; the rule below mirrors it onto whichever of the two is
+     actually visible. */
+  transform: translate(-50%, calc(-1 * var(--freshness-lift, 0px)));
+  transition: transform 0.15s ease;
+  /* Same stacking decision the mode bar carried (PR #37): under the wizard
+     (28) and drawers (30/31), above chips and the legend. Any open panel wins
+     the overlap and you close it to get back here. */
+  z-index: 27;
+  width: max-content;
+  max-width: min(94vw, 460px);
+}
+.home-bar.is-open {
+  width: min(94vw, 460px);
+}
+
+.home-bar__pill {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(94vw, 460px);
+  padding: 13px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--modebar-fg);
+  background: var(--modebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.home-bar__pill:hover {
+  color: var(--fg);
+}
+.home-bar__pill-glyph {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.home-bar__sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  /* Grows upward from the bar, and never past the viewport: on a short
+     phone in landscape the list scrolls rather than pushing the input off
+     the top of the screen, which would hide the thing being typed into. */
+  max-height: min(62vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.home-bar__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.home-bar__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 16px: anything smaller makes iOS Safari zoom the whole page on focus,
+     which on this surface would throw the map off-screen mid-search. */
+  font-size: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.home-bar__close {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.home-bar__close:hover {
+  color: var(--fg);
+}
+
+.home-bar__status {
+  margin: 0;
+  padding: 2px 2px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.home-bar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.home-bar__section {
+  margin: 6px 2px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.home-bar__row {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.home-bar__row:hover,
+.home-bar__row:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--border);
+}
+.home-bar__row-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.home-bar__row-desc {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* The chosen destination, echoed back before the second question — so the
+   rider answers "how am I getting there" while looking at where "there" is. */
+.home-bar__to {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 2px 0;
+  font-size: 15px;
+}
+.home-bar__to-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* The wheels question. Two buttons, IDENTICAL styling — no primary, no
+   recommended, no preselection. See home-bar.ts's header: this app serves
+   people who already own a scooter as well as people looking to rent one,
+   and a styled default tells one of them they are the wrong kind of user. */
+.home-bar__wheels {
+  display: flex;
+  gap: 8px;
+}
+.home-bar__wheel {
+  appearance: none;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.home-bar__wheel:hover,
+.home-bar__wheel:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--fg-muted);
+}
+.home-bar__wheel-glyph {
+  font-size: 22px;
+  line-height: 1;
+}
+.home-bar__wheel-name {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.home-bar__wheel-desc {
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+/* The start-point line. Grey and quiet on purpose — nothing has failed when
+   location is off, so this reads as an explanation, not an error. */
+.home-bar__foot:empty {
+  display: none;
+}
+.home-bar__hint {
+  margin: 0;
+  padding: 2px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.home-bar__hint-arrow {
+  font-weight: 700;
+}
+.home-bar__linkbtn {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* The "lil tiny red button": small, unmistakably a map pin, and inline in the
+   sentence that explains it — so the alternative to granting GPS is visible
+   in the same breath as the request, not buried in a settings panel. */
+.home-bar__pin {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin: 0 2px;
+  padding: 0;
+  vertical-align: -5px;
+  border: none;
+  border-radius: 50%;
+  background: #e5484d;
+  color: #fff;
+  font-size: 11px;
+  line-height: 22px;
+  cursor: pointer;
+}
+.home-bar__pin:hover,
+.home-bar__pin:focus-visible {
+  background: #cc3b40;
+}
+
+/* A live ride owns the whole screen; so does an open ride wizard sheet. */
+body.ride-active .home-bar,
+body.is-map-picking .home-bar {
+  display: none;
+}
+
 /* ---------- Intent-mode presets (bottom center) ---------- */
 .mode-switch {
   position: fixed;

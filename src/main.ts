@@ -94,6 +94,8 @@ import {
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
+import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
+import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -841,6 +843,9 @@ map.on("load", async () => {
   const areaFilter = wireAreaFilter();
   applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
   wireModes();
+  // After wireModes: the home bar drives the (now hidden) mode buttons, so
+  // their listeners have to exist before it can hand a trip to one.
+  homeBar = wireHomeBar();
   wireFilterPresets({
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
@@ -976,10 +981,30 @@ map.on("load", async () => {
       // exactly as it does when Screen 2's own panel toggles it, and a
       // shortcut that skipped the cascades would be the one path that can
       // produce an options blob the wizard itself would call illegal.
+      // A trip planned on the home bar answers two of these before the
+      // wizard opens: "got my own" IS `own_device`, and having named a
+      // destination is what `navigation` means. Folded in here, through
+      // `applyCascades` like every other seed, so the wizard can never be
+      // handed an options blob it would call illegal.
+      const trip = takePendingTrip();
+      const fromHomeBar = trip
+        ? { own_device: trip.wheels === "own", navigation: true }
+        : {};
       const options = entry.preflight
-        ? applyCascades({ ...base, ...entry.preflight }, context)
-        : base;
+        ? applyCascades({ ...base, ...entry.preflight, ...fromHomeBar }, context)
+        : applyCascades({ ...base, ...fromHomeBar }, context);
+      homeBar?.collapse();
       rideSession.dispatch({ type: "open", options });
+      // The rider already said where they are going, so Screen 3 opens with
+      // the answer in hand rather than asking the same question twice. It
+      // still SHOWS — changing your mind about the destination is exactly
+      // what that screen is for — but Next is live the moment it mounts.
+      if (trip) {
+        rideSession.dispatch({
+          type: "setDest",
+          dest: { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon },
+        });
+      }
 
       // The survey path also pre-selects the DEVICE, which is normally
       // Screen 2's job. It has to be done here rather than left to that
@@ -2418,6 +2443,10 @@ function wireModes(): void {
    *  and reveals the HUD button; the map container also resizes when the
    *  wizard docks as a side panel on small screens. */
   const setRideSurface = (on: boolean): void => {
+    // One surface owns the bottom of the screen at a time. Entering a ride
+    // flow folds the home bar back to its pill rather than leaving a
+    // "Where are you going?" sheet open underneath the answer to it.
+    if (on) homeBar?.collapse();
     rideActive = on;
     leanFetch = on; // riders get the lean payload; analysis gets extras
     document.body.classList.toggle("mode-ride", on);
@@ -2571,6 +2600,50 @@ function wireModes(): void {
       }
     });
   }
+
+  // The Analysis preset moved to the ribbon when the bottom mode bar became
+  // the home bar. Same button underneath, same preset, new home — see the
+  // markup comment on #mode-switch.
+  for (const preset of document.querySelectorAll<HTMLButtonElement>(
+    "[data-mode-preset]",
+  )) {
+    preset.addEventListener("click", () => {
+      const target = btns.find((b) => b.dataset.mode === preset.dataset.modePreset);
+      target?.click();
+    });
+  }
+}
+
+// ---------- Home bar ("Where are you going?") ----------
+
+// The bottom of the map. Owns the two questions a rider can actually answer
+// on arrival — where to, and whether they need wheels — and then hands the
+// trip to the flow that fits the answer. Both flows already existed; this
+// only changes which question gets asked first, and by whom.
+let homeBar: HomeBarHandle | null = null;
+
+function wireHomeBar(): HomeBarHandle {
+  const bar = createHomeBar(need("home-bar"), {
+    locate,
+    // The same one-shot picker the profile's home/work and Screen 3 use.
+    pickOnMap: (hint) => mapPick.pick({ hint }),
+    onPlanTrip: ({ dest, wheels, start }) => {
+      setPendingTrip({ dest, wheels, start });
+      closeAllPopups();
+      const click = (mode: string): void =>
+        document
+          .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
+          ?.click();
+      // "Need wheels" is a question about which vehicle, which is exactly what
+      // the find-a-ride ranker answers. "Got my own" has no vehicle to choose,
+      // so it goes straight into the ride flow — the destination is already
+      // known, so the wizard's own "Where to?" screen opens pre-answered
+      // rather than asking again.
+      if (wheels === "need") click("ride");
+      else click("riding");
+    },
+  });
+  return bar;
 }
 
 // ---------- Equity ranks ----------
@@ -2739,7 +2812,9 @@ function wireDrawers(): void {
 // can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
-  const modeSwitch = need("mode-switch");
+  // The home bar, not the mode bar: #mode-switch is `hidden` now (it survives
+  // only as the seam the home bar clicks), so lifting it would move nothing.
+  const modeSwitch = need("home-bar");
   const mq = window.matchMedia("(max-width: 640px)");
   let expanded = false;
   let idleTimer: number | undefined;
@@ -2747,7 +2822,7 @@ function wireFreshnessCollapse(): void {
   const sync = (): void => {
     root.classList.toggle("freshness--collapsed", mq.matches && !expanded);
     // While the pill is tap-expanded, its three lines of text can reach
-    // well past the mode pill's own footprint — lift the pill clear rather
+    // well past the home bar's own footprint — lift the bar clear rather
     // than let it sit on top of (and hide) that text. Read the freshness
     // pill's live rendered height instead of hardcoding one: the class
     // toggle above already applied, so this reflects the current expanded

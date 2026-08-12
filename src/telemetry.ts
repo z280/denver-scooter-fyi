@@ -28,6 +28,10 @@ export const TELEMETRY_EVENTS = [
   "install_prompt",
   // navigation
   "mode_switch",
+  // The home bar's own funnel: opened -> destination chosen -> wheels
+  // answered. Worth its own event because the drop-off between those three is
+  // the whole question the redesign is a bet on.
+  "home_bar",
   "drawer_open",
   "account_tab",
   "theme_change",

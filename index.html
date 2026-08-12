@@ -255,6 +255,27 @@
         </svg>
         <span class="drawer-tab__label">About</span>
       </button>
+      <!-- Analysis: the civic/data preset that used to be the middle of the
+           bottom mode bar (choropleth + the compliance drawer). It belongs
+           here, with the other map-control surfaces — it was never a peer of
+           "where are you going", it was a way of looking at the map. Not a
+           `data-drawer` tab: it applies a preset, so main.ts wires it to the
+           hidden mode bar's own Analysis button. -->
+      <button
+        class="drawer-tab"
+        type="button"
+        data-mode-preset="analysis"
+        aria-pressed="false"
+        title="Analysis view"
+      >
+        <!-- Bar chart -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="20" x2="12" y2="10" />
+          <line x1="18" y1="20" x2="18" y2="4" />
+          <line x1="6" y1="20" x2="6" y2="16" />
+        </svg>
+        <span class="drawer-tab__label">Analysis</span>
+      </button>
     </nav>
 
     <!-- ---------- Filters drawer (internal id "devices") ---------- -->
@@ -936,11 +957,21 @@
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
-    <!-- Mode bar (bottom center), three modes: "Find wheels" runs the
-         guided wizard surface; "Analysis" is the full civic/data surface
-         with the drawer tabs; "Ride" opens the full-screen in-ride HUD.
-         All three are wired by wireModes() in main.ts. -->
-    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
+    <!-- Home bar (bottom center): "Where are you going?" — the surface that
+         replaced the three-way mode bar. Built by home-bar.ts; this is only
+         the mount point. -->
+    <div id="home-bar" class="home-bar"></div>
+
+    <!-- The old mode bar, now HIDDEN and kept only as the seam the home bar
+         drives. Every mode preset (filters, iconography, choropleth, drawer,
+         the wizard's snapshot/restore, leanFetch, the live-ride guard) is
+         wired to these three buttons by wireModes() in main.ts, and the home
+         bar switches surfaces by clicking them — the same synthetic-event
+         technique wireModes already uses on checkboxes, selects and drawer
+         tabs. `hidden` keeps them out of the tab order and the a11y tree
+         while leaving .click() working, so a rider can never reach them and
+         no behaviour had to be re-derived to move the entry point. -->
+    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets" hidden>
       <button class="mode-btn" type="button" data-mode="ride" aria-pressed="false">🛴 Find wheels</button>
       <button class="mode-btn is-active" type="button" data-mode="analysis" aria-pressed="true">📊 Analysis</button>
       <button class="mode-btn" type="button" id="ride-open" data-mode="riding" aria-pressed="false">🧭 Ride</button>
