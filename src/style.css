@@ -3829,13 +3829,17 @@ body.is-map-picking .ride-modal {
 /* A readable version of the marker the rider just tapped — comic art or the
    model-tinted letter tag, whichever the map is set to. Sized to the header
    text block rather than to the map marker: this is identity, not a dot. */
+/* Twice the size, and no plate behind it. The badge was sitting on a
+   translucent rounded square that read as a second, competing shape around
+   art which is already a circle — so the art is simply bigger and the
+   backing is gone. */
 .device-popup__badge {
   flex: none;
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
   object-fit: contain;
-  background: rgba(255, 255, 255, 0.22);
+  background: none;
 }
 .device-popup__badge--letter {
   display: inline-flex;
@@ -4076,34 +4080,44 @@ body.is-map-picking .ride-modal {
 .device-popup__features {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 5px;
-  margin: 0 -14px;
-  padding: 8px 14px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+  /* Inside the turquoise header now, under the name — these are part of what
+     this scooter IS, so they belong with its identity rather than in a strip
+     of their own between two coloured bars. */
+  margin: 6px 0 0;
 }
+/* GLYPH ONLY. The names were three words of chrome on the busiest line of
+   the card; the icon is the recognisable part and the name is one tap away in
+   the explanation, which says more than a label could anyway. The full
+   sentence is still the button's aria-label, so nothing is lost to a screen
+   reader.
+
+   Translucent white on the turquoise rather than a panel colour — it reads as
+   part of the header rather than as controls dropped on top of it. */
 .device-popup__feature {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border: 1px solid var(--border);
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 999px;
-  background: var(--bg);
-  color: var(--fg);
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
+  line-height: 1;
   cursor: pointer;
 }
 .device-popup__feature:hover,
 .device-popup__feature.is-open {
-  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.42);
+  border-color: #fff;
 }
 .device-popup__feature:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid #fff;
   outline-offset: 2px;
 }
 /* Reported broken. Dimmed and struck rather than removed: that it is THERE
@@ -4111,27 +4125,28 @@ body.is-map-picking .ride-modal {
    bell should learn this before walking to it. Never colour alone — the
    strike-through and the tapped explanation both carry it too. */
 .device-popup__feature.is-broken {
-  color: var(--fg-muted);
   border-style: dashed;
+  background: rgba(0, 0, 0, 0.16);
 }
-.device-popup__feature.is-broken .device-popup__feature-label {
-  text-decoration: line-through;
-}
+/* With no label left to strike through, the broken state is carried by the
+   dashed ring, the dimmed glyph and the tapped sentence. */
 .device-popup__feature.is-broken .device-popup__feature-glyph {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 .device-popup__feature-glyph {
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
 }
 /* One shared explanation line under the row — tooltips do not exist on
    touch, and a modal for one sentence is a punishment. */
 .device-popup__feature-why {
   flex-basis: 100%;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--fg-muted);
+  /* On the turquoise, not on a panel — slightly held back from the title
+     without dropping out of contrast. */
+  color: rgba(255, 255, 255, 0.93);
 }
 .device-popup__feature-why[hidden] {
   display: none;

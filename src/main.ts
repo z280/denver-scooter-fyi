@@ -2576,35 +2576,33 @@ function wireModes(): void {
   // rider actually chooses: 3D navigation, which takes the whole screen and
   // announces itself.
 
-  const applyAnalysis = (): void => {
-    // OPENING A PANEL OPENS A PANEL. Nothing else.
-    //
-    // This used to be a PRESET: it called resetAllFilters(), resetIconography()
-    // and setSelect("choropleth-select", "v1") before opening the drawer — so
-    // one tap wiped every filter the rider had set, reset their icon
-    // preferences, and painted Disadvantaged Areas (v1) across the map.
-    //
-    // That would be defensible on a control that announced itself. It is not
-    // one: since the bottom mode bar became the home bar, Analysis lives in
-    // the ribbon as a TAB, visually identical to the seven beside it that do
-    // nothing but open a drawer. A rider reaching for Areas or Tools and
-    // catching this one instead lost their whole map setup and got an equity
-    // choropleth they never asked for — which is exactly the "equity
-    // compliance choropleths keep getting activated" report, and the same
-    // root cause behind filters seeming to clear themselves.
-    //
-    // The choropleth select is still in the Areas drawer, named, for anyone
-    // who wants it. Turning it on is the rider's decision, not a side effect
-    // of opening a different panel.
-    //
-    // `resetIconography` and `setSelect` survive with no caller here on
-    // purpose — they are the machinery a DELIBERATE reset would use, and
-    // deleting them cascades into the icon setters they own. Referenced
-    // below so the compiler agrees they are alive.
-    void resetIconography;
-    void setSelect;
-    setDrawer("compliance");
-  };
+  // NO ANALYSIS MODE. There is no third mode, because there were never three
+  // things to be in.
+  //
+  // "Analysis" was a PRESET from the old bottom mode bar: it reset filters
+  // and iconography, forced a choropleth, and opened Equity Compliance. Every
+  // one of those side effects has since been removed as a bug in its own
+  // right, and what was left — `setDrawer("compliance")` — is just opening a
+  // drawer, which is what a drawer tab already does. Keeping a "mode" wrapped
+  // around it meant the ribbon's Analysis tab silently opened the Equity
+  // Compliance drawer, which is why that panel kept coming back for a rider
+  // who never asked for it.
+  //
+  // Equity Compliance is still reachable, deliberately, from the Tools
+  // drawer's own "Open Equity Compliance" button — one named control, in the
+  // drawer about tools, that says what it opens.
+  //
+  // What is left is the only distinction this app ever actually had: riding,
+  // or not.
+  //
+  // `resetIconography` and `setSelect` lose their last caller here and are
+  // kept anyway. Deleting them cascades into the four setters they solely
+  // write, and those setters are the ONLY writers of the iconography state —
+  // so removing them makes the compiler treat whole drawer branches as
+  // unreachable. That is a real pre-existing knot and untangling it is its
+  // own change, not a footnote to this one.
+  void resetIconography;
+  void setSelect;
 
   /** Entering or leaving the find-a-ride flow. It no longer changes the MAP —
    *  only what owns the bottom of the screen. */
@@ -2735,34 +2733,16 @@ function wireModes(): void {
         case "ride":
           enterRide();
           break;
-        default:
-          closeAllPopups();
-          if (rideActive) {
-            exitRide(); // back to a normal map — no surprise choropleth
-          } else {
-            applyAnalysis();
-            setActive("analysis");
-          }
-          // Progressive discovery: first deliberate Analysis open.
-          showTipOnce(
-            "analysis",
-            "This mode lets you explore Denver's scooter ecosystem — density, compliance, and historical trends.",
-          );
+        // NO `default`. It was the Analysis button's branch, and being a
+        // catch-all meant any button reaching this switch with an unexpected
+        // `data-mode` — or none at all — silently applied a whole map preset.
+        // A switch over a closed set of modes should name them.
       }
     });
   }
 
-  // The Analysis preset moved to the ribbon when the bottom mode bar became
-  // the home bar. Same button underneath, same preset, new home — see the
-  // markup comment on #mode-switch.
-  for (const preset of document.querySelectorAll<HTMLButtonElement>(
-    "[data-mode-preset]",
-  )) {
-    preset.addEventListener("click", () => {
-      const target = btns.find((b) => b.dataset.mode === preset.dataset.modePreset);
-      target?.click();
-    });
-  }
+  // No `[data-mode-preset]` forwarding: the Analysis tab it existed for is
+  // gone from the ribbon.
 }
 
 // ---------- Home bar ("Where are you going?") ----------

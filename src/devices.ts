@@ -904,6 +904,64 @@ export class Devices {
              </div>
              <p class="device-popup__report-status" role="status" aria-live="polite"></p>
            </form>`;
+      const knownFeatures = readDeviceFeatures(props.device_features);
+
+      // ---- Feature pills: what this scooter actually has, right under its
+      // name and above the verdict.
+      //
+      // These are the details a rider chooses BETWEEN two nearby scooters
+      // with — a basket decides a grocery run, a phone holder decides
+      // whether you can navigate — and they were buried in the Details
+      // modal, behind a tap most people never make.
+      //
+      // CONDITION IS PART OF THE FACT, not a footnote. A bell that does not
+      // ring is not a bell, and Veo's bells are broken often enough that
+      // listing one unqualified would be the app telling a small lie. So a
+      // feature someone has reported as broken renders visibly degraded and
+      // says so when tapped, rather than quietly disappearing (which would
+      // lose the information that it is THERE and BUST) or appearing intact
+      // (which would be worse).
+      //
+      // Everything here is crowdsourced, so every explanation is hedged —
+      // "or so we've been informed" is doing real work, not being cute.
+      const FEATURE_PILLS: readonly {
+        key: "bell" | "cup_holder" | "phone_holder" | "basket";
+        glyph: string;
+        label: string;
+        /** Reads after "This Astro has …". */
+        phrase: string;
+      }[] = [
+        { key: "bell", glyph: "🛎️", label: "Bell", phrase: "a bell" },
+        { key: "basket", glyph: "🧺", label: "Basket", phrase: "a basket" },
+        { key: "phone_holder", glyph: "📱", label: "Phone holder", phrase: "a phone holder" },
+        { key: "cup_holder", glyph: "🥤", label: "Cup holder", phrase: "a cup holder" },
+      ];
+      const featureSubject = model ? bareModelName(model.name) : "scooter";
+      const poorSet = new Set(knownFeatures?.poor_condition ?? []);
+      const pills = knownFeatures
+        ? FEATURE_PILLS.filter((f) => knownFeatures[f.key])
+        : [];
+      const featureBlock = pills.length
+        ? `<div class="device-popup__features">
+             ${pills
+               .map((f) => {
+                 const broken = poorSet.has(f.key);
+                 const why = broken
+                   ? `This ${featureSubject} has ${f.phrase}, but a rider told us it's not working.`
+                   : `This ${featureSubject} has ${f.phrase}, and it actually works (or so we've been informed).`;
+                 return `<button type="button"
+                    class="device-popup__feature${broken ? " is-broken" : ""}"
+                    data-action="feature-why"
+                    data-why="${escapeHtml(why)}"
+                    aria-label="${escapeHtml(why)}">
+                    <span class="device-popup__feature-glyph" aria-hidden="true">${f.glyph}</span>
+                  </button>`;
+               })
+               .join("")}
+             <p class="device-popup__feature-why" role="status" aria-live="polite" hidden></p>
+           </div>`
+        : "";
+
       // A LARGER VERSION OF THE MAP'S OWN BADGE, top-left of the card. The
       // marker a rider just tapped is 30-odd pixels of art; this is the same
       // identity at a size you can actually read, and it anchors the card to
@@ -933,6 +991,7 @@ export class Devices {
           <div class="device-popup__headtext">
             <div class="device-popup__model">${escapeHtml(headerName)}</div>
             <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
+            ${featureBlock}
             ${reportUi}
           </div>
         </div>`;
@@ -1006,64 +1065,7 @@ export class Devices {
       // Features stat row and the action row below need it, and the stat
       // rows are built first.
       const featureStatus = asFeatureStatus(props.feature_status);
-      const knownFeatures = readDeviceFeatures(props.device_features);
 
-      // ---- Feature pills: what this scooter actually has, right under its
-      // name and above the verdict.
-      //
-      // These are the details a rider chooses BETWEEN two nearby scooters
-      // with — a basket decides a grocery run, a phone holder decides
-      // whether you can navigate — and they were buried in the Details
-      // modal, behind a tap most people never make.
-      //
-      // CONDITION IS PART OF THE FACT, not a footnote. A bell that does not
-      // ring is not a bell, and Veo's bells are broken often enough that
-      // listing one unqualified would be the app telling a small lie. So a
-      // feature someone has reported as broken renders visibly degraded and
-      // says so when tapped, rather than quietly disappearing (which would
-      // lose the information that it is THERE and BUST) or appearing intact
-      // (which would be worse).
-      //
-      // Everything here is crowdsourced, so every explanation is hedged —
-      // "or so we've been informed" is doing real work, not being cute.
-      const FEATURE_PILLS: readonly {
-        key: "bell" | "cup_holder" | "phone_holder" | "basket";
-        glyph: string;
-        label: string;
-        /** Reads after "This Astro has …". */
-        phrase: string;
-      }[] = [
-        { key: "bell", glyph: "🛎️", label: "Bell", phrase: "a bell" },
-        { key: "basket", glyph: "🧺", label: "Basket", phrase: "a basket" },
-        { key: "phone_holder", glyph: "📱", label: "Phone holder", phrase: "a phone holder" },
-        { key: "cup_holder", glyph: "🥤", label: "Cup holder", phrase: "a cup holder" },
-      ];
-      const featureSubject = model ? bareModelName(model.name) : "scooter";
-      const poorSet = new Set(knownFeatures?.poor_condition ?? []);
-      const pills = knownFeatures
-        ? FEATURE_PILLS.filter((f) => knownFeatures[f.key])
-        : [];
-      const featureBlock = pills.length
-        ? `<div class="device-popup__features">
-             ${pills
-               .map((f) => {
-                 const broken = poorSet.has(f.key);
-                 const why = broken
-                   ? `This ${featureSubject} has ${f.phrase}, but a rider told us it's not working.`
-                   : `This ${featureSubject} has ${f.phrase}, and it actually works (or so we've been informed).`;
-                 return `<button type="button"
-                    class="device-popup__feature${broken ? " is-broken" : ""}"
-                    data-action="feature-why"
-                    data-why="${escapeHtml(why)}"
-                    aria-label="${escapeHtml(why)}">
-                    <span class="device-popup__feature-glyph" aria-hidden="true">${f.glyph}</span>
-                    <span class="device-popup__feature-label">${escapeHtml(f.label)}</span>
-                  </button>`;
-               })
-               .join("")}
-             <p class="device-popup__feature-why" role="status" aria-live="polite" hidden></p>
-           </div>`
-        : "";
 
 
       const user = this.locate.current();
@@ -1543,13 +1545,15 @@ export class Devices {
       const popup = new maplibregl.Popup({
         closeButton: true,
         offset: 10,
-        maxWidth: "300px",
+        // Widened for the 92px model badge: at 300px the badge left the
+        // title column so narrow that "Veo Cosmo · One passenger glider (no
+        // pedals)" wrapped to three lines beside it.
+        maxWidth: "342px",
       })
         .setLngLat(coords)
         .setHTML(
           `<div class="device-popup">
              ${headerBlock}
-             ${featureBlock}
              ${verdictBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
