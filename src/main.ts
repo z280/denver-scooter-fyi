@@ -164,10 +164,20 @@ function need<T extends HTMLElement>(id: string): T {
 }
 
 /** Local ride tracks are recorded without an account (a private ride has no
- *  server ride id at all), so gating the tab on sign-in also hides a guest's
- *  own recordings from them — including the only control that deletes one.
- *  Kept as specified, isolated here so it is a one-line reversal. */
-const GATE_LOCAL_TAB_ON_AUTH = true;
+ *  server ride id at all), so gating this tab on sign-in hid a guest's own
+ *  recordings from them — including the only control that deletes one, and
+ *  (once the standing preference moved here) the only switch that stops the
+ *  recording in the first place. A guest could be recorded with no way to
+ *  look at it, delete it, or turn it off.
+ *
+ *  So: OFF. The tab is reachable signed out. Nothing behind it leaks anything
+ *  — every track it lists was recorded by this device and never left it, and
+ *  the one action that does upload (donate) is gated separately on
+ *  `isSignedIn`, which the panel already takes as a dep.
+ *
+ *  Kept as a named constant rather than deleted: it is the honest record of a
+ *  decision that was made deliberately in both directions. */
+const GATE_LOCAL_TAB_ON_AUTH = false;
 
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
