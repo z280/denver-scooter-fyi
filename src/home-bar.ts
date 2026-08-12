@@ -402,11 +402,14 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     for (const choice of WHEELS) {
       const btn = el("button", "home-bar__wheel");
       btn.type = "button";
-      btn.append(
-        el("span", "home-bar__wheel-glyph", choice.glyph),
+      // Glyph, then a stacked name/blurb, so the row fills its width instead
+      // of centring three things in a narrow column.
+      const text = el("span", "home-bar__wheel-text");
+      text.append(
         el("span", "home-bar__wheel-name", choice.name),
         el("span", "home-bar__wheel-desc", choice.desc),
       );
+      btn.append(el("span", "home-bar__wheel-glyph", choice.glyph), text);
       btn.addEventListener("click", () => {
         if (!dest) return;
         track("home_bar", { action: "plan", wheels: choice.value });
