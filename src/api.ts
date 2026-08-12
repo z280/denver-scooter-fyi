@@ -1467,6 +1467,70 @@ export function fetchWalkRoute(
  *  this list has one entry per ROAD rather than one per profile name. `also`
  *  names the other profiles that produce this same road — folded, not hidden,
  *  so a rider looking for "the shaded one" can see that it is this one. */
+/** A dibs claim, as the server records it.
+ *
+ *  The claim lives on the phone; this registers it so the CERTIFICATE can be
+ *  verified by somebody who has no reason to trust the phone. `claimed_at` is
+ *  the server's, which is the whole point — a timestamp the holder can edit
+ *  settles no argument. */
+export interface DibsRegistration {
+  id: string;
+  claimed_at: string;
+  expires_at: string;
+  verify_url: string;
+  qr_url: string;
+}
+
+export function registerDibs(
+  claim: {
+    vehicle_identifier: string;
+    vehicle_name: string;
+    plate: string | null;
+    claimed_by: string;
+    provider?: string;
+    device_type?: string;
+    lat?: number | null;
+    lon?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<DibsRegistration> {
+  // Unauthenticated on purpose: a rider who has not signed in can still call
+  // dibs, and the certificate names them as the anonymous form. Requiring an
+  // account here would make the friendliest thing in the app the one that
+  // asks for a login first.
+  return authedFetchJSON<DibsRegistration>("/api/v1/dibs", {
+    method: "POST",
+    body: claim,
+    signal,
+  });
+}
+
+/** Somebody's live claim on a vehicle, as anyone can see it.
+ *
+ *  Public and unauthenticated: the second person in a dibbs argument is
+ *  exactly who needs this, and they may not have an account. Carries only the
+ *  public handle the claimant chose — a name to argue with, not a way to find
+ *  somebody. */
+export interface VehicleDibs {
+  id: string;
+  claimed_by: string;
+  claimed_at: string;
+  expires_at: string;
+  denver_time: string;
+  certificate_url: string;
+}
+
+/** Every live claim in the city, keyed by vehicle identifier.
+ *
+ *  One small response per device refresh rather than a request per popup:
+ *  dibbs are rare, and this way the popup already knows the answer when it
+ *  opens. */
+export function liveDibs(
+  signal?: AbortSignal,
+): Promise<{ dibs: Record<string, VehicleDibs> }> {
+  return getJSON<{ dibs: Record<string, VehicleDibs> }>("/api/v1/dibs/live", signal);
+}
+
 export interface RouteOption {
   key: string;
   label: string;

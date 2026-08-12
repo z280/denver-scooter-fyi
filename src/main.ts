@@ -7,6 +7,8 @@ import {
   getTrackedRide,
   type BoundaryLayer,
   type DeviceInclude,
+  fetchProfile,
+  liveDibs,
 } from "./api.ts";
 import { createMap } from "./map.ts";
 import { initialTheme, startSunSync, ThemeControl } from "./theme.ts";
@@ -99,6 +101,7 @@ import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
 import { createTripPins } from "./trip-pins.ts";
 import { createActiveVehicle, type ActiveVehicleHandle } from "./active-vehicle.ts";
 import { formatWalkLeg, startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
+import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
@@ -127,6 +130,7 @@ import { initInstallPrompt } from "./install-prompt.ts";
 import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
+  installBrandMark,
   setRibbonOpen,
   closeAllPopups,
   registerPopupCloser,
@@ -174,6 +178,7 @@ const { map, geolocate } = createMap("map", theme0);
 // adopts the corner into the top bar.
 map.addControl(new ThemeControl(theme0), "top-left");
 initChrome();
+installBrandMark();
 setAuthState(isAuthenticated());
 initTelemetry();
 // About drawer's "Allow private analytics" switch — a purely local choice,
@@ -877,6 +882,19 @@ map.on("load", async () => {
   // 🧭 Use in Ride Mode goes to the walk flow when a destination is already
   // known, and falls through to the preflight survey when it is not.
   devices.setRideInterceptor(beginWalkToVehicle);
+  // Whose name goes on a certificate. The signed-in display name when there is
+  // one, and an honest anonymous form when there is not — never a fabricated
+  // identity, since the whole artifact is an assertion about who did what.
+  devices.setDibsClaimant(() => dibsClaimant);
+  // A signed-out rider is the common case and not an error — skip the fetch
+  // rather than burning a guaranteed 401, same as ride-screen-dest does.
+  if (isAuthenticated()) {
+    void fetchProfile()
+      .then(setDibsClaimantFromProfile)
+      .catch(() => {
+        /* the anonymous form is a fine certificate */
+      });
+  }
   wireFilterPresets({
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
@@ -904,6 +922,8 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
+    window.dispatchEvent(new Event("scooter:devices-refreshed"));
+    refreshLiveDibs();
     equity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
@@ -2620,6 +2640,34 @@ function wireModes(): void {
 // trip to the flow that fits the answer. Both flows already existed; this
 // only changes which question gets asked first, and by whom.
 let homeBar: HomeBarHandle | null = null;
+/** Whose name goes on a dibs certificate. Filled from the signed-in profile
+ *  when one loads; the anonymous form otherwise. Never fabricated — the whole
+ *  artifact is an assertion about who did what. */
+let dibsClaimant = "Someone with the app";
+
+/** Who currently holds a claim on what, refreshed with the device feed.
+ *
+ *  One small request per refresh rather than one per popup: claims are rare
+ *  across a fleet this size, and this way a popup opens already knowing
+ *  whether somebody has called it rather than gaining the notice a beat
+ *  later. Failure is silent and total — no claims visible is the same as no
+ *  claims, and a dibbs lookup must never be why the map stops updating. */
+function refreshLiveDibs(): void {
+  void liveDibs()
+    .then(({ dibs }) => devices.setVehicleDibs(dibs))
+    .catch(() => {
+      /* the map is the point; this is a garnish on it */
+    });
+}
+
+function setDibsClaimantFromProfile(
+  profile: { display_name?: string | null; public_username?: string | null } | null,
+): void {
+  dibsClaimant =
+    profile?.display_name?.trim() ||
+    profile?.public_username?.trim() ||
+    "Someone with the app";
+}
 
 function wireHomeBar(): HomeBarHandle {
   const bar = createHomeBar(need("home-bar"), {
@@ -2715,8 +2763,11 @@ function syncActiveVehicle(): void {
 // them to it and getting them moving.
 let walkLeg: WalkLegHandle | null = null;
 let arrivalPanel: ArrivalPanelHandle | null = null;
+let deviceWatch: DeviceWatchHandle | null = null;
 
 function endWalkFlow(): void {
+  deviceWatch?.stop();
+  deviceWatch = null;
   walkLeg?.stop();
   walkLeg = null;
   arrivalPanel?.destroy();
@@ -2793,6 +2844,45 @@ function beginWalkToVehicle(info: {
   panel.update(walkLeg.state());
   activeVehicle?.set({ name: info.name, detail: "walking to it" });
   map.resize();
+
+  // WATCH IT WHILE THEY WALK. Somebody standing next to the scooter can
+  // unlock it at any moment, and every second between that happening and the
+  // rider knowing is a second spent walking the wrong way.
+  if (info.vehicleIdentifier) {
+    deviceWatch = watchDevice(info.vehicleIdentifier, {
+      lookup: (id) => {
+        const f = devices
+          .allFeatures()
+          .find((x) => x.properties.vehicle_identifier === id);
+        if (!f) return undefined;
+        const p = f.properties as unknown as Record<string, unknown>;
+        const bool = (v: unknown): boolean => v === true || v === "true" || v === 1;
+        return {
+          vehicleIdentifier: id,
+          // is_reserved means IN USE on this operator, not a held booking.
+          inUse: bool(p.is_reserved),
+          rentable: !bool(p.is_disabled),
+          // Our own read, not Veo's — see device-watch.ts's two categories.
+          looksRideable: !bool(p.is_disabled) && !bool(p.is_reserved),
+        };
+      },
+      onRefresh: (cb) => {
+        window.addEventListener("scooter:devices-refreshed", cb);
+        return () => window.removeEventListener("scooter:devices-refreshed", cb);
+      },
+      onGone: (reason) => {
+        track("device_gone", { reason });
+        // Say it where the rider is already looking, and stop pointing them
+        // at a scooter that is not there.
+        walkLine.clear();
+        activeVehicle?.set({
+          name: info.name,
+          detail: goneMessage(info.name, reason),
+        });
+        arrivalPanel?.reportGone(goneMessage(info.name, reason));
+      },
+    });
+  }
   return true;
 }
 
@@ -3216,6 +3306,10 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
+    window.dispatchEvent(new Event("scooter:devices-refreshed"));
+    refreshLiveDibs();
+      // The watcher listens on this: a scooter can go at any tick.
+      window.dispatchEvent(new Event("scooter:devices-refreshed"));
       equity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);

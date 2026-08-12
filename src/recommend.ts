@@ -227,7 +227,10 @@ export class RecommendedDevices {
     const routeBtn = el(
       "button",
       "login-btn ride-wizard__route",
-      "Route me to selected",
+      // "Route me to selected" described the mechanism and named the row's
+      // state; this names what the rider is deciding — and it is the same
+      // sentence as the popup's, because it does the same thing.
+      "🛴 Use this device",
     );
     routeBtn.type = "button";
     const selectedNow = ranked.find((o) => o.id === this.selectedId) ?? null;

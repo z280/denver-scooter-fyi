@@ -54,6 +54,10 @@ export interface ArrivalPanelDeps {
 
 export interface ArrivalPanelHandle {
   update(state: WalkState): void;
+  /** The scooter went while the rider was walking to it. Takes over the panel
+   *  entirely — continuing to show a walk ETA to a scooter somebody else is
+   *  riding is the app knowing something and not saying it. */
+  reportGone(message: string): void;
   destroy(): void;
 }
 
@@ -63,6 +67,7 @@ export function createArrivalPanel(
 ): ArrivalPanelHandle {
   let arrived = false;
   let destroyed = false;
+  let gone = false;
 
   const panel = el("div", "arrival");
   const head = el("div", "arrival__head");
@@ -145,9 +150,28 @@ export function createArrivalPanel(
 
   return {
     update(state) {
-      if (destroyed) return;
+      if (destroyed || gone) return;
       if (state.arrived) setArrived();
       else if (!arrived) renderWalking(state);
+    },
+    reportGone(message) {
+      if (destroyed || gone) return;
+      gone = true;
+      panel.classList.add("is-gone");
+      title.textContent = `😞 ${message}`;
+      sub.textContent = "Pick another one — the map is still behind this.";
+      body.replaceChildren();
+      const back = el("button", "arrival__action arrival__action--primary");
+      back.type = "button";
+      back.append(
+        el("span", "arrival__action-glyph", "🗺️"),
+        el("span", "", "Find another scooter"),
+      );
+      back.addEventListener("click", () => {
+        track("arrival_panel", { action: "find_another" });
+        deps.onCancel();
+      });
+      body.append(back);
     },
     destroy() {
       destroyed = true;

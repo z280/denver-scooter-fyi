@@ -43,6 +43,9 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
+import { callDibs, dibsAge, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import { registerDibs, type VehicleDibs } from "./api.ts";
+import { openDibsCertificate, showDibsConfirmation } from "./dibs-certificate.ts";
 import {
   submitModelReport,
   submitDeviceReport,
@@ -133,6 +136,19 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
  *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
  *  tight enough that the button means "you're at this scooter." */
 const UNLOCK_PROXIMITY_M = 75;
+
+/** How far away a scooter can be and still be worth claiming.
+ *
+ *  "I'll ride this one" used to share ▶️ Open in Veo's 75 m unlock proximity,
+ *  because it used to mean "I am standing at this scooter". It doesn't any
+ *  more — it starts a WALK to it — so that gate made the walk feature
+ *  unreachable except from the one place you'd never need it.
+ *
+ *  The right limit is how far somebody will actually walk, which is already
+ *  decided: dibbs allows a fifteen-minute walk, and this is that distance at
+ *  the 4.5 km/h pace the walk router quotes. Past it a claim is speculation
+ *  and the walk is a hike. */
+const RIDE_MAX_WALK_M = Math.round((4.5 * 1000 / 60) * 15); // ~1125 m
 
 /** Both device-photo endpoints require a bearer session — uploading AND
  *  listing — so a signed-out rider gets the same hint from either button. */
@@ -286,7 +302,7 @@ export class Devices {
   private readonly plates = new GbfsPlates();
   /** Session status, pushed in by wireAccount() once /auth/session
    *  resolves. admin lifts the proximity gate on ▶️ Start (issue #18) and on
-   *  🧭 Use in Ride Mode. */
+   *  🛴 I'll ride this one. */
   private adminSession = false;
   /** What the open popup was built from, so a later admin flip can rebuild
    *  it. Cleared on close alongside `this.popup`. */
@@ -308,11 +324,49 @@ export class Devices {
     if (open) this.openDevicePopup(open.props, open.coords);
   }
 
-  /** Intercept 🧭 Use in Ride Mode. Returns true when something else has
+  /** Rebuild the open popup in place — the same mechanism `setAdminSession`
+   *  uses. Calling dibs changes what the popup should show about itself, and
+   *  a claim the rider cannot see is a claim they will make twice. */
+  /** The live claims, pushed in by main.ts with each device refresh.
+   *
+   *  Pushed rather than fetched here: dibbs are rare — a handful across the
+   *  fleet against thousands of vehicles — so one small response per refresh
+   *  beats a request every time somebody taps a scooter, and the popup
+   *  already knows the answer when it opens instead of gaining it a moment
+   *  later. It also keeps this class rendering rather than fetching. */
+  setVehicleDibs(dibs: Record<string, VehicleDibs | undefined>): void {
+    this.vehicleDibs = dibs;
+    // A claim landing or expiring changes what an OPEN popup should offer.
+    this.refreshOpenPopup();
+  }
+
+  private refreshOpenPopup(): void {
+    const open = this.openPopupFor;
+    if (open) this.openDevicePopup(open.props, open.coords);
+  }
+
+  /** Intercept 🛴 I'll ride this one. Returns true when something else has
    *  taken the ride over — the home bar's walk-to-the-scooter flow does,
    *  whenever a destination is already known — and false to fall through to
    *  the preflight survey and the wizard, which is still the right path for a
    *  rider who tapped a scooter with no trip in mind. */
+  /** Who to print on a certificate. Injected by main.ts from the signed-in
+   *  profile; absent means the honest anonymous form rather than a made-up
+   *  name. */
+  private dibsClaimant: (() => string) | null = null;
+
+  /** Live claims by vehicle, as the server last reported them.
+   *
+   *  Populated on popup open (see refreshDibsFor) rather than with the device
+   *  feed: the feed carries thousands of vehicles and almost none of them are
+   *  claimed, so asking about the one the rider is actually looking at is the
+   *  only version of this that scales. */
+  private vehicleDibs: Record<string, VehicleDibs | undefined> = {};
+
+  setDibsClaimant(fn: () => string): void {
+    this.dibsClaimant = fn;
+  }
+
   private rideInterceptor:
     | ((info: { name: string; plate: string | null; vehicleIdentifier: string | null;
                 lat: number; lng: number }) => boolean)
@@ -817,6 +871,16 @@ export class Devices {
       // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
       // skip the proximity requirement entirely. The button is ALWAYS
       // visible; when disabled, tapping it explains why in the hint line.
+      // Somebody else's live claim, if the lookup has answered. Null while it
+      // is in flight or when there is none — the popup renders immediately
+      // either way and gains the notice when it lands, because a popup that
+      // waits on the network to show its buttons is worse than one that
+      // updates a moment later.
+      const gateVid = props.vehicle_identifier ? String(props.vehicle_identifier) : "";
+      const held = gateVid ? this.vehicleDibs[gateVid] ?? null : null;
+      // A rider's OWN dibs never blocks them — it is the reason they are here.
+      const heldByOther = held && !dibsOn(gateVid) ? held : null;
+
       const signedIn = isAuthenticated();
       const nearEnough =
         user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
@@ -844,32 +908,43 @@ export class Devices {
       // explicit rather than riding on TS aliased-condition narrowing.
       const startHref =
         startAllowed && effectivePlate && !outOfService && !reserved
+        && !heldByOther
           ? veoDeepLink(effectivePlate)
           : null;
       const startBtn = startHref
         ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Open in Veo</a>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Open in Veo</button>`;
 
-      // 🧭 Use in Ride Mode carries the same geographic gate as ▶️ Start:
-      // both rows commit the rider to THIS scooter, and neither means
-      // anything from across town — ride mode's whole premise is that the
-      // rider is standing at the vehicle (it is what lets the preflight skip
-      // the wizard's "which scooter?" screens). Admins bypass proximity, as
-      // they do for Start, so the flows stay testable from a desk. Sign-in
-      // is deliberately NOT required here: ride mode runs client-side, and
-      // Start still enforces its own session gate downstream.
-      const rideAllowed = this.adminSession || nearEnough;
+      // 🛴 I'll ride this one is gated on WALKING distance, not on standing
+      // at the vehicle — it starts a walk, so requiring you to already be
+      // there was the gate contradicting the button. ▶️ Open in Veo keeps the
+      // tight unlock proximity above, because that one really does need you
+      // at the scooter.
+      //
+      // Admins bypass it, as they do for Start, so the flows stay testable
+      // from a desk. Sign-in is deliberately NOT required: ride mode runs
+      // client-side, and Start enforces its own session gate downstream.
+      const walkMeters = user ? distanceMeters(user, here) : null;
+      const withinWalk = walkMeters !== null && walkMeters <= RIDE_MAX_WALK_M;
+      const rideAllowed = this.adminSession || withinWalk;
+
+      // Somebody else's live claim, if the lookup has answered. Null while it
+      // is in flight or when there is none — the popup renders immediately
+      // either way and gains the notice when it lands, because a popup that
+      // waits on the network to show a button is worse than one that updates.
       let rideHint = "";
       if (outOfService) {
         rideHint = "This scooter is marked out of service.";
       } else if (reserved) {
         rideHint = "Reserved by another rider right now.";
+      } else if (heldByOther) {
+        rideHint = `${heldByOther.claimed_by} called dibbs on this one.`;
       } else if (!rideAllowed) {
         rideHint = user
-          ? "You're too far away, sorry!"
-          : "Turn on your location to use ride mode with this scooter.";
+          ? `Too far to walk — that's ${formatWalk(walkMeters ?? 0)} away.`
+          : "Turn on your location to ride this scooter.";
       }
-      const rideOk = rideAllowed && !outOfService && !reserved;
+      const rideOk = rideAllowed && !outOfService && !reserved && !heldByOther;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
@@ -1135,7 +1210,7 @@ export class Devices {
       // key stats. The report tools hide behind ⚠️ Report; everything else
       // lives in the ℹ️ Details modal — the popup itself stays short. The
       // admin two-column variant is gone; admin extras ride in the modal.
-      // Two more actions. "Use in Ride Mode" spans the row as the primary
+      // Two more actions. "I'll ride this one" spans the row as the primary
       // CTA — it is the one the rider standing at the scooter most likely
       // wants, and it is the reason the wizard's "which scooter?" screens
       // can be skipped at all (they already answered that by opening this
@@ -1145,9 +1220,36 @@ export class Devices {
       // vehicle_identifier: the
       // API keys the report on it, and there is nothing useful to send
       // without one.
+      // SOMEBODY ELSE CALLED IT. Said above the buttons, in red, naming the
+      // person — not "unavailable", because that would be untrue: nothing
+      // here stops this scooter unlocking, and a rider who opens Veo directly
+      // is unaffected. What the app can honestly do is decline to help you
+      // take something somebody else is walking towards, and say who.
+      const dibsNotice = heldByOther
+        ? `<p class="device-popup__dibs-notice">✋ ${escapeHtml(heldByOther.claimed_by)} has dibbs!</p>`
+        : "";
       const rideBtn = rideOk
-        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🧭 Use in Ride Mode</button>`;
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🛴 I'll ride this one</button>`
+        : heldByOther
+        // The button becomes the useful thing instead of a dead one: the
+        // rider's actual question is "says who?", and the certificate answers
+        // it with a name and a timestamp they can check.
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="view-dibs">📜 View dibbs certificate</button>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🛴 I'll ride this one</button>`;
+      // DIBS. Veo has no reservation, so this is the honest substitute: a
+      // timestamped claim with exactly the standing of calling dibs on the
+      // front seat. It sits beside the ride button rather than inside the ride
+      // flow, because the moment a rider wants it is the moment they SPOT the
+      // scooter — four blocks out, before they have committed to anything.
+      const heldDibs = vid ? dibsOn(vid) : null;
+      const dibsRow = vid
+        ? `<div class="device-popup__dibs">${
+            heldDibs
+              ? `<button type="button" class="device-popup__action" data-action="dibs-cert">📜 Your dibs · ${escapeHtml(dibsAge(heldDibs))}</button>` +
+                `<button type="button" class="device-popup__action" data-action="dibs-drop">Drop</button>`
+              : `<button type="button" class="device-popup__action" data-action="dibs-call">✋ Call dibs</button>`
+          }</div>`
+        : "";
       const featuresBtn =
         vid.length >= 16
           ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
@@ -1171,7 +1273,9 @@ export class Devices {
              <button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">🖼️ Show Photos</button>`;
       const actionRow = `
         <div class="device-popup__actionrow">
+          ${dibsNotice}
           ${rideBtn}
+          ${dibsRow}
           ${startBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
@@ -1309,16 +1413,95 @@ export class Devices {
             (root) => this.wireRangeToggles(root),
           );
         });
-      // 🧭 Use in Ride Mode — the device card's shortcut into ride mode.
+      // 🛴 I'll ride this one — the device card's shortcut into the ride flow.
+      //
+      // NAMED FOR THE RIDER'S INTENT, not our architecture. "Use in Ride
+      // Mode" told them which of our surfaces they were about to enter, which
+      // is information only we have a use for. This says the thing they are
+      // actually deciding — and it is the same sentence they will say out
+      // loud to somebody walking towards the same scooter.
       // The rider has already answered "which scooter?" by opening this
       // popup, so the survey asks the three things the wizard would have,
       // then jumps past every screen the answers make unnecessary
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
       // Screen 6 build a working Open-in-Veo deep link without a second
       // GBFS round trip.
+      // 📜 View dibbs certificate — the useful answer to "says who?" when
+      // somebody else has it.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="view-dibs"]')
+        ?.addEventListener("click", () => {
+          const other = this.vehicleDibs[vid];
+          if (!other) return;
+          track("dibs", { action: "view_other" });
+          window.open(other.certificate_url, "_blank", "noopener");
+        });
+
+      // ✋ Dibs — claim it, drop it, or show the certificate.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-call"]')
+        ?.addEventListener("click", () => {
+          const here = this.locate.current();
+          const claim = callDibs({
+            vehicleIdentifier: vid,
+            vehicleName: headerName,
+            plate: effectivePlate,
+            claimedBy: this.dibsClaimant?.() ?? "Someone with the app",
+            // The baseline every progress check measures against (dibs rule 1).
+            startMeters: here ? distanceMeters(here, { lat: coords[1], lng: coords[0] }) : 0,
+          });
+          track("dibs", { action: "call" });
+          // TELL THEM, don't just open the certificate over the map. The
+          // rider tapped a small button and deserves to be told it worked —
+          // but throwing a full-screen document at somebody who is probably
+          // about to start walking is the wrong response to a confirmation.
+          // The notice carries the link; opening it is their choice.
+          showDibsConfirmation(claim);
+          this.refreshOpenPopup();
+          void registerDibs({
+            vehicle_identifier: claim.vehicleIdentifier,
+            vehicle_name: claim.vehicleName,
+            plate: claim.plate,
+            claimed_by: claim.claimedBy,
+            provider: "Veo",
+            device_type: model ? model.name : (props.vehicle_model_name ?? ""),
+            lat: coords[1],
+            lon: coords[0],
+          })
+            .then((reg) => {
+              saveDibs({
+                ...claim,
+                registration: {
+                  id: reg.id,
+                  verifyUrl: reg.verify_url,
+                  qrUrl: reg.qr_url,
+                },
+              });
+              // The notice is already up; nothing to re-open. When the rider
+              // taps through, dibsOn() reads the registered copy and the
+              // certificate has its QR.
+            })
+            .catch(() => {
+              /* the certificate already says the time is from this phone */
+            });
+        });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-cert"]')
+        ?.addEventListener("click", () => {
+          const held = dibsOn(vid);
+          if (held) openDibsCertificate(held);
+        });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-drop"]')
+        ?.addEventListener("click", () => {
+          dropDibs(vid);
+          track("dibs", { action: "drop" });
+          this.refreshOpenPopup();
+        });
+
       // 🚶 Walk me there — the in-app walk. This used to be an <a> that opened
       // Google or Apple Maps, which is the app admitting it cannot do the one
-      // thing it just offered. Same interceptor as Use in Ride Mode, so a
+      // thing it just offered. Same interceptor as "I'll ride this one", so a
       // rider with a destination in hand keeps it.
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="walk-here"]')

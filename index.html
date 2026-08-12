@@ -48,7 +48,10 @@
       content="Live interactive map of every Denver Veo scooter and e-bike, with disadvantaged-area overlays and daily compliance status."
     />
     <title>Denver Veo Scooter &amp; E-Bike Map</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛴%3C/text%3E%3C/svg%3E" />
+    <!-- The real mark, not an emoji: a glyph favicon renders in whatever the
+         platform feels like and cannot be themed. public/mark.svg draws in
+         currentColor, which a favicon resolves against the tab's own text. -->
+    <link rel="icon" href="/mark.svg" type="image/svg+xml" />
     <!-- PWA install metadata. manifest.webmanifest + icon-*.png drive the
          Android/desktop install UI; the apple-* tags are iOS Safari's own
          (pre-manifest) equivalents — it ignores the manifest's icons/name. -->
@@ -96,6 +99,8 @@
         <!-- .maplibregl-ctrl-top-left (GPS + theme) is adopted here by chrome.ts -->
       </div>
       <div class="topbar__brand" aria-hidden="true">
+        <!-- Replaced by the real mark at boot (chrome.ts); the glyph is the
+             pre-hydration fallback so the bar never renders empty. -->
         <span class="topbar__brand-glyph">🛴</span>
         <span class="topbar__brand-name">Scooter.fyi</span>
       </div>

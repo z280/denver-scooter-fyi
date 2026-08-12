@@ -39,6 +39,15 @@ export const TELEMETRY_EVENTS = [
   // The strip under the map: how often riders go back to what they are on,
   // and how often they end from there rather than from inside the HUD.
   "active_vehicle",
+  // Dibs: claimed, dropped, certificate shown. The certificate count is the
+  // interesting one — it is the only event that means the thing got shown to
+  // another human.
+  "dibs",
+  // Which of the four dibs alerts fired. The ratio of `taken` to the
+  // countdowns is the honest measure of whether dibs is worth anything.
+  "dibs_alert",
+  // The watched scooter went while the rider was walking to it, and why.
+  "device_gone",
   "drawer_open",
   "account_tab",
   "theme_change",

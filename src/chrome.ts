@@ -5,7 +5,22 @@
 // tabs themselves (including the top bar's profile button, which drives
 // the right-side account drawer).
 
+import { markSvg } from "./mark.ts";
+
 const RIBBON_KEY = "scooter-fyi-ribbon";
+
+/** Swap the top bar's placeholder glyph for the real mark.
+ *
+ *  The 🛴 in the markup is a pre-hydration fallback so the bar never renders
+ *  empty; this replaces it once the module loads. Only the BRAND uses of that
+ *  emoji change — the ones that mean "a standing scooter" (the ride-type
+ *  filter, the No Standing preset, the device tiers) are about a vehicle
+ *  class, not about us, and swapping those would say the wrong thing. */
+export function installBrandMark(): void {
+  const slot = document.querySelector(".topbar__brand-glyph");
+  if (!slot) return;
+  slot.replaceChildren(markSvg("topbar__brand-mark"));
+}
 
 /** Everything that can be left open over the map. Registered by the owners
  *  (devices/clusters) so mode switches can sweep all of it at once. */

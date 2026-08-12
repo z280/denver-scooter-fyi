@@ -73,7 +73,11 @@ const DEVICE: [number, number] = [-104.99, 39.74];
 // ~0.0002° of longitude at Denver's latitude ≈ 17 m — inside the 75 m gate.
 const NEAR: LngLat = { lng: DEVICE[0] + 0.0002, lat: DEVICE[1] };
 // ~0.01° ≈ 855 m — comfortably outside it.
-const FAR: LngLat = { lng: DEVICE[0] + 0.01, lat: DEVICE[1] };
+/** ~850 m: too far to UNLOCK (that needs you at the scooter) but well within
+ *  walking, which is what "I'll ride this one" now starts. */
+const WALKABLE: LngLat = { lng: DEVICE[0] + 0.01, lat: DEVICE[1] };
+/** ~2.6 km: past the fifteen-minute walk a claim is allowed to be. */
+const FAR: LngLat = { lng: DEVICE[0] + 0.03, lat: DEVICE[1] };
 
 function fakeMap() {
   const setData = vi.fn();
@@ -165,9 +169,23 @@ describe("device popup — geographic gate on the two primary rows", () => {
     expect(startEnabled(html)).toBe(false);
   });
 
-  it("blocks both rows when the rider is too far away", () => {
+  it("blocks the ride row only once it is beyond a sane walk", () => {
+    // The threshold is the fifteen-minute walk dibbs allows, at the pace the
+    // walk router quotes — past that a claim is speculation and the walk is
+    // a hike.
     const html = openPopup({ fix: FAR });
     expect(rideBlocked(html)).toBe(true);
+    expect(startEnabled(html)).toBe(false);
+  });
+
+  it("does NOT block the ride row for a scooter you can walk to", () => {
+    // The regression this pins: "I'll ride this one" used to share Open in
+    // Veo's 75 m unlock proximity, from when it meant "I am standing at this
+    // scooter". It starts a WALK now, so that gate made the walk feature
+    // unreachable from anywhere you would actually need it.
+    const html = openPopup({ fix: WALKABLE });
+    expect(rideEnabled(html)).toBe(true);
+    // Unlocking still needs you at the vehicle, which is a different claim.
     expect(startEnabled(html)).toBe(false);
   });
 
@@ -218,7 +236,10 @@ describe("device popup — geographic gate on the two primary rows", () => {
     expect(hint?.hidden).toBe(true);
     btn?.click();
     expect(hint?.hidden).toBe(false);
-    expect(hint?.textContent).toContain("too far away");
+    // Says HOW far, not just "too far" — a rider deciding whether to walk it
+    // needs the number, and the app already knows it.
+    expect(hint?.textContent).toContain("Too far to walk");
+    expect(hint?.textContent).toMatch(/\d/);
   });
 
   it("tells a fix-less rider to turn on location rather than to walk closer", () => {

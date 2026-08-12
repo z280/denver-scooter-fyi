@@ -291,6 +291,13 @@ body::before {
 }
 .topbar__brand-glyph {
   font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+.topbar__brand-mark {
+  width: 22px;
+  height: auto;
 }
 .topbar__brand-name {
   font-size: 16px;
@@ -773,6 +780,340 @@ body:not(.ribbon-open) .drawer-tabs {
 .ride-route-battery.is-warning {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* ---------- Dibs ---------- */
+.device-popup__dibs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.device-popup__dibs .device-popup__action {
+  flex: 1 1 auto;
+}
+/* Somebody else called it. Red, above the buttons, naming the person —
+   never "unavailable", because that would be untrue: nothing stops this
+   scooter unlocking and a rider who opens Veo directly is unaffected. */
+.device-popup__dibs-notice {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12.5px;
+  font-weight: 800;
+  text-align: center;
+}
+
+/* "You've got dibbs" — a confirmation, not a document. */
+.dibs-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(
+    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+      var(--float-inset)
+  );
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(94vw, 420px);
+  padding: 11px 12px;
+  border-radius: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  animation: dibs-toast-in 0.22s ease-out;
+}
+@keyframes dibs-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dibs-toast { animation: none; }
+}
+.dibs-toast__glyph {
+  font-size: 19px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.dibs-toast__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.dibs-toast__what {
+  display: block;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dibs-toast__view {
+  flex: 0 0 auto;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dibs-toast__view:hover,
+.dibs-toast__view:focus-visible {
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--metal-active-border);
+}
+body.ride-active .dibs-toast {
+  display: none;
+}
+
+.dibs-badge {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* The certificate. Sized and weighted for ONE use: held at arm's length,
+   read by a stranger at an angle, in Denver sun. Big name, big time, hard
+   contrast, no scrolling. */
+.dibs-cert {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* over everything, including the HUD */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 15, 25, 0.72);
+  backdrop-filter: blur(3px);
+}
+.dibs-cert__card {
+  position: relative;
+  width: min(92vw, 420px);
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: 22px 20px 18px;
+  text-align: center;
+  border-radius: 18px;
+  /* Deliberately a document, not a panel: warm paper, a heavy rule, a serif.
+     The absurdity is the honesty — this is a joke that happens to work, and
+     dressing it as a system dialog would oversell it. */
+  background: #fdfaf3;
+  color: #2b2418;
+  border: 2px solid #b9a06a;
+  box-shadow: 0 0 0 6px rgba(185, 160, 106, 0.18), var(--shadow);
+  /* The app's own rounded sans, not a serif. The certificate reads as a
+     document through its LAYOUT — the rule, the seal, the caps — which
+     survives without borrowing somebody's idea of officialdom in a typeface
+     nothing else here uses. */
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+}
+:root[data-theme="dark"] .dibs-cert__card {
+  background: #f6f1e6;
+}
+.dibs-cert__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #cbb98d;
+  background: transparent;
+  color: #6b5c3c;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dibs-cert__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #0066ff;
+}
+.dibs-cert__mark {
+  width: 34px;
+  height: auto;
+  flex: 0 0 auto;
+}
+.dibs-cert__word {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #2b2418;
+}
+.dibs-cert__tld {
+  color: #0066ff;
+}
+.dibs-cert__title {
+  margin: 12px 0 12px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b5c3c;
+  border-bottom: 2px solid #b9a06a;
+  padding-bottom: 8px;
+}
+/* The certificate's opening word IS the mark. */
+.dibs-cert__fyi {
+  margin: 0 0 10px;
+  color: #0066ff;
+}
+.dibs-cert__fyi-art {
+  display: block;
+  width: 92px;
+  height: auto;
+  margin: 0 auto;
+}
+.dibs-cert__claim {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.dibs-cert__plate {
+  font-size: 13px;
+  color: #6b5c3c;
+  white-space: nowrap;
+}
+.dibs-cert__lede {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: #6b5c3c;
+}
+
+/* THE LIVENESS STRIP. See dibs-certificate.ts: a still image of this is
+   indistinguishable from a forgery, so the real one moves and says so. */
+.dibs-cert__live {
+  position: relative;
+  margin: 14px 0 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(0, 102, 255, 0.08);
+  border: 1px solid rgba(0, 102, 255, 0.25);
+}
+.dibs-cert__sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(0, 102, 255, 0.28) 45%,
+    rgba(0, 102, 255, 0.05) 60%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: dibs-sweep 2.1s linear infinite;
+}
+.dibs-cert__live-text {
+  position: relative;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #0b4fbf;
+}
+/* The countdown. Tabular figures so the seconds tick in place instead of the
+   whole line jittering — motion is the signal here, and the wrong motion
+   reads as a glitch. */
+.dibs-cert__clock {
+  position: relative;
+  margin-right: 6px;
+  font-size: 15px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: #0b4fbf;
+}
+.dibs-cert__live.is-expired {
+  background: rgba(192, 38, 38, 0.08);
+  border-color: rgba(192, 38, 38, 0.3);
+}
+.dibs-cert__live.is-expired .dibs-cert__clock,
+.dibs-cert__live.is-expired .dibs-cert__live-text {
+  color: #c02626;
+}
+.dibs-cert__live.is-expired .dibs-cert__sweep {
+  display: none;
+}
+@keyframes dibs-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* Reduced motion still needs a liveness signal — a rider who has asked for
+   less movement has not asked to be handed an unverifiable certificate. A
+   slow pulse carries the same "this is live" fact without travel. */
+@media (prefers-reduced-motion: reduce) {
+  .dibs-cert__sweep {
+    animation: dibs-pulse 2.4s ease-in-out infinite;
+    transform: none;
+  }
+  @keyframes dibs-pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 0.75; }
+  }
+}
+
+.dibs-cert__rules {
+  margin: 14px 0 0;
+  text-align: left;
+  border-top: 1px solid #ddd0ac;
+  padding-top: 10px;
+}
+.dibs-cert__rules summary {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b5c3c;
+  cursor: pointer;
+}
+.dibs-cert__rules ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.dibs-cert__rules li {
+  margin: 0 0 7px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.dibs-cert__qr-cap--warn {
+  color: #a5561b;
+}
+.dibs-cert__qr {
+  width: 128px;
+  margin: 0 auto;
+  color: #2b2418;
+}
+.dibs-cert__qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.dibs-cert__qr-cap {
+  margin: 5px 0 0;
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: #6b5c3c;
+}
+.dibs-cert__fine {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #ddd0ac;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #6b5c3c;
 }
 
 /* ---------- Active vehicle strip (active-vehicle.ts) ---------- */
