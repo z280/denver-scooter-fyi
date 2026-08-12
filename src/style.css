@@ -60,12 +60,19 @@
      its buttons float over the map as separate chips. That rule proved the
      pattern; this makes it the default rather than a fallback. */
   --float-inset: 12px;
+  /* The bottom-centre stack: the WeSeeYouVeo mark sits on the edge and the
+     home bar floats directly above it. --brand-h is that mark's height, so
+     the bar's offset is derived rather than a literal that drifts the moment
+     the logo is resized. */
+  --brand-h: 60px;
   --float-top: max(var(--float-inset), env(safe-area-inset-top));
   --float-side-l: max(var(--float-inset), env(safe-area-inset-left));
   --float-side-r: max(var(--float-inset), env(safe-area-inset-right));
-  /* Still "everything the top strip occupies", so every downstream offset
-     keeps working — it just now includes the gap above the chips. */
-  --topbar-h: calc(var(--float-top) + 44px);
+  /* --topbar-band-h is the bar itself; --topbar-h is still "everything the
+     top strip occupies" (the gap above it plus the bar), so every downstream
+     offset — ribbon, drawers, chips — keeps deriving from one place. */
+  --topbar-band-h: 48px;
+  --topbar-h: calc(var(--float-top) + var(--topbar-band-h));
   /* 40px buttons + 6px padding + 1px border per side (border-box). */
   --ribbon-w: 54px;
   --ribbon-gutter: 0px;
@@ -208,43 +215,27 @@ body::before {
 }
 
 /* ---------- Top bar ---------- */
-/* No band. The bar is an invisible full-width strip that positions three
-   floating clusters; the map runs underneath it to the top edge and shows
-   between and around them. pointer-events are handed back only to the
-   clusters, so the map stays draggable through the gaps. */
+/* Still a bar — one element, not a scatter of chips. It just floats now:
+   inset from the top and both sides, rounded and shadowed, with map running
+   above it and down both edges instead of a band welded across the frame.
+   Its buttons stay flat inside it, because the BAR is the element and the
+   buttons are its contents. */
 .topbar {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--topbar-h);
-  padding-top: var(--float-top);
-  padding-left: var(--float-side-l);
-  padding-right: var(--float-side-r);
+  top: var(--float-top);
+  left: var(--float-side-l);
+  right: var(--float-side-r);
+  height: var(--topbar-band-h);
+  padding-left: 8px;
+  padding-right: 8px;
   z-index: 34; /* over the ribbon (32) and drawers (30), under the safe-area mask (55) */
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: transparent;
-  pointer-events: none;
-}
-.topbar__left,
-.topbar__right,
-.topbar__brand {
-  pointer-events: auto;
-}
-/* Each CONTROL is its own chip, not each cluster: the direction is that
-   elements read as independent, and a rider should see map between the
-   hamburger and the GPS button, not a welded-together bar of them. */
-.topbar__left,
-.topbar__right {
-  gap: 8px;
-}
-.topbar__btn,
-.topbar .maplibregl-ctrl {
   background: var(--bg-panel);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 .topbar__left,
@@ -257,7 +248,9 @@ body::before {
   appearance: none;
   width: 40px;
   height: 40px;
-  border-radius: var(--radius);
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -279,18 +272,13 @@ body::before {
 .topbar__brand {
   position: absolute;
   left: 50%;
-  top: var(--float-top);
+  top: 0;
+  height: var(--topbar-band-h);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 40px;
-  padding: 0 14px;
-  background: var(--bg-panel);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: var(--shadow);
+  pointer-events: none;
   user-select: none;
 }
 .topbar__brand-glyph {
@@ -316,12 +304,15 @@ body::before {
   position: static;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   pointer-events: auto;
 }
 .topbar .maplibregl-ctrl {
   margin: 0;
-  border-radius: var(--radius);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
   overflow: hidden;
   float: none;
 }
@@ -761,7 +752,13 @@ body:not(.ribbon-open) .drawer-tabs {
    should not have to close anything first. */
 .home-bar {
   position: fixed;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  /* Stacked above the WeSeeYouVeo mark, with a float gap between them, so
+     both are centred and neither overlaps the other. Derived from --brand-h
+     rather than hardcoded, so resizing the logo moves the bar with it. */
+  bottom: calc(
+    max(var(--float-inset), env(safe-area-inset-bottom)) + var(--brand-h) +
+      var(--float-inset)
+  );
   left: 50%;
   /* --freshness-lift: same variable, same reason, as the old mode bar — the
      freshness pill's tap-expanded text must not be sat on. main.ts sets it on
@@ -1452,27 +1449,20 @@ body.is-map-picking .home-bar {
 }
 
 /* ---------- Brand link (bottom-left, beside zoom controls) ---------- */
+/* Bottom centre, with the home bar floating directly above it — the two read
+   as one centred stack rather than two things that happened to land near each
+   other. Centring is also what lets the mark survive on a phone: tucked into
+   the bottom-left it had to be hidden below 720px to stop colliding with the
+   zoom control, and here it has the middle of the edge to itself. */
 .brand-link {
   position: fixed;
   bottom: max(var(--float-inset), env(safe-area-inset-bottom));
-  /* Clears the zoom control with a full float gap rather than the 3px the
-     old literal left once the controls moved in: MapLibre's own ~10px margin
-     inside --float-side-l, plus the ~31px control, plus the standard gap.
-     Every element gets map on all four sides, including from its neighbour. */
-  left: calc(var(--float-side-l) + 10px + 31px + var(--float-inset));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 5;
   display: inline-flex;
   align-items: center;
   line-height: 0;
-}
-/* Along the bottom edge there is room for the zoom control, the home bar and
-   the freshness pill — a fourth element there stops being independent and
-   starts being a collision. The mark keeps its place in the About drawer,
-   which is where a credit belongs anyway. */
-@media (max-width: 720px) {
-  .brand-link {
-    display: none;
-  }
 }
 
 /* ---------- Account drawer login placeholder ---------- */
@@ -2237,9 +2227,20 @@ body.is-map-picking .ride-modal {
 
 .brand-link img {
   display: block;
-  /* Matches the stacked zoom +/- buttons (~29px each) plus the divider. */
-  height: 60px;
+  height: var(--brand-h);
   width: auto;
+  /* Centred, it now has the zoom control on one side and the freshness pill
+     on the other — it must not grow into either. */
+  max-width: min(60vw, 320px);
+  object-fit: contain;
+}
+/* A 60px mark plus the bar above it is a lot of a phone's height to spend on
+   the bottom edge — shrink the mark rather than drop it, and --brand-h pulls
+   the bar down with it. */
+@media (max-width: 720px) {
+  :root {
+    --brand-h: 40px;
+  }
 }
 
 /* ---------- Compliance gauge (rendered inside its drawer) ---------- */
@@ -2564,6 +2565,23 @@ body.is-map-picking .ride-modal {
 .maplibregl-ctrl-attrib.maplibregl-compact {
   background: var(--bg-panel);
   color: var(--fg-muted);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+/* The home bar is centred at the bottom, so the expanded attribution — which
+   runs rightward from the left edge — collides with it on a narrow screen.
+   Collapse it to MapLibre's own ⓘ there (its intended compact behaviour, and
+   still one tap from the full credit); the same credit is also spelled out in
+   the About drawer, so nothing is lost. */
+@media (max-width: 720px) {
+  .maplibregl-ctrl-attrib.maplibregl-compact.maplibregl-compact-show
+    .maplibregl-ctrl-attrib-inner {
+    display: none;
+  }
+  .maplibregl-ctrl-attrib.maplibregl-compact.maplibregl-compact-show {
+    padding: 2px 0 2px 0;
+    min-width: 24px;
+  }
 }
 .maplibregl-ctrl-attrib a {
   color: var(--fg-muted);
@@ -2575,8 +2593,8 @@ body.is-map-picking .ride-modal {
 /* ---------- Freshness footer ---------- */
 .freshness {
   position: fixed;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  right: max(12px, env(safe-area-inset-right));
+  bottom: max(var(--float-inset), env(safe-area-inset-bottom));
+  right: var(--float-side-r);
   /* A passive status readout: below the wizard (28) and drawers (30/31),
      like the mode bar (27) — any open panel wins the overlap. (It sat at
      30 and painted over the Find wheels wizard on landscape phones.) */
@@ -3800,16 +3818,37 @@ body.landscape-hint-dismissed .hud-note--landscape {
   .mode-switch {
     bottom: max(52px, env(safe-area-inset-bottom));
   }
-  /* This breakpoint used to be where the top bar's band dissolved into
-     floating chips. That is now the default everywhere (see --float-inset),
-     so all that is left here is the part that is genuinely about a short
-     viewport: tighten the gap above the chips, and drop the wordmark, which
-     is the one element that buys nothing when vertical room is scarce. */
+  /* Short viewport: the bar gives up its band so the map runs to the top
+     edge, and the hamburger, GPS/theme cluster and profile button float as
+     individual chips. Vertical room is the scarce thing here, so the one
+     element that buys nothing — the wordmark — goes too. --topbar-band-h
+     shrinks to the floating buttons' strip so ribbon/drawers/chips still
+     clear them. */
   :root {
     --float-inset: 8px;
+    --topbar-band-h: 44px;
+  }
+  .topbar {
+    background: transparent;
+    backdrop-filter: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    pointer-events: none;
   }
   .topbar__brand {
     display: none;
+  }
+  .topbar__left,
+  .topbar__right {
+    pointer-events: auto;
+  }
+  .topbar__btn,
+  .topbar .maplibregl-ctrl {
+    background: var(--bg-panel);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
   }
 }
 
