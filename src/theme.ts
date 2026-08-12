@@ -359,3 +359,91 @@ export class ThemeControl implements maplibregl.IControl {
     this.btn.removeAttribute("aria-pressed");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Theme modes, named out loud (drawer header)
+// ---------------------------------------------------------------------------
+
+/** The three modes as a labelled segmented control, mounted in the Account
+ *  drawer's header.
+ *
+ *  IT REPLACES A CYCLING BUTTON on the map's top bar, and both halves of that
+ *  are deliberate.
+ *
+ *  Off the top bar, because the top bar is for controls that move you around
+ *  the MAP. Theme is a preference about the app; sitting there it borrowed a
+ *  meaning it did not have (and, with the brushed-metal finish those controls
+ *  wear, borrowed the look too).
+ *
+ *  Named rather than cycled, because one button showing one glyph asks the
+ *  rider to remember both which mode they are in and what the next tap will
+ *  do — and "Auto" is not guessable from any icon at all. Three labelled
+ *  options say the whole state and every available choice at once, and cost
+ *  one tap instead of up to three.
+ */
+export function mountThemeModes(host: HTMLElement): () => void {
+  const MODES: readonly { mode: ThemeMode; label: string; glyph: string }[] = [
+    { mode: "light", label: "Light", glyph: "☀️" },
+    { mode: "dark", label: "Dark", glyph: "🌙" },
+    // Sun-sync: the theme follows local sunrise/sunset. "Auto" is the word
+    // riders expect from every other app that does this.
+    { mode: "auto", label: "Auto", glyph: "🌗" },
+  ];
+
+  const current = (): ThemeMode =>
+    isSunSyncEnabled() ? "auto" : currentTheme();
+
+  const buttons = MODES.map(({ mode, label, glyph }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "theme-modes__btn";
+    btn.dataset.mode = mode;
+    btn.append(
+      Object.assign(document.createElement("span"), {
+        className: "theme-modes__glyph",
+        textContent: glyph,
+        // The word beside it carries the meaning; the glyph is decoration and
+        // must not be read out twice.
+        ariaHidden: "true",
+      }),
+      Object.assign(document.createElement("span"), {
+        className: "theme-modes__label",
+        textContent: label,
+      }),
+    );
+    btn.addEventListener("click", () => {
+      if (current() === mode) return;
+      track("theme_change", { theme: mode === "auto" ? "sunsync" : mode });
+      if (mode === "auto") setSunSync(true);
+      else setManualTheme(mode);
+    });
+    return btn;
+  });
+
+  const render = (): void => {
+    const now = current();
+    for (const btn of buttons) {
+      const on = btn.dataset.mode === now;
+      btn.classList.toggle("is-active", on);
+      // A radio group, semantically: exactly one is chosen, and the others
+      // are choices rather than toggles that happen to be off.
+      btn.setAttribute("aria-checked", String(on));
+      btn.setAttribute("role", "radio");
+    }
+  };
+
+  host.setAttribute("role", "radiogroup");
+  host.replaceChildren(...buttons);
+  render();
+
+  // Sun-sync flips the theme on its own at dawn and dusk, and the ride HUD
+  // has its own night toggle — so this listens rather than assuming it is the
+  // only writer.
+  window.addEventListener("scooter:theme", render);
+  window.addEventListener("scooter:sunsync", render);
+  return () => {
+    window.removeEventListener("scooter:theme", render);
+    window.removeEventListener("scooter:sunsync", render);
+    host.replaceChildren();
+  };
+}

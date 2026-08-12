@@ -300,8 +300,28 @@ body::before {
   letter-spacing: -0.02em;
   color: var(--fg);
 }
-/* Hide the wordmark before it can collide with the side clusters. */
+/* The wordmark used to vanish below 430px, which is most phones — the app was
+   nameless on exactly the devices it is mostly used on. Theme leaving the top
+   bar freed a whole button of width, so it now SHRINKS through the sizes
+   where it still fits and only disappears where it genuinely cannot.
+
+   The brand is absolutely centred with pointer-events: none, so the failure
+   mode being avoided is purely visual overlap with the side clusters — which
+   is why the steps below are checked against a rendered bar at each width,
+   not reasoned about from box sums. */
 @media (max-width: 430px) {
+  .topbar__brand-name {
+    font-size: 14px;
+  }
+}
+@media (max-width: 380px) {
+  .topbar__brand-name {
+    font-size: 13px;
+    letter-spacing: -0.03em;
+  }
+}
+/* Below this the side clusters really do meet in the middle. */
+@media (max-width: 330px) {
   .topbar__brand-name {
     display: none;
   }
@@ -485,6 +505,68 @@ body:not(.ribbon-open) .drawer-tabs {
   margin: 0;
   letter-spacing: -0.01em;
 }
+/* Theme modes in the Account drawer's header (theme.ts `mountThemeModes`).
+   Sits between the title and the ✕ — `margin-left: auto` pushes it right and
+   the gap keeps it clear of the close button, so neither is a mis-tap target
+   for the other.
+
+   Deliberately NOT metal: that finish belongs to controls that move you
+   around the map, and this is a preference about the app. It wears the
+   surface's own buttons, like everything else inside a drawer. */
+.theme-modes {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+}
+.theme-modes__btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.theme-modes__btn:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* The selected mode is marked by fill AND weight, never by colour alone —
+   1.4.1. The label is always present, so the state is also readable as text
+   by anyone who cannot see the fill at all. */
+.theme-modes__btn.is-active {
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-weight: 700;
+}
+.theme-modes__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-modes__glyph {
+  font-size: 12px;
+  line-height: 1;
+}
+/* Narrow phones: the words are what make the modes unguessable-proof, so the
+   GLYPHS go first when space runs out, never the labels. */
+@media (max-width: 380px) {
+  .theme-modes__glyph {
+    display: none;
+  }
+}
+
 .drawer-close {
   border: none;
   background: transparent;
@@ -1448,8 +1530,7 @@ body.ride-active .arrival {
 
 /* ---------- Metal: the finish on NAVIGATION, and nothing else ---------- */
 /* The brushed-silver face (gunmetal in dark) belongs to the controls that
-   move you around the MAP: the top bar's buttons and the zoom control. That
-   is the whole list.
+   move you around the MAP: locate, recenter, zoom. That is the whole list.
 
    It spread further than that once — the menu tabs, every dismiss button, the
    wizard's Back/Next, panel actions — and at that point it stopped meaning
@@ -1457,9 +1538,17 @@ body.ride-active .arrival {
    things it came off are actions INSIDE a surface, and they wear that
    surface's own buttons.
 
+   IT WAS STILL TOO WIDE. `.topbar__btn` matched every button in the top bar,
+   which is a PLACE, not a category — so the hamburger (which opens a drawer)
+   and Profile (which opens another) wore the navigation finish purely for
+   standing next to the locate button. Being in the top bar is not what earns
+   the metal; moving the map is. Dropping the selector is the whole fix —
+   `.topbar__btn` already carries a plain transparent face with an
+   accent-soft hover, which those two simply fall back to. Theme left the bar
+   entirely (see `mountThemeModes`).
+
    The gradient and its ink live in the token block near the top; --metal-fg
    exists because --fg-muted fails AA against the gradient's darkest stop. */
-.topbar__btn,
 .maplibregl-ctrl-group button,
 .topbar .maplibregl-ctrl button {
   background: var(--metal-bg);
@@ -1469,14 +1558,12 @@ body.ride-active .arrival {
 }
 /* Hover lifts the highlight rather than tinting the face — a colour wash over
    a gradient reads as a rendering bug, not as feedback. */
-.topbar__btn:hover,
 .maplibregl-ctrl-group button:hover,
 .topbar .maplibregl-ctrl button:hover {
   color: var(--fg);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75),
     0 0 0 1px var(--metal-active-border);
 }
-.topbar__btn.is-active,
 .topbar .maplibregl-ctrl button.maplibregl-ctrl-geolocate-active {
   color: var(--fg);
   box-shadow: 0 0 0 2px var(--metal-active-border),

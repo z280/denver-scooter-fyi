@@ -957,6 +957,12 @@
     <aside class="drawer drawer--right" id="drawer-account" aria-labelledby="drawer-account-h" aria-hidden="true">
       <header class="drawer-header">
         <h2 class="drawer-title" id="drawer-account-h">Account</h2>
+        <!-- Theme lives here, above the tabs, rather than on the map's top
+             bar: it is a preference about the app, not a control that moves
+             you around the map, and the top bar is for the latter. Populated
+             by mountThemeModes() (theme.ts); the markup is empty so a boot
+             failure leaves a gap rather than a dead control. -->
+        <div class="theme-modes" id="theme-modes" role="group" aria-label="Theme"></div>
         <button class="drawer-close" type="button" aria-label="Close Account">&times;</button>
       </header>
       <div class="drawer-body">

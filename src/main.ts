@@ -11,7 +11,7 @@ import {
   liveDibs,
 } from "./api.ts";
 import { createMap } from "./map.ts";
-import { initialTheme, startSunSync, ThemeControl } from "./theme.ts";
+import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -182,10 +182,9 @@ const GATE_LOCAL_TAB_ON_AUTH = false;
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
 const { map, geolocate } = createMap("map", theme0);
-// Added AFTER createMap (which registers geolocate in top-left) so the
-// theme toggle sits directly right of the location control once chrome.ts
-// adopts the corner into the top bar.
-map.addControl(new ThemeControl(theme0), "top-left");
+// No ThemeControl on the map any more. Theme is a preference about the app,
+// not a control that moves you around the map, and it now lives in the
+// Account drawer's header as three named modes — see `mountThemeModes`.
 initChrome();
 installBrandMark();
 setAuthState(isAuthenticated());
@@ -826,7 +825,7 @@ const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
 // ---------- Sun-synced theme ----------
 
 // Auto mode (theme follows sunrise/sunset in Denver) lives in the map's
-// three-state ☀/☾ ThemeControl now; here we only resume it on boot.
+// three named modes in the Account drawer now; here we only resume it on boot.
 
 // ---------- Recommended Devices ----------
 
@@ -876,6 +875,11 @@ map.on("load", async () => {
     { setTerritory: (on) => setTerritoryShading(on) },
   );
   wireDrawers();
+  // Theme, in the Account drawer's header above the tabs. Mounted for the
+  // life of the page: the drawer's body is rebuilt on every auth change, and
+  // a control that reset itself each time a rider signed in or out would be
+  // the kind of flicker the header exists to avoid.
+  mountThemeModes(need("theme-modes"));
   // Ride-flow text fields apply their own edits so nothing lands in WebKit's
   // undo queue — see ios-shake-undo.ts for why a queue left non-empty means
   // an "Undo Typing" alert on every bump for the rest of the ride. One
