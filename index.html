@@ -49,14 +49,20 @@
     />
     <title>Denver Veo Scooter &amp; E-Bike Map</title>
     <!-- The real mark, not an emoji: a glyph favicon renders in whatever the
-         platform feels like and cannot be themed. public/mark.svg draws in
-         currentColor, which a favicon resolves against the tab's own text. -->
-    <link rel="icon" href="/mark.svg" type="image/svg+xml" />
+         platform feels like and cannot be themed.
+         EVERY ICON FILENAME CARRIES -v2. Icons are the most aggressively
+         cached thing a PWA has — an installed home-screen icon can outlive
+         several deploys — and a new BYTE at an old NAME is exactly what
+         nothing re-fetches. The v1 files are still on disk and still served,
+         unreferenced, so anything already holding a cached URL keeps
+         resolving instead of 404ing on the old name. -->
+    <link rel="icon" href="/mark-v2.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-48-v2.png" sizes="48x48" type="image/png" />
     <!-- PWA install metadata. manifest.webmanifest + icon-*.png drive the
          Android/desktop install UI; the apple-* tags are iOS Safari's own
          (pre-manifest) equivalents — it ignores the manifest's icons/name. -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-v2.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Scooter.fyi" />
@@ -401,7 +407,12 @@
           <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
           <h4 class="control-sublabel">Availability</h4>
           <label class="switch">
-            <input type="checkbox" id="hide-unavailable" />
+            <!-- ON by default: a scooter somebody is riding, or one marked out
+                 of service, is not a thing a rider can go and get. Showing them
+                 by default made the map look fuller than the city was. The
+                 switch inverts to "show" so the OFF state is the unusual one
+                 the rider opted into. -->
+            <input type="checkbox" id="hide-unavailable" checked />
             <span>Hide Reserved &amp; Out of Service</span>
           </label>
           </div>

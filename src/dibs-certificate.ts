@@ -372,3 +372,109 @@ export function openDibsExplainer(): void {
   });
   close.focus();
 }
+
+
+/** At the ceiling: three claims already, and this would be a fourth.
+ *
+ *  No question here — three is the hard limit under any circumstances, so
+ *  this states it and names what they are holding, because "you have too many"
+ *  without saying which ones is an instruction with no way to follow it. */
+export function showDibsLimit(held: Dibs[]): void {
+  openSheet({
+    title: "That's three already",
+    lede:
+      `Three is the most anyone can hold at once. Release one of these first ` +
+      `and the scooter is yours to claim.`,
+    list: held.map((d) => d.vehicleName),
+    actions: [{ label: "Got it", primary: true, onClick: () => {} }],
+  });
+}
+
+/** They hold claims somewhere else entirely, and this one is nowhere near
+ *  them.
+ *
+ *  A QUESTION, NOT A REFUSAL, because only the rider knows which of two
+ *  legitimate things they are doing: hedging across the city (which the limit
+ *  exists to stop) or walking to a rack with friends (which is fine). The
+ *  release option leads, because it is the right answer most of the time and
+ *  the group case is the rarer one. */
+export function askAboutSecondDibs(
+  held: Dibs[],
+  wanted: string,
+  handlers: { onRelease(): void; onGroup(): void },
+): void {
+  const plural = held.length > 1;
+  openSheet({
+    title: plural ? "You've already got dibs elsewhere" : "You've already got dibs",
+    lede:
+      `${plural ? "Those are" : "That's"} nowhere near ${wanted}. ` +
+      `Swapping is usually what you meant — but if you're grabbing a few for ` +
+      `a group, keep them both.`,
+    list: held.map((d) => d.vehicleName),
+    actions: [
+      {
+        label: plural ? "Release those, claim this" : "Release that, claim this",
+        primary: true,
+        onClick: handlers.onRelease,
+      },
+      { label: "It's for a group — keep both", onClick: handlers.onGroup },
+    ],
+  });
+}
+
+interface SheetSpec {
+  title: string;
+  lede: string;
+  list?: string[];
+  actions: { label: string; primary?: boolean; onClick(): void }[];
+}
+
+/** The shared shell for the two dibs questions. Bottom sheet, same geometry
+ *  as everything else in this app, dismissible by backdrop and Escape. */
+function openSheet(spec: SheetSpec): void {
+  const backdrop = el("div", "dibs-sheet");
+  const card = el("div", "dibs-sheet__card");
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+
+  card.append(
+    el("h3", "dibs-sheet__title", spec.title),
+    el("p", "dibs-sheet__lede", spec.lede),
+  );
+  if (spec.list?.length) {
+    const ul = el("ul", "dibs-sheet__list");
+    for (const item of spec.list) ul.append(el("li", "", `✋ ${item}`));
+    card.append(ul);
+  }
+
+  const dismiss = (): void => {
+    document.removeEventListener("keydown", onKey, true);
+    backdrop.remove();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    dismiss();
+  };
+
+  const row = el("div", "dibs-sheet__actions");
+  for (const a of spec.actions) {
+    const btn = el("button", `dibs-sheet__btn${a.primary ? " is-primary" : ""}`, a.label);
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      dismiss();
+      a.onClick();
+    });
+    row.append(btn);
+  }
+  card.append(row);
+
+  backdrop.append(card);
+  document.body.append(backdrop);
+  document.addEventListener("keydown", onKey, true);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) dismiss();
+  });
+  row.querySelector("button")?.focus();
+}

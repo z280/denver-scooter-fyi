@@ -989,6 +989,76 @@ body.ride-active .dibs-toast {
   max-width: 100%;
 }
 
+/* The two dibs questions: at-the-limit, and is-this-a-group. Same bottom-sheet
+   geometry as everything else. */
+.dibs-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 62;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(10, 15, 25, 0.55);
+}
+.dibs-sheet__card {
+  width: min(94vw, 460px);
+  padding: 18px 16px 16px;
+  border-radius: 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.dibs-sheet__title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 800;
+}
+.dibs-sheet__lede {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+.dibs-sheet__list {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dibs-sheet__list li {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.dibs-sheet__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dibs-sheet__btn {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dibs-sheet__btn.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
 .dibs-badge {
   font-size: 11.5px;
   font-weight: 700;

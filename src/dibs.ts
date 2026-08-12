@@ -56,6 +56,77 @@ export const DIBS_MAX_TOTAL_MS = 25 * 60_000;
  *  standing still next to a drifting fix. */
 export const DIBS_PROGRESS_METERS = 40;
 
+/** Hard ceiling on simultaneous claims, under any circumstances.
+ *
+ *  Dibs costs a rider nothing to call, which is exactly why it needs a
+ *  ceiling: without one the cheapest strategy is to claim every scooter you
+ *  can see and sort it out later, and a map where the good vehicles are all
+ *  spoken for by one person is worse for everybody — including them, since
+ *  the whole thing only works if other riders take it seriously. */
+export const DIBS_MAX_CONCURRENT = 3;
+
+/** How close two claims have to be to count as one group.
+ *
+ *  Multiple dibs are legitimate in one case: a few people walking to the same
+ *  rack together. That is a cluster, not a spread — 150 m is a rack, a plaza,
+ *  a block of parked scooters. Claims further apart than this are one person
+ *  hedging across the city, which is the thing the ceiling exists to stop. */
+export const DIBS_GROUP_METERS = 150;
+
+/** Straight-line metres between two points. Duplicated from locate.ts rather
+ *  than imported: this module is the rules, and the rules should not need the
+ *  map's geolocation machinery to be evaluated (or stubbed, in a test). */
+export function metersBetween(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number },
+): number {
+  const R = 6_371_000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+export type DibsVerdict =
+  /** Nothing in the way. */
+  | { kind: "ok" }
+  /** They already hold this exact vehicle. */
+  | { kind: "already" }
+  /** At the ceiling. No question to ask — this one is simply refused. */
+  | { kind: "at_limit"; held: Dibs[] }
+  /** They hold others, and this one is nowhere near them. Ask whether to
+   *  release the existing claims or keep them as a group. */
+  | { kind: "ask"; held: Dibs[]; nearest: number };
+
+/** Can this rider call dibs on this vehicle, and if not, what do we ask?
+ *
+ *  Three outcomes rather than a boolean, because two of the three failures
+ *  are questions and not refusals. A rider walking to a rack with two friends
+ *  is doing something legitimate; a rider claiming scooters a mile apart is
+ *  not; and only they know which one they are.
+ */
+export function canCallDibs(
+  at: { lat: number; lon: number },
+  now: number = Date.now(),
+): DibsVerdict {
+  const held = loadDibs(now);
+  if (held.length === 0) return { kind: "ok" };
+  if (held.some((d) => metersBetween(d, at) < SAME_PLACE_METERS)) {
+    return { kind: "already" };
+  }
+  if (held.length >= DIBS_MAX_CONCURRENT) return { kind: "at_limit", held };
+  const nearest = Math.min(...held.map((d) => metersBetween(d, at)));
+  // Close enough to be one group — a rack, a plaza — so no question needed.
+  if (nearest <= DIBS_GROUP_METERS) return { kind: "ok" };
+  return { kind: "ask", held, nearest };
+}
+
+/** Two claims this close are the same vehicle for practical purposes. */
+const SAME_PLACE_METERS = 5;
+
 export interface Dibs {
   vehicleIdentifier: string;
   /** The vehicle's rider-facing name at the time of claiming — "Lunar 🐸 928".
@@ -78,6 +149,10 @@ export interface Dibs {
   /** When we first saw real movement towards it, or null while they have not
    *  set off. Rule 1 turns on exactly this field. */
   startedWalkingAt: number | null;
+  /** Where the scooter is. Needed to tell "three friends at one rack" from
+   *  "one rider hedging across the city" — see canCallDibs. */
+  lat: number;
+  lon: number;
   /** The server's record of this claim, once it has one.
    *
    *  The claim works without it — dibs is local and must not need a network
@@ -146,6 +221,8 @@ function isValid(d: unknown): d is Dibs {
     typeof r.vehicleName === "string" &&
     typeof r.claimedBy === "string" &&
     typeof r.claimedAt === "number" && Number.isFinite(r.claimedAt) &&
+    typeof r.lat === "number" && Number.isFinite(r.lat) &&
+    typeof r.lon === "number" && Number.isFinite(r.lon) &&
     typeof r.startMeters === "number" && Number.isFinite(r.startMeters) &&
     typeof r.bestMeters === "number" && Number.isFinite(r.bestMeters) &&
     (r.startedWalkingAt === null ||

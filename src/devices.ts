@@ -43,12 +43,15 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
-import { callDibs, dibsOn, saveDibs } from "./dibs.ts";
+import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import { vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
 import {
+  askAboutSecondDibs,
   openDibsCertificate,
   openDibsExplainer,
   showDibsConfirmation,
+  showDibsLimit,
 } from "./dibs-certificate.ts";
 import {
   submitModelReport,
@@ -780,7 +783,23 @@ export class Devices {
       // model shows its friendly name + description; an unknown one invites
       // the rider to report what it is (description + optional photo).
       const model = veoModel(props.vehicle_model_name);
-      const headerName = model ? model.name : "Veo Unknown";
+      // A NAME, NOT A MODEL. "Cosmo" is what it is; "Lunar 🐸 928" is which
+      // one — and which one is the thing a rider says out loud, shows on a
+      // certificate, and argues about on a pavement. The model stays, one
+      // line down, where it belongs.
+      //
+      // The suffix is added here rather than server-side: the public payload
+      // omits the plate on purpose, and this app resolves its own from Veo's
+      // GBFS feed, so the disambiguating digits are ours to add only once we
+      // already have them.
+      const namePlate: string | null =
+        (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
+        this.plates.cachedPlateFor(props.device_id);
+      const headerName = vehicleDisplayName(
+        props.public_name ?? null,
+        namePlate,
+        model ? model.name : null,
+      );
       const headerDesc = model ? model.desc : "Tell us!";
       const reportUi = model
         ? ""
@@ -1246,8 +1265,14 @@ export class Devices {
           `<button type="button" class="device-popup__whatsthis" data-action="dibs-cert" aria-label="Open your dibs certificate" title="Your certificate">📄</button>` +
           `</p>`
         : "";
+      // Two buttons, sharing a row: the certificate, and the thing the rider
+      // most likely wants next — which differs entirely by whose claim it is.
+      // Theirs: let it go. Somebody else's: find out what this even is.
       const certBtn = heldDibs || heldByOther
-        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-cert">📜 View dibs certificate</button>`
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-cert">📜 Dibs certificate</button>` +
+          (heldDibs
+            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-drop">✋ Release dibs</button>`
+            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-explain">❓ What's dibs?</button>`)
         : "";
       const featuresBtn =
         vid.length >= 16
@@ -1406,8 +1431,12 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="full-details"]')
         ?.addEventListener("click", () => {
+          // THE FULL NAME at the top: what it is, and which one. The popup
+          // behind this shows them on two lines; a modal that opens over it
+          // has to carry both or the rider loses track of which scooter they
+          // opened.
           openFloatingModal(
-            `${headerName} — full details`,
+            [model?.name, headerName].filter(Boolean).join(" · "),
             `<dl class="device-popup__meta">${detailRows.join("")}</dl>`,
             (root) => this.wireRangeToggles(root),
           );
@@ -1444,14 +1473,24 @@ export class Devices {
           window.open(other.certificate_url, "_blank", "noopener");
         }));
 
+      // ✋ Release dibs — theirs to give up, from the same row they see it on.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-drop"]')
+        ?.addEventListener("click", () => {
+          if (!vid) return;
+          track("dibs", { action: "drop" });
+          dropDibs(vid);
+          this.refreshOpenPopup();
+        });
+
       // ? — what are dibs? Asked at the only moment anybody wonders: the
       // first time the app tells them they have some.
       popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="dibs-explain"]')
-        ?.addEventListener("click", () => {
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="dibs-explain"]')
+        .forEach((b) => b.addEventListener("click", () => {
           track("dibs", { action: "explain" });
           openDibsExplainer();
-        });
+        }));
 
       // 🚶 Walk me there — the in-app walk. This used to be an <a> that opened
       // Google or Apple Maps, which is the app admitting it cannot do the one
@@ -1481,7 +1520,8 @@ export class Devices {
           // that calls dibs, so it does — there is no second button to know
           // about, and the rider finds out they have dibs from the
           // confirmation rather than from having pressed something.
-          if (vid) {
+          const at = { lat: coords[1], lon: coords[0] };
+          const startClaim = (): void => {
             const here = this.locate.current();
             const claim = callDibs({
               vehicleIdentifier: vid,
@@ -1491,17 +1531,22 @@ export class Devices {
               startMeters: here
                 ? distanceMeters(here, { lat: coords[1], lng: coords[0] })
                 : 0,
+              lat: at.lat,
+              lon: at.lon,
             });
             showDibsConfirmation(claim);
+            this.refreshOpenPopup();
             void registerDibs({
               vehicle_identifier: claim.vehicleIdentifier,
               vehicle_name: claim.vehicleName,
               plate: claim.plate,
               claimed_by: claim.claimedBy,
-              provider: "Veo",
-              device_type: model ? model.name : (props.vehicle_model_name ?? ""),
-              lat: coords[1],
-              lon: coords[0],
+              // The catalogue's own name — "Veo Cosmo" — IS the device name.
+              // There is no separate provider field: printing one produced
+              // "Veo Veo Cosmo Veo Cosmo" on the certificate.
+              device_type: model?.name ?? props.vehicle_model_name ?? "",
+              lat: at.lat,
+              lon: at.lon,
             })
               .then((reg) => {
                 saveDibs({
@@ -1516,7 +1561,35 @@ export class Devices {
               .catch(() => {
                 /* the certificate says the time is from this phone */
               });
+          };
+
+          if (vid) {
+
+            // HOW MANY SCOOTERS CAN ONE PERSON HOLD? Three, and only when
+            // they are together — a rack, a plaza, a group walking to the
+            // same spot. Anything else is one rider hedging across the city,
+            // which makes the map worse for everybody including them.
+            const verdict = canCallDibs(at);
+            if (verdict.kind === "at_limit") {
+              showDibsLimit(verdict.held);
+              return;
+            }
+            if (verdict.kind === "ask") {
+              // Only they know which of the two they are doing, so ask —
+              // and make releasing the easy answer, since it is the right
+              // one most of the time.
+              askAboutSecondDibs(verdict.held, headerName, {
+                onRelease: () => {
+                  for (const d of verdict.held) dropDibs(d.vehicleIdentifier);
+                  startClaim();
+                },
+                onGroup: () => startClaim(),
+              });
+              return;
+            }
+            startClaim();
           }
+
           if (
             this.rideInterceptor?.({
               name: headerName,
@@ -2429,6 +2502,8 @@ interface PopupProps {
   form_factor: FormFactor;
   // public
   vehicle_identifier?: string | null;
+  /** "Lunar 🐸" — see vehicle-name.ts. */
+  public_name?: string | null;
   is_disabled?: boolean | string | null;
   is_reserved?: boolean | string | null;
   current_range_meters?: number | string | null;

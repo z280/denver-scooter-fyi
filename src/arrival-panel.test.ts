@@ -148,6 +148,8 @@ describe("the dibs clock on the chip", () => {
     claimedAt: Date.now(),
     startMeters: 600,
     bestMeters: 600,
+    lat: 39.74,
+    lon: -104.99,
     startedWalkingAt: null,
     registration: null,
     ...over,

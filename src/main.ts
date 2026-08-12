@@ -446,12 +446,17 @@ function activeFilterChips(): Chip[] {
     });
   }
 
+  // THE CHIP MARKS THE EXCEPTION, NOT THE RULE. Hiding unavailable vehicles
+  // is the default now, so a chip saying so would sit there permanently
+  // announcing that nothing unusual is happening — which is how a chip row
+  // stops being read. The chip appears only when a rider has turned the
+  // default OFF, and clearing it restores the default.
   const hideCb = need<HTMLInputElement>("hide-unavailable");
-  if (hideCb.checked) {
+  if (!hideCb.checked) {
     active.push({
       id: "availability",
-      label: "Hiding unavailable",
-      onClear: () => setHideUnavailableControl(false),
+      label: "+ Unavailable",
+      onClear: () => setHideUnavailableControl(true),
     });
   }
 
@@ -1758,6 +1763,12 @@ function wireClearFilters(): void {
 
 function wireHideUnavailable(): void {
   const cb = need<HTMLInputElement>("hide-unavailable");
+  // Push the markup's default INTO the layer at wire time. The checkbox is
+  // checked in the HTML and Devices starts with its own `hideUnavailable =
+  // false`, so without this the control and the map disagree until somebody
+  // happens to toggle it — the map showing reserved scooters while the panel
+  // insists they are hidden.
+  devices.setHideUnavailable(cb.checked);
   cb.addEventListener("change", () => {
     devices.setHideUnavailable(cb.checked);
     clusters.update(devices.visibleFeatures());

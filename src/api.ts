@@ -36,6 +36,11 @@ export interface DeviceProperties {
   spatial_status: string;
   // ----- Public per-device fields (always potentially present on
   // /api/v1/devices/current; values may still be null when upstream omits them).
+  /** "Lunar 🐸" — a label a rider can say out loud, derived from the
+   *  identifier and never stored (sql/073). The plate suffix that
+   *  disambiguates two Lunar 🐸s is added client-side where the plate is
+   *  already known, since the public payload deliberately omits it. */
+  public_name?: string | null;
   /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
   vehicle_identifier?: string | null;
   /** True when the scooter is out of service (low battery, fault, impound). */

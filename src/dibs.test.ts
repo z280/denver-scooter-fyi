@@ -28,8 +28,10 @@ const CLAIM = {
   vehicleIdentifier: "abc123",
   vehicleName: "Lunar 🐸 928",
   plate: "1020922",
-  claimedBy: "zeke",
+  claimedBy: "Resourceful 🌈",
   startMeters: 600,
+  lat: 39.7392,
+  lon: -104.9903,
 };
 
 const T0 = Date.UTC(2026, 7, 12, 20, 34, 56); // a fixed instant
