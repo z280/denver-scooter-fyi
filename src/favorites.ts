@@ -58,7 +58,21 @@ function isValidFavorite(f: unknown): f is Favorite {
   );
 }
 
+/** The session's own copy, used ONLY when storage refuses writes.
+ *
+ *  Null while storage is working, which is the normal case: storage is then
+ *  the single source of truth and a mirror could only drift from it.
+ *
+ *  It exists because `persistFavorites` swallowing a failure was not enough
+ *  to keep the promise its own comment makes ("the pick still works this
+ *  visit"). It did not: `recordFavorite` re-reads `loadFavorites()` on every
+ *  save, so in private mode the second save read back the empty store and
+ *  returned a list containing only the newest place — quietly dropping one
+ *  the rider had just watched appear. Found by Copilot on PR #74. */
+let sessionFavs: Favorite[] | null = null;
+
 export function loadFavorites(): Favorite[] {
+  if (sessionFavs !== null) return sessionFavs.slice();
   try {
     const raw = localStorage.getItem(FAVORITES_KEY);
     if (!raw) return [];
@@ -74,9 +88,16 @@ function persistFavorites(favs: Favorite[]): boolean {
   try {
     const blob: StoredFavorites = { v: 1, favs };
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(blob));
+    // Storage is truth again — drop any mirror so a later read cannot serve
+    // a stale copy of a list that has since been written properly.
+    sessionFavs = null;
     return true;
   } catch {
-    return false; // private mode — the pick still works this visit
+    // Private mode or quota. Hold the list in memory so the rest of THIS
+    // visit stays coherent: without it the next save re-reads an empty
+    // store and the rider watches an earlier favourite disappear.
+    sessionFavs = favs.slice();
+    return false;
   }
 }
 

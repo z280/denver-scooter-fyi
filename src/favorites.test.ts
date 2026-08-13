@@ -182,3 +182,54 @@ describe("default glyph", () => {
     expect(defaultEmoji(undefined)).toBe("📍");
   });
 });
+
+describe("a session where storage refuses writes (Copilot, PR #74)", () => {
+  it("keeps earlier saves visible for the rest of the visit", () => {
+    // THE BUG: `persistFavorites` swallowed the failure, but `recordFavorite`
+    // re-reads `loadFavorites()` on every save. So in private mode the second
+    // save read back an EMPTY store and returned a list containing only the
+    // newest place — the rider watched a favourite they had just saved
+    // disappear, with no error and nothing to retry.
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("QuotaExceededError");
+      });
+
+    const first = recordFavorite({
+      label: "Home", emoji: "🏠", lat: 39.7285, lon: -105.0345,
+    });
+    expect(first.map((f) => f.label)).toEqual(["Home"]);
+
+    const second = recordFavorite({
+      label: "Work", emoji: "💼", lat: 39.7392, lon: -104.9903,
+    });
+    // BOTH, newest first — not just "Work".
+    expect(second.map((f) => f.label)).toEqual(["Work", "Home"]);
+    expect(loadFavorites().map((f) => f.label)).toEqual(["Work", "Home"]);
+
+    setItem.mockRestore();
+  });
+
+  it("goes back to trusting storage the moment a write succeeds", () => {
+    // The mirror must not outlive the outage, or a later read serves a stale
+    // copy of a list that has since been written properly.
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementationOnce(() => {
+        throw new DOMException("QuotaExceededError");
+      });
+
+    recordFavorite({ label: "Home", emoji: "🏠", lat: 39.7285, lon: -105.0345 });
+    // This one lands.
+    recordFavorite({ label: "Work", emoji: "💼", lat: 39.7392, lon: -104.9903 });
+    setItem.mockRestore();
+
+    // Storage now holds both; a fresh read comes from it, not the mirror.
+    localStorage.setItem(
+      FAVORITES_KEY,
+      JSON.stringify({ v: 1, favs: [] }),
+    );
+    expect(loadFavorites()).toEqual([]);
+  });
+});
