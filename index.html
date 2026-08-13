@@ -731,6 +731,17 @@
         <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- My dibs. First in the drawer because it is the only thing here
+             that EXPIRES: everything below it will still be there in ten
+             minutes, and these will not. Hidden entirely when the rider
+             holds none — an empty "My dibs" heading is a permanent reminder
+             of a feature you are not using. Populated by wireMyDibs(). -->
+        <section class="control-group" id="tools-my-dibs"
+                 aria-labelledby="tools-my-dibs-label" hidden>
+          <h3 id="tools-my-dibs-label" class="control-label">My dibs</h3>
+          <ul class="my-dibs" id="my-dibs-list"></ul>
+        </section>
+
         <section class="control-group" aria-labelledby="finder-label">
           <h3 id="finder-label" class="control-label">Find dense device clusters</h3>
           <p class="finder-help">Groups of devices within 30&nbsp;ft of each other.</p>
@@ -902,7 +913,17 @@
         </p>
         </details>
 
-        <h3>A few things worth knowing</h3>
+        <!-- Collapsed, like the founder's note above it. These are the two
+             longest blocks on the page and the two fewest readers came for;
+             open by default they pushed the data credits — which are a
+             CONDITION of the Denver licence, not a courtesy — off the
+             bottom. Native <details>, so both work before JS.
+             NOT open by default even though it sets beta expectations: a
+             wall of text nobody scrolls sets no expectations at all, and a
+             titled thing you can choose to open is read more than a titled
+             thing you scroll past. -->
+        <details class="about-founder" id="about-caveats">
+          <summary class="about-founder__summary">A few things worth knowing</summary>
         <p>
           <strong>This is a beta, experimental project.</strong> Features may
           appear out of thin air, get removed, or break. Don't get too
@@ -937,6 +958,7 @@
           ·
           <a href="https://data.scooter.fyi/legal/terms-of-service" target="_blank" rel="noopener">Terms&nbsp;of&nbsp;Use</a>
         </p>
+        </details>
 
         <section class="control-group" id="about-analytics" aria-labelledby="about-analytics-label">
           <h3 id="about-analytics-label" class="control-label">Private analytics</h3>

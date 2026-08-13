@@ -3069,6 +3069,82 @@ body.is-map-picking .ride-modal {
   flex: none;
 }
 
+/* ---------- My dibs (my-dibs.ts) ---------- */
+.my-dibs {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.my-dibs__row {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.my-dibs__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.my-dibs__name {
+  font-weight: 700;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-dibs__clock {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  /* Digits that don't jiggle as the seconds tick. */
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+/* Running out. Colour AND weight, never colour alone. */
+.my-dibs__clock.is-urgent {
+  color: var(--fail);
+}
+.my-dibs__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+.my-dibs__btn {
+  appearance: none;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.my-dibs__btn:hover {
+  border-color: var(--accent);
+}
+.my-dibs__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Release is not destructive — it gives a scooter back to everybody else —
+   so it is not painted as a danger. It just should not be the one your thumb
+   lands on by accident. */
+.my-dibs__btn--release {
+  color: var(--fg-muted);
+}
+.my-dibs__btn--release:hover {
+  color: var(--fg);
+}
+
 /* ---------- Local Data (account-local-data.ts) ---------- */
 /* The standing "save ride tracks" preference. Boxed, because it governs the
    list beneath it rather than being another item in it. */

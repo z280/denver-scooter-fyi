@@ -9,10 +9,12 @@ import {
   type DeviceInclude,
   fetchProfile,
   liveDibs,
-} from "./api.ts";
+  releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
+import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
+import { openDibsCertificate } from "./dibs-certificate.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -104,7 +106,13 @@ import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
-import { dibsOn, dropDibs, recordProgress, saveDibs } from "./dibs.ts";
+import {
+  dibsOn,
+  dropDibs,
+  recordProgress,
+  saveDibs,
+  type Dibs,
+} from "./dibs.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -934,11 +942,11 @@ map.on("load", async () => {
   // telemetry like every other interaction. `toggle` fires on close too —
   // only the open is interesting, and counting both would make the number
   // mean "interactions" rather than "reads".
-  {
-    const founder = document.getElementById("about-founder");
-    if (founder instanceof HTMLDetailsElement) {
-      founder.addEventListener("toggle", () => {
-        if (founder.open) track("about_founder_open", {});
+  for (const id of ["about-founder", "about-caveats"]) {
+    const acc = document.getElementById(id);
+    if (acc instanceof HTMLDetailsElement) {
+      acc.addEventListener("toggle", () => {
+        if (acc.open) track("about_founder_open", { section: id });
       });
     }
   }
@@ -977,6 +985,20 @@ map.on("load", async () => {
   });
   wireEquityRanks();
   wireIgnoreDibs();
+  // My dibs, in Tools. Kept in step with the map: releasing one from here has
+  // to un-dim that scooter and rebuild any open popup, which is exactly what
+  // `refreshLiveDibs` already does for a claim landing.
+  myDibs = wireMyDibs({
+    section: need("tools-my-dibs"),
+    list: need("my-dibs-list"),
+    onOpenCertificate: (d: Dibs) => openDibsCertificate(d),
+    onRelease: (d: Dibs) => {
+      if (d.registration) void releaseDibs(d.registration.id);
+    },
+    // Re-fetch rather than mutate a local copy: the server has just been told
+    // to expire the row, and its answer is the one every other rider sees.
+    onChanged: () => refreshLiveDibs(),
+  });
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -2821,9 +2843,16 @@ let dibsClaimant = "Someone with the app";
  *  whether somebody has called it rather than gaining the notice a beat
  *  later. Failure is silent and total — no claims visible is the same as no
  *  claims, and a dibs lookup must never be why the map stops updating. */
+let myDibs: MyDibsHandle | null = null;
+
 function refreshLiveDibs(): void {
   void liveDibs()
-    .then(({ dibs }) => devices.setVehicleDibs(dibs))
+    .then(({ dibs }) => {
+      devices.setVehicleDibs(dibs);
+      // A claim made from a scooter popup has to show up in Tools without a
+      // reload — this is the one place that runs on every dibs change.
+      myDibs?.refresh();
+    })
     .catch(() => {
       /* the map is the point; this is a garnish on it */
     });

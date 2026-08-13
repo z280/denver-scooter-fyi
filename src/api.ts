@@ -1541,6 +1541,23 @@ export function liveDibs(
   return getJSON<{ dibs: Record<string, VehicleDibs> }>("/api/v1/dibs/live", signal);
 }
 
+/** Give a claim back before it expires.
+ *
+ *  Fire-and-forget from the caller's point of view but NOT optional: the
+ *  server row is what every other rider's map reads, and dropping only the
+ *  local copy leaves that scooter dimmed for everyone else — and reading as a
+ *  STRANGER's claim to the person who just released it, since "is this mine?"
+ *  is answered by the local record they have already deleted.
+ *
+ *  Unauthenticated by design: possession of the claim id is the credential,
+ *  exactly as it is for the certificate URL it appears in. */
+export async function releaseDibs(dibsId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/dibs/${encodeURIComponent(dibsId)}/release`, {
+    method: "POST",
+    keepalive: true,
+  });
+}
+
 export interface RouteOption {
   key: string;
   label: string;
