@@ -7,9 +7,14 @@ import {
   getTrackedRide,
   type BoundaryLayer,
   type DeviceInclude,
-} from "./api.ts";
+  fetchProfile,
+  liveDibs,
+  releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
-import { initialTheme, startSunSync, ThemeControl } from "./theme.ts";
+import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
+import { RecenterControl } from "./recenter.ts";
+import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
+import { openDibsCertificate } from "./dibs-certificate.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -72,7 +77,8 @@ import {
   type RideRecoveryNote,
   type RideRecoveryOutcome,
   type RideSessionStore,
-} from "./ride-session.ts";
+  isRideLive,
+  type RideSessionDoc,} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -94,6 +100,20 @@ import {
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
 import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
+import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
+import { createTripPins } from "./trip-pins.ts";
+import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
+import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
+import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
+import { peekPendingTrip } from "./pending-trip.ts";
+import {
+  dibsOn,
+  dropDibs,
+  recordProgress,
+  saveDibs,
+  type Dibs,
+} from "./dibs.ts";
+import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -119,6 +139,7 @@ import { initInstallPrompt } from "./install-prompt.ts";
 import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
+  installBrandMark,
   setRibbonOpen,
   closeAllPopups,
   registerPopupCloser,
@@ -153,19 +174,29 @@ function need<T extends HTMLElement>(id: string): T {
 }
 
 /** Local ride tracks are recorded without an account (a private ride has no
- *  server ride id at all), so gating the tab on sign-in also hides a guest's
- *  own recordings from them — including the only control that deletes one.
- *  Kept as specified, isolated here so it is a one-line reversal. */
-const GATE_LOCAL_TAB_ON_AUTH = true;
+ *  server ride id at all), so gating this tab on sign-in hid a guest's own
+ *  recordings from them — including the only control that deletes one, and
+ *  (once the standing preference moved here) the only switch that stops the
+ *  recording in the first place. A guest could be recorded with no way to
+ *  look at it, delete it, or turn it off.
+ *
+ *  So: OFF. The tab is reachable signed out. Nothing behind it leaks anything
+ *  — every track it lists was recorded by this device and never left it, and
+ *  the one action that does upload (donate) is gated separately on
+ *  `isSignedIn`, which the panel already takes as a dep.
+ *
+ *  Kept as a named constant rather than deleted: it is the honest record of a
+ *  decision that was made deliberately in both directions. */
+const GATE_LOCAL_TAB_ON_AUTH = false;
 
 const theme0 = initialTheme();
 document.documentElement.dataset.theme = theme0;
 const { map, geolocate } = createMap("map", theme0);
-// Added AFTER createMap (which registers geolocate in top-left) so the
-// theme toggle sits directly right of the location control once chrome.ts
-// adopts the corner into the top bar.
-map.addControl(new ThemeControl(theme0), "top-left");
+// No ThemeControl on the map any more. Theme is a preference about the app,
+// not a control that moves you around the map, and it now lives in the
+// Account drawer's header as three named modes — see `mountThemeModes`.
 initChrome();
+installBrandMark();
 setAuthState(isAuthenticated());
 initTelemetry();
 // About drawer's "Allow private analytics" switch — a purely local choice,
@@ -183,6 +214,23 @@ initTelemetry();
 }
 if (import.meta.env.DEV) (window as unknown as { __map: unknown }).__map = map;
 const locate = new Locate(map, geolocate);
+
+// Recenter goes in the same top-left corner as geolocate, so chrome.ts adopts
+// both into the top bar's left cluster and they read as one pair: "am I
+// locating" and "put me back in the middle". It hides itself when it has
+// nothing to do — see recenter.ts.
+//
+// Registered AFTER `locate` exists, not up beside the map's other controls:
+// addControl runs onAdd synchronously, and onAdd subscribes to locate.onFix,
+// so registering it earlier hit the const's temporal dead zone and threw
+// before the map ever rendered. Typechecked fine; only running it showed it.
+map.addControl(
+  new RecenterControl({
+    current: () => locate.current(),
+    onFix: (cb) => locate.onFix(() => cb()),
+  }),
+  "top-left",
+);
 const devices = new Devices(map, locate);
 // Profile location picking. The drawer gets these as callbacks so account.ts
 // never imports maplibre — and so its tests never need a map.
@@ -201,6 +249,11 @@ const rideRouteLine = createRideRouteLine(map);
 // Screen 4's route choices, drawn on this same map behind the wizard's
 // bottom sheet (ride-screen-routes.ts's sheet presentation).
 const routePreview = createRoutePreview(map);
+// The destination/start pins the home bar puts on the map.
+const tripPins = createTripPins(map);
+// The walk to the scooter, drawn with the same module as the ride route but
+// its own source ids and its own colour — see ride-route-line.ts's prefix.
+const walkLine = createRideRouteLine(map, "walk-route");
 const mapPick = createMapPick(map, {
   onModeChange: (active) => {
     // Slide the drawer out of the way (it covers the map on a phone) and
@@ -351,15 +404,23 @@ let clearBatteryMin: () => void = () => {};
 let clearQualityFilter: () => void = () => {};
 let setQualityFilter: (value: QualityFilter) => void = () => {};
 let resetAllFilters: () => void = () => {};
+// The lean payload (the API's low-end-phone diet) is for 3D NAVIGATION — the
+// one remaining mode, where the phone is doing follow-cam work and nothing on
+// screen can use the h3 or rank extras anyway. It used to follow the invisible
+// find-a-ride mode instead, which meant merely opening the wizard silently
+// changed what the map knew, and leaving it needed a refresh to get the fields
+// back. Read live off the body class the HUD owns, so there is no second flag
+// to keep in step.
+
+/** Put the map's iconography back to its defaults. Kept — and now reachable
+ *  only from the Analysis preset, which is a deliberate, rider-chosen action.
+ *  It used to fire from `applyNormal()` whenever somebody merely LEFT the
+ *  find-a-ride flow, which is how a rider's chosen icon style disappeared
+ *  without them asking. Assigned by wireIconography. */
 let resetIconography: () => void = () => {};
-// Ride mode fetches the lean payload (the API's low-end-phone diet); the
-// analysis surface needs the h3 + rank extras. Assigned by wireModes /
-// startRefreshLoop.
-let leanFetch = false;
-let requestRefresh: () => void = () => {};
 
 function fetchIncludes(): DeviceInclude[] {
-  return leanFetch ? [] : ["h3", "ranks"];
+  return document.body.classList.contains("ride-active") ? [] : ["h3", "ranks"];
 }
 
 const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
@@ -421,12 +482,32 @@ function activeFilterChips(): Chip[] {
     });
   }
 
+  // THE CHIP MARKS THE EXCEPTION, NOT THE RULE. Hiding unavailable vehicles
+  // is the default now, so a chip saying so would sit there permanently
+  // announcing that nothing unusual is happening — which is how a chip row
+  // stops being read. The chip appears only when a rider has turned the
+  // default OFF, and clearing it restores the default.
   const hideCb = need<HTMLInputElement>("hide-unavailable");
-  if (hideCb.checked) {
+  if (!hideCb.checked) {
     active.push({
       id: "availability",
-      label: "Hiding unavailable",
-      onClear: () => setHideUnavailableControl(false),
+      label: "+ Unavailable",
+      onClear: () => setHideUnavailableControl(true),
+    });
+  }
+
+  // Rude mode gets a chip for the same reason "+ Unavailable" does: it is a
+  // departure from the default, and a rider who left it on last week should
+  // be able to see that from the map rather than by opening a drawer.
+  const rudeCb = need<HTMLInputElement>("ignore-dibs");
+  if (rudeCb.checked) {
+    active.push({
+      id: "ignore-dibs",
+      label: "😤 Ignoring dibs",
+      onClear: () => {
+        rudeCb.checked = false;
+        rudeCb.dispatchEvent(new Event("change"));
+      },
     });
   }
 
@@ -786,7 +867,7 @@ const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
 // ---------- Sun-synced theme ----------
 
 // Auto mode (theme follows sunrise/sunset in Denver) lives in the map's
-// three-state ☀/☾ ThemeControl now; here we only resume it on boot.
+// three named modes in the Account drawer now; here we only resume it on boot.
 
 // ---------- Recommended Devices ----------
 
@@ -802,6 +883,24 @@ function wireRecommended(): void {
     locate,
     map,
   );
+  // The ranked list's Route button walks in-app rather than opening Google or
+  // Apple Maps — the app ranked these for you; handing you to a different app
+  // to reach the one you picked was the odd part.
+  recommended.setWalkTo((req) => void beginWalkToVehicle(req));
+  // The Recommended tab stays out of the menu until there is something in it.
+  // `hidden` alone is not enough here — `.drawer-tab` sets
+  // `display: inline-flex`, which has beaten `hidden` in this codebase
+  // before — so the class carries it and `.drawer-tab[hidden]` backs it up.
+  {
+    const tab = document.querySelector<HTMLButtonElement>(
+      '.drawer-tab[data-drawer="recommended"]',
+    );
+    if (tab) {
+      recommended.setAvailabilityListener((hasList) => {
+        tab.hidden = !hasList;
+      });
+    }
+  }
 }
 
 map.on("load", async () => {
@@ -832,6 +931,25 @@ map.on("load", async () => {
     { setTerritory: (on) => setTerritoryShading(on) },
   );
   wireDrawers();
+  // Theme, in the Account drawer's header above the tabs. Mounted for the
+  // life of the page: the drawer's body is rebuilt on every auth change, and
+  // a control that reset itself each time a rider signed in or out would be
+  // the kind of flicker the header exists to avoid.
+  mountThemeModes(need("theme-modes"));
+  wireFreeRide();
+  // The founder's note is collapsed by default; opening it is a real signal
+  // about what people read on the About page, so it goes through our own
+  // telemetry like every other interaction. `toggle` fires on close too —
+  // only the open is interesting, and counting both would make the number
+  // mean "interactions" rather than "reads".
+  for (const id of ["about-founder", "about-caveats"]) {
+    const acc = document.getElementById(id);
+    if (acc instanceof HTMLDetailsElement) {
+      acc.addEventListener("toggle", () => {
+        if (acc.open) track("about_founder_open", { section: id });
+      });
+    }
+  }
   // Ride-flow text fields apply their own edits so nothing lands in WebKit's
   // undo queue — see ios-shake-undo.ts for why a queue left non-empty means
   // an "Undo Typing" alert on every bump for the rest of the ride. One
@@ -841,12 +959,46 @@ map.on("load", async () => {
   const areaFilter = wireAreaFilter();
   applyFilterSnapshot = makeApplyFilterSnapshot(areaFilter);
   wireModes();
+  // After wireModes: the home bar drives the (now hidden) mode buttons, so
+  // their listeners have to exist before it can hand a trip to one.
+  homeBar = wireHomeBar();
+  // 🧭 Use in Ride Mode goes to the walk flow when a destination is already
+  // known, and falls through to the preflight survey when it is not.
+  devices.setRideInterceptor(beginWalkToVehicle);
+  // Whose name goes on a certificate. The signed-in display name when there is
+  // one, and an honest anonymous form when there is not — never a fabricated
+  // identity, since the whole artifact is an assertion about who did what.
+  devices.setDibsClaimant(() => dibsClaimant);
+  // A signed-out rider is the common case and not an error — skip the fetch
+  // rather than burning a guaranteed 401, same as ride-screen-dest does.
+  if (isAuthenticated()) {
+    void fetchProfile()
+      .then(setDibsClaimantFromProfile)
+      .catch(() => {
+        /* the anonymous form is a fine certificate */
+      });
+  }
   wireFilterPresets({
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
     suggestName: () => filterSummary() || "All devices",
   });
   wireEquityRanks();
+  wireIgnoreDibs();
+  // My dibs, in Tools. Kept in step with the map: releasing one from here has
+  // to un-dim that scooter and rebuild any open popup, which is exactly what
+  // `refreshLiveDibs` already does for a claim landing.
+  myDibs = wireMyDibs({
+    section: need("tools-my-dibs"),
+    list: need("my-dibs-list"),
+    onOpenCertificate: (d: Dibs) => openDibsCertificate(d),
+    onRelease: (d: Dibs) => {
+      if (d.registration) void releaseDibs(d.registration.id);
+    },
+    // Re-fetch rather than mutate a local copy: the server has just been told
+    // to expire the row, and its answer is the one every other rider sees.
+    onChanged: () => refreshLiveDibs(),
+  });
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -868,6 +1020,8 @@ map.on("load", async () => {
   const resp = await devicesPromise;
   if (resp) {
     devices.setData(resp);
+    window.dispatchEvent(new Event("scooter:devices-refreshed"));
+    refreshLiveDibs();
     equity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
@@ -976,10 +1130,49 @@ map.on("load", async () => {
       // exactly as it does when Screen 2's own panel toggles it, and a
       // shortcut that skipped the cascades would be the one path that can
       // produce an options blob the wizard itself would call illegal.
+      // A trip planned on the home bar answers two of these before the
+      // wizard opens: "got my own" IS `own_device`, and having named a
+      // destination is what `navigation` means. Folded in here, through
+      // `applyCascades` like every other seed, so the wizard can never be
+      // handed an options blob it would call illegal.
+      const trip = takePendingTrip();
+      const fromHomeBar = trip
+        ? { own_device: trip.wheels === "own", navigation: true }
+        : {};
+      // A free ride answers all three of the wizard's questions by declining
+      // them: whatever you are riding is your own, there is nowhere to
+      // navigate to, and there is no Veo meter to price.
+      const fromFreeRide = entry.freeRide
+        ? { own_device: true, navigation: false, cost_hud: false }
+        : {};
       const options = entry.preflight
-        ? applyCascades({ ...base, ...entry.preflight }, context)
-        : base;
+        ? applyCascades(
+            { ...base, ...entry.preflight, ...fromHomeBar, ...fromFreeRide },
+            context,
+          )
+        : applyCascades({ ...base, ...fromHomeBar, ...fromFreeRide }, context);
+      homeBar?.collapse();
       rideSession.dispatch({ type: "open", options });
+      // The rider already said where they are going, so Screen 3 opens with
+      // the answer in hand rather than asking the same question twice. It
+      // still SHOWS — changing your mind about the destination is exactly
+      // what that screen is for — but Next is live the moment it mounts.
+      if (trip) {
+        rideSession.dispatch({
+          type: "setDest",
+          dest: { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon },
+        });
+        // AND THE DEVICE, for an own-device trip. `own_device: true` in the
+        // OPTIONS is not the same as a device on the doc, and Screen 6 skips
+        // itself on `doc.device === null` — so setting only the option made
+        // Screen 2 skip (correctly) and Screen 6 skip (fatally), and the flow
+        // ran off the end without ever dispatching `rideStarted`. A rider who
+        // said "got my own" and picked a route watched the wizard close and
+        // nothing happen.
+        if (trip.wheels === "own") {
+          rideSession.dispatch({ type: "setDevice", device: { own: true } });
+        }
+      }
 
       // The survey path also pre-selects the DEVICE, which is normally
       // Screen 2's job. It has to be done here rather than left to that
@@ -994,7 +1187,22 @@ map.on("load", async () => {
       // exactly: a guest's real-device pick is still a private ride, because
       // `POST /tracked-rides` is session-authed and there is no account to
       // attribute a row to.
-      if (entry.preflight && entry.vehicleIdentifier) {
+      // ...OR when the rider walked to it. `deviceConfirmed` says they
+      // committed to this vehicle; without setting the device here the doc
+      // stayed empty, Screen 2 refused to skip, and somebody who had just
+      // walked three blocks to a specific scooter was asked which scooter —
+      // with the navigation and save-tracks toggles alongside it, which is
+      // how a rider ends up with navigation off on a trip they chose a
+      // destination for. Same shape as the own-device bug: an entry that
+      // means "device known" has to actually put the device on the doc.
+      // Same rule as the own-device home-bar trip above: `own_device: true`
+      // in the OPTIONS is not a device on the DOC, and Screen 6 skips itself
+      // on `doc.device === null` — which is exactly how a "started" ride ends
+      // up with no HUD and no recorder.
+      if (entry.freeRide) {
+        rideSession.dispatch({ type: "setDevice", device: { own: true } });
+      }
+      if ((entry.preflight || entry.deviceConfirmed) && entry.vehicleIdentifier) {
         const want = entry.vehicleIdentifier.toLowerCase();
         const feat = devices
           .allFeatures()
@@ -1058,7 +1266,12 @@ map.on("load", async () => {
   // id), but auth is wired first so its GPS-permission priming has the most
   // lead time before the rider can reach it (ride-screen-auth.ts's own
   // module note).
-  wireRideScreenAuth({ locate });
+  wireRideScreenAuth({
+    locate,
+    // A rider with a destination on the session is mid-task; Screen 1 stops
+    // pitching an account at them and gates on location alone.
+    hasDestination: () => (rideSession.current()?.dest ?? null) !== null,
+  });
   wireRideScreenSelect({
     devices,
     locate,
@@ -1180,6 +1393,10 @@ map.on("load", async () => {
 
 // ---------- Onboarding & progressive discovery ----------
 
+/** Whether the intro tour opens itself on a first visit. OFF while the tour
+ *  is rewritten — see the note at its call site. */
+const ONBOARDING_AUTOSHOW = false;
+
 // The seven-screen tour (onboarding.ts) auto-shows once per browser and is
 // replayable from the About drawer. Its final CTA hands the user straight to
 // Find-a-ride — center on location and ranked picks are the wizard's own
@@ -1239,7 +1456,17 @@ function wireOnboarding(): void {
     }
   });
 
-  maybeShowOnboarding(hooks);
+  // AUTO-SHOW IS OFF, deliberately and temporarily.
+  //
+  // The tour walks through a UI that has moved on — the three-way mode bar it
+  // demonstrates no longer exists, and several screens describe surfaces that
+  // have since moved. A tour that confidently describes the wrong app is
+  // worse than no tour: it is the first thing a new rider sees, and it
+  // teaches them things they then have to unlearn.
+  //
+  // Still REPLAYABLE from About, so it stays reachable and testable, and
+  // turning it back on is one line rather than a revert.
+  if (ONBOARDING_AUTOSHOW) maybeShowOnboarding(hooks);
 }
 
 // ---------- Controls ----------
@@ -1427,6 +1654,23 @@ function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
     "model",
     compatible.size > 0 ? compatible : want,
   );
+}
+
+/** "I'm rude AF" — other people's claims stop dimming the map.
+ *
+ *  The claims are still REAL: the popup still names whoever holds one, the
+ *  certificate still validates, and "I'll ride this one" is still blocked on
+ *  somebody else's scooter. This hides the courtesy, not the fact — which is
+ *  the only version of this toggle worth shipping, since dibs is a social
+ *  convention and an app that let you switch off other people's existence
+ *  would just be a worse app. */
+function wireIgnoreDibs(): void {
+  const cb = need<HTMLInputElement>("ignore-dibs");
+  cb.addEventListener("change", () => {
+    devices.setIgnoreDibs(cb.checked);
+    track("control_change", { control: "ignore_dibs", value: cb.checked ? "on" : "off" });
+    refreshChips();
+  });
 }
 
 /** Drive the Availability checkbox through its normal change path. */
@@ -1651,7 +1895,13 @@ function wireClearFilters(): void {
     clearFeatureFilter();
     clearBatteryMin();
     clearQualityFilter();
-    setHideUnavailableControl(false);
+    // RESET, not clear — restores the DEFAULT, which is hiding reserved and
+    // out-of-service vehicles, rather than turning every constraint off.
+    // `false` here meant a rider who tapped this to get out of a narrow
+    // filter got the whole broken fleet dumped onto their map, which is not
+    // what anyone means by "start again". Showing those is an opt-in
+    // (the "+ Unavailable" chip), so un-opting-in is the reset.
+    setHideUnavailableControl(true);
     const areaCb = need<HTMLInputElement>("area-filter-enable");
     if (areaCb.checked) {
       areaCb.checked = false;
@@ -1665,6 +1915,12 @@ function wireClearFilters(): void {
 
 function wireHideUnavailable(): void {
   const cb = need<HTMLInputElement>("hide-unavailable");
+  // Push the markup's default INTO the layer at wire time. The checkbox is
+  // checked in the HTML and Devices starts with its own `hideUnavailable =
+  // false`, so without this the control and the map disagree until somebody
+  // happens to toggle it — the map showing reserved scooters while the panel
+  // insists they are hidden.
+  devices.setHideUnavailable(cb.checked);
   cb.addEventListener("change", () => {
     devices.setHideUnavailable(cb.checked);
     clusters.update(devices.visibleFeatures());
@@ -2140,6 +2396,7 @@ function wireIconography(): void {
     }
   };
 
+
   // Model badges decode async — refresh previews once they land.
   void whenModelIconsReady().then(renderAll);
   renderAll();
@@ -2349,13 +2606,6 @@ function wireModes(): void {
       b.setAttribute("aria-pressed", String(on));
     }
   };
-  const setChecked = (id: string, on: boolean): void => {
-    const cb = need<HTMLInputElement>(id);
-    if (cb.checked !== on) {
-      cb.checked = on;
-      cb.dispatchEvent(new Event("change"));
-    }
-  };
   const setSelect = (id: string, value: string): void => {
     const sel = need<HTMLSelectElement>(id);
     if (sel.value !== value) {
@@ -2377,50 +2627,61 @@ function wireModes(): void {
       if (tab && !tab.classList.contains("is-active")) tab.click();
     }
   };
-  const clearOverlays = (): void => {
-    for (const input of layerInputs.values()) {
-      if (input.checked) {
-        input.checked = false;
-        input.dispatchEvent(new Event("change"));
-      }
-    }
-  };
 
   // Fresh-load defaults. Exiting ride mode runs this so the map comes back
   // "normal": every filter cleared, iconography back to its defaults
   // (device-use badges, battery gauge on), overlays and the walk line gone.
-  const applyNormal = (): void => {
-    resetAllFilters();
-    resetIconography();
-    setSelect("choropleth-select", "");
-    clearHexDensity();
-    clearOverlays();
-    setDrawer(null);
-    locate.clearLine();
-  };
-
   // Map preset behind the wizard: a clean slate showing available devices.
-  const applyRide = (): void => {
-    resetAllFilters();
-    setChecked("hide-unavailable", true);
-    setSelect("choropleth-select", "");
-    clearOverlays();
-    setDrawer(null);
-  };
+  // ONE MAP. Finding a ride used to switch the map into a third mode nobody
+  // could see or choose: it wiped the rider's filters, forced
+  // hide-unavailable on, cleared the choropleth and overlays, hid the Areas,
+  // Tools and Compliance tabs, revealed a Recommended tab that existed
+  // nowhere else, and fetched a leaner payload. None of that was visible as a
+  // mode, none of it was switchable, and all of it had to be snapshotted and
+  // undone on the way out — which is where the "merely visiting Find wheels
+  // destroyed my analysis setup" bug came from.
+  //
+  // So there is no ride surface any more. The map keeps whatever the rider
+  // set, every tab stays where it is, and the only mode left is the one a
+  // rider actually chooses: 3D navigation, which takes the whole screen and
+  // announces itself.
 
-  const applyAnalysis = (): void => {
-    resetAllFilters();
-    setSelect("choropleth-select", "v1");
-    setDrawer("compliance");
-  };
+  // NO ANALYSIS MODE. There is no third mode, because there were never three
+  // things to be in.
+  //
+  // "Analysis" was a PRESET from the old bottom mode bar: it reset filters
+  // and iconography, forced a choropleth, and opened Equity Compliance. Every
+  // one of those side effects has since been removed as a bug in its own
+  // right, and what was left — `setDrawer("compliance")` — is just opening a
+  // drawer, which is what a drawer tab already does. Keeping a "mode" wrapped
+  // around it meant the ribbon's Analysis tab silently opened the Equity
+  // Compliance drawer, which is why that panel kept coming back for a rider
+  // who never asked for it.
+  //
+  // Equity Compliance is still reachable, deliberately, from the Tools
+  // drawer's own "Open Equity Compliance" button — one named control, in the
+  // drawer about tools, that says what it opens.
+  //
+  // What is left is the only distinction this app ever actually had: riding,
+  // or not.
+  //
+  // `resetIconography` and `setSelect` lose their last caller here and are
+  // kept anyway. Deleting them cascades into the four setters they solely
+  // write, and those setters are the ONLY writers of the iconography state —
+  // so removing them makes the compiler treat whole drawer branches as
+  // unreachable. That is a real pre-existing knot and untangling it is its
+  // own change, not a footnote to this one.
+  void resetIconography;
+  void setSelect;
 
-  /** Swap the visible surface: ride hides the analysis tabs (Account stays)
-   *  and reveals the HUD button; the map container also resizes when the
-   *  wizard docks as a side panel on small screens. */
+  /** Entering or leaving the find-a-ride flow. It no longer changes the MAP —
+   *  only what owns the bottom of the screen. */
   const setRideSurface = (on: boolean): void => {
+    // One surface owns the bottom of the screen at a time: entering a ride
+    // flow folds the home bar back to its pill rather than leaving a
+    // "Where are you going?" sheet open underneath the answer to it.
+    if (on) homeBar?.collapse();
     rideActive = on;
-    leanFetch = on; // riders get the lean payload; analysis gets extras
-    document.body.classList.toggle("mode-ride", on);
     map.resize();
   };
 
@@ -2433,16 +2694,15 @@ function wireModes(): void {
     map.resize();
   };
 
-  // Filters as they stood when ride mode was entered. Snapshotted BEFORE
-  // wizard.start() — onConsentGranted fires applyRide() (a resetAllFilters)
-  // at step one, so by interview time the live state is already gone. The
-  // summary string is captured alongside for the same reason. Restored by
-  // option 4 (before the ranking runs) and unconditionally on exit.
-  let rideEntrySnapshot: FilterSnapshot | null = null;
+  // The snapshot/restore dance is gone with the mode that made it necessary:
+  // nothing wipes the rider's filters on the way in, so nothing has to put
+  // them back on the way out. The summary string is still captured, because
+  // the wizard shows it ("ranking within your current filters").
   let rideEntrySummary = "";
 
   const wizard = new RideWizard(need("ride-wizard"), locate, {
-    onConsentGranted: () => applyRide(),
+    // Consent no longer rearranges the map behind the rider.
+    onConsentGranted: () => {},
     onExit: () => exitRide(),
     onLoginHint: () => {
       const tab = document.querySelector<HTMLButtonElement>(
@@ -2464,17 +2724,18 @@ function wireModes(): void {
         recommended?.setContext({ from, priority, typeChoice });
         setDrawer("recommended");
       };
-      if (carryOverFilters && rideEntrySnapshot) {
-        // Option 4: re-apply the mode-entry snapshot BEFORE the ranking
-        // runs — rankDevices() already ranks over visibleFeatures(), so
-        // restoring the filters is the whole feature.
-        const snap = rideEntrySnapshot;
-        void applyFilterSnapshot(snap).then(finish);
-      } else {
-        finish();
-      }
+      // "Carry over my filters" is now the only behaviour there is: nothing
+      // wiped them, so they are still applied and rankDevices() already ranks
+      // over visibleFeatures(). The option survives in the interview as a
+      // statement of intent; there is simply nothing left to restore.
+      void carryOverFilters;
+      finish();
     },
   });
+
+  exitFindWheels = () => {
+    if (rideActive) exitRide();
+  };
 
   const exitRide = (): void => {
     if (!rideActive) return;
@@ -2482,34 +2743,30 @@ function wireModes(): void {
     if (wizard.isOpen()) wizard.close();
     setWizardDocked(false);
     setRideSurface(false);
-    applyNormal();
-    // ALWAYS restore the filters as they stood on entry — option 4 or not.
-    // Merely visiting Find wheels must never destroy the analysis setup,
-    // and a wiped exit also poisons the next visit's snapshot (the likely
-    // shape of the option-4 bug reported on PR #37).
-    if (rideEntrySnapshot) {
-      void applyFilterSnapshot(rideEntrySnapshot);
-    }
-    rideEntrySnapshot = null;
-    // Recommendations are scoped to one Find-a-ride session: drop them so
-    // re-entering never shows a stale list from the prior location/answers.
+    // Nothing to undo. Leaving the flow leaves the map exactly as the rider
+    // had it — no applyNormal() wipe, no snapshot to restore, no refresh to
+    // recover fields a lean payload had dropped.
+    //
+    // Recommendations are still scoped to one Find-a-ride session: drop them
+    // so re-entering never shows a stale list from the prior answers.
     recommended?.clear();
-    setActive("analysis");
-    // Ride-mode ticks fetched the lean payload; refresh now so analysis
-    // tools (hex density, battery rankings) get their fields back promptly.
-    requestRefresh();
+    // ...and close the drawer they were in, if it is the one open. Picking a
+    // scooter off the ranked list is the moment that list stops being useful,
+    // and leaving it open parks a panel over the map right when the rider
+    // wants to see where they are walking. Only `recommended` — a rider who
+    // deliberately opened Filters or Areas keeps it.
+    const openDrawer = document.querySelector<HTMLButtonElement>(
+      ".drawer-tab.is-active",
+    );
+    if (openDrawer?.dataset.drawer === "recommended") setDrawer(null);
   };
 
   const enterRide = (): void => {
     closeAllPopups();
-    // Re-tapping the active Find-wheels button restarts the wizard, but
-    // must NOT re-snapshot: applyRide() already wiped the live state on
-    // first entry, so a second capture would replace the rider's analysis
-    // setup with the wipe — the exact loss the snapshot exists to prevent.
-    if (!rideActive) {
-      rideEntrySnapshot = snapshotFilters();
-      rideEntrySummary = filterSummary();
-    }
+    // The summary is what the wizard shows the rider ("ranking within your
+    // current filters"), so it is read at entry. There is no snapshot to take
+    // any more: nothing is about to overwrite what it describes.
+    if (!rideActive) rideEntrySummary = filterSummary();
     setDrawer(null);
     setRideSurface(true);
     setActive("ride");
@@ -2555,22 +2812,270 @@ function wireModes(): void {
         case "ride":
           enterRide();
           break;
-        default:
-          closeAllPopups();
-          if (rideActive) {
-            exitRide(); // back to a normal map — no surprise choropleth
-          } else {
-            applyAnalysis();
-            setActive("analysis");
-          }
-          // Progressive discovery: first deliberate Analysis open.
-          showTipOnce(
-            "analysis",
-            "This mode lets you explore Denver's scooter ecosystem — density, compliance, and historical trends.",
-          );
+        // NO `default`. It was the Analysis button's branch, and being a
+        // catch-all meant any button reaching this switch with an unexpected
+        // `data-mode` — or none at all — silently applied a whole map preset.
+        // A switch over a closed set of modes should name them.
       }
     });
   }
+
+  // No `[data-mode-preset]` forwarding: the Analysis tab it existed for is
+  // gone from the ribbon.
+}
+
+// ---------- Home bar ("Where are you going?") ----------
+
+// The bottom of the map. Owns the two questions a rider can actually answer
+// on arrival — where to, and whether they need wheels — and then hands the
+// trip to the flow that fits the answer. Both flows already existed; this
+// only changes which question gets asked first, and by whom.
+let homeBar: HomeBarHandle | null = null;
+/** Whose name goes on a dibs certificate. Filled from the signed-in profile
+ *  when one loads; the anonymous form otherwise. Never fabricated — the whole
+ *  artifact is an assertion about who did what. */
+let dibsClaimant = "Someone with the app";
+
+/** Who currently holds a claim on what, refreshed with the device feed.
+ *
+ *  One small request per refresh rather than one per popup: claims are rare
+ *  across a fleet this size, and this way a popup opens already knowing
+ *  whether somebody has called it rather than gaining the notice a beat
+ *  later. Failure is silent and total — no claims visible is the same as no
+ *  claims, and a dibs lookup must never be why the map stops updating. */
+let myDibs: MyDibsHandle | null = null;
+
+function refreshLiveDibs(): void {
+  void liveDibs()
+    .then(({ dibs }) => {
+      devices.setVehicleDibs(dibs);
+      // A claim made from a scooter popup has to show up in Tools without a
+      // reload — this is the one place that runs on every dibs change.
+      myDibs?.refresh();
+    })
+    .catch(() => {
+      /* the map is the point; this is a garnish on it */
+    });
+}
+
+function setDibsClaimantFromProfile(
+  profile: { display_name?: string | null; public_username?: string | null } | null,
+): void {
+  dibsClaimant =
+    profile?.display_name?.trim() ||
+    profile?.public_username?.trim() ||
+    "Someone with the app";
+}
+
+function wireHomeBar(): HomeBarHandle {
+  const bar = createHomeBar(need("home-bar"), {
+    locate,
+    onPlacesChange: ({ dest, start }) => {
+      tripPins.set({ dest, start });
+      // Show it, not just draw it: a pin outside the current viewport is the
+      // same as no pin. Ease rather than jump, and only when there is
+      // somewhere to go — an ease to nowhere on every clear would fight the
+      // rider for control of the map.
+      const focus = dest ?? start;
+      if (!focus) return;
+      map.easeTo({ center: [focus.lon, focus.lat], zoom: Math.max(map.getZoom(), 14), duration: 600 });
+    },
+    // The same one-shot picker the profile's home/work and Screen 3 use.
+    pickOnMap: (hint) => mapPick.pick({ hint }),
+    onPlanTrip: ({ dest, wheels, start }) => {
+      setPendingTrip({ dest, wheels, start });
+      closeAllPopups();
+      const click = (mode: string): void =>
+        document
+          .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
+          ?.click();
+      // "Need wheels" is a question about which vehicle, which is exactly what
+      // the find-a-ride ranker answers: the rider picks one on the map, and
+      // 🧭 Use in Ride Mode hands them to the walk flow rather than the
+      // wizard (see beginWalkToVehicle).
+      if (wheels === "need") {
+        click("ride");
+        return;
+      }
+      // "Got my own" has no vehicle to choose and nowhere to walk to. The
+      // rider is standing on their own scooter with a destination in hand, so
+      // there is nothing left to ask — go straight to route triage and the
+      // 3D navigation that follows it, skipping the gates, the device picker
+      // and the "Where to?" screen the home bar already answered.
+      openRideModal({ fastForwardTo: "4" });
+    },
+  });
+  return bar;
+}
+
+// ---------- Walk to the scooter, then ride ----------
+
+// The flow that replaced a run of wizard screens for the case where the app
+// already knows everything they asked about: the rider named a destination on
+// the home bar and then tapped a specific scooter. All that is left is getting
+// them to it and getting them moving.
+let walkLeg: WalkLegHandle | null = null;
+let arrivalPanel: ArrivalPanelHandle | null = null;
+let deviceWatch: DeviceWatchHandle | null = null;
+
+/** Close the find-a-scooter panel and its ranked list. Exported from the
+ *  mode wiring via a module-level handle because `wireModes` owns the wizard
+ *  and the drawer, and the walk flow is the only other thing that needs to
+ *  put them away. */
+let exitFindWheels: () => void = () => {};
+
+function endWalkFlow(): void {
+  deviceWatch?.stop();
+  deviceWatch = null;
+  walkLeg?.stop();
+  walkLeg = null;
+  arrivalPanel?.destroy();
+  arrivalPanel = null;
+  walkLine.clear();
+  document.body.classList.remove("arrival-open");
+}
+
+function beginWalkToVehicle(info: {
+  name: string;
+  plate: string | null;
+  vehicleIdentifier: string | null;
+  lat: number;
+  lng: number;
+}): boolean {
+  // A destination is a bonus, not a prerequisite. Walking to a scooter is
+  // worth doing IN THIS APP whether or not the rider has said where they are
+  // going afterwards — the alternative was a link that opened Google Maps,
+  // which is the app admitting it cannot do the one thing it just asked the
+  // rider to do. Without a trip the arrival panel hands off to the ride flow,
+  // which asks for the destination itself, correctly, because it genuinely
+  // does not know it. The panel reads the trip on each render rather than
+  // taking a copy here, so that "bonus" can also be added mid-walk.
+
+  endWalkFlow();
+  closeAllPopups();
+  // The choice is made. Leaving the chooser open behind the walk is two
+  // surfaces arguing about one decision, and the ranked list is stale the
+  // moment a scooter is picked out of it.
+  exitFindWheels();
+  document.body.classList.add("arrival-open");
+
+  const panel = createArrivalPanel(need("arrival-panel"), {
+    vehicle: { name: info.name, plate: info.plate ?? undefined },
+    // Re-read, never captured: `onChangeDestination` below rewrites the
+    // pending trip while this panel is on screen.
+    destinationLabel: () => peekPendingTrip()?.dest.label ?? null,
+    onChangeDestination: () => {
+      // The one-question form. The wheels question is already answered —
+      // they walked to a scooter — so the bar answers only "where to?" and
+      // hands it straight back rather than dispatching a fresh trip that
+      // would tear down the walk flow the rider is standing in the middle of.
+      homeBar?.openForDestination((place) => {
+        const existing = peekPendingTrip();
+        setPendingTrip({
+          dest: place,
+          // Keep whatever the trip already said about the other two. A rider
+          // correcting their destination has not changed their mind about
+          // riding a scooter, or about where they set off from.
+          wheels: existing?.wheels ?? "need",
+          start: existing?.start ?? null,
+        });
+        panel.refreshDestination();
+      });
+    },
+    onChooseRoute: () => {
+      endWalkFlow();
+      // Straight to route triage. The wizard still owns starting a ride — it
+      // is where the session doc, the track store and the Veo handoff live —
+      // and Screen 6's unlock sits downstream of Screen 4's route choice,
+      // which is exactly the order the meter demands.
+      openRideModal({
+        vehicleIdentifier: info.vehicleIdentifier ?? undefined,
+        plate: info.plate ?? undefined,
+        // They walked to it. There is nothing left to confirm.
+        deviceConfirmed: true,
+        fastForwardTo: "4",
+      });
+    },
+    onCancel: () => {
+      // BACKING OUT RELEASES THE CLAIM. A rider who closes this has stopped
+      // walking towards the scooter, and dibs nobody is honouring is exactly
+      // the hoarding the ten-minute rule exists to prevent — it would just
+      // take ten minutes to expire instead of going immediately. Dropping it
+      // here also means the next person sees the scooter free the moment it
+      // is free.
+      if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
+      endWalkFlow();
+    },
+    // Re-read each update rather than closing over a copy: the claim gains
+    // its "started walking" stamp as the rider moves, and a stale copy would
+    // keep telling them to set off after they had.
+    dibs: () => (info.vehicleIdentifier ? dibsOn(info.vehicleIdentifier) : null),
+  });
+  arrivalPanel = panel;
+
+  walkLeg = startWalkLeg(
+    { lat: info.lat, lng: info.lng, label: info.name },
+    {
+      locate,
+      drawRoute: (coords) => {
+        if (!coords || coords.length < 2) walkLine.clear();
+        // Green, not the ride route's profile colour: this is the leg you do
+        // on foot, and two lines in the same colour would read as one route.
+        else walkLine.set(coords, { color: "#2f9e44", dest: [info.lng, info.lat] });
+      },
+      onChange: (state) => {
+        // Rule 1 is satisfied by MOVEMENT, and this is the only place that
+        // sees it: fold each fresh distance into the claim so "started
+        // walking" gets stamped and the grace stops applying.
+        const vid = info.vehicleIdentifier;
+        if (vid && state.remainingMeters !== null) {
+          const held = dibsOn(vid);
+          if (held) {
+            const next = recordProgress(held, state.remainingMeters);
+            if (next !== held) saveDibs(next);
+          }
+        }
+        panel.update(state);
+      },
+    },
+  );
+  panel.update(walkLeg.state());
+
+  // WATCH IT WHILE THEY WALK. Somebody standing next to the scooter can
+  // unlock it at any moment, and every second between that happening and the
+  // rider knowing is a second spent walking the wrong way.
+  if (info.vehicleIdentifier) {
+    deviceWatch = watchDevice(info.vehicleIdentifier, {
+      lookup: (id) => {
+        const f = devices
+          .allFeatures()
+          .find((x) => x.properties.vehicle_identifier === id);
+        if (!f) return undefined;
+        const p = f.properties as unknown as Record<string, unknown>;
+        const bool = (v: unknown): boolean => v === true || v === "true" || v === 1;
+        return {
+          vehicleIdentifier: id,
+          // is_reserved means IN USE on this operator, not a held booking.
+          inUse: bool(p.is_reserved),
+          rentable: !bool(p.is_disabled),
+          // Our own read, not Veo's — see device-watch.ts's two categories.
+          looksRideable: !bool(p.is_disabled) && !bool(p.is_reserved),
+        };
+      },
+      onRefresh: (cb) => {
+        window.addEventListener("scooter:devices-refreshed", cb);
+        return () => window.removeEventListener("scooter:devices-refreshed", cb);
+      },
+      onGone: (reason) => {
+        track("device_gone", { reason });
+        // Say it where the rider is already looking, and stop pointing them
+        // at a scooter that is not there.
+        walkLine.clear();
+        arrivalPanel?.reportGone(goneMessage(info.name, reason));
+      },
+    });
+  }
+  return true;
 }
 
 // ---------- Equity ranks ----------
@@ -2583,8 +3088,12 @@ function wireEquityRanks(): void {
   const rankBtns = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#rank-toggles .rank-btn"),
   );
+  // ONE checkbox now, not two. The Areas drawer carried a mirrored copy of
+  // this control, which put equity ranking in front of every rider looking at
+  // boundary outlines — a compliance-analysis feature advertising itself from
+  // a general map surface. The remaining one lives beside the rank toggles it
+  // belongs to, inside Equity Compliance.
   const overlayInputs = [
-    need<HTMLInputElement>("equity-selected-overlay"),
     need<HTMLInputElement>("equity-selected-overlay-mirror"),
   ];
 
@@ -2669,6 +3178,86 @@ function wireFilterAccordion(): void {
   }
 }
 
+/** Ride Mode from the top bar: one tap and you are recording.
+ *
+ *  No vehicle, no destination, no timer, and no wizard — the three questions
+ *  the flow normally asks are all "so we can do more for you", and this is
+ *  the mode for a rider who wants none of that and just wants the track.
+ *
+ *  It is a PRIVATE, LOCAL ride: `rideId: null`, signed with a client-random
+ *  key, recorded on this device. That is not a limitation dressed up as a
+ *  feature — a tracked server ride is a ride ON SOMETHING, keyed to a
+ *  vehicle we can correlate against GBFS, and a free ride has no vehicle to
+ *  key it to. Recording locally is the honest shape, and the rider can still
+ *  review, export or (for a vehicle ride) donate from Local Data.
+ *
+ *  The device is marked "own" because that is what it is: whatever you are
+ *  riding, we did not rent it to you.
+ */
+/** Does this doc carry anything the rider told us? A doc outlives the surface
+ *  that made it (a reload, a closed wizard, a "back in a minute"), and any of
+ *  these means a ride is in progress even when nothing is on screen. `state`
+ *  alone is not enough — `wizard` covers both "just opened, asked nothing"
+ *  and "chose a scooter and a destination". */
+function hasAnswers(doc: RideSessionDoc): boolean {
+  // A FINISHED ride is not an unfinished one. `done` and `idle` docs keep
+  // their device and `startedAtMs` — that is the record of the ride that just
+  // happened — so answering this on the fields alone made every tap after the
+  // first reopen the last ride's wizard instead of starting a new one. The
+  // second through nth attempt "broke" for exactly this reason.
+  if (doc.state === "idle" || doc.state === "done") return false;
+  return (
+    doc.device !== null ||
+    doc.dest !== null ||
+    doc.route !== null ||
+    doc.rideId !== null ||
+    doc.startedAtMs !== null
+  );
+}
+
+function wireFreeRide(): void {
+  const btn = document.getElementById("free-ride");
+  if (!(btn instanceof HTMLButtonElement)) return;
+
+  btn.addEventListener("click", () => {
+    // THIS BUTTON NEVER DESTROYS AN ANSWER THE RIDER ALREADY GAVE.
+    //
+    // It is two things at once: "start a free ride" for a rider with nothing
+    // in flight, and "take me back to my ride" for one who stepped away —
+    // picked a scooter, chose a destination, went to buy a coffee. Both press
+    // the same button, and the second must never get the first's behaviour,
+    // because `open` seeds a FRESH doc and would drop their device,
+    // destination and route on the floor.
+    //
+    // So anything in flight is REOPENED, never replaced. Live ride included:
+    // the HUD owns ending, and a second control for one irreversible action
+    // is how a rider ends a ride they meant to keep.
+    const doc = rideSession.current();
+    if (doc && (isRideLive(doc) || hasAnswers(doc))) {
+      openRideModal({});
+      return;
+    }
+    track("ride_mode_free", {});
+    // A fix is not required to START — the watch may still be answering, and
+    // refusing to begin would lose the first seconds of the ride, which is
+    // exactly the part a rider cannot go back for. Ask for one anyway.
+    locate.trigger();
+    // Through the wizard's own Screen 6, not four hand-written dispatches.
+    //
+    // The hand-written version set `state: "riding"` on the doc and stopped
+    // there — and a doc that says "riding" is not a ride. Screen 6 is where
+    // `rideStarted` legally happens AND where the private track key is
+    // minted, the local recorder opened, the transition checked for
+    // acceptance, and the HUD handed off. Reimplementing that got the state
+    // change and none of the rest: no HUD, and — on a feature whose entire
+    // point is "GPS track on" — no recording at all.
+    //
+    // Screen 6 auto-starts an own-device ride on mount, so this is still one
+    // tap; the rider sees the HUD, not a wizard.
+    openRideModal({ freeRide: true, deviceConfirmed: true, fastForwardTo: "6" });
+  });
+}
+
 function wireDrawers(): void {
   const tabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".drawer-tab"),
@@ -2739,7 +3328,9 @@ function wireDrawers(): void {
 // can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
-  const modeSwitch = need("mode-switch");
+  // The home bar, not the mode bar: #mode-switch is `hidden` now (it survives
+  // only as the seam the home bar clicks), so lifting it would move nothing.
+  const modeSwitch = need("home-bar");
   const mq = window.matchMedia("(max-width: 640px)");
   let expanded = false;
   let idleTimer: number | undefined;
@@ -2747,7 +3338,7 @@ function wireFreshnessCollapse(): void {
   const sync = (): void => {
     root.classList.toggle("freshness--collapsed", mq.matches && !expanded);
     // While the pill is tap-expanded, its three lines of text can reach
-    // well past the mode pill's own footprint — lift the pill clear rather
+    // well past the home bar's own footprint — lift the bar clear rather
     // than let it sit on top of (and hide) that text. Read the freshness
     // pill's live rendered height instead of hardcoding one: the class
     // toggle above already applied, so this reflects the current expanded
@@ -2991,6 +3582,10 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
+    window.dispatchEvent(new Event("scooter:devices-refreshed"));
+    refreshLiveDibs();
+      // The watcher listens on this: a scooter can go at any tick.
+      window.dispatchEvent(new Event("scooter:devices-refreshed"));
       equity.update(resp.features);
       const visible = devices.visibleFeatures();
       clusters.update(visible);
@@ -3009,7 +3604,6 @@ function startRefreshLoop(): void {
     }
   };
 
-  requestRefresh = () => void tick();
   setInterval(tick, REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {

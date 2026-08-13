@@ -48,12 +48,21 @@
       content="Live interactive map of every Denver Veo scooter and e-bike, with disadvantaged-area overlays and daily compliance status."
     />
     <title>Denver Veo Scooter &amp; E-Bike Map</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛴%3C/text%3E%3C/svg%3E" />
+    <!-- The real mark, not an emoji: a glyph favicon renders in whatever the
+         platform feels like and cannot be themed.
+         EVERY ICON FILENAME CARRIES -v2. Icons are the most aggressively
+         cached thing a PWA has — an installed home-screen icon can outlive
+         several deploys — and a new BYTE at an old NAME is exactly what
+         nothing re-fetches. The v1 files are still on disk and still served,
+         unreferenced, so anything already holding a cached URL keeps
+         resolving instead of 404ing on the old name. -->
+    <link rel="icon" href="/mark-v2.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-48-v2.png" sizes="48x48" type="image/png" />
     <!-- PWA install metadata. manifest.webmanifest + icon-*.png drive the
          Android/desktop install UI; the apple-* tags are iOS Safari's own
          (pre-manifest) equivalents — it ignores the manifest's icons/name. -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-v2.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Scooter.fyi" />
@@ -96,10 +105,31 @@
         <!-- .maplibregl-ctrl-top-left (GPS + theme) is adopted here by chrome.ts -->
       </div>
       <div class="topbar__brand" aria-hidden="true">
+        <!-- Replaced by the real mark at boot (chrome.ts); the glyph is the
+             pre-hydration fallback so the bar never renders empty. -->
         <span class="topbar__brand-glyph">🛴</span>
         <span class="topbar__brand-name">Scooter.fyi</span>
       </div>
       <div class="topbar__right">
+        <!-- Free ride. Where the 🏆 used to be, and monochrome on purpose:
+             it starts something, it does not decorate. One tap records a
+             track with no vehicle, no destination and no timer — see
+             startFreeRide() in main.ts. -->
+        <button
+          id="free-ride"
+          class="topbar__btn"
+          type="button"
+          title="Ride Mode"
+          aria-label="Ride Mode — start recording a free ride"
+        >
+          <!-- Analog speedometer: dial arc, needle, hub -->
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 17a9 9 0 1 1 17 0" />
+            <path d="M12 13.5 16.5 9" />
+            <circle cx="12" cy="14.5" r="1.5" fill="currentColor" stroke="none" />
+          </svg>
+          <span class="sr-only">Ride Mode</span>
+        </button>
         <button
           class="topbar__btn drawer-tab drawer-tab--topbar"
           type="button"
@@ -220,25 +250,6 @@
         </svg>
         <span class="drawer-tab__label">Tools</span>
       </button>
-      <!-- Hidden, not removed: wireDrawers still manages the compliance
-           drawer through this tab, and the Tools drawer's Equity Compliance
-           button opens it with a programmatic click. -->
-      <button
-        class="drawer-tab"
-        type="button"
-        data-drawer="compliance"
-        aria-pressed="false"
-        aria-controls="drawer-compliance"
-        title="Equity Compliance"
-        hidden
-      >
-        <!-- Double check -->
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M18 6 7 17l-5-5" />
-          <path d="m22 10-7.5 7.5L13 16" />
-        </svg>
-        <span class="drawer-tab__label">Compliance</span>
-      </button>
       <button
         class="drawer-tab"
         type="button"
@@ -255,7 +266,45 @@
         </svg>
         <span class="drawer-tab__label">About</span>
       </button>
+      <!-- No Analysis tab. It applied a PRESET rather than opening a panel —
+           resetting filters and iconography, forcing a choropleth, opening
+           Equity Compliance — while looking identical to the tabs beside it
+           that only open a drawer. Every side effect has since been removed
+           as its own bug, and what remained was a mode wrapper around
+           "open the compliance drawer", which is why that panel kept coming
+           back unasked. Equity Compliance is reached from the Tools drawer's
+           own named button now. -->
     </nav>
+
+    <!-- The Equity Compliance tab lives HERE, outside the tab strip, not
+         inside it with `hidden` on. It kept reappearing in the menu: `hidden`
+         is one CSS rule away from being defeated (`.drawer-tab` sets
+         `display: inline-flex`, which has beaten it before), and a control
+         that must never be in the menu should not be in the menu's markup.
+
+         Still a real button, because wireDrawers() finds tabs with a
+         document-wide `.drawer-tab` query and the Tools drawer's "Open Equity
+         Compliance" button opens this drawer with a programmatic click. Out
+         of the flow and out of the accessibility tree; nothing can reveal it
+         by accident. -->
+    <div class="offscreen-controls" aria-hidden="true">
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="compliance"
+        aria-pressed="false"
+        aria-controls="drawer-compliance"
+        title="Equity Compliance"
+        hidden
+      >
+        <!-- Double check -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 7 17l-5-5" />
+          <path d="m22 10-7.5 7.5L13 16" />
+        </svg>
+        <span class="drawer-tab__label">Compliance</span>
+      </button>
+    </div>
 
     <!-- ---------- Filters drawer (internal id "devices") ---------- -->
     <aside class="drawer" id="drawer-devices" aria-labelledby="drawer-devices-h" aria-hidden="true">
@@ -375,8 +424,25 @@
           <p class="control-hint">Above 0%, devices with unknown charge are hidden too.</p>
           <h4 class="control-sublabel">Availability</h4>
           <label class="switch">
-            <input type="checkbox" id="hide-unavailable" />
+            <!-- ON by default: a scooter somebody is riding, or one marked out
+                 of service, is not a thing a rider can go and get. Showing them
+                 by default made the map look fuller than the city was. The
+                 switch inverts to "show" so the OFF state is the unusual one
+                 the rider opted into. -->
+            <input type="checkbox" id="hide-unavailable" checked />
             <span>Hide Reserved &amp; Out of Service</span>
+          </label>
+          <label class="switch">
+            <!-- OFF by default, because the default is to be a decent
+                 person about it. A scooter somebody has called dibs on
+                 renders faded with a 🚫 — it is still THERE, still tappable,
+                 still rideable, because dibs was never a reservation. This
+                 only removes the visual courtesy.
+                 The label is the rider's own words. It is meant to be a
+                 slightly uncomfortable thing to switch on, which is the
+                 honest framing of what it does. -->
+            <input type="checkbox" id="ignore-dibs" />
+            <span>I&rsquo;m rude AF &mdash; I don&rsquo;t care about dibs</span>
           </label>
           </div>
         </details>
@@ -417,7 +483,10 @@
           </div>
         </details>
 
-        <button id="clear-filters" class="clear-filters-btn" type="button">Clear All Filters</button>
+        <!-- "Reset", not "Clear": it restores the defaults (which include
+             hiding reserved and out-of-service vehicles), rather than
+             switching every constraint off. -->
+        <button id="clear-filters" class="clear-filters-btn" type="button">Reset Filters</button>
       </div>
     </aside>
 
@@ -557,14 +626,6 @@
           <ul class="layer-list" id="layer-list">
             <!-- populated by JS -->
           </ul>
-          <!-- Union of the equity ranks selected in the Equity Compliance
-               drawer. Not a single boundary layer, so it lives outside the
-               JS-built list. -->
-          <label class="layer-item">
-            <input type="checkbox" id="equity-selected-overlay" />
-            <span class="layer-item__swatch" style="background: #7b1fa2"></span>
-            <span class="layer-item__label">Equity Ranking (Selected)</span>
-          </label>
         </section>
 
         <section class="control-group" aria-labelledby="choropleth-label">
@@ -670,6 +731,17 @@
         <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- My dibs. First in the drawer because it is the only thing here
+             that EXPIRES: everything below it will still be there in ten
+             minutes, and these will not. Hidden entirely when the rider
+             holds none — an empty "My dibs" heading is a permanent reminder
+             of a feature you are not using. Populated by wireMyDibs(). -->
+        <section class="control-group" id="tools-my-dibs"
+                 aria-labelledby="tools-my-dibs-label" hidden>
+          <h3 id="tools-my-dibs-label" class="control-label">My dibs</h3>
+          <ul class="my-dibs" id="my-dibs-list"></ul>
+        </section>
+
         <section class="control-group" aria-labelledby="finder-label">
           <h3 id="finder-label" class="control-label">Find dense device clusters</h3>
           <p class="finder-help">Groups of devices within 30&nbsp;ft of each other.</p>
@@ -816,7 +888,14 @@
           </button>
         </section>
 
-        <h3>Message from Founder</h3>
+        <!-- Collapsed by default: this is the longest block on the page and
+             the one fewest readers came for, so it should not push "A few
+             things worth knowing" (which is the part that actually sets
+             expectations about a beta) below the fold. Native <details>, so
+             it works before JS and is announced correctly without ARIA of
+             our own. The open event is tracked in main.ts. -->
+        <details class="about-founder" id="about-founder">
+          <summary class="about-founder__summary">Message from Founder</summary>
         <p>
           Hey there! I'm <a href="https://zneill.com" target="_blank" rel="noopener">Zeke Neill</a>,
           the Denverite responsible for Scooter.fyi. This project originally
@@ -832,8 +911,19 @@
           you do — or there's a feature you'd like to see — please don't
           hesitate to reach out.
         </p>
+        </details>
 
-        <h3>A few things worth knowing</h3>
+        <!-- Collapsed, like the founder's note above it. These are the two
+             longest blocks on the page and the two fewest readers came for;
+             open by default they pushed the data credits — which are a
+             CONDITION of the Denver licence, not a courtesy — off the
+             bottom. Native <details>, so both work before JS.
+             NOT open by default even though it sets beta expectations: a
+             wall of text nobody scrolls sets no expectations at all, and a
+             titled thing you can choose to open is read more than a titled
+             thing you scroll past. -->
+        <details class="about-founder" id="about-caveats">
+          <summary class="about-founder__summary">A few things worth knowing</summary>
         <p>
           <strong>This is a beta, experimental project.</strong> Features may
           appear out of thin air, get removed, or break. Don't get too
@@ -868,6 +958,7 @@
           ·
           <a href="https://data.scooter.fyi/legal/terms-of-service" target="_blank" rel="noopener">Terms&nbsp;of&nbsp;Use</a>
         </p>
+        </details>
 
         <section class="control-group" id="about-analytics" aria-labelledby="about-analytics-label">
           <h3 id="about-analytics-label" class="control-label">Private analytics</h3>
@@ -909,6 +1000,12 @@
             Neither the City of Denver nor OpenStreetMap endorses this app,
             and any mistakes in how their data is used here are ours.
           </p>
+          <p class="control-hint">
+            Veo, Veo Cosmo, Veo Astro, Veo Rover, and Veo Apollo may be
+            trademarks of VeoRide, Inc. These are used only for
+            educational/descriptive purposes, VeoRide, Inc is not affiliated
+            with and does not endorse this website.
+          </p>
         </section>
       </div>
     </aside>
@@ -920,6 +1017,12 @@
     <aside class="drawer drawer--right" id="drawer-account" aria-labelledby="drawer-account-h" aria-hidden="true">
       <header class="drawer-header">
         <h2 class="drawer-title" id="drawer-account-h">Account</h2>
+        <!-- Theme lives here, above the tabs, rather than on the map's top
+             bar: it is a preference about the app, not a control that moves
+             you around the map, and the top bar is for the latter. Populated
+             by mountThemeModes() (theme.ts); the markup is empty so a boot
+             failure leaves a gap rather than a dead control. -->
+        <div class="theme-modes" id="theme-modes" role="group" aria-label="Theme"></div>
         <button class="drawer-close" type="button" aria-label="Close Account">&times;</button>
       </header>
       <div class="drawer-body">
@@ -936,13 +1039,27 @@
          so closing a drawer never hides the map's state. Populated by JS. -->
     <div id="filter-chips" class="filter-chips" role="region" aria-label="Active filters" hidden></div>
 
-    <!-- Mode bar (bottom center), three modes: "Find wheels" runs the
-         guided wizard surface; "Analysis" is the full civic/data surface
-         with the drawer tabs; "Ride" opens the full-screen in-ride HUD.
-         All three are wired by wireModes() in main.ts. -->
-    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets">
+    <!-- "Walking to / arrived at the scooter" panel. Floats over the map in
+         place of the wizard screens that used to ask what the app already
+         knew. Built by arrival-panel.ts; this is only the mount point. -->
+    <div id="arrival-panel"></div>
+
+    <!-- Home bar (bottom center): "Where are you going?" — the surface that
+         replaced the three-way mode bar. Built by home-bar.ts; this is only
+         the mount point. -->
+    <div id="home-bar" class="home-bar"></div>
+
+    <!-- The old mode bar, now HIDDEN and kept only as the seam the home bar
+         drives. Every mode preset (filters, iconography, choropleth, drawer,
+         the wizard's snapshot/restore, leanFetch, the live-ride guard) is
+         wired to these two buttons by wireModes() in main.ts, and the home
+         bar switches surfaces by clicking them — the same synthetic-event
+         technique wireModes already uses on checkboxes, selects and drawer
+         tabs. `hidden` keeps them out of the tab order and the a11y tree
+         while leaving .click() working, so a rider can never reach them and
+         no behaviour had to be re-derived to move the entry point. -->
+    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets" hidden>
       <button class="mode-btn" type="button" data-mode="ride" aria-pressed="false">🛴 Find wheels</button>
-      <button class="mode-btn is-active" type="button" data-mode="analysis" aria-pressed="true">📊 Analysis</button>
       <button class="mode-btn" type="button" id="ride-open" data-mode="riding" aria-pressed="false">🧭 Ride</button>
     </div>
 

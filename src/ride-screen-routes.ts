@@ -73,10 +73,12 @@ import {
 import {
   ApiError,
   fetchRoute as defaultFetchRoute,
-  fetchRouteProfiles as defaultFetchRouteProfiles,
+  fetchRouteOptions as defaultFetchRouteOptions,
   postRideRoute as defaultPostRideRoute,
   type PostRideRouteIn,
   type PostRideRouteResponse,
+  type RouteOption,
+  type RouteOptionsResponse,
   type RouteProfile,
   type RouteProfilesResponse,
   type RouteQuery,
@@ -109,8 +111,16 @@ export interface RideScreenRoutesDeps {
   devices?: DevicesLike;
   /** Injected for tests; defaults to `api.ts`'s `fetchRouteProfiles`. */
   fetchRouteProfiles?(signal?: AbortSignal): Promise<RouteProfilesResponse>;
-  /** Injected for tests; defaults to `api.ts`'s `fetchRoute`. */
+  /** Injected for tests; defaults to `api.ts`'s `fetchRoute`. Still used for
+   *  ONE call, at the moment of commitment, to fetch turn-by-turn for the
+   *  route the rider actually chose — see `advance`. */
   fetchRoute?(q: RouteQuery, signal?: AbortSignal): Promise<RouteResponse>;
+  /** Injected for tests; defaults to `api.ts`'s `fetchRouteOptions`. */
+  fetchRouteOptions?(
+    q: { from: [number, number]; to: [number, number]; vehicle_model?: string;
+         battery_percent?: number | null },
+    signal?: AbortSignal,
+  ): Promise<RouteOptionsResponse>;
   /** Injected for tests; defaults to `api.ts`'s `postRideRoute`. Never called
    *  with an abort signal tied to this screen's lifetime — see the NEXT
    *  handler: the POST must outlive the screen (non-blocking ≠ discarded). */
@@ -203,7 +213,17 @@ export function profileInfoText(key: string): string {
 
 export type RouteState =
   | { key: string; label: string; status: "loading" }
-  | { key: string; label: string; status: "ready"; response: RouteResponse }
+  | {
+      key: string;
+      label: string;
+      status: "ready";
+      response: RouteResponse;
+      /** The deduped option this row came from, when it came from
+       *  `/route/options` — carries the folded profile names and the arrival
+       *  battery, neither of which fits in a `/route` Feature. Absent for a
+       *  row built any other way. */
+      option?: RouteOption;
+    }
   | { key: string; label: string; status: "error" };
 
 export function countByStatus(
@@ -447,6 +467,19 @@ function buildLoadedScreen(
   const abort = new AbortController();
 
   let results = new Map<string, RouteState>();
+  /** Profile keys the server could not route at all, so the status line can
+   *  account for them instead of quietly showing a shorter list. */
+  let unavailable: string[] = [];
+  /** Explicit, rather than inferred from `results.size === 0`. The old screen
+   *  seeded one entry per profile before fetching, so an empty map could only
+   *  mean "not started"; one call that FAILS also leaves it empty, and reading
+   *  that as "still loading" left the rider on a spinner forever instead of on
+   *  the documented degrade. */
+  let loaded = false;
+  /** The beta notice now arrives once, on the response, rather than repeated
+   *  on every option. Held so `advance` can carry it into the session route —
+   *  the nav HUD keeps showing it for the whole ride. */
+  let betaWarning: string | null = null;
   let selectedProfile: string | null = null;
   /** Close function for the open profile-ℹ modal, if any — closed on
    *  re-open (one at a time) and on screen teardown, same discipline as
@@ -495,62 +528,75 @@ function buildLoadedScreen(
   void loadRoutes();
 
   async function loadRoutes(): Promise<void> {
-    let list: RouteProfile[];
+    // ONE call, not one-per-profile-plus-a-profile-list.
+    //
+    // Asking for every profile separately offered the rider five choices that
+    // were two or three roads, and let two of them quote different durations
+    // for a byte-identical shape. The server now groups by the shape that
+    // comes back and returns one option per ROAD, so the list is choices
+    // rather than synonyms, and there is no second number to contradict the
+    // first. It also carries each option's own geometry, which is why the
+    // preview needs no follow-up request.
+    let resp: RouteOptionsResponse;
     try {
-      const resp = await (deps.fetchRouteProfiles ?? defaultFetchRouteProfiles)(
+      resp = await (deps.fetchRouteOptions ?? defaultFetchRouteOptions)(
+        {
+          from: [origin.lat, origin.lng],
+          to: [dest.lat, dest.lon],
+          vehicle_model: selectedDevice(doc.device)?.model ?? undefined,
+          // The charge the rider confirmed at the scooter, so every row can
+          // say what will be left on arrival rather than only what it spends.
+          // Null for an own-device ride today: RideSessionOwnDevice carries
+          // no charge, so there is nothing honest to send. Every row then
+          // shows the burn without an arrival figure, which is the truthful
+          // degrade rather than a guess.
+          battery_percent: selectedDevice(doc.device)?.batteryConfirmed ?? null,
+        },
         abort.signal,
       );
-      list = resp.profiles.length > 0 ? resp.profiles : FALLBACK_PROFILES;
     } catch (e) {
       if (destroyed) return;
-      if (!isAbortError(e)) {
-        console.error(
-          "route profiles fetch failed — using the known fallback list",
-          e,
-        );
-      }
-      list = FALLBACK_PROFILES;
+      if (!isAbortError(e)) console.error("route options fetch failed", e);
+      // Total failure is the documented degrade: nav off, the ride proceeds.
+      results = new Map();
+      loaded = true;
+      render();
+      return;
     }
     if (destroyed) return;
-    results = new Map(
-      list.map((p) => [p.key, { key: p.key, label: p.label, status: "loading" as const }]),
-    );
-    render();
 
-    await Promise.allSettled(
-      list.map(async (p) => {
-        try {
-          const rr = await (deps.fetchRoute ?? defaultFetchRoute)(
-            {
-              from: [origin.lat, origin.lng],
-              to: [dest.lat, dest.lon],
-              profile: p.key,
-              vehicle_model: selectedDevice(doc.device)?.model ?? undefined,
-              maneuvers: true,
-            },
-            abort.signal,
-          );
-          if (destroyed) return;
-          results.set(p.key, { key: p.key, label: p.label, status: "ready", response: rr });
-          if (rr.properties.beta_warning && betaEl.hidden) {
-            betaEl.textContent = `⚠️ ${rr.properties.beta_warning}`;
-            betaEl.hidden = false;
-          }
-        } catch (e) {
-          if (destroyed) return;
-          if (!isAbortError(e)) {
-            console.error(`route fetch failed for profile "${p.key}"`, e);
-          }
-          results.set(p.key, { key: p.key, label: p.label, status: "error" });
-        }
-        if (destroyed) return;
-        if (selectedProfile === null) {
-          const s = results.get(p.key);
-          if (s?.status === "ready") selectedProfile = p.key;
-        }
-        render();
-      }),
+    unavailable = resp.profiles_unavailable ?? [];
+    betaWarning = resp.beta_warning ?? null;
+    if (betaWarning && betaEl.hidden) {
+      betaEl.textContent = `⚠️ ${betaWarning}`;
+      betaEl.hidden = false;
+    }
+
+    results = new Map(
+      resp.options.map((o) => [o.key, {
+        key: o.key,
+        label: o.label,
+        status: "ready" as const,
+        option: o,
+        response: optionAsRoute(o),
+      }]),
     );
+    if (selectedProfile === null || !results.has(selectedProfile)) {
+      selectedProfile = resp.options[0]?.key ?? null;
+    }
+    loaded = true;
+    render();
+  }
+
+  /** An option, shaped like the `/route` Feature the rest of this screen (and
+   *  the session doc) already speaks. Keeps the rewiring to the fetch. */
+  function optionAsRoute(o: RouteOption): RouteResponse {
+    const { geometry, ...properties } = o;
+    return {
+      type: "Feature",
+      geometry,
+      properties: properties as unknown as RouteResponse["properties"],
+    } as RouteResponse;
   }
 
   // ---------------- selection ----------------
@@ -563,7 +609,36 @@ function buildLoadedScreen(
   }
 
   // ---------------- advance ----------------
-  function advance(): void {
+  /** Turn-by-turn for the route the rider actually chose.
+   *
+   *  `/route/options` deliberately omits maneuvers: they roughly double a
+   *  response, and paying that for every option to use one of them is exactly
+   *  the waste the single-call rewrite removed. So they are fetched once, at
+   *  the moment of commitment, for the one profile that won.
+   *
+   *  Never fatal. A ride with a drawn line and no spoken turns is a worse
+   *  ride; a ride that refuses to start because a second request failed is
+   *  not a ride at all. */
+  async function routeWithManeuversFor(key: string) {
+    try {
+      const rr = await (deps.fetchRoute ?? defaultFetchRoute)(
+        {
+          from: [origin.lat, origin.lng],
+          to: [dest.lat, dest.lon],
+          profile: key,
+          vehicle_model: selectedDevice(doc.device)?.model ?? undefined,
+          maneuvers: true,
+        },
+        abort.signal,
+      );
+      return rr;
+    } catch (e) {
+      if (!isAbortError(e)) console.error("maneuvers fetch failed", e);
+      return null;
+    }
+  }
+
+  async function advance(): Promise<void> {
     if (destroyed) return;
     const fresh = deps.session.current() ?? doc;
     const state = selectedProfile ? results.get(selectedProfile) : undefined;
@@ -588,8 +663,51 @@ function buildLoadedScreen(
         ),
       ),
       maneuvers: chosen.properties.maneuvers ?? [],
-      betaWarning: chosen.properties.beta_warning ?? null,
+      betaWarning: betaWarning ?? chosen.properties.beta_warning ?? null,
     };
+    // AWAITED, and it did not used to be — which is the whole bug.
+    //
+    // This fired the maneuvers fetch and called `ctx.next()` in the same
+    // breath, on the reasoning that a second request should never delay a
+    // rider. But `ctx.next()` starts the ride, the nav HUD opens and
+    // SNAPSHOTS `route.maneuvers` (`opts.route.maneuvers.slice()`), and the
+    // late `setRoute` landed against a HUD that never re-reads it. So every
+    // navigated ride showed "Follow the route" and no turns, forever: not a
+    // missing feature, a race that made a working one unreachable.
+    //
+    // The response REPLACES the route rather than lending it a maneuvers
+    // array, and that is the other half of the fix. `begin_shape_index`
+    // indexes into the geometry of the response it came from, so pairing
+    // these maneuvers with the option call's separately-computed shape would
+    // point every turn at roughly-but-not-exactly the right vertex. Same
+    // profile, same endpoints — it is the same route, and taking both halves
+    // from one response is the only version that is actually consistent.
+    if (sessionRoute.maneuvers.length === 0) {
+      const withTurns = await routeWithManeuversFor(selectedProfile);
+      if (destroyed) return;
+      const turns = withTurns?.properties.maneuvers ?? [];
+      if (withTurns && turns.length > 0) {
+        sessionRoute.maneuvers = turns;
+        // Same [lng, lat] order the option's own encoding uses above —
+        // `encodePolyline` is given the coordinates verbatim, not flipped.
+        sessionRoute.polyline = encodePolyline(
+          withTurns.geometry.coordinates.map(
+            ([lng, lat]) => [lng, lat] as [number, number],
+          ),
+        );
+        sessionRoute.distanceM =
+          withTurns.properties.distance_meters ?? sessionRoute.distanceM;
+        sessionRoute.durationS =
+          withTurns.properties.duration_seconds ?? sessionRoute.durationS;
+      }
+      // No turns available (offline, rate-limited, out of coverage) is NOT
+      // fatal: a ride with a drawn line and no spoken turns is a worse ride;
+      // a ride that refuses to start because a second request failed is not
+      // a ride at all.
+    }
+    // Dispatched HERE, after the turns are settled — the nav HUD snapshots
+    // `route.maneuvers` when it opens and never re-reads, so the store has to
+    // be right before `ctx.next()` starts the ride.
     deps.session.dispatch({ type: "setRoute", route: sessionRoute });
     // Advance FIRST — the POST is non-blocking (frontend plan: "route choice
     // must proceed... until A3 deploys"). Fired after `ctx.next()` so it
@@ -602,7 +720,7 @@ function buildLoadedScreen(
 
   // ---------------- render ----------------
   function render(): void {
-    const loadingProfiles = results.size === 0;
+    const loadingProfiles = !loaded;
     const readyCount = countByStatus(results, "ready");
     const settled = !loadingProfiles && allSettled(results);
 
@@ -611,6 +729,12 @@ function buildLoadedScreen(
     } else if (readyCount === 0 && settled) {
       statusEl.textContent =
         "No routes are available for this trip — you can continue without navigation.";
+    } else if (unavailable.length > 0) {
+      // The server names the profiles it could not route — the High Injury
+      // Network exclusions mean `safe` can legitimately find nothing where
+      // `express` does. Say so rather than silently offering a shorter list.
+      const total = results.size + unavailable.length;
+      statusEl.textContent = `${results.size} of ${total} route styles are available for this trip.`;
     } else if (readyCount < results.size) {
       statusEl.textContent = `${readyCount} of ${results.size} route styles are available for this trip.`;
     } else {
@@ -678,6 +802,35 @@ function buildLoadedScreen(
     );
 
     btn.append(title, meta);
+
+    const opt = state.option;
+    if (opt) {
+      // The other names for this same road. Folded, not hidden: a rider
+      // looking for "the shaded one" can see that it is this one, without
+      // being offered it twice.
+      if (opt.also.length > 0) {
+        // "also the The Shaded Canopy route" — the labels are proper names
+        // and several already start with "The", so the sentence supplies no
+        // article of its own.
+        btn.append(
+          el("div", "ride-route-also",
+            `Also: ${opt.also.map((a) => a.label).join(" · ")}`),
+        );
+      }
+      // What is in the battery on arrival — the number the rider wants and
+      // cannot work out in their head — rather than only what the ride spends.
+      if (opt.arrival_percent !== null) {
+        const ok = opt.will_make_it !== false;
+        const line = el(
+          "div",
+          `ride-route-battery${ok ? "" : " is-warning"}`,
+          ok
+            ? `🔋 ~${Math.round(opt.arrival_percent)}% left on arrival`
+            : `⚠️ May not make it — as little as ${Math.round(opt.arrival_percent_low ?? 0)}% left`,
+        );
+        btn.append(line);
+      }
+    }
     btn.addEventListener("click", () => select(state.key));
 
     const infoBtn = el("button", "ride-route-info", "ℹ");

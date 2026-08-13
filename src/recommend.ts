@@ -13,7 +13,6 @@ import {
   distanceMeters,
   walkMinutes,
   formatWalk,
-  walkingDirectionsUrl,
   type Locate,
   type LngLat,
 } from "./locate.ts";
@@ -35,6 +34,14 @@ export interface RecommendContext {
 
 export interface RankedOption {
   id: string;
+  /** The 16-hex vehicle identifier, when the payload carries one.
+   *
+   *  Carried because DIBS IS KEYED ON IT. Without it a scooter chosen off
+   *  this list reaches the walk flow anonymous: no claim can be made on it,
+   *  no existing claim can be shown, and the arrival panel silently drops
+   *  every dibs affordance. `id` is the device_id, which is a different
+   *  thing and is not what any of that keys off. */
+  vehicleIdentifier: string | null;
   name: string;
   /** Recognized Veo model — drives the row's badge glyph. */
   model: ModelKey | null;
@@ -113,6 +120,9 @@ export function rankDevices(
 
     out.push({
       id: p.device_id,
+      vehicleIdentifier: p.vehicle_identifier
+        ? String(p.vehicle_identifier)
+        : null,
       name: deviceName(p),
       model: modelKeyOf(p),
       desc: `${walkMinutes(meters)} min away`,
@@ -129,9 +139,24 @@ export function rankDevices(
   return out.slice(0, RESULT_COUNT);
 }
 
+export interface WalkToRequest {
+  name: string;
+  plate: string | null;
+  vehicleIdentifier: string | null;
+  lat: number;
+  lng: number;
+}
+
 export class RecommendedDevices {
   private ctx: RecommendContext | null = null;
   private selectedId: string | null = null;
+  /** Start the in-app walk to the selected scooter. Injected by main.ts;
+   *  absent in tests, where the button is simply inert. */
+  private walkTo: ((req: WalkToRequest) => void) | null = null;
+
+  setWalkTo(fn: (req: WalkToRequest) => void): void {
+    this.walkTo = fn;
+  }
 
   constructor(
     private readonly body: HTMLElement,
@@ -167,8 +192,23 @@ export class RecommendedDevices {
     this.render();
   }
 
+  /** Told whether this drawer currently has a ranked list to show, so its
+   *  tab can stay out of the menu until it does. A tab whose whole content is
+   *  "go and do something else first" is a dead end wearing the same clothes
+   *  as the seven tabs that aren't. */
+  setAvailabilityListener(fn: (hasList: boolean) => void): void {
+    this.onAvailability = fn;
+    fn(this.ctx !== null);
+  }
+  private onAvailability: ((hasList: boolean) => void) | null = null;
+
   private render(): void {
     this.body.replaceChildren();
+    // Fired on every render, including the empty ones: a re-rank that drops
+    // to zero results is still a list the rider asked for and can act on
+    // ("loosen a filter"), so the tab stays. It is the ABSENCE OF A CONTEXT —
+    // never having run Find wheels — that hides it.
+    this.onAvailability?.(this.ctx !== null);
     if (!this.ctx) {
       const p = el(
         "p",
@@ -213,7 +253,10 @@ export class RecommendedDevices {
     const routeBtn = el(
       "button",
       "login-btn ride-wizard__route",
-      "Route me to selected",
+      // "Route me to selected" described the mechanism and named the row's
+      // state; this names what the rider is deciding — and it is the same
+      // sentence as the popup's, because it does the same thing.
+      "🛴 Use this device",
     );
     routeBtn.type = "button";
     const selectedNow = ranked.find((o) => o.id === this.selectedId) ?? null;
@@ -221,11 +264,21 @@ export class RecommendedDevices {
     routeBtn.addEventListener("click", () => {
       const sel = ranked.find((o) => o.id === this.selectedId);
       if (!sel) return;
-      window.open(
-        walkingDirectionsUrl({ lng: sel.lng, lat: sel.lat }),
-        "_blank",
-        "noopener",
-      );
+      // In-app. This used to window.open() Google or Apple Maps — the app
+      // ranking scooters for you and then handing you to a different app to
+      // reach the one you picked.
+      this.walkTo?.({
+        name: sel.name,
+        // The plate genuinely is not needed here — it is resolved from GBFS
+        // at the scooter, where it is actually used. The IDENTIFIER is a
+        // different matter: dibs is keyed on it, so passing null meant a
+        // scooter picked off this list arrived at the walk flow anonymous
+        // and lost every dibs affordance on the way.
+        plate: null,
+        vehicleIdentifier: sel.vehicleIdentifier,
+        lat: sel.lat,
+        lng: sel.lng,
+      });
     });
 
     const rows: HTMLButtonElement[] = [];

@@ -35,10 +35,11 @@ import type { LngLatCoord } from "./polyline-encode.ts";
 import { RIDE_TRAIL_CASING_LAYER } from "./ride-trail.ts";
 import { emptyFC } from "./util.ts";
 
-const SRC = "ride-route-active";
-const CASING_LAYER = "ride-route-active-casing";
-const LINE_LAYER = "ride-route-active-line";
-const DEST_LAYER = "ride-route-active-dest";
+// Ids are derived from a prefix so a SECOND line can share this module: the
+// walk to the scooter is the same drawing problem (a routed polyline with a
+// casing and an end dot) and would otherwise be a near-copy of this file, or
+// worse, a second instance quietly fighting the first over one source id.
+const DEFAULT_PREFIX = "ride-route-active";
 
 /** Screen 4's dest-marker orange (ride-screen-routes.ts's POINTS_LAYER). */
 const DEST_COLOR = "#D55E00";
@@ -85,8 +86,15 @@ function routeFeatures(
   return { type: "FeatureCollection", features };
 }
 
-export function createRideRouteLine(map: MLMap): RideRouteLineHandle {
+export function createRideRouteLine(
+  map: MLMap,
+  prefix: string = DEFAULT_PREFIX,
+): RideRouteLineHandle {
   let visible = true;
+  const SRC = prefix;
+  const CASING_LAYER = `${prefix}-casing`;
+  const LINE_LAYER = `${prefix}-line`;
+  const DEST_LAYER = `${prefix}-dest`;
 
   const ensureLayers = (): void => {
     if (map.getSource(SRC)) return;

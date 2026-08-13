@@ -73,7 +73,11 @@ const DEVICE: [number, number] = [-104.99, 39.74];
 // ~0.0002° of longitude at Denver's latitude ≈ 17 m — inside the 75 m gate.
 const NEAR: LngLat = { lng: DEVICE[0] + 0.0002, lat: DEVICE[1] };
 // ~0.01° ≈ 855 m — comfortably outside it.
-const FAR: LngLat = { lng: DEVICE[0] + 0.01, lat: DEVICE[1] };
+/** ~850 m: too far to UNLOCK (that needs you at the scooter) but well within
+ *  walking, which is what "I'll ride this one" now starts. */
+const WALKABLE: LngLat = { lng: DEVICE[0] + 0.01, lat: DEVICE[1] };
+/** ~2.6 km: past the fifteen-minute walk a claim is allowed to be. */
+const FAR: LngLat = { lng: DEVICE[0] + 0.03, lat: DEVICE[1] };
 
 function fakeMap() {
   const setData = vi.fn();
@@ -165,9 +169,23 @@ describe("device popup — geographic gate on the two primary rows", () => {
     expect(startEnabled(html)).toBe(false);
   });
 
-  it("blocks both rows when the rider is too far away", () => {
+  it("blocks the ride row only once it is beyond a sane walk", () => {
+    // The threshold is the fifteen-minute walk dibs allows, at the pace the
+    // walk router quotes — past that a claim is speculation and the walk is
+    // a hike.
     const html = openPopup({ fix: FAR });
     expect(rideBlocked(html)).toBe(true);
+    expect(startEnabled(html)).toBe(false);
+  });
+
+  it("does NOT block the ride row for a scooter you can walk to", () => {
+    // The regression this pins: "I'll ride this one" used to share Open in
+    // Veo's 75 m unlock proximity, from when it meant "I am standing at this
+    // scooter". It starts a WALK now, so that gate made the walk feature
+    // unreachable from anywhere you would actually need it.
+    const html = openPopup({ fix: WALKABLE });
+    expect(rideEnabled(html)).toBe(true);
+    // Unlocking still needs you at the vehicle, which is a different claim.
     expect(startEnabled(html)).toBe(false);
   });
 
@@ -218,7 +236,10 @@ describe("device popup — geographic gate on the two primary rows", () => {
     expect(hint?.hidden).toBe(true);
     btn?.click();
     expect(hint?.hidden).toBe(false);
-    expect(hint?.textContent).toContain("too far away");
+    // Says HOW far, not just "too far" — a rider deciding whether to walk it
+    // needs the number, and the app already knows it.
+    expect(hint?.textContent).toContain("Too far to walk");
+    expect(hint?.textContent).toMatch(/\d/);
   });
 
   it("tells a fix-less rider to turn on location rather than to walk closer", () => {
@@ -341,13 +362,18 @@ describe("device popup — the photo row", () => {
       fix: NEAR,
       props: { vehicle_identifier: PHOTO_VID },
     });
-    // Ride → Start → Report/Details → Features → Photos.
+    // Ride → [Start · Features] → Report/Details → Photos.
+    //
+    // Confirm Features moved UP, out of its own full-width bar and into a
+    // shared row with Open in Veo — the card had five stacked full-width
+    // bars before a rider reached anything they came for. The photo row is
+    // still last, which is what this test is actually about.
     const order = [
       'data-action="use-in-ride-mode"',
       "device-popup__actbtn--start",
+      'data-action="confirm-features"',
       'data-action="open-report"',
       'data-action="full-details"',
-      'data-action="confirm-features"',
       'data-action="take-photo"',
       'data-action="show-photos"',
     ].map((marker) => html.indexOf(marker));
@@ -663,5 +689,87 @@ describe("device popup — the photo gallery modal", () => {
     await vi.waitFor(() =>
       expect(grid?.textContent).toContain("Couldn't load photos"),
     );
+  });
+});
+
+describe("device popup — Open in Veo and Confirm Features share a row", () => {
+  const pairClass = (html: string): string | null =>
+    html.match(/device-popup__pair ([a-z-]+)/)?.[1] ?? null;
+
+  it("pairs them when both are offered", () => {
+    // Near enough for the unlock link, and a vehicle whose features are not
+    // yet confirmed — so both buttons exist.
+    // Confirm Features is gated on a 16-hex vehicle_identifier (it posts
+    // against that id), NOT on feature_status — the button is how you change
+    // the status, so gating it on the status would hide it exactly when it
+    // is needed.
+    const html = openPopup({
+      fix: NEAR,
+      props: { vehicle_identifier: PHOTO_VID },
+    });
+    expect(html).toContain("device-popup__actbtn--start");
+    expect(html).toContain('data-action="confirm-features"');
+    expect(pairClass(html)).toBe("is-pair");
+  });
+
+  it("NEVER leaves a lone half-width button — one alone takes the row", () => {
+    // Features already confirmed, so only Open in Veo remains. Asserted on
+    // the class the grid template keys off, because that is the only thing
+    // deciding the width. Same rule as the pinned Home/Work row.
+    // Short identifier: no Confirm Features, so Open in Veo stands alone.
+    const html = openPopup({
+      fix: NEAR,
+      props: { vehicle_identifier: "abc" },
+    });
+    if (html.includes("device-popup__pair")) {
+      expect(pairClass(html)).toBe("is-single");
+    }
+  });
+});
+
+describe("device popup — reporting bad parking from a distance", () => {
+  /** The parking block lives inside the ⚠️ Report modal, not the popup body,
+   *  so the popup HTML alone never carries it — open the modal and read
+   *  THAT. Discovered by the first version of these tests failing on the
+   *  case that should obviously have passed. */
+  const openReportModal = (opts: Parameters<typeof openPopup>[0]): string => {
+    openPopup(opts);
+    // Through the popup ELEMENT the harness captured — the report button's
+    // listener is bound to that node, which is not in the document.
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
+      ?.click();
+    return document.body.innerHTML;
+  };
+  const canReport = (html: string): boolean =>
+    html.includes('data-action="report-parking"');
+
+  it("is offered to a rider standing at the scooter", () => {
+    expect(canReport(openReportModal({ fix: NEAR }))).toBe(true);
+  });
+
+  it("is refused to a rider across town, with a reason", () => {
+    const html = openReportModal({ fix: FAR });
+    expect(canReport(html)).toBe(false);
+    expect(html).toContain("Walk within sight");
+  });
+
+  it("IS offered to an admin across town", () => {
+    // The gate is a credibility check, not a data dependency — the report is
+    // built from the DEVICE's coordinates, never the reporter's, so a distant
+    // admin files exactly the report a nearby rider would. An admin working a
+    // compliance queue reviews parking city-wide from a desk.
+    expect(canReport(openReportModal({ fix: FAR, admin: true }))).toBe(true);
+  });
+
+  it("IS offered to an admin with no location fix at all", () => {
+    // Both halves of the gate are waived, not just the distance one.
+    expect(canReport(openReportModal({ fix: null, admin: true }))).toBe(true);
+  });
+
+  it("is still refused to a signed-out rider with no fix", () => {
+    const html = openReportModal({ fix: null });
+    expect(canReport(html)).toBe(false);
+    expect(html).toContain("Turn on your location");
   });
 });

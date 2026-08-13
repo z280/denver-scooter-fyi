@@ -2,6 +2,7 @@ import maplibregl, {
   type Map,
   type GeoJSONSource,
   type ExpressionSpecification,
+  type Popup,
 } from "maplibre-gl";
 import { isAuthenticated } from "./map-auth.js";
 import type {
@@ -40,10 +41,19 @@ import {
   distanceMeters,
   formatWalk,
   walkMinutes,
-  walkingDirectionsUrl,
   type Locate,
   type LngLat,
 } from "./locate.ts";
+import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
+import { registerDibs, type VehicleDibs } from "./api.ts";
+import {
+  askAboutSecondDibs,
+  openDibsCertificate,
+  openDibsExplainer,
+  showDibsConfirmation,
+  showDibsLimit,
+} from "./dibs-certificate.ts";
 import {
   submitModelReport,
   submitDeviceReport,
@@ -135,6 +145,19 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
  *  tight enough that the button means "you're at this scooter." */
 const UNLOCK_PROXIMITY_M = 75;
 
+/** How far away a scooter can be and still be worth claiming.
+ *
+ *  "I'll ride this one" used to share ▶️ Open in Veo's 75 m unlock proximity,
+ *  because it used to mean "I am standing at this scooter". It doesn't any
+ *  more — it starts a WALK to it — so that gate made the walk feature
+ *  unreachable except from the one place you'd never need it.
+ *
+ *  The right limit is how far somebody will actually walk, which is already
+ *  decided: dibs allows a fifteen-minute walk, and this is that distance at
+ *  the 4.5 km/h pace the walk router quotes. Past it a claim is speculation
+ *  and the walk is a hike. */
+const RIDE_MAX_WALK_M = Math.round((4.5 * 1000 / 60) * 15); // ~1125 m
+
 /** Both device-photo endpoints require a bearer session — uploading AND
  *  listing — so a signed-out rider gets the same hint from either button. */
 const PHOTO_SIGNIN_HINT = "Sign in (Account tab) to add or view photos.";
@@ -175,6 +198,8 @@ const POINT_LAYER = "device-points";
  *  when the gauge display mode is "On Hover". */
 const HOVER_LAYER = "device-points-hover";
 const FLAG_LAYER = "device-negative-flag";
+/** 🚫 over a scooter somebody else has called dibs on. */
+const DIBS_LAYER = "device-dibs-mark";
 /** Filter that matches nothing — the hover layer's idle state. */
 const HOVER_NONE: maplibregl.FilterSpecification = [
   "==",
@@ -188,6 +213,15 @@ export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
 /** Veo's model line-up, keyed by the INTERNAL `ModelKey`. The popup header
  *  shows the friendly name + a plain description; an unrecognized or
  *  missing model falls through to a "Tell us!" report prompt. */
+/** How faded a scooter someone else has called dibs on renders.
+ *
+ *  Read as "30% opacity" rather than "70% opacity with 30% transparency
+ *  removed": the point is to push it out of the way of a rider scanning the
+ *  map, and the existing high-risk fade is already 0.45 — anything lighter
+ *  than that would read as noise rather than as a signal. One constant if a
+ *  softer touch is wanted. */
+const DIBS_ICON_OPACITY = 0.3;
+
 const VEO_MODELS: Record<ModelKey, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
@@ -201,6 +235,75 @@ const VEO_MODELS: Record<ModelKey, { name: string; desc: string }> = {
  *  internal "trike"; a raw lookup missed it, and every Rover popup fell
  *  through to the "Veo Unknown / Tell us!" prompt. Exported for the
  *  model-key test file that pins the two-names-one-key mapping. */
+/** Pan the map so the whole popup is on screen.
+ *
+ *  A popup opens anchored to its marker and grows UPWARD, so a scooter in the
+ *  top half of the screen gets a card whose head is off the top, and one near
+ *  the bottom gets its details cut off by the edge. Either way the rider is
+ *  reading a partial answer to the question they just asked, and their only
+ *  recourse is to close it, drag the map, and tap again.
+ *
+ *  So the map comes to the popup. Overflow is measured on all four sides and
+ *  panned away in one move.
+ *
+ *  The insets are the app's own chrome, not the viewport: the map fills the
+ *  screen and the top bar and home bar float ON it, so a popup "inside the
+ *  viewport" can still be underneath either of them. These are what those two
+ *  actually occupy, plus a little air.
+ */
+const POPUP_INSET_TOP = 76;
+const POPUP_INSET_BOTTOM = 96;
+const POPUP_INSET_SIDE = 10;
+
+export function nudgePopupIntoView(map: Map, popup: Popup): void {
+  // One frame, so the popup has been laid out and measured with its real
+  // content — before that its rect is either empty or the previous card's.
+  requestAnimationFrame(() => {
+    // `getElement()` returning a laid-out node is the whole precondition: a
+    // closed or torn-down popup has none. Deliberately NOT calling
+    // `isOpen()` — this runs a frame late, by which point the popup may have
+    // been replaced, and requiring a method that not every caller's popup
+    // object carries turned a cosmetic nicety into a thrown error.
+    const el = popup.getElement();
+    if (!el || !el.isConnected) return;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    const box = map.getContainer().getBoundingClientRect();
+
+    const top = box.top + POPUP_INSET_TOP;
+    const bottom = box.bottom - POPUP_INSET_BOTTOM;
+    const left = box.left + POPUP_INSET_SIDE;
+    const right = box.right - POPUP_INSET_SIDE;
+
+    // panBy moves the VIEW by the offset, so the content moves the other
+    // way — which means these deltas are used as-is: a popup 40px above the
+    // top limit gives dy = -40, the view goes up 40, the popup comes down 40.
+    let dx = 0;
+    let dy = 0;
+    // A popup taller than the space available cannot satisfy both edges.
+    // Favour the TOP, which carries the name, the model and the verdict —
+    // the body below it scrolls on its own, the header does not.
+    if (r.height <= bottom - top) {
+      if (r.top < top) dy = r.top - top;
+      else if (r.bottom > bottom) dy = r.bottom - bottom;
+    } else if (r.top < top) {
+      dy = r.top - top;
+    }
+    if (r.width <= right - left) {
+      if (r.left < left) dx = r.left - left;
+      else if (r.right > right) dx = r.right - right;
+    }
+
+    if (dx === 0 && dy === 0) return;
+    map.panBy([dx, dy], {
+      duration: 260,
+      // Not a user gesture: this must not cancel the geolocate camera lock
+      // or read as the rider panning away from their own position.
+      essential: true,
+    });
+  });
+}
+
 export function veoModel(
   modelName: string | null | undefined,
 ): { name: string; desc: string } | null {
@@ -287,7 +390,7 @@ export class Devices {
   private readonly plates = new GbfsPlates();
   /** Session status, pushed in by wireAccount() once /auth/session
    *  resolves. admin lifts the proximity gate on ▶️ Start (issue #18) and on
-   *  🧭 Use in Ride Mode. */
+   *  🛴 I'll ride this one. */
   private adminSession = false;
   /** What the open popup was built from, so a later admin flip can rebuild
    *  it. Cleared on close alongside `this.popup`. */
@@ -307,6 +410,77 @@ export class Devices {
     this.adminSession = admin;
     const open = this.openPopupFor;
     if (open) this.openDevicePopup(open.props, open.coords);
+  }
+
+  /** Rebuild the open popup in place — the same mechanism `setAdminSession`
+   *  uses. Calling dibs changes what the popup should show about itself, and
+   *  a claim the rider cannot see is a claim they will make twice. */
+  /** The live claims, pushed in by main.ts with each device refresh.
+   *
+   *  Pushed rather than fetched here: dibs are rare — a handful across the
+   *  fleet against thousands of vehicles — so one small response per refresh
+   *  beats a request every time somebody taps a scooter, and the popup
+   *  already knows the answer when it opens instead of gaining it a moment
+   *  later. It also keeps this class rendering rather than fetching. */
+  setVehicleDibs(dibs: Record<string, VehicleDibs | undefined>): void {
+    this.vehicleDibs = dibs;
+    // A claim landing or expiring changes what an OPEN popup should offer...
+    this.refreshOpenPopup();
+    // ...and what the MAP shows. Claims are stamped onto features in
+    // `annotateIconKeys`, so a new set of them is only visible after a
+    // repaint — without this the dimming and the 🚫 would lag a whole
+    // device-refresh cycle behind the claims that caused them.
+    this.apply();
+  }
+
+  private refreshOpenPopup(): void {
+    const open = this.openPopupFor;
+    if (open) this.openDevicePopup(open.props, open.coords);
+  }
+
+  /** Intercept 🛴 I'll ride this one. Returns true when something else has
+   *  taken the ride over — the home bar's walk-to-the-scooter flow does,
+   *  whenever a destination is already known — and false to fall through to
+   *  the preflight survey and the wizard, which is still the right path for a
+   *  rider who tapped a scooter with no trip in mind. */
+  /** Who to print on a certificate. Injected by main.ts from the signed-in
+   *  profile; absent means the honest anonymous form rather than a made-up
+   *  name. */
+  private dibsClaimant: (() => string) | null = null;
+
+  /** Live claims by vehicle, as the server last reported them.
+   *
+   *  Populated on popup open (see refreshDibsFor) rather than with the device
+   *  feed: the feed carries thousands of vehicles and almost none of them are
+   *  claimed, so asking about the one the rider is actually looking at is the
+   *  only version of this that scales. */
+  private vehicleDibs: Record<string, VehicleDibs | undefined> = {};
+  /** "I'm rude AF — I don't care about dibs". When on, other people's claims
+   *  stop dimming anything and the 🚫 overlay goes away. The claims are still
+   *  REAL and the popup still says whose they are: this hides the courtesy,
+   *  not the fact. */
+  private ignoreDibs = false;
+
+  /** Toggle the rude-mode filter. Repaints, since every marker's opacity and
+   *  the whole 🚫 layer depend on it. */
+  setIgnoreDibs(on: boolean): void {
+    if (this.ignoreDibs === on) return;
+    this.ignoreDibs = on;
+    this.apply();
+    this.refreshOpenPopup();
+  }
+
+  setDibsClaimant(fn: () => string): void {
+    this.dibsClaimant = fn;
+  }
+
+  private rideInterceptor:
+    | ((info: { name: string; plate: string | null; vehicleIdentifier: string | null;
+                lat: number; lng: number }) => boolean)
+    | null = null;
+
+  setRideInterceptor(fn: typeof Devices.prototype.rideInterceptor): void {
+    this.rideInterceptor = fn;
   }
 
   constructor(
@@ -437,15 +611,51 @@ export class Devices {
         "text-color": "#ffffff",
         "text-halo-color": "rgba(0,0,0,0.25)",
         "text-halo-width": 0.6,
-        // Ghost pins: high-failure-risk devices render semi-transparent in
-        // every color mode, training riders to walk past dead hardware.
+        // Ghost pins, two reasons. A scooter somebody else has called dibs
+        // on is faded HARDER than a high-risk one: risk says "probably not
+        // worth your walk", dibs says "someone is already walking to this",
+        // and the second is the stronger reason to look elsewhere. Paired
+        // with the 🚫 overlay, since opacity alone is not a signal — and
+        // overridable, for a rider who has told us they do not care.
         "icon-opacity": [
-          "match",
-          ["get", "reliability_tier"],
-          "risk",
+          "case",
+          ["==", ["get", "dibs_held"], "yes"],
+          DIBS_ICON_OPACITY,
+          ["==", ["get", "reliability_tier"], "risk"],
           0.45,
           1,
         ],
+      },
+    });
+
+    // 🚫 over anything somebody else has called dibs on. A separate symbol
+    // layer rather than another icon variant: the atlas is keyed by the
+    // composite icon spec, and dibs is orthogonal to every part of it — a
+    // claimed Cosmo is the same drawing as an unclaimed one with a mark on
+    // top, not a different drawing. Keeping it separate also means the
+    // overlay appears and disappears with a claim without touching the
+    // atlas at all.
+    //
+    // Opacity is NOT a signal on its own (a faded pin could be anything), so
+    // the mark carries the meaning and the fade carries the emphasis.
+    this.map.addLayer({
+      id: DIBS_LAYER,
+      type: "symbol",
+      source: SRC,
+      filter: ["==", ["get", "dibs_held"], "yes"],
+      layout: {
+        "text-field": "🚫",
+        "text-size": 15,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        // Up and right, clear of the badge art and of the battery readout
+        // that sits under it.
+        "text-offset": [0.85, -0.85],
+      },
+      paint: {
+        // Full strength on purpose. The scooter behind it is faded; the
+        // reason it is faded should not be.
+        "text-opacity": 1,
       },
     });
 
@@ -709,8 +919,32 @@ export class Devices {
       // model shows its friendly name + description; an unknown one invites
       // the rider to report what it is (description + optional photo).
       const model = veoModel(props.vehicle_model_name);
-      const headerName = model ? model.name : "Veo Unknown";
-      const headerDesc = model ? model.desc : "Tell us!";
+      // A NAME, NOT A MODEL. "Cosmo" is what it is; "Lunar 🐸 928" is which
+      // one — and which one is the thing a rider says out loud, shows on a
+      // certificate, and argues about on a pavement. The model stays, one
+      // line down, where it belongs.
+      //
+      // The suffix is added here rather than server-side: the public payload
+      // omits the plate on purpose, and this app resolves its own from Veo's
+      // GBFS feed, so the disambiguating digits are ours to add only once we
+      // already have them.
+      const namePlate: string | null =
+        (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
+        this.plates.cachedPlateFor(props.device_id);
+      const headerName = vehicleDisplayName(
+        props.public_name ?? null,
+        namePlate,
+        model ? model.name : null,
+        props.plate_suffix ? String(props.plate_suffix) : null,
+      );
+      // THE MODEL STAYS IN THE HEADER. The line above answers "which one";
+      // this one answers "what is it", and a rider deciding whether to walk
+      // to it needs both — an Apollo and an Astro are not interchangeable.
+      // The model was displaced from here when the name moved in, leaving
+      // only the description, which describes the model without naming it.
+      const headerDesc = model
+        ? `${model.name} · ${model.desc}`
+        : "Tell us!";
       const reportUi = model
         ? ""
         : `<button type="button" class="device-popup__report-btn" data-action="report-model">📸 Tell us what this is</button>
@@ -736,11 +970,96 @@ export class Devices {
              </div>
              <p class="device-popup__report-status" role="status" aria-live="polite"></p>
            </form>`;
+      const knownFeatures = readDeviceFeatures(props.device_features);
+
+      // ---- Feature pills: what this scooter actually has, right under its
+      // name and above the verdict.
+      //
+      // These are the details a rider chooses BETWEEN two nearby scooters
+      // with — a basket decides a grocery run, a phone holder decides
+      // whether you can navigate — and they were buried in the Details
+      // modal, behind a tap most people never make.
+      //
+      // CONDITION IS PART OF THE FACT, not a footnote. A bell that does not
+      // ring is not a bell, and Veo's bells are broken often enough that
+      // listing one unqualified would be the app telling a small lie. So a
+      // feature someone has reported as broken renders visibly degraded and
+      // says so when tapped, rather than quietly disappearing (which would
+      // lose the information that it is THERE and BUST) or appearing intact
+      // (which would be worse).
+      //
+      // Everything here is crowdsourced, so every explanation is hedged —
+      // "or so we've been informed" is doing real work, not being cute.
+      const FEATURE_PILLS: readonly {
+        key: "bell" | "cup_holder" | "phone_holder" | "basket";
+        glyph: string;
+        label: string;
+        /** Reads after "This Astro has …". */
+        phrase: string;
+      }[] = [
+        { key: "bell", glyph: "🛎️", label: "Bell", phrase: "a bell" },
+        { key: "basket", glyph: "🧺", label: "Basket", phrase: "a basket" },
+        { key: "phone_holder", glyph: "📱", label: "Phone holder", phrase: "a phone holder" },
+        { key: "cup_holder", glyph: "🥤", label: "Cup holder", phrase: "a cup holder" },
+      ];
+      const featureSubject = model ? bareModelName(model.name) : "scooter";
+      const poorSet = new Set(knownFeatures?.poor_condition ?? []);
+      const pills = knownFeatures
+        ? FEATURE_PILLS.filter((f) => knownFeatures[f.key])
+        : [];
+      const featureBlock = pills.length
+        ? `<div class="device-popup__features">
+             ${pills
+               .map((f) => {
+                 const broken = poorSet.has(f.key);
+                 const why = broken
+                   ? `This ${featureSubject} has ${f.phrase}, but a rider told us it's not working.`
+                   : `This ${featureSubject} has ${f.phrase}, and it actually works (or so we've been informed).`;
+                 return `<button type="button"
+                    class="device-popup__feature${broken ? " is-broken" : ""}"
+                    data-action="feature-why"
+                    data-why="${escapeHtml(why)}"
+                    aria-label="${escapeHtml(why)}">
+                    <span class="device-popup__feature-glyph" aria-hidden="true">${f.glyph}</span>
+                  </button>`;
+               })
+               .join("")}
+             <p class="device-popup__feature-why" role="status" aria-live="polite" hidden></p>
+           </div>`
+        : "";
+
+      // A LARGER VERSION OF THE MAP'S OWN BADGE, top-left of the card. The
+      // marker a rider just tapped is 30-odd pixels of art; this is the same
+      // identity at a size you can actually read, and it anchors the card to
+      // the dot it came from.
+      //
+      // It follows the Iconography setting rather than picking one: a rider
+      // who chose letters on the map chose letters, and showing them comic
+      // art here would be the app overruling them in the one place they are
+      // looking hardest. `setModelIcon` rebuilds an open popup so the switch
+      // lands immediately.
+      const headerModelKey = modelKeyOf(props);
+      const headerIcon = (() => {
+        if (!headerModelKey) return "";
+        if (this.modelIcon === "letter") {
+          const tint = MODEL_COLOR[headerModelKey];
+          return `<span class="device-popup__badge device-popup__badge--letter"
+                    style="background:${escapeHtml(tint)}" aria-hidden="true"
+                  >${escapeHtml(MODEL_LETTER[headerModelKey])}</span>`;
+        }
+        return `<img class="device-popup__badge" aria-hidden="true" alt=""
+                  src="${escapeHtml(MODEL_ICON_URL[headerModelKey])}" />`;
+      })();
+
       const headerBlock = `
         <div class="device-popup__header${model ? "" : " device-popup__header--unknown"}">
-          <div class="device-popup__model">${escapeHtml(headerName)}</div>
-          <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
-          ${reportUi}
+          ${headerIcon}
+          <div class="device-popup__headtext">
+            <div class="device-popup__model">${escapeHtml(headerName)}</div>
+            <div class="device-popup__model-sub">${escapeHtml(headerDesc)}</div>
+            ${featureBlock}
+            ${reportUi}
+          </div>
         </div>`;
 
       // Rating verdict — the headline answer to "worth the walk?".
@@ -777,11 +1096,73 @@ export class Devices {
         .filter(Boolean)
         .join(" · ");
 
+      // THE VERDICT BAR — full width, directly under the name and model, and
+      // the first thing in the popup. "Is this one worth walking to?" is the
+      // only question a rider actually opens this for, and it used to be the
+      // first row of a definition list four items down, at the same weight as
+      // "Parked for".
+      //
+      // Colour is not the signal, it is the amplifier: every state also
+      // carries a distinct icon SHAPE and its own words, so the bar reads
+      // correctly in greyscale and to a screen reader (1.4.1). The ink is
+      // chosen per state rather than globally — white on the green and red,
+      // black on the yellow — which is what keeps all three past 4.5:1
+      // (measured: 4.63, 9.69, 5.62) while leaving the colours as strong as
+      // the owner asked for. White on that yellow would be 1.84:1.
+      //
+      // Icons are inline SVG on `currentColor`, matching the house 24x24
+      // stroke convention, so each one inherits exactly the ink that was
+      // contrast-checked against its own bar.
+      const VERDICT_ICON: Record<ReliabilityTier, string> = {
+        ok: `<circle cx="12" cy="12" r="10" /><path d="M8 12.5l2.5 2.5L16 9.5" />`,
+        unknown: `<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4" /><path d="M12 17h.01" />`,
+        risk: `<circle cx="12" cy="12" r="10" /><path d="M12 7v5" /><path d="M12 16h.01" />`,
+      };
+      // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
+      // deep link as the QR sticker on the scooter's deck, same gates: it
+      // needs a plate (`effectivePlate` — the admin field, or one resolved
+      // client-side from Veo's own public GBFS feed), a signed-in session,
+      // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
+      // skip the proximity requirement entirely. The button is ALWAYS
+      // visible; when disabled, tapping it explains why in the hint line.
+      // Somebody else's live claim, if the lookup has answered. Null while it
+      // is in flight or when there is none — the popup renders immediately
+      // either way and gains the notice when it lands, because a popup that
+      // waits on the network to show its buttons is worse than one that
+      // updates a moment later.
+      const gateVid = props.vehicle_identifier ? String(props.vehicle_identifier) : "";
+      const held = gateVid ? this.vehicleDibs[gateVid] ?? null : null;
+      // A rider's OWN dibs never blocks them — it is the reason they are here.
+      const heldByOther = held && !dibsOn(gateVid) ? held : null;
+
+      // A LIVE CLAIM TAKES THE BAR. When somebody else has dibs, "is this
+      // rideable?" is no longer the question the rider needs answered first —
+      // "somebody is already walking to this" is. Orange rather than the
+      // verdict palette, because it is not a verdict about the scooter: the
+      // scooter may be perfect, and that is rather the point.
+      //
+      // The rating is not lost, it MOVES: the stats list below carries it in
+      // the old dot-and-label form, with its reasons. Two facts, each said
+      // once, in the order they matter.
+      const verdictBlock = heldByOther
+        ? `<div class="device-popup__verdict device-popup__verdict--dibs">
+             <span class="device-popup__verdict-glyph" aria-hidden="true">🚫</span>
+             <span class="device-popup__verdict-text">${escapeHtml(heldByOther.claimed_by)} has dibs!</span>
+           </div>`
+        : `<div class="device-popup__verdict device-popup__verdict--${relTier}">
+             <svg class="device-popup__verdict-icon" width="20" height="20"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+                  aria-hidden="true">${VERDICT_ICON[relTier]}</svg>
+             <span class="device-popup__verdict-text">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
+           </div>`;
+
       // Crowdsourced equipment (API sql/055). Read up here because BOTH the
       // Features stat row and the action row below need it, and the stat
       // rows are built first.
       const featureStatus = asFeatureStatus(props.feature_status);
-      const knownFeatures = readDeviceFeatures(props.device_features);
+
+
 
       const user = this.locate.current();
 
@@ -797,13 +1178,7 @@ export class Devices {
           ? this.plates.cachedPlateFor(props.device_id)
           : null);
 
-      // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
-      // deep link as the QR sticker on the scooter's deck, same gates: it
-      // needs a plate (`effectivePlate` — the admin field, or one resolved
-      // client-side from Veo's own public GBFS feed), a signed-in session,
-      // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
-      // skip the proximity requirement entirely. The button is ALWAYS
-      // visible; when disabled, tapping it explains why in the hint line.
+
       const signedIn = isAuthenticated();
       const nearEnough =
         user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
@@ -831,43 +1206,57 @@ export class Devices {
       // explicit rather than riding on TS aliased-condition narrowing.
       const startHref =
         startAllowed && effectivePlate && !outOfService && !reserved
+        && !heldByOther
           ? veoDeepLink(effectivePlate)
           : null;
       const startBtn = startHref
         ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Open in Veo</a>`
         : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Open in Veo</button>`;
 
-      // 🧭 Use in Ride Mode carries the same geographic gate as ▶️ Start:
-      // both rows commit the rider to THIS scooter, and neither means
-      // anything from across town — ride mode's whole premise is that the
-      // rider is standing at the vehicle (it is what lets the preflight skip
-      // the wizard's "which scooter?" screens). Admins bypass proximity, as
-      // they do for Start, so the flows stay testable from a desk. Sign-in
-      // is deliberately NOT required here: ride mode runs client-side, and
-      // Start still enforces its own session gate downstream.
-      const rideAllowed = this.adminSession || nearEnough;
+      // 🛴 I'll ride this one is gated on WALKING distance, not on standing
+      // at the vehicle — it starts a walk, so requiring you to already be
+      // there was the gate contradicting the button. ▶️ Open in Veo keeps the
+      // tight unlock proximity above, because that one really does need you
+      // at the scooter.
+      //
+      // Admins bypass it, as they do for Start, so the flows stay testable
+      // from a desk. Sign-in is deliberately NOT required: ride mode runs
+      // client-side, and Start enforces its own session gate downstream.
+      const walkMeters = user ? distanceMeters(user, here) : null;
+      const withinWalk = walkMeters !== null && walkMeters <= RIDE_MAX_WALK_M;
+      const rideAllowed = this.adminSession || withinWalk;
+
+      // Somebody else's live claim, if the lookup has answered. Null while it
+      // is in flight or when there is none — the popup renders immediately
+      // either way and gains the notice when it lands, because a popup that
+      // waits on the network to show a button is worse than one that updates.
       let rideHint = "";
       if (outOfService) {
         rideHint = "This scooter is marked out of service.";
       } else if (reserved) {
         rideHint = "Reserved by another rider right now.";
+      } else if (heldByOther) {
+        rideHint = `${heldByOther.claimed_by} called dibs on this one.`;
       } else if (!rideAllowed) {
         rideHint = user
-          ? "You're too far away, sorry!"
-          : "Turn on your location to use ride mode with this scooter.";
+          ? `Too far to walk — that's ${formatWalk(walkMeters ?? 0)} away.`
+          : "Turn on your location to ride this scooter.";
       }
-      const rideOk = rideAllowed && !outOfService && !reserved;
+      const rideOk = rideAllowed && !outOfService && !reserved && !heldByOther;
 
       // Walk economics — needs a location fix (opt-in via the geolocate
       // button). For risky devices, point at the nearest likely-rideable
       // alternative so the rider can decide before burning the walk.
       let walkBlock = "";
       if (user) {
-        const meters = distanceMeters(user, here);
+        // No distance readout. "12 min" was a straight-line estimate that
+        // the walk flow immediately contradicts with a routed one — two
+        // numbers for one question, and the one shown first is the wrong
+        // one. Tapping through gives the real answer, so the button is left
+        // to make its own offer.
         walkBlock = `
           <div class="device-popup__walk">
-            🚶 ${escapeHtml(formatWalk(meters))}
-            <a class="device-popup__action" href="${escapeHtml(walkingDirectionsUrl(here))}" target="_blank" rel="noopener">Directions</a>
+            <button type="button" class="device-popup__action" data-action="walk-here">🚶 Walk me there</button>
           </div>`;
         if (relTier !== "ok") {
           const alt = this.nearestReliable(
@@ -905,14 +1294,32 @@ export class Devices {
       // else moves to the "Full details" modal so the popup stays short.
       const batteryPct = asNumber(props.battery_percent);
       const statRows: string[] = [];
-      statRows.push(
-        `<dt>Rating</dt>
-         <dd>
-           <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
-           <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
-           ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
-         </dd>`,
-      );
+      // Normally the bar at the top IS the verdict, so this row carries only
+      // what the bar cannot say: WHY. Repeating the label would be the same
+      // grade twice on one card, with the quieter copy in a stat list, which
+      // is backwards.
+      //
+      // But when a claim has taken the bar, nothing else on the card states
+      // the rating — so it comes back here in full, in the dot-and-label form
+      // it had before the bar existed.
+      if (heldByOther) {
+        statRows.push(
+          `<dt>Rating</dt>
+           <dd>
+             <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+             <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
+             ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
+           </dd>`,
+        );
+      } else if (ratingNotes) {
+        statRows.push(
+          `<dt>Why</dt>
+           <dd>
+             <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+             <span class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</span>
+           </dd>`,
+        );
+      }
       if (batteryPct !== null) {
         statRows.push(
           `<dt>Battery</dt><dd>${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</dd>`,
@@ -1078,13 +1485,26 @@ export class Devices {
       // the vehicle, so it needs (1) a live GPS fix and (2) sight distance.
       // When those aren't met we say why instead of offering the action —
       // same pattern as the unlock block above.
+      //
+      // ADMINS ARE EXEMPT, from both halves. The gate is a CREDIBILITY check,
+      // not a data dependency: the report is built from the DEVICE's
+      // coordinates (`coords` below), never the reporter's, so a distant
+      // admin files exactly the same report a nearby rider would. An admin
+      // working a compliance queue is reviewing parking across the city from
+      // a desk, which is the job — and requiring them to be standing next to
+      // each scooter would make the queue unworkable while adding nothing to
+      // the report. Same exemption `startAllowed` already grants for unlock.
       const parkNearEnough =
-        user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M;
+        this.adminSession ||
+        (user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M);
       // Hoisted so the async reverse-geocode below can rebuild the URL with a
       // street address once it resolves.
       let parkingInput: ParkingReportInput | null = null;
       let veoParkReportBlock: string;
-      if (user && parkNearEnough) {
+      // `parkNearEnough` alone, not `user && parkNearEnough`: an admin with
+      // no location fix at all still gets the action, which is the whole
+      // point of exempting them.
+      if (parkNearEnough) {
         parkingInput = {
           lat: coords[1],
           lng: coords[0],
@@ -1122,7 +1542,7 @@ export class Devices {
       // key stats. The report tools hide behind ⚠️ Report; everything else
       // lives in the ℹ️ Details modal — the popup itself stays short. The
       // admin two-column variant is gone; admin extras ride in the modal.
-      // Two more actions. "Use in Ride Mode" spans the row as the primary
+      // Two more actions. "I'll ride this one" spans the row as the primary
       // CTA — it is the one the rider standing at the scooter most likely
       // wants, and it is the reason the wizard's "which scooter?" screens
       // can be skipped at all (they already answered that by opening this
@@ -1133,8 +1553,36 @@ export class Devices {
       // API keys the report on it, and there is nothing useful to send
       // without one.
       const rideBtn = rideOk
-        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🧭 Use in Ride Mode</button>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🧭 Use in Ride Mode</button>`;
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🛴 I'll ride this one</button>`
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🛴 I'll ride this one</button>`;
+      // NO "CALL DIBS" BUTTON. Calling dibs is not a separate decision from
+      // going to get the scooter — it IS that decision, said out loud. So
+      // 🛴 I'll ride this one claims it and starts the walk in one tap, and
+      // the rider learns they have dibs from the confirmation rather than
+      // from having pressed a second button they had to know about.
+      //
+      // What survives as a button is the CERTIFICATE, and only when there is
+      // one to look at: their own to show somebody, or somebody else's to
+      // check.
+      const heldDibs = vid ? dibsOn(vid) : null;
+      const dibsNotice = heldByOther
+        ? `<p class="device-popup__dibs-notice">✋ ${escapeHtml(heldByOther.claimed_by)} has dibs!</p>`
+        : heldDibs
+        ? `<p class="device-popup__dibs-notice device-popup__dibs-notice--mine">` +
+          `✋ You've got dibs!` +
+          `<button type="button" class="device-popup__whatsthis" data-action="dibs-explain" aria-label="What are dibs?">?</button>` +
+          `<button type="button" class="device-popup__whatsthis" data-action="dibs-cert" aria-label="Open your dibs certificate" title="Your certificate">📄</button>` +
+          `</p>`
+        : "";
+      // Two buttons, sharing a row: the certificate, and the thing the rider
+      // most likely wants next — which differs entirely by whose claim it is.
+      // Theirs: let it go. Somebody else's: find out what this even is.
+      const certBtn = heldDibs || heldByOther
+        ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-cert">📜 Dibs certificate</button>` +
+          (heldDibs
+            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-drop">✋ Release dibs</button>`
+            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-explain">❓ What's dibs?</button>`)
+        : "";
       const featuresBtn =
         vid.length >= 16
           ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
@@ -1156,13 +1604,32 @@ export class Devices {
              <button type="button" class="device-popup__actbtn" data-action="show-photos" aria-haspopup="dialog">🖼️ Show Photos</button>`
           : `<button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">📷 Take Photo</button>
              <button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">🖼️ Show Photos</button>`;
+      // Open in Veo and Confirm Features share a row. Both used to span the
+      // full width, which gave this card five stacked full-width bars before
+      // the rider reached anything they came for.
+      //
+      // They are paired in their own grid rather than just dropped into the
+      // action row's columns, so the count decides the widths and no branch
+      // here can produce a lone half-width button beside dead space — the
+      // same rule the pinned Home/Work row follows. Either one can be absent:
+      // Open in Veo needs a plate and proximity, Confirm Features disappears
+      // once the features are confirmed.
+      const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
+      const startFeatureRow = pairCount
+        ? `<div class="device-popup__pair ${pairCount === 1 ? "is-single" : "is-pair"}">
+             ${startBtn}
+             ${featuresBtn}
+           </div>`
+        : "";
+
       const actionRow = `
         <div class="device-popup__actionrow">
+          ${dibsNotice}
           ${rideBtn}
-          ${startBtn}
+          ${certBtn}
+          ${startFeatureRow}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
-          ${featuresBtn}
           ${photoRow}
         </div>
         <p class="device-popup__actionhint" role="status" aria-live="polite" hidden></p>`;
@@ -1171,12 +1638,16 @@ export class Devices {
       const popup = new maplibregl.Popup({
         closeButton: true,
         offset: 10,
-        maxWidth: "300px",
+        // Widened for the 92px model badge: at 300px the badge left the
+        // title column so narrow that "Veo Cosmo · One passenger glider (no
+        // pedals)" wrapped to three lines beside it.
+        maxWidth: "342px",
       })
         .setLngLat(coords)
         .setHTML(
           `<div class="device-popup">
              ${headerBlock}
+             ${verdictBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
                  ${actionRow}
@@ -1189,6 +1660,7 @@ export class Devices {
         )
         .addTo(map);
       this.popup = popup;
+      nudgePopupIntoView(map, popup);
       // Remembered so setAdminSession can rebuild this popup if the admin
       // flag lands while it is open — its gates captured the old value.
       this.openPopupFor = { props, coords };
@@ -1216,11 +1688,17 @@ export class Devices {
         });
       }
 
-      // Dashed orientation line user → device while the popup is open.
-      if (user) {
-        this.locate.showLineTo(here);
-        popup.on("close", () => this.locate.clearLine());
-      }
+      // NO DASHED LINE. A straight line from the rider to the scooter was an
+      // orientation aid back when tapping a scooter told you nothing about
+      // getting to it. It now competes with a real walking route — the walk
+      // flow draws the path you actually take — and a crow-flies line beside
+      // a routed one reads as a second, contradicting suggestion. Worse, it
+      // cuts through buildings and the Platte, which is exactly the shape a
+      // rider must not follow.
+      //
+      // `Locate.showLineTo`/`clearLine` stay: recommend.ts still draws one
+      // for the ranked list, where nothing has been committed to yet and
+      // "roughly that way, roughly that far" is the whole question.
 
       const popupEl = this.popup.getElement();
 
@@ -1278,6 +1756,30 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="ride-blocked"]')
         ?.addEventListener("click", () => showHint(rideHint));
+      // Tap a feature pill for the plain-English version. One shared line
+      // under the row rather than a tooltip per pill: tooltips do not exist
+      // on touch, and a modal for one sentence is a punishment.
+      const whyLine = popupEl?.querySelector<HTMLElement>(
+        ".device-popup__feature-why",
+      );
+      for (const pill of popupEl?.querySelectorAll<HTMLButtonElement>(
+        '[data-action="feature-why"]',
+      ) ?? []) {
+        pill.addEventListener("click", () => {
+          if (!whyLine) return;
+          const why = pill.dataset.why ?? "";
+          // Tapping the pill that is already explained puts it away again.
+          const same = whyLine.textContent === why && !whyLine.hidden;
+          whyLine.textContent = same ? "" : why;
+          whyLine.hidden = same;
+          for (const other of popupEl?.querySelectorAll(
+            '[data-action="feature-why"]',
+          ) ?? []) {
+            other.classList.toggle("is-open", other === pill && !same);
+          }
+        });
+      }
+
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
         ?.addEventListener("click", () => {
@@ -1290,22 +1792,177 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="full-details"]')
         ?.addEventListener("click", () => {
+          // THE FULL NAME at the top: what it is, and which one. The popup
+          // behind this shows them on two lines; a modal that opens over it
+          // has to carry both or the rider loses track of which scooter they
+          // opened.
           openFloatingModal(
-            `${headerName} — full details`,
+            [model?.name, headerName].filter(Boolean).join(" · "),
             `<dl class="device-popup__meta">${detailRows.join("")}</dl>`,
             (root) => this.wireRangeToggles(root),
           );
         });
-      // 🧭 Use in Ride Mode — the device card's shortcut into ride mode.
+      // 🛴 I'll ride this one — the device card's shortcut into the ride flow.
+      //
+      // NAMED FOR THE RIDER'S INTENT, not our architecture. "Use in Ride
+      // Mode" told them which of our surfaces they were about to enter, which
+      // is information only we have a use for. This says the thing they are
+      // actually deciding — and it is the same sentence they will say out
+      // loud to somebody walking towards the same scooter.
       // The rider has already answered "which scooter?" by opening this
       // popup, so the survey asks the three things the wizard would have,
       // then jumps past every screen the answers make unnecessary
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
       // Screen 6 build a working Open-in-Veo deep link without a second
       // GBFS round trip.
+      // 📜 View dibs certificate — theirs to show, or somebody else's to
+      // check. Only rendered when there is one.
+      // Two of these now — the icon in the notice and the action row's
+      // button — so wire every match rather than the first.
+      popupEl
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="dibs-cert"]')
+        .forEach((b) => b.addEventListener("click", () => {
+          const mine = dibsOn(vid);
+          if (mine) {
+            track("dibs", { action: "certificate" });
+            openDibsCertificate(mine);
+            return;
+          }
+          const other = this.vehicleDibs[vid];
+          if (!other) return;
+          track("dibs", { action: "view_other" });
+          window.open(other.certificate_url, "_blank", "noopener");
+        }));
+
+      // ✋ Release dibs — theirs to give up, from the same row they see it on.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="dibs-drop"]')
+        ?.addEventListener("click", () => {
+          if (!vid) return;
+          track("dibs", { action: "drop" });
+          dropDibs(vid);
+          this.refreshOpenPopup();
+        });
+
+      // ? — what are dibs? Asked at the only moment anybody wonders: the
+      // first time the app tells them they have some.
+      popupEl
+        ?.querySelectorAll<HTMLButtonElement>('[data-action="dibs-explain"]')
+        .forEach((b) => b.addEventListener("click", () => {
+          track("dibs", { action: "explain" });
+          openDibsExplainer();
+        }));
+
+      // 🚶 Walk me there — the in-app walk. This used to be an <a> that opened
+      // Google or Apple Maps, which is the app admitting it cannot do the one
+      // thing it just offered. Same interceptor as "I'll ride this one", so a
+      // rider with a destination in hand keeps it.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="walk-here"]')
+        ?.addEventListener("click", () => {
+          this.rideInterceptor?.({
+            name: headerName,
+            plate: effectivePlate,
+            vehicleIdentifier: props.vehicle_identifier
+              ? String(props.vehicle_identifier)
+              : null,
+            lat: coords[1],
+            lng: coords[0],
+          });
+          this.closePopup();
+        });
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="use-in-ride-mode"]')
         ?.addEventListener("click", () => {
+          // A rider who already told the home bar where they are going has
+          // answered the survey's questions and the wizard's first three
+          // screens. Walk them to the scooter instead of interviewing them.
+          // CLAIMING IS PART OF GOING. "I'll ride this one" is the sentence
+          // that calls dibs, so it does — there is no second button to know
+          // about, and the rider finds out they have dibs from the
+          // confirmation rather than from having pressed something.
+          const at = { lat: coords[1], lon: coords[0] };
+          const startClaim = (): void => {
+            const here = this.locate.current();
+            const claim = callDibs({
+              vehicleIdentifier: vid,
+              vehicleName: headerName,
+              plate: effectivePlate,
+              claimedBy: this.dibsClaimant?.() ?? "Someone with the app",
+              startMeters: here
+                ? distanceMeters(here, { lat: coords[1], lng: coords[0] })
+                : 0,
+              lat: at.lat,
+              lon: at.lon,
+            });
+            showDibsConfirmation(claim);
+            this.refreshOpenPopup();
+            void registerDibs({
+              vehicle_identifier: claim.vehicleIdentifier,
+              vehicle_name: claim.vehicleName,
+              plate: claim.plate,
+              claimed_by: claim.claimedBy,
+              // The catalogue's own name — "Veo Cosmo" — IS the device name.
+              // There is no separate provider field: printing one produced
+              // "Veo Veo Cosmo Veo Cosmo" on the certificate.
+              device_type: model?.name ?? props.vehicle_model_name ?? "",
+              lat: at.lat,
+              lon: at.lon,
+            })
+              .then((reg) => {
+                saveDibs({
+                  ...claim,
+                  registration: {
+                    id: reg.id,
+                    verifyUrl: reg.verify_url,
+                    qrUrl: reg.qr_url,
+                  },
+                });
+              })
+              .catch(() => {
+                /* the certificate says the time is from this phone */
+              });
+          };
+
+          if (vid) {
+
+            // HOW MANY SCOOTERS CAN ONE PERSON HOLD? Three, and only when
+            // they are together — a rack, a plaza, a group walking to the
+            // same spot. Anything else is one rider hedging across the city,
+            // which makes the map worse for everybody including them.
+            const verdict = canCallDibs(at);
+            if (verdict.kind === "at_limit") {
+              showDibsLimit(verdict.held);
+              return;
+            }
+            if (verdict.kind === "ask") {
+              // Only they know which of the two they are doing, so ask —
+              // and make releasing the easy answer, since it is the right
+              // one most of the time.
+              askAboutSecondDibs(verdict.held, headerName, {
+                onRelease: () => {
+                  for (const d of verdict.held) dropDibs(d.vehicleIdentifier);
+                  startClaim();
+                },
+                onGroup: () => startClaim(),
+              });
+              return;
+            }
+            startClaim();
+          }
+
+          if (
+            this.rideInterceptor?.({
+              name: headerName,
+              plate: effectivePlate,
+              vehicleIdentifier: vid || null,
+              lat: coords[1],
+              lng: coords[0],
+            })
+          ) {
+            this.closePopup();
+            return;
+          }
           openRidePreflight({
             deviceLabel: effectivePlate
               ? `${headerName} — plate ${effectivePlate}`
@@ -1851,8 +2508,15 @@ export class Devices {
 
   /** "Model" badge art: illustrated comic badges vs model-tinted letters. */
   setModelIcon(v: ModelIcon): void {
+    if (this.modelIcon === v) return;
     this.modelIcon = v;
     this.apply();
+    // The card's own icon follows the map's. Two renderings of the same
+    // choice disagreeing on screen at once is the app looking broken — and
+    // the rider changed the setting precisely to see it applied. Same
+    // in-place rebuild `setAdminSession` uses.
+    const open = this.openPopupFor;
+    if (open) this.openDevicePopup(open.props, open.coords);
   }
 
   /** Signal shown by the "Data" badge style. */
@@ -2077,7 +2741,26 @@ export class Devices {
       const props = f.properties as DeviceProperties & {
         icon_key?: string;
         icon_key_hover?: string;
+        dibs_held?: string;
       };
+      // DIBS AS A FEATURE PROPERTY, stamped here rather than fetched with
+      // the devices. Claims change every few minutes; the device snapshot
+      // changes on a cycle and is served with an ETag, so folding dibs into
+      // that payload would trade a cache that works for a field that is
+      // stale anyway. It arrives separately from /api/v1/dibs/live and is
+      // joined on here, which is also the only place that knows whether the
+      // rider has opted out of caring.
+      //
+      // A rider's OWN claim never dims their own scooter — it is the reason
+      // they are looking at it.
+      const dvid = String(props.vehicle_identifier ?? "");
+      const heldByOther =
+        !this.ignoreDibs &&
+        dvid !== "" &&
+        this.vehicleDibs[dvid] !== undefined &&
+        !dibsOn(dvid);
+      props.dibs_held = heldByOther ? "yes" : "no";
+
       const { base, ringed } = this.iconKeysFor(f.properties);
       props.icon_key = base;
       needed.add(base);
@@ -2206,6 +2889,10 @@ interface PopupProps {
   form_factor: FormFactor;
   // public
   vehicle_identifier?: string | null;
+  /** "Lunar 🐸" — see vehicle-name.ts. */
+  public_name?: string | null;
+  /** "928" — the digits on the deck, from the payload. See vehicle-name.ts. */
+  plate_suffix?: string | null;
   is_disabled?: boolean | string | null;
   is_reserved?: boolean | string | null;
   current_range_meters?: number | string | null;

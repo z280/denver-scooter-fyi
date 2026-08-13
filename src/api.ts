@@ -36,6 +36,16 @@ export interface DeviceProperties {
   spatial_status: string;
   // ----- Public per-device fields (always potentially present on
   // /api/v1/devices/current; values may still be null when upstream omits them).
+  /** "Lunar 🐸" — a label a rider can say out loud, derived from the
+   *  identifier and never stored (sql/073). */
+  public_name?: string | null;
+  /** "928" — the last three characters of the plate, as printed on the deck.
+   *  This is what tells two Lunar 🐸s apart when you are standing between
+   *  them, so it is on the public payload. The RAW plate is still admin-only;
+   *  the suffix is public because Veo publishes the whole plate themselves in
+   *  free_bike_status, keyed by the same id we emit as `device_id`.
+   *  Null for a device whose plate we have never resolved. */
+  plate_suffix?: string | null;
   /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
   vehicle_identifier?: string | null;
   /** True when the scooter is out of service (low battery, fault, impound). */
@@ -1423,6 +1433,182 @@ export function fetchRoute(
       vehicle_model: q.vehicle_model,
       maneuvers: q.maneuvers ? "true" : undefined,
       explain: q.explain ? "true" : undefined,
+    })}`,
+    signal,
+  );
+}
+
+/** The walk to the scooter — Valhalla pedestrian costing on the same tiles the
+ *  ride profiles use (`GET /api/v1/route/walk`).
+ *
+ *  Deliberately not one of the ride profiles: those exclude the High Injury
+ *  Network, which is a sensible thing to avoid riding along and a nonsense
+ *  thing to avoid walking along. */
+export interface WalkRoute {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+  properties: {
+    mode: "walk";
+    distance_meters: number;
+    duration_seconds: number;
+    maneuvers?: { instruction: string; begin_shape_index: number }[];
+  };
+}
+
+export function fetchWalkRoute(
+  from: [number, number],
+  to: [number, number],
+  opts: { maneuvers?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<WalkRoute> {
+  return getJSON<WalkRoute>(
+    `/api/v1/route/walk${query({
+      from: `${from[0]},${from[1]}`,
+      to: `${to[0]},${to[1]}`,
+      maneuvers: opts.maneuvers ? "true" : undefined,
+    })}`,
+    signal,
+  );
+}
+
+/** One genuinely different road to the destination (`GET /route/options`).
+ *
+ *  The server routes every profile and groups by the shape that comes back, so
+ *  this list has one entry per ROAD rather than one per profile name. `also`
+ *  names the other profiles that produce this same road — folded, not hidden,
+ *  so a rider looking for "the shaded one" can see that it is this one. */
+/** A dibs claim, as the server records it.
+ *
+ *  The claim lives on the phone; this registers it so the CERTIFICATE can be
+ *  verified by somebody who has no reason to trust the phone. `claimed_at` is
+ *  the server's, which is the whole point — a timestamp the holder can edit
+ *  settles no argument. */
+export interface DibsRegistration {
+  id: string;
+  claimed_at: string;
+  expires_at: string;
+  verify_url: string;
+  qr_url: string;
+}
+
+export function registerDibs(
+  claim: {
+    vehicle_identifier: string;
+    vehicle_name: string;
+    plate: string | null;
+    claimed_by: string;
+    provider?: string;
+    device_type?: string;
+    lat?: number | null;
+    lon?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<DibsRegistration> {
+  // Unauthenticated on purpose: a rider who has not signed in can still call
+  // dibs, and the certificate names them as the anonymous form. Requiring an
+  // account here would make the friendliest thing in the app the one that
+  // asks for a login first.
+  return authedFetchJSON<DibsRegistration>("/api/v1/dibs", {
+    method: "POST",
+    body: claim,
+    signal,
+  });
+}
+
+/** Somebody's live claim on a vehicle, as anyone can see it.
+ *
+ *  Public and unauthenticated: the second person in a dibs argument is
+ *  exactly who needs this, and they may not have an account. Carries only the
+ *  public handle the claimant chose — a name to argue with, not a way to find
+ *  somebody. */
+export interface VehicleDibs {
+  id: string;
+  claimed_by: string;
+  claimed_at: string;
+  expires_at: string;
+  denver_time: string;
+  certificate_url: string;
+}
+
+/** Every live claim in the city, keyed by vehicle identifier.
+ *
+ *  One small response per device refresh rather than a request per popup:
+ *  dibs are rare, and this way the popup already knows the answer when it
+ *  opens. */
+export function liveDibs(
+  signal?: AbortSignal,
+): Promise<{ dibs: Record<string, VehicleDibs> }> {
+  return getJSON<{ dibs: Record<string, VehicleDibs> }>("/api/v1/dibs/live", signal);
+}
+
+/** Give a claim back before it expires.
+ *
+ *  Fire-and-forget from the caller's point of view but NOT optional: the
+ *  server row is what every other rider's map reads, and dropping only the
+ *  local copy leaves that scooter dimmed for everyone else — and reading as a
+ *  STRANGER's claim to the person who just released it, since "is this mine?"
+ *  is answered by the local record they have already deleted.
+ *
+ *  Unauthenticated by design: possession of the claim id is the credential,
+ *  exactly as it is for the certificate URL it appears in. */
+export async function releaseDibs(dibsId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/dibs/${encodeURIComponent(dibsId)}/release`, {
+    method: "POST",
+    keepalive: true,
+  });
+}
+
+export interface RouteOption {
+  key: string;
+  label: string;
+  also: { key: string; label: string }[];
+  distance_meters: number | null;
+  duration_seconds: number;
+  elevation_gain_meters: number | null;
+  battery_percent_estimate: number | null;
+  battery_percent_low: number | null;
+  battery_percent_high: number | null;
+  battery_model: string;
+  /** What is left in the battery on arrival, given the charge that was passed
+   *  in. Named by what the rider HAS on arrival, so `_low` is the bad case. */
+  arrival_percent: number | null;
+  arrival_percent_low: number | null;
+  arrival_percent_high: number | null;
+  /** Null when no starting charge was supplied — there is no honest answer
+   *  without it, and a cheerful default would be the dishonest one. */
+  will_make_it: boolean | null;
+  reserve_percent: number;
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+}
+
+export interface RouteOptionsResponse {
+  graph_bbox: [number, number, number, number];
+  beta_warning?: string;
+  /** Profiles that could not be routed at all — the High Injury Network
+   *  exclusions mean `safe` can legitimately find nothing where `express`
+   *  does. Reported rather than silently dropped. */
+  profiles_unavailable: string[];
+  options: RouteOption[];
+}
+
+export function fetchRouteOptions(
+  q: {
+    from: [number, number];
+    to: [number, number];
+    vehicle_model?: string;
+    battery_percent?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<RouteOptionsResponse> {
+  return getJSON<RouteOptionsResponse>(
+    `/api/v1/route/options${query({
+      from: `${q.from[0]},${q.from[1]}`,
+      to: `${q.to[0]},${q.to[1]}`,
+      vehicle_model: q.vehicle_model,
+      battery_percent:
+        q.battery_percent === null || q.battery_percent === undefined
+          ? undefined
+          : String(q.battery_percent),
     })}`,
     signal,
   );

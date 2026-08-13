@@ -28,7 +28,37 @@ export const TELEMETRY_EVENTS = [
   "install_prompt",
   // navigation
   "mode_switch",
+  // The home bar's own funnel: opened -> destination chosen -> wheels
+  // answered. Worth its own event because the drop-off between those three is
+  // the whole question the redesign is a bet on.
+  "home_bar",
+  // The walk-to-scooter panel: manual arrival, start-nav, confirm-started,
+  // open-in-veo. The split between "started nav" and "opened Veo" is the
+  // measurable version of "did the handoff work".
+  "arrival_panel",
+  // The strip under the map: how often riders go back to what they are on,
+  // and how often they end from there rather than from inside the HUD.
+  "active_vehicle",
+  // Dibs: claimed, dropped, certificate shown. The certificate count is the
+  // interesting one — it is the only event that means the thing got shown to
+  // another human.
+  "dibs",
+  // Which of the four dibs alerts fired. The ratio of `taken` to the
+  // countdowns is the honest measure of whether dibs is worth anything.
+  "dibs_alert",
+  // The watched scooter went while the rider was walking to it, and why.
+  "device_gone",
   "drawer_open",
+  // The founder's note on the About page is collapsed by default; this is
+  // the OPEN only, never the close, so the count reads as "people who chose
+  // to read it" rather than "people who poked at it".
+  "about_founder_open",
+  // The crosshair button. Worth counting on its own: if it is tapped often,
+  // the map is losing riders more than it should.
+  "recenter",
+  // Free-ride mode from the top bar — GPS track on, no vehicle, no
+  // destination, no timer.
+  "ride_mode_free",
   "account_tab",
   "theme_change",
   // features

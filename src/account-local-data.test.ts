@@ -563,3 +563,37 @@ describe("teardown", () => {
     expect(rows()).toHaveLength(before);
   });
 });
+
+describe("the standing save-tracks preference lives here", () => {
+  beforeEach(() => {
+    localStorage.removeItem("scooter-fyi-save-tracks");
+  });
+
+  it("renders above the ride list, since it governs it", () => {
+    mount({ getTrackStore: async () => fakeStore([]) });
+    const row = host.querySelector(".track-pref");
+    expect(row).toBeTruthy();
+    const list = host.querySelector(".track-list")!;
+    // DOCUMENT_POSITION_FOLLOWING: the list comes after the preference.
+    expect(row!.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it("reflects the stored answer rather than always starting checked", () => {
+    localStorage.setItem("scooter-fyi-save-tracks", "0");
+    mount({ getTrackStore: async () => fakeStore([]) });
+    expect(host.querySelector<HTMLInputElement>(".track-pref__box")!.checked).toBe(false);
+  });
+
+  it("writes the rider's choice and says what it did", () => {
+    mount({ getTrackStore: async () => fakeStore([]) });
+    const box = host.querySelector<HTMLInputElement>(".track-pref__box")!;
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(localStorage.getItem("scooter-fyi-save-tracks")).toBe("0");
+    // And is explicit that turning it off is not retroactive — the rides
+    // already on the device are still there, one row below.
+    expect(host.querySelector(".account-magic-status")?.textContent)
+      .toMatch(/no longer be saved.*kept/i);
+  });
+});
