@@ -1599,6 +1599,13 @@ body.is-map-picking .drawer--right {
   transform: translateX(calc(100% + 48px + max(12px, env(safe-area-inset-right))));
   visibility: hidden;
 }
+/* Same reason for the ride wizard, which reaches the picker from Screen 3's
+   "Pick a point on the map" row: the rider cannot tap a map they cannot see.
+   Hidden rather than closed — the wizard keeps its place in the flow and
+   comes back with the point already chosen. */
+body.is-map-picking .ride-modal {
+  visibility: hidden;
+}
 .map-pick-bar {
   position: fixed;
   left: 50%;
@@ -3813,6 +3820,59 @@ body:not(.mode-ride) .drawer-tab[data-drawer="recommended"] {
 }
 .ride-option.is-out-of-coverage .ride-option__desc {
   font-style: italic;
+}
+
+/* ---------- Saved places (favorites.ts) ---------- */
+/* A row that can also be saved or forgotten puts that control BESIDE the row
+   rather than inside it — a button inside a button is markup browsers fix by
+   dropping one of them. The row keeps the whole remaining width, because
+   choosing the destination is what the rider is here to do and starring it is
+   the rarer, smaller intent. */
+.ride-screen-dest__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.ride-screen-dest__row > .ride-option {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ride-screen-dest__action {
+  flex: 0 0 auto;
+  width: 44px; /* full touch target — see the 44px minimum used app-wide */
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ride-screen-dest__action:hover,
+.ride-screen-dest__action:focus-visible {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+/* Naming a place, inline in the list rather than in a dialog stacked on the
+   wizard — see ride-screen-dest.ts's renderNaming. */
+.ride-screen-dest__naming {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px 2px;
+}
+.ride-screen-dest__chips,
+.ride-screen-dest__naming-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ride-screen-dest__save {
+  flex: 0 0 auto;
+  padding: 8px 20px;
+  text-align: center;
 }
 
 /* Limited room (mobile): the wizard becomes a right-side panel and the map
