@@ -619,7 +619,7 @@ function buildLoadedScreen(
    *  Never fatal. A ride with a drawn line and no spoken turns is a worse
    *  ride; a ride that refuses to start because a second request failed is
    *  not a ride at all. */
-  async function maneuversFor(key: string): Promise<RideSessionRoute["maneuvers"]> {
+  async function routeWithManeuversFor(key: string) {
     try {
       const rr = await (deps.fetchRoute ?? defaultFetchRoute)(
         {
@@ -631,14 +631,14 @@ function buildLoadedScreen(
         },
         abort.signal,
       );
-      return rr.properties.maneuvers ?? [];
+      return rr;
     } catch (e) {
       if (!isAbortError(e)) console.error("maneuvers fetch failed", e);
-      return [];
+      return null;
     }
   }
 
-  function advance(): void {
+  async function advance(): Promise<void> {
     if (destroyed) return;
     const fresh = deps.session.current() ?? doc;
     const state = selectedProfile ? results.get(selectedProfile) : undefined;
@@ -665,21 +665,50 @@ function buildLoadedScreen(
       maneuvers: chosen.properties.maneuvers ?? [],
       betaWarning: betaWarning ?? chosen.properties.beta_warning ?? null,
     };
-    deps.session.dispatch({ type: "setRoute", route: sessionRoute });
-    // Turns arrive a moment later and patch the route in place, so the flow
-    // never waits on a second request to move forward.
-    const chosenKey = selectedProfile;
+    // AWAITED, and it did not used to be — which is the whole bug.
+    //
+    // This fired the maneuvers fetch and called `ctx.next()` in the same
+    // breath, on the reasoning that a second request should never delay a
+    // rider. But `ctx.next()` starts the ride, the nav HUD opens and
+    // SNAPSHOTS `route.maneuvers` (`opts.route.maneuvers.slice()`), and the
+    // late `setRoute` landed against a HUD that never re-reads it. So every
+    // navigated ride showed "Follow the route" and no turns, forever: not a
+    // missing feature, a race that made a working one unreachable.
+    //
+    // The response REPLACES the route rather than lending it a maneuvers
+    // array, and that is the other half of the fix. `begin_shape_index`
+    // indexes into the geometry of the response it came from, so pairing
+    // these maneuvers with the option call's separately-computed shape would
+    // point every turn at roughly-but-not-exactly the right vertex. Same
+    // profile, same endpoints — it is the same route, and taking both halves
+    // from one response is the only version that is actually consistent.
     if (sessionRoute.maneuvers.length === 0) {
-      void maneuversFor(chosenKey).then((maneuvers) => {
-        if (maneuvers.length === 0) return;
-        const live = deps.session.current();
-        if (live?.route?.profile !== chosenKey) return;
-        deps.session.dispatch({
-          type: "setRoute",
-          route: { ...live.route, maneuvers },
-        });
-      });
+      const withTurns = await routeWithManeuversFor(selectedProfile);
+      if (destroyed) return;
+      const turns = withTurns?.properties.maneuvers ?? [];
+      if (withTurns && turns.length > 0) {
+        sessionRoute.maneuvers = turns;
+        // Same [lng, lat] order the option's own encoding uses above —
+        // `encodePolyline` is given the coordinates verbatim, not flipped.
+        sessionRoute.polyline = encodePolyline(
+          withTurns.geometry.coordinates.map(
+            ([lng, lat]) => [lng, lat] as [number, number],
+          ),
+        );
+        sessionRoute.distanceM =
+          withTurns.properties.distance_meters ?? sessionRoute.distanceM;
+        sessionRoute.durationS =
+          withTurns.properties.duration_seconds ?? sessionRoute.durationS;
+      }
+      // No turns available (offline, rate-limited, out of coverage) is NOT
+      // fatal: a ride with a drawn line and no spoken turns is a worse ride;
+      // a ride that refuses to start because a second request failed is not
+      // a ride at all.
     }
+    // Dispatched HERE, after the turns are settled — the nav HUD snapshots
+    // `route.maneuvers` when it opens and never re-reads, so the store has to
+    // be right before `ctx.next()` starts the ride.
+    deps.session.dispatch({ type: "setRoute", route: sessionRoute });
     // Advance FIRST — the POST is non-blocking (frontend plan: "route choice
     // must proceed... until A3 deploys"). Fired after `ctx.next()` so it
     // survives this screen's teardown; `persistRoute` re-reads the session

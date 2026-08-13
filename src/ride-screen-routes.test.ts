@@ -16,7 +16,7 @@ import {
   type RouteOption,
   type RouteOptionsResponse,
   type RouteResponse,
-} from "./api.ts";
+  type RouteQuery,} from "./api.ts";
 import type { LngLat } from "./locate.ts";
 import type { RideDestWithCoverage } from "./ride-screen-dest.ts";
 import {
@@ -469,8 +469,15 @@ describe("Screen 4 — NEXT: POST /ride-routes", () => {
     expect(next?.disabled).toBe(false);
     next?.click();
 
-    // Advance happens synchronously — before the POST has even been given a
-    // chance to reject. Non-blocking means non-blocking.
+    // The POST is still non-blocking — that is what this test is about, and
+    // `postDeferred` is deliberately never resolved below.
+    //
+    // Advancing is no longer SYNCHRONOUS, though: the screen now awaits the
+    // maneuvers call before dispatching the route, because the nav HUD
+    // snapshots `route.maneuvers` the moment it opens and never re-reads
+    // them. Firing that fetch and calling ctx.next() in the same breath is
+    // exactly what made every navigated ride say "Follow the route".
+    await flush();
     expect(currentRideScreen()).toBe("6");
     expect(session.current()?.route?.profile).toBe("safe");
     expect(session.current()?.route?.rideRouteId).toBeNull();
@@ -910,8 +917,127 @@ describe("Screen 4 — directions beta warning", () => {
     await flush();
 
     rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    // The route is dispatched after the maneuvers call settles — see the
+    // note on the advance path.
+    await flush();
     expect(session.current()?.route?.betaWarning).toBe(
       "Navigation directions are in beta.",
     );
+  });
+});
+
+describe("Screen 4 — turn-by-turn reaches the nav HUD", () => {
+  /** A `/route` response carrying maneuvers, as the real endpoint returns
+   *  when asked with `maneuvers: true`. */
+  const routeWithTurns = () =>
+    vi.fn(async (_q: RouteQuery, _s?: AbortSignal): Promise<RouteResponse> => ({
+      type: "Feature" as const,
+      geometry: {
+        type: "LineString" as const,
+        coordinates: [
+          [-104.99, 39.74],
+          [-104.98, 39.75],
+          [-104.97, 39.76],
+        ] as [number, number][],
+      },
+      properties: {
+        profile: "safe",
+        label: "Safest",
+        elevation_gain_meters: 12,
+        shade_score: 0.4,
+        battery_percent_estimate: null,
+        battery_model: "unavailable" as const,
+        graph_bbox: [-105.1, 39.6, -104.8, 39.9] as [number, number, number, number],
+        distance_meters: 1200,
+        duration_seconds: 300,
+        maneuvers: [
+          {
+            type: 15,
+            instruction: "Turn left onto Hazel Court",
+            street_names: ["Hazel Court"],
+            length_meters: 400,
+            time_seconds: 90,
+            begin_shape_index: 0,
+            end_shape_index: 2,
+          },
+          {
+            type: 10,
+            instruction: "Turn right onto West 10th Avenue",
+            street_names: ["West 10th Avenue"],
+            length_meters: 800,
+            time_seconds: 210,
+            begin_shape_index: 2,
+            end_shape_index: 2,
+          },
+        ],
+      },
+    }));
+
+  it("has the turns ON THE SESSION before the ride starts", async () => {
+    // THE REGRESSION. `/route/options` omits maneuvers to keep five parallel
+    // responses small, so they are fetched once for the chosen profile. That
+    // fetch used to run un-awaited alongside ctx.next() — and the nav HUD
+    // snapshots `route.maneuvers` when it opens and never re-reads, so the
+    // turns always landed a moment too late and every navigated ride showed
+    // "Follow the route".
+    const session = sessionOnScreen4(baseOptions({ navigation: true }));
+    const fetchRoute = routeWithTurns();
+    wireRideScreenRoutes(
+      baseDeps(session, { fetchRouteOptions: fakeOptions(["safe"]), fetchRoute }),
+    );
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    await flush();
+
+    expect(fetchRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ maneuvers: true, profile: "safe" }),
+      expect.anything(),
+    );
+    expect(session.current()?.route?.maneuvers).toHaveLength(2);
+    expect(session.current()?.route?.maneuvers?.[0].instruction).toContain("Hazel");
+  });
+
+  it("takes the SHAPE from the same response as the turns", async () => {
+    // `begin_shape_index` indexes into the geometry of the response it came
+    // from. Pairing these maneuvers with the option call's separately
+    // computed shape would point every turn at roughly-but-not-exactly the
+    // right vertex, which is a subtler bug than no turns at all.
+    const session = sessionOnScreen4(baseOptions({ navigation: true }));
+    const fetchRoute = routeWithTurns();
+    wireRideScreenRoutes(
+      baseDeps(session, { fetchRouteOptions: fakeOptions(["safe"]), fetchRoute }),
+    );
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    await flush();
+
+    const route = session.current()?.route;
+    expect(route?.distanceM).toBe(1200);
+    expect(route?.durationS).toBe(300);
+  });
+
+  it("still starts the ride when the turns cannot be fetched", async () => {
+    // A ride with a line and no spoken turns is a worse ride. A ride that
+    // refuses to start because a second request failed is not a ride.
+    const session = sessionOnScreen4(baseOptions({ navigation: true }));
+    const fetchRoute = vi.fn(
+      async (_q: RouteQuery, _s?: AbortSignal): Promise<RouteResponse> => {
+        throw new Error("offline");
+      },
+    );
+    wireRideScreenRoutes(
+      baseDeps(session, { fetchRouteOptions: fakeOptions(["safe"]), fetchRoute }),
+    );
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+    rideModalRoot()?.querySelector<HTMLButtonElement>(".ride-route-next")?.click();
+    await flush();
+
+    expect(currentRideScreen()).toBe("6");
+    expect(session.current()?.route?.profile).toBe("safe");
+    expect(session.current()?.route?.maneuvers).toEqual([]);
   });
 });
