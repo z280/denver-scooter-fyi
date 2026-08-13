@@ -488,6 +488,21 @@ function activeFilterChips(): Chip[] {
     });
   }
 
+  // Rude mode gets a chip for the same reason "+ Unavailable" does: it is a
+  // departure from the default, and a rider who left it on last week should
+  // be able to see that from the map rather than by opening a drawer.
+  const rudeCb = need<HTMLInputElement>("ignore-dibs");
+  if (rudeCb.checked) {
+    active.push({
+      id: "ignore-dibs",
+      label: "😤 Ignoring dibs",
+      onClear: () => {
+        rudeCb.checked = false;
+        rudeCb.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
   if (minBatteryPct > 0) {
     active.push({
       id: "battery",
@@ -961,6 +976,7 @@ map.on("load", async () => {
     suggestName: () => filterSummary() || "All devices",
   });
   wireEquityRanks();
+  wireIgnoreDibs();
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -1616,6 +1632,23 @@ function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
     "model",
     compatible.size > 0 ? compatible : want,
   );
+}
+
+/** "I'm rude AF" — other people's claims stop dimming the map.
+ *
+ *  The claims are still REAL: the popup still names whoever holds one, the
+ *  certificate still validates, and "I'll ride this one" is still blocked on
+ *  somebody else's scooter. This hides the courtesy, not the fact — which is
+ *  the only version of this toggle worth shipping, since dibs is a social
+ *  convention and an app that let you switch off other people's existence
+ *  would just be a worse app. */
+function wireIgnoreDibs(): void {
+  const cb = need<HTMLInputElement>("ignore-dibs");
+  cb.addEventListener("change", () => {
+    devices.setIgnoreDibs(cb.checked);
+    track("control_change", { control: "ignore_dibs", value: cb.checked ? "on" : "off" });
+    refreshChips();
+  });
 }
 
 /** Drive the Availability checkbox through its normal change path. */

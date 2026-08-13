@@ -4287,6 +4287,21 @@ body.is-map-picking .ride-modal {
 .device-popup__verdict-icon {
   flex: none;
 }
+/* A live claim by somebody else. Orange, not a verdict colour: this says
+   nothing about whether the scooter is any good — it may be excellent, which
+   is exactly why someone is walking to it. Black ink, per the same
+   per-state rule the other three follow; measured 6.59:1, where white
+   would have been 2.70:1. */
+.device-popup__verdict--dibs {
+  background: #f57c00;
+  color: #14181d;
+}
+.device-popup__verdict-glyph {
+  flex: none;
+  font-size: 17px;
+  line-height: 1;
+}
+
 .device-popup__verdict--ok {
   background: #238636;
   color: #fff;

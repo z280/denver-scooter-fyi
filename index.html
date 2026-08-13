@@ -432,6 +432,18 @@
             <input type="checkbox" id="hide-unavailable" checked />
             <span>Hide Reserved &amp; Out of Service</span>
           </label>
+          <label class="switch">
+            <!-- OFF by default, because the default is to be a decent
+                 person about it. A scooter somebody has called dibs on
+                 renders faded with a 🚫 — it is still THERE, still tappable,
+                 still rideable, because dibs was never a reservation. This
+                 only removes the visual courtesy.
+                 The label is the rider's own words. It is meant to be a
+                 slightly uncomfortable thing to switch on, which is the
+                 honest framing of what it does. -->
+            <input type="checkbox" id="ignore-dibs" />
+            <span>I&rsquo;m rude AF &mdash; I don&rsquo;t care about dibs</span>
+          </label>
           </div>
         </details>
 

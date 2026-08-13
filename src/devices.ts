@@ -198,6 +198,8 @@ const POINT_LAYER = "device-points";
  *  when the gauge display mode is "On Hover". */
 const HOVER_LAYER = "device-points-hover";
 const FLAG_LAYER = "device-negative-flag";
+/** 🚫 over a scooter somebody else has called dibs on. */
+const DIBS_LAYER = "device-dibs-mark";
 /** Filter that matches nothing — the hover layer's idle state. */
 const HOVER_NONE: maplibregl.FilterSpecification = [
   "==",
@@ -211,6 +213,15 @@ export const DEVICE_INTERACTIVE_LAYERS = [CLUSTER_LAYER, POINT_LAYER];
 /** Veo's model line-up, keyed by the INTERNAL `ModelKey`. The popup header
  *  shows the friendly name + a plain description; an unrecognized or
  *  missing model falls through to a "Tell us!" report prompt. */
+/** How faded a scooter someone else has called dibs on renders.
+ *
+ *  Read as "30% opacity" rather than "70% opacity with 30% transparency
+ *  removed": the point is to push it out of the way of a rider scanning the
+ *  map, and the existing high-risk fade is already 0.45 — anything lighter
+ *  than that would read as noise rather than as a signal. One constant if a
+ *  softer touch is wanted. */
+const DIBS_ICON_OPACITY = 0.3;
+
 const VEO_MODELS: Record<ModelKey, { name: string; desc: string }> = {
   astro: { name: "Veo Astro", desc: "Standing scooter" },
   cosmo: { name: "Veo Cosmo", desc: "One passenger glider (no pedals)" },
@@ -413,8 +424,13 @@ export class Devices {
    *  later. It also keeps this class rendering rather than fetching. */
   setVehicleDibs(dibs: Record<string, VehicleDibs | undefined>): void {
     this.vehicleDibs = dibs;
-    // A claim landing or expiring changes what an OPEN popup should offer.
+    // A claim landing or expiring changes what an OPEN popup should offer...
     this.refreshOpenPopup();
+    // ...and what the MAP shows. Claims are stamped onto features in
+    // `annotateIconKeys`, so a new set of them is only visible after a
+    // repaint — without this the dimming and the 🚫 would lag a whole
+    // device-refresh cycle behind the claims that caused them.
+    this.apply();
   }
 
   private refreshOpenPopup(): void {
@@ -439,6 +455,20 @@ export class Devices {
    *  claimed, so asking about the one the rider is actually looking at is the
    *  only version of this that scales. */
   private vehicleDibs: Record<string, VehicleDibs | undefined> = {};
+  /** "I'm rude AF — I don't care about dibs". When on, other people's claims
+   *  stop dimming anything and the 🚫 overlay goes away. The claims are still
+   *  REAL and the popup still says whose they are: this hides the courtesy,
+   *  not the fact. */
+  private ignoreDibs = false;
+
+  /** Toggle the rude-mode filter. Repaints, since every marker's opacity and
+   *  the whole 🚫 layer depend on it. */
+  setIgnoreDibs(on: boolean): void {
+    if (this.ignoreDibs === on) return;
+    this.ignoreDibs = on;
+    this.apply();
+    this.refreshOpenPopup();
+  }
 
   setDibsClaimant(fn: () => string): void {
     this.dibsClaimant = fn;
@@ -581,15 +611,51 @@ export class Devices {
         "text-color": "#ffffff",
         "text-halo-color": "rgba(0,0,0,0.25)",
         "text-halo-width": 0.6,
-        // Ghost pins: high-failure-risk devices render semi-transparent in
-        // every color mode, training riders to walk past dead hardware.
+        // Ghost pins, two reasons. A scooter somebody else has called dibs
+        // on is faded HARDER than a high-risk one: risk says "probably not
+        // worth your walk", dibs says "someone is already walking to this",
+        // and the second is the stronger reason to look elsewhere. Paired
+        // with the 🚫 overlay, since opacity alone is not a signal — and
+        // overridable, for a rider who has told us they do not care.
         "icon-opacity": [
-          "match",
-          ["get", "reliability_tier"],
-          "risk",
+          "case",
+          ["==", ["get", "dibs_held"], "yes"],
+          DIBS_ICON_OPACITY,
+          ["==", ["get", "reliability_tier"], "risk"],
           0.45,
           1,
         ],
+      },
+    });
+
+    // 🚫 over anything somebody else has called dibs on. A separate symbol
+    // layer rather than another icon variant: the atlas is keyed by the
+    // composite icon spec, and dibs is orthogonal to every part of it — a
+    // claimed Cosmo is the same drawing as an unclaimed one with a mark on
+    // top, not a different drawing. Keeping it separate also means the
+    // overlay appears and disappears with a claim without touching the
+    // atlas at all.
+    //
+    // Opacity is NOT a signal on its own (a faded pin could be anything), so
+    // the mark carries the meaning and the fade carries the emphasis.
+    this.map.addLayer({
+      id: DIBS_LAYER,
+      type: "symbol",
+      source: SRC,
+      filter: ["==", ["get", "dibs_held"], "yes"],
+      layout: {
+        "text-field": "🚫",
+        "text-size": 15,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        // Up and right, clear of the badge art and of the battery readout
+        // that sits under it.
+        "text-offset": [0.85, -0.85],
+      },
+      paint: {
+        // Full strength on purpose. The scooter behind it is faded; the
+        // reason it is faded should not be.
+        "text-opacity": 1,
       },
     });
 
@@ -1052,14 +1118,44 @@ export class Devices {
         unknown: `<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4" /><path d="M12 17h.01" />`,
         risk: `<circle cx="12" cy="12" r="10" /><path d="M12 7v5" /><path d="M12 16h.01" />`,
       };
-      const verdictBlock = `
-        <div class="device-popup__verdict device-popup__verdict--${relTier}">
-          <svg class="device-popup__verdict-icon" width="20" height="20"
-               viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
-               aria-hidden="true">${VERDICT_ICON[relTier]}</svg>
-          <span class="device-popup__verdict-text">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
-        </div>`;
+      // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
+      // deep link as the QR sticker on the scooter's deck, same gates: it
+      // needs a plate (`effectivePlate` — the admin field, or one resolved
+      // client-side from Veo's own public GBFS feed), a signed-in session,
+      // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
+      // skip the proximity requirement entirely. The button is ALWAYS
+      // visible; when disabled, tapping it explains why in the hint line.
+      // Somebody else's live claim, if the lookup has answered. Null while it
+      // is in flight or when there is none — the popup renders immediately
+      // either way and gains the notice when it lands, because a popup that
+      // waits on the network to show its buttons is worse than one that
+      // updates a moment later.
+      const gateVid = props.vehicle_identifier ? String(props.vehicle_identifier) : "";
+      const held = gateVid ? this.vehicleDibs[gateVid] ?? null : null;
+      // A rider's OWN dibs never blocks them — it is the reason they are here.
+      const heldByOther = held && !dibsOn(gateVid) ? held : null;
+
+      // A LIVE CLAIM TAKES THE BAR. When somebody else has dibs, "is this
+      // rideable?" is no longer the question the rider needs answered first —
+      // "somebody is already walking to this" is. Orange rather than the
+      // verdict palette, because it is not a verdict about the scooter: the
+      // scooter may be perfect, and that is rather the point.
+      //
+      // The rating is not lost, it MOVES: the stats list below carries it in
+      // the old dot-and-label form, with its reasons. Two facts, each said
+      // once, in the order they matter.
+      const verdictBlock = heldByOther
+        ? `<div class="device-popup__verdict device-popup__verdict--dibs">
+             <span class="device-popup__verdict-glyph" aria-hidden="true">🚫</span>
+             <span class="device-popup__verdict-text">${escapeHtml(heldByOther.claimed_by)} has dibs!</span>
+           </div>`
+        : `<div class="device-popup__verdict device-popup__verdict--${relTier}">
+             <svg class="device-popup__verdict-icon" width="20" height="20"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+                  aria-hidden="true">${VERDICT_ICON[relTier]}</svg>
+             <span class="device-popup__verdict-text">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
+           </div>`;
 
       // Crowdsourced equipment (API sql/055). Read up here because BOTH the
       // Features stat row and the action row below need it, and the stat
@@ -1082,22 +1178,6 @@ export class Devices {
           ? this.plates.cachedPlateFor(props.device_id)
           : null);
 
-      // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
-      // deep link as the QR sticker on the scooter's deck, same gates: it
-      // needs a plate (`effectivePlate` — the admin field, or one resolved
-      // client-side from Veo's own public GBFS feed), a signed-in session,
-      // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
-      // skip the proximity requirement entirely. The button is ALWAYS
-      // visible; when disabled, tapping it explains why in the hint line.
-      // Somebody else's live claim, if the lookup has answered. Null while it
-      // is in flight or when there is none — the popup renders immediately
-      // either way and gains the notice when it lands, because a popup that
-      // waits on the network to show its buttons is worse than one that
-      // updates a moment later.
-      const gateVid = props.vehicle_identifier ? String(props.vehicle_identifier) : "";
-      const held = gateVid ? this.vehicleDibs[gateVid] ?? null : null;
-      // A rider's OWN dibs never blocks them — it is the reason they are here.
-      const heldByOther = held && !dibsOn(gateVid) ? held : null;
 
       const signedIn = isAuthenticated();
       const nearEnough =
@@ -1214,11 +1294,24 @@ export class Devices {
       // else moves to the "Full details" modal so the popup stays short.
       const batteryPct = asNumber(props.battery_percent);
       const statRows: string[] = [];
-      // The verdict itself is the bar at the top now, so this row keeps only
-      // what the bar cannot say: WHY. Repeating the label here would be the
-      // same grade twice on one card, and the version in a stat list would
-      // be the quieter of the two — which is backwards.
-      if (ratingNotes) {
+      // Normally the bar at the top IS the verdict, so this row carries only
+      // what the bar cannot say: WHY. Repeating the label would be the same
+      // grade twice on one card, with the quieter copy in a stat list, which
+      // is backwards.
+      //
+      // But when a claim has taken the bar, nothing else on the card states
+      // the rating — so it comes back here in full, in the dot-and-label form
+      // it had before the bar existed.
+      if (heldByOther) {
+        statRows.push(
+          `<dt>Rating</dt>
+           <dd>
+             <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
+             <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
+             ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
+           </dd>`,
+        );
+      } else if (ratingNotes) {
         statRows.push(
           `<dt>Why</dt>
            <dd>
@@ -2648,7 +2741,26 @@ export class Devices {
       const props = f.properties as DeviceProperties & {
         icon_key?: string;
         icon_key_hover?: string;
+        dibs_held?: string;
       };
+      // DIBS AS A FEATURE PROPERTY, stamped here rather than fetched with
+      // the devices. Claims change every few minutes; the device snapshot
+      // changes on a cycle and is served with an ETag, so folding dibs into
+      // that payload would trade a cache that works for a field that is
+      // stale anyway. It arrives separately from /api/v1/dibs/live and is
+      // joined on here, which is also the only place that knows whether the
+      // rider has opted out of caring.
+      //
+      // A rider's OWN claim never dims their own scooter — it is the reason
+      // they are looking at it.
+      const dvid = String(props.vehicle_identifier ?? "");
+      const heldByOther =
+        !this.ignoreDibs &&
+        dvid !== "" &&
+        this.vehicleDibs[dvid] !== undefined &&
+        !dibsOn(dvid);
+      props.dibs_held = heldByOther ? "yes" : "no";
+
       const { base, ringed } = this.iconKeysFor(f.properties);
       props.icon_key = base;
       needed.add(base);
