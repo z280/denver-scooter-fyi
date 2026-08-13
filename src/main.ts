@@ -14,7 +14,8 @@ import { createMap } from "./map.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
-import { openDibsCertificate } from "./dibs-certificate.ts";
+import { openDibsCertificate, showDibsAlertToast } from "./dibs-certificate.ts";
+import { createDibsNotifier } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -112,6 +113,7 @@ import {
   recordProgress,
   saveDibs,
   type Dibs,
+  loadDibs,
 } from "./dibs.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
@@ -985,6 +987,7 @@ map.on("load", async () => {
   });
   wireEquityRanks();
   wireIgnoreDibs();
+  wireDibsAlerts();
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
   // `refreshLiveDibs` already does for a claim landing.
@@ -2844,6 +2847,95 @@ let dibsClaimant = "Someone with the app";
  *  later. Failure is silent and total — no claims visible is the same as no
  *  claims, and a dibs lookup must never be why the map stops updating. */
 let myDibs: MyDibsHandle | null = null;
+
+/** How often held claims are re-checked for an alert.
+ *
+ *  Ticks rather than timers, per `dibs-notify.ts`: a backgrounded tab that
+ *  sleeps through its exact window fires on the next tick it gets instead of
+ *  silently skipping the message. Fifteen seconds is well inside the
+ *  resolution of anything here — the tightest alert is a five-minute
+ *  countdown — and cheap enough to leave running for the life of the page. */
+const DIBS_TICK_MS = 15_000;
+
+let dibsNotifier: ReturnType<typeof createDibsNotifier> | null = null;
+
+/** Wire the four dibs alerts to something that actually fires them.
+ *
+ *  `dibs-notify.ts` had every message, the vibration and the dedupe written
+ *  and tested, and was connected to nothing — so the rule the certificate
+ *  now prints ("Scooter.fyi will try to notify you if the device you have
+ *  dibs on is no longer available") was a promise with no mechanism.
+ *
+ *  Three drivers, because the four alerts have two different sources:
+ *
+ *    tick   — the clock. Every held claim, every 15s. Covers the grace
+ *             warning (which fires while the rider has NOT set off, so the
+ *             walk flow cannot be its source) and both countdowns.
+ *    taken  — the world. The scooter left the feed or went in use. Checked on
+ *             every device refresh, which is the only moment that fact
+ *             changes, and independently from the walk's own watcher so a
+ *             rider who claimed but has not set off is still told.
+ *    forget — a claim that ended. Released, expired, or ridden.
+ */
+function wireDibsAlerts(): void {
+  dibsNotifier = createDibsNotifier({
+    // ALWAYS shown, even when the OS notification also fires: a rider
+    // looking at the screen should not be the one person who misses it.
+    inApp: (alert, text) => showDibsAlertToast(alert, text),
+    // Tapping "RUN!" lands on the walk, not on a cold map.
+    onResume: (d) => {
+      void beginWalkToVehicle({
+        name: d.vehicleName,
+        plate: d.plate ?? null,
+        vehicleIdentifier: d.vehicleIdentifier,
+        lat: d.lat,
+        lng: d.lon,
+      });
+    },
+  });
+
+  const known = new Set<string>();
+
+  const sweep = (): void => {
+    const held = loadDibs();
+    const live = new Set(held.map((d) => d.vehicleIdentifier));
+    // A claim that has gone — released, expired, or ridden — must not keep
+    // its fired-alert history, or re-claiming the same scooter would be
+    // silent.
+    for (const vid of known) {
+      if (!live.has(vid)) {
+        dibsNotifier?.forget(vid);
+        known.delete(vid);
+      }
+    }
+    for (const d of held) {
+      known.add(d.vehicleIdentifier);
+      dibsNotifier?.tick(d);
+    }
+  };
+
+  sweep();
+  window.setInterval(sweep, DIBS_TICK_MS);
+
+  // "It's gone" is about the WORLD, not the clock, so it is checked where
+  // the world changes: each device refresh. `is_reserved` means IN USE on
+  // this operator rather than a held booking, so either flag going up means
+  // somebody else has it.
+  window.addEventListener("scooter:devices-refreshed", () => {
+    for (const d of loadDibs()) {
+      const f = devices
+        .allFeatures()
+        .find((x) => x.properties.vehicle_identifier === d.vehicleIdentifier);
+      const props = f?.properties as unknown as Record<string, unknown> | undefined;
+      const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+      // Absent from the feed entirely counts too: a scooter that vanished
+      // is at least as gone as one marked in use.
+      const gone =
+        f === undefined || truthy(props?.is_reserved) || truthy(props?.is_disabled);
+      if (gone) dibsNotifier?.taken(d);
+    }
+  });
+}
 
 function refreshLiveDibs(): void {
   void liveDibs()

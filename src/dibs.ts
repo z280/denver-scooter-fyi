@@ -91,6 +91,10 @@ export function metersBetween(
 }
 
 export type DibsVerdict =
+  /** Not signed in. Dibs is an assertion about WHO called it, and a
+   *  certificate naming nobody is weak evidence in the argument it exists to
+   *  settle — so this one is a gate rather than a nudge. */
+  | { kind: "signed_out" }
   /** Nothing in the way. */
   | { kind: "ok" }
   /** They already hold this exact vehicle. */
@@ -111,7 +115,15 @@ export type DibsVerdict =
 export function canCallDibs(
   at: { lat: number; lon: number },
   now: number = Date.now(),
+  /** Injected rather than imported so this module stays free of the auth
+   *  layer and testable without one. */
+  signedIn: boolean = true,
 ): DibsVerdict {
+  // FIRST, because every other verdict is about claims this rider holds and
+  // a signed-out rider cannot hold any: the registration is session-authed
+  // (`registerDibs`), so an anonymous claim could only ever be a local note
+  // to self that no other rider's map would ever see.
+  if (!signedIn) return { kind: "signed_out" };
   const held = loadDibs(now);
   if (held.length === 0) return { kind: "ok" };
   if (held.some((d) => metersBetween(d, at) < SAME_PLACE_METERS)) {

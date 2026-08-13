@@ -1504,10 +1504,20 @@ export function registerDibs(
   },
   signal?: AbortSignal,
 ): Promise<DibsRegistration> {
-  // Unauthenticated on purpose: a rider who has not signed in can still call
-  // dibs, and the certificate names them as the anonymous form. Requiring an
-  // account here would make the friendliest thing in the app the one that
-  // asks for a login first.
+  // SESSION-AUTHED, and the UI gates on it (see `canCallDibs` in devices.ts).
+  //
+  // It was not always: this used to be described as "unauthenticated on
+  // purpose" so a signed-out rider could claim and appear on the certificate
+  // as the anonymous form — but the call itself has always been
+  // `authedFetchJSON`, which throws NO_AUTH before the request leaves the
+  // browser. So a signed-out claim failed instantly, the caller's `.catch`
+  // swallowed it, and the certificate reported "couldn't reach the server"
+  // about a server it never called.
+  //
+  // Resolved by making the product match the code rather than the reverse:
+  // dibs needs an account. A certificate that names nobody is weak evidence
+  // in the argument it exists to settle, and an anonymous claim is free to
+  // make in unlimited numbers.
   return authedFetchJSON<DibsRegistration>("/api/v1/dibs", {
     method: "POST",
     body: claim,
