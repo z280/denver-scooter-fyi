@@ -4329,6 +4329,28 @@ body.is-map-picking .ride-modal {
   display: none;
 }
 
+/* What you'd arrive with. Directly under the verdict, because "is it any
+   good" and "will it get me there" are the two halves of one decision and a
+   rider reads them together. Quiet by design — the verdict bar above it is
+   the loud thing, and two shouting rows would leave neither read. */
+.device-popup__arrival {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 -14px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+/* Not enough charge. Colour AND the words AND a different glyph (🪫 vs 🔋) —
+   the sentence alone says it, so the colour is emphasis rather than meaning. */
+.device-popup__arrival.is-short {
+  color: var(--fail);
+}
+
 /* ---------- The verdict bar (devices.ts `verdictBlock`) ---------- */
 /* Full width, directly under the name and model, first thing in the popup —
    "is this one worth walking to?" is the only question a rider opens this

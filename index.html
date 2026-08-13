@@ -432,6 +432,15 @@
             <input type="checkbox" id="hide-unavailable" checked />
             <span>Hide Reserved &amp; Out of Service</span>
           </label>
+          <label class="switch" id="reach-row" hidden>
+            <!-- Hidden until there is a destination to measure against: this
+                 is a claim about a specific trip, not a standing preference
+                 like a battery floor, and an always-visible toggle that does
+                 nothing most of the time is a control that teaches riders to
+                 ignore the panel. main.ts reveals it with the trip. -->
+            <input type="checkbox" id="reach-filter" />
+            <span>Only ones that can get me there</span>
+          </label>
           <label class="switch">
             <!-- OFF by default, because the default is to be a decent
                  person about it. A scooter somebody has called dibs on

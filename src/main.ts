@@ -496,6 +496,18 @@ function activeFilterChips(): Chip[] {
     });
   }
 
+  if (devices.reachFilterOn()) {
+    active.push({
+      id: "reach",
+      label: "🔋 Can reach my destination",
+      onClear: () => {
+        const cb = need<HTMLInputElement>("reach-filter");
+        cb.checked = false;
+        cb.dispatchEvent(new Event("change"));
+      },
+    });
+  }
+
   // Rude mode gets a chip for the same reason "+ Unavailable" does: it is a
   // departure from the default, and a rider who left it on last week should
   // be able to see that from the map rather than by opening a drawer.
@@ -985,6 +997,7 @@ map.on("load", async () => {
   });
   wireEquityRanks();
   wireIgnoreDibs();
+  wireReachFilter();
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
   // `refreshLiveDibs` already does for a claim landing.
@@ -1671,6 +1684,50 @@ function wireIgnoreDibs(): void {
     track("control_change", { control: "ignore_dibs", value: cb.checked ? "on" : "off" });
     refreshChips();
   });
+}
+
+/** "Only ones that can get me there."
+ *
+ *  THE CHEAP TIER of the will-it-make-it question. `/route/options` already
+ *  answers it properly, from the pessimistic end of the battery model's band
+ *  — but that costs a routing call per scooter, and a filter that has to
+ *  route the whole visible fleet is not a filter. Every device already
+ *  carries `current_range_meters`, so this needs no network at all. See
+ *  `reach.ts` for what the two approximations are and why they are honest
+ *  enough to filter with and not to promise with.
+ *
+ *  The row only exists while a trip does. The filter is a claim about a
+ *  SPECIFIC destination, so it cannot be a standing preference: clearing the
+ *  trip clears the filter, because there is nothing left to reach. */
+function wireReachFilter(): void {
+  const row = document.getElementById("reach-row");
+  const cb = need<HTMLInputElement>("reach-filter");
+
+  const sync = (): void => {
+    const trip = peekPendingTrip();
+    if (row) row.hidden = trip === null;
+    if (trip === null && cb.checked) {
+      // The destination went; so does the claim about it.
+      cb.checked = false;
+    }
+    devices.setReachDest(
+      cb.checked && trip ? { lat: trip.dest.lat, lon: trip.dest.lon } : null,
+    );
+    refreshChips();
+  };
+
+  cb.addEventListener("change", () => {
+    track("control_change", {
+      control: "reach_filter",
+      value: cb.checked ? "on" : "off",
+    });
+    sync();
+  });
+  // The trip can change from anywhere — the home bar, the arrival panel's
+  // Change button, a flow ending — so re-read it rather than trying to be
+  // told about every writer.
+  window.addEventListener("scooter:trip-changed", sync);
+  sync();
 }
 
 /** Drive the Availability checkbox through its normal change path. */

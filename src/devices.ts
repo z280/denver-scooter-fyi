@@ -18,6 +18,7 @@ import {
   type ParkingReportInput,
 } from "./config.ts";
 import { GbfsPlates } from "./gbfs.ts";
+import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
@@ -330,6 +331,27 @@ export class Devices {
    *  satisfy a minimum. */
   private minBattery = 0;
   private quality: QualityFilter = "any";
+  /** The destination the "can reach" filter is measured against, or null when
+   *  the filter is off. Holding the DESTINATION rather than a boolean is what
+   *  makes the filter impossible to leave on meaninglessly: clearing the trip
+   *  clears the filter, because there is nothing left to reach. */
+  private reachDest: { lat: number; lon: number } | null = null;
+
+  /** Turn the reach filter on for a destination, or off with null. */
+  setReachDest(dest: { lat: number; lon: number } | null): void {
+    const same =
+      (this.reachDest === null && dest === null) ||
+      (this.reachDest !== null && dest !== null &&
+        this.reachDest.lat === dest.lat && this.reachDest.lon === dest.lon);
+    if (same) return;
+    this.reachDest = dest;
+    this.apply();
+  }
+
+  /** Whether the filter is on, for the chip row. */
+  reachFilterOn(): boolean {
+    return this.reachDest !== null;
+  }
   /** Features filter (crowdsourced equipment). Empty = off; see
    *  `matchesFeatureFilter` for the require/AND/¯\_(ツ)_/¯ semantics. */
   private featureFilter = new Set<FeatureFilterKey>();
@@ -1144,6 +1166,43 @@ export class Devices {
       // The rating is not lost, it MOVES: the stats list below carries it in
       // the old dot-and-label form, with its reasons. Two facts, each said
       // once, in the order they matter.
+      // WHAT YOU'D ARRIVE WITH, when there is somewhere to arrive.
+      //
+      // The one number a rider actually wants off this card once they have a
+      // destination, and the one they were being asked to work out in their
+      // head from a percentage and a map scale. Only shown when a trip is
+      // set — with nowhere to go it is an answer to no question.
+      //
+      // The cheap estimate, deliberately: the modelled answer (fitted from
+      // real rides, elevation and temperature included, with a band) arrives
+      // from `/route/options` once a scooter is CHOSEN. This is what can be
+      // said before paying for that call, so it is hedged in words as well
+      // as rounded to 5.
+      const reachDest = this.reachDest;
+      let arrivalBlock = "";
+      if (reachDest) {
+        const arriveAt = estimatedArrivalPercent({
+          rangeMeters: asNumber(props.current_range_meters),
+          batteryPercent: asNumber(props.battery_percent),
+          scooter: { lat: coords[1], lng: coords[0] },
+          dest: reachDest,
+        });
+        const verdict = canReach({
+          rangeMeters: asNumber(props.current_range_meters),
+          scooter: { lat: coords[1], lng: coords[0] },
+          dest: reachDest,
+        });
+        if (verdict === "no") {
+          arrivalBlock = `<div class="device-popup__arrival is-short">
+            🪫 Probably won't reach your destination</div>`;
+        } else if (arriveAt !== null) {
+          arrivalBlock = `<div class="device-popup__arrival">
+            🔋 About ${arriveAt}% left when you arrive
+            <span class="device-popup__hint">estimate — exact figure once you pick a route</span>
+          </div>`;
+        }
+      }
+
       const verdictBlock = heldByOther
         ? `<div class="device-popup__verdict device-popup__verdict--dibs">
              <span class="device-popup__verdict-glyph" aria-hidden="true">🚫</span>
@@ -1648,6 +1707,7 @@ export class Devices {
           `<div class="device-popup">
              ${headerBlock}
              ${verdictBlock}
+             ${arrivalBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
                  ${actionRow}
@@ -2680,6 +2740,27 @@ export class Devices {
       feats = feats.filter((f) => {
         const pct = asNumber(f.properties.battery_percent);
         return pct !== null && pct >= min;
+      });
+    }
+    // "Only ones that can get me there." Off unless the rider has BOTH set a
+    // destination and asked for it — this is a claim about a specific trip,
+    // so it cannot be a standing preference the way a battery floor is.
+    //
+    // `unknown` survives the filter. A vehicle the feed gave no range for is
+    // not a vehicle that cannot make it, and hiding working scooters on the
+    // strength of a missing field is a worse error than showing one that
+    // turns out to be short.
+    if (this.reachDest) {
+      const dest = this.reachDest;
+      feats = feats.filter((f) => {
+        const [lng, lat] = f.geometry.coordinates;
+        return (
+          canReach({
+            rangeMeters: asNumber(f.properties.current_range_meters),
+            scooter: { lat, lng },
+            dest,
+          }) !== "no"
+        );
       });
     }
     if (this.quality !== "any") {
