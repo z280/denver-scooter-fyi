@@ -1719,7 +1719,22 @@ body.ride-active .dibs-toast {
   text-align: center;
 }
 /* One surface owns the bottom of the screen at a time. */
-body.arrival-open .home-bar {
+/* ...UNLESS THE RIDER OPENED IT ON PURPOSE. The arrival panel's "Change"
+   button calls `openForDestination`, and hiding the home bar unconditionally
+   meant that button opened a sheet nobody could see — it looked like a dead
+   control, which is exactly how it was reported.
+
+   So the rule now hides the RESTING PILL, which is the thing that would
+   otherwise sit under the arrival panel competing for the same corner. An
+   open sheet is the rider's current business and owns the bottom of the
+   screen; the arrival panel steps aside for it below. */
+body.arrival-open .home-bar:not(.is-open) {
+  display: none;
+}
+/* One surface at a time, still — just the other way round while the sheet is
+   up. `:has()` because the panel is a sibling of the home bar, not a
+   descendant, so there is nothing to select down from. */
+body.arrival-open:has(.home-bar.is-open) .arrival {
   display: none;
 }
 /* ...including the map's own. The arrival panel is centred and nearly the

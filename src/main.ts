@@ -2937,6 +2937,20 @@ function wireDibsAlerts(): void {
   });
 }
 
+/** How often live claims are re-fetched.
+ *
+ *  FASTER THAN THE DEVICE REFRESH (90s), because the two are different kinds
+ *  of data. A device snapshot is a whole city of vehicles that move on an
+ *  ingest cycle; the claims are a handful of rows that turn over in minutes
+ *  and are the thing two riders can disagree about while standing next to
+ *  each other. Riding the slow cadence meant somebody could call dibs and
+ *  the next rider's map would keep offering them that scooter for up to a
+ *  minute and a half.
+ *
+ *  Cheap enough to justify: `/api/v1/dibs/live` returns the live claims for
+ *  the whole city, which is a handful of rows, not thousands. */
+const DIBS_REFRESH_MS = 25_000;
+
 function refreshLiveDibs(): void {
   void liveDibs()
     .then(({ dibs }) => {
@@ -3674,8 +3688,6 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
-    window.dispatchEvent(new Event("scooter:devices-refreshed"));
-    refreshLiveDibs();
       // The watcher listens on this: a scooter can go at any tick.
       window.dispatchEvent(new Event("scooter:devices-refreshed"));
       equity.update(resp.features);
@@ -3697,8 +3709,20 @@ function startRefreshLoop(): void {
   };
 
   setInterval(tick, REFRESH_MS);
+  // Claims on their own, shorter clock — see DIBS_REFRESH_MS. Skipped while
+  // hidden for the same reason the device tick is: a backgrounded tab
+  // polling is a battery cost with nobody looking at the result.
+  setInterval(() => {
+    if (!document.hidden) refreshLiveDibs();
+  }, DIBS_REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void tick();
+    if (document.hidden) return;
+    void tick();
+    // Claims too, and not only on the 25s clock: coming back to the app is
+    // exactly the moment a rider looks at whether their scooter is still
+    // theirs, and waiting a quarter of a minute to find out is the lag this
+    // whole cadence exists to remove.
+    refreshLiveDibs();
   });
 }
