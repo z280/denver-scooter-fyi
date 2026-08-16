@@ -104,3 +104,33 @@ describe("distance", () => {
     expect(Math.round(metersBetween(AT, NEARBY))).toBeLessThan(100);
   });
 });
+
+describe("dibs needs an account", () => {
+  it("refuses a signed-out rider before anything else is considered", () => {
+    // The registration is session-authed, so an anonymous claim could only
+    // ever be a local note to self that no other rider's map would see —
+    // and a certificate naming nobody is weak evidence in the argument the
+    // whole feature exists to settle.
+    expect(canCallDibs(AT, Date.now(), false).kind).toBe("signed_out");
+  });
+
+  it("checks it FIRST, ahead of the limit rules", () => {
+    // Every other verdict is about claims this rider holds, and a signed-out
+    // rider cannot hold any. Reporting "at_limit" to somebody who cannot
+    // claim at all would be an answer to a question they did not ask.
+    // `claim` is the file's own helper, and the three sit together at AT so
+    // ACROSS_TOWN is genuinely elsewhere — spacing them by hand put one on
+    // top of it and turned the verdict into "already".
+    claim("a", AT);
+    claim("b", { lat: AT.lat + 0.0002, lon: AT.lon });
+    claim("c", { lat: AT.lat + 0.0004, lon: AT.lon });
+    expect(canCallDibs(ACROSS_TOWN, Date.now(), true).kind).toBe("at_limit");
+    expect(canCallDibs(ACROSS_TOWN, Date.now(), false).kind).toBe("signed_out");
+  });
+
+  it("still says yes to a signed-in rider by default", () => {
+    // The parameter defaults to true so every existing caller keeps its
+    // meaning; only the one that knows about auth passes it.
+    expect(canCallDibs(AT).kind).toBe("ok");
+  });
+});

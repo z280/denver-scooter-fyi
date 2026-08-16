@@ -1015,6 +1015,17 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 
 /* "You've got dibs" — a confirmation, not a document. */
+/* An alert that cost the rider something. Louder ink and a heavier edge —
+   never colour alone: the words change, the glyph changes (🚫 vs ✋), and
+   `taken` does not auto-dismiss at all. */
+.dibs-toast--urgent {
+  border-color: var(--fail);
+  box-shadow: 0 0 0 1px var(--fail), var(--shadow);
+}
+.dibs-toast--urgent .dibs-toast__text strong {
+  color: var(--fail);
+}
+
 .dibs-toast {
   position: fixed;
   left: 50%;
@@ -1708,7 +1719,22 @@ body.ride-active .dibs-toast {
   text-align: center;
 }
 /* One surface owns the bottom of the screen at a time. */
-body.arrival-open .home-bar {
+/* ...UNLESS THE RIDER OPENED IT ON PURPOSE. The arrival panel's "Change"
+   button calls `openForDestination`, and hiding the home bar unconditionally
+   meant that button opened a sheet nobody could see — it looked like a dead
+   control, which is exactly how it was reported.
+
+   So the rule now hides the RESTING PILL, which is the thing that would
+   otherwise sit under the arrival panel competing for the same corner. An
+   open sheet is the rider's current business and owns the bottom of the
+   screen; the arrival panel steps aside for it below. */
+body.arrival-open .home-bar:not(.is-open) {
+  display: none;
+}
+/* One surface at a time, still — just the other way round while the sheet is
+   up. `:has()` because the panel is a sibling of the home bar, not a
+   descendant, so there is nothing to select down from. */
+body.arrival-open:has(.home-bar.is-open) .arrival {
   display: none;
 }
 /* ...including the map's own. The arrival panel is centred and nearly the
@@ -1943,6 +1969,22 @@ body.ride-active .arrival {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* CAPPED, AND IT SCROLLS. An account with real history has a long recents
+     list, and this sheet grows upward from the bottom of the screen — so on
+     a well-used account it ran up into the top bar and the ribbon.
+
+     Bounded by the VIEWPORT rather than by a row count: the number of rows
+     that fit is a function of screen height, and a fixed count is wrong on
+     both a small phone and a desktop. 42vh leaves the map visible above the
+     sheet, which is the whole point of the floating design, and the input
+     and start line are outside this box so they never scroll away. */
+  max-height: 42vh;
+  overflow-y: auto;
+  /* Momentum scrolling inside a fixed sheet, and no scroll chaining out to
+     the map behind it — dragging past the end of this list should stop, not
+     pan Denver. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 /* Pinned Home / Work. The layout rule is enforced here rather than in a
    branch: `is-pair` splits the row in two, `is-single` gives the one button
