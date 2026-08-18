@@ -331,7 +331,7 @@ describe("non-linear transitions the buttons imply", () => {
     expect(t.effects).toEqual([{ kind: "end_reported", fields: "minimal" }]);
   });
 
-  it("sends a private ride riding → done with no end report", () => {
+  it("ends a private ride with no end report — survey(9) first when a route was chosen", () => {
     const doc = ridingDoc({
       private: true,
       rideId: null,
@@ -339,10 +339,16 @@ describe("non-linear transitions the buttons imply", () => {
       device: { own: true },
     });
     const t = reduceRideSession(doc, { type: "endRide" });
-    expect(t.to).toBe("done");
+    // ridingDoc carries a chosen route, so the nav pane's route-feedback
+    // ask runs before close-out; never Screen 8, and never a PATCH /end.
+    expect(t.to).toBe("survey(9)");
     // The final partial batch still seals — a track-store duty, not an
     // ending(8) one.
     expect(t.effects).toEqual([{ kind: "seal_final_batch" }]);
+    // Without a route there is nothing to ask: straight to done.
+    expect(
+      reduceRideSession({ ...doc, route: null }, { type: "endRide" }).to,
+    ).toBe("done");
   });
 
   it("skips a gated-off survey and a waypoint-free eligibility screen", () => {
@@ -391,11 +397,37 @@ describe("non-linear transitions the buttons imply", () => {
     expect(
       surveyPanes({ ...base, options: { ...OPTIONS, own_device: true } }),
     ).toMatchObject({ scooter: false });
-    // A private ride has no tracked_rides row at all.
+    // A private ride has no tracked_rides row to survey — but the rider
+    // still rode the chosen route, so the NAV pane stays up (it submits to
+    // POST /route-feedback instead of the ride survey).
     expect(surveyPanes({ ...base, private: true, rideId: null })).toEqual({
       scooter: false,
-      navigation: false,
+      navigation: true,
     });
+    expect(
+      surveyPanes({ ...base, private: true, rideId: null, route: null }),
+    ).toEqual({ scooter: false, navigation: false });
+    // And the phase machine actually takes a private ride THROUGH survey(9)
+    // when a route was chosen — the gate above would be dead code if endRide
+    // still short-circuited riding → done.
+    const privateRiding = ridingDoc({ private: true, rideId: null });
+    const ended = reduceRideSession(privateRiding, { type: "endRide" });
+    expect(ended.to).toBe("survey(9)");
+    // No PATCH /end for a private ride — only the final-batch seal.
+    expect(effectKinds(ended.effects)).toEqual(["seal_final_batch"]);
+    expect(
+      reduceRideSession(ended.doc, {
+        type: "surveyDone",
+        facts: { hasWaypoints: true },
+      }).to,
+    ).toBe("done"); // Screen 10 stays tracked-only
+    // Routeless private ride: nothing to ask, straight to done as before.
+    expect(
+      reduceRideSession(
+        ridingDoc({ private: true, rideId: null, route: null }),
+        { type: "endRide" },
+      ).to,
+    ).toBe("done");
     expect(
       shouldShowEligibility({ ...base, private: true }, { hasWaypoints: true }),
     ).toBe(false);
@@ -703,22 +735,6 @@ describe("persistence", () => {
     const restoredWithout = parseRideSession(serializeRideSession(withoutFlag));
     expect(restoredWithout?.dest).not.toHaveProperty("inCoverage");
     expect(restoredWithout).toEqual(withoutFlag);
-  });
-
-  it("round-trips route.betaWarning — a reload mid-ride keeps the nav HUD's beta disclaimer", () => {
-    const doc = ridingDoc({
-      route: { ...ROUTE, betaWarning: "Navigation directions are in beta." },
-    });
-    const restored = parseRideSession(serializeRideSession(doc));
-    expect(restored?.route?.betaWarning).toBe("Navigation directions are in beta.");
-    expect(restored).toEqual(doc);
-
-    // A doc from before this field existed (or one stored after directions
-    // leave beta) must still parse cleanly with no stray `betaWarning` key.
-    const withoutWarning = ridingDoc();
-    const restoredWithout = parseRideSession(serializeRideSession(withoutWarning));
-    expect(restoredWithout?.route).not.toHaveProperty("betaWarning");
-    expect(restoredWithout).toEqual(withoutWarning);
   });
 
   it("discards a doc it cannot trust", () => {

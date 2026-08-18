@@ -5,7 +5,8 @@
 
 import type { BoundaryLayer } from "./api.ts";
 import type { FeatureFilterKey } from "./device-features.ts";
-import type { ModelKey, QualityFilter, RideType } from "./devices.ts";
+import type { QualityFilter, RideType } from "./devices.ts";
+import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
 
 /** One saved filter set. `area` stores only the display selection
@@ -15,6 +16,16 @@ export interface FilterPreset {
   name: string;
   rideTypes: RideType[];
   models: ModelKey[];
+  /** The model line-up that existed when this preset was SAVED. A stored
+   *  `models` array only encodes which of the models the saver could see
+   *  were left on — it says nothing about models that joined the fleet
+   *  later, and reading their absence as "deselected" is how every pre-Rover
+   *  preset silently hid every Rover on the map (the lineup gained `trike`
+   *  on 2026-07-30, two days after presets shipped). `effectiveModels`
+   *  defaults any model this preset never knew about to ON. Optional
+   *  because presets from before this field lack it — those knew exactly
+   *  the pre-Rover trio (`LEGACY_KNOWN_MODELS`). */
+  knownModels?: ModelKey[];
   /** Optional because presets saved before the Features filter existed
    *  lack it — absent applies as "no selection" (the filter's off state). */
   features?: FeatureFilterKey[];
@@ -35,7 +46,32 @@ interface StoredPresets {
 const KEY = "scooter-fyi-filter-presets";
 
 const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
-const MODEL_KEYS: readonly string[] = ["astro", "cosmo", "apollo", "trike"];
+// Derived from the shared catalog, never a second hardcoded list (review
+// fix): a copy here that lagged a model addition would reintroduce the
+// exact "new model hidden by old preset" bug effectiveModels prevents.
+const MODEL_KEYS: readonly string[] = ALL_MODELS;
+/** What a preset with no `knownModels` member could possibly have known:
+ *  the lineup as it stood before the field existed. `trike` joined on
+ *  2026-07-30 and the field shipped later still, so any preset old enough
+ *  to lack the field is also old enough to predate the Rover. If a rider
+ *  saved a preset in the gap between the two and DID mean to hide Rovers,
+ *  applying it now shows them again — one tap to re-hide, against every
+ *  older preset permanently hiding a model its saver never heard of. */
+const LEGACY_KNOWN_MODELS: readonly ModelKey[] = ["astro", "cosmo", "apollo"];
+
+/** The models a preset actually asks to show: its stored selection, plus
+ *  every model that did not exist when it was saved. Absence from `models`
+ *  is only a choice for a model the saver could have toggled. */
+export function effectiveModels(
+  p: Pick<FilterPreset, "models" | "knownModels">,
+): Set<ModelKey> {
+  const known = new Set<string>(p.knownModels ?? LEGACY_KNOWN_MODELS);
+  const want = new Set<ModelKey>(p.models);
+  for (const m of ALL_MODELS) {
+    if (!known.has(m)) want.add(m);
+  }
+  return want;
+}
 const FEATURE_KEYS: readonly string[] = [
   "bell",
   "basket",
@@ -53,6 +89,9 @@ function isValidPreset(p: FilterPreset): boolean {
     p.rideTypes.every((t) => RIDE_TYPES.includes(t)) &&
     Array.isArray(p.models) &&
     p.models.every((m) => MODEL_KEYS.includes(m)) &&
+    (p.knownModels === undefined ||
+      (Array.isArray(p.knownModels) &&
+        p.knownModels.every((m) => MODEL_KEYS.includes(m)))) &&
     (p.features === undefined ||
       (Array.isArray(p.features) &&
         p.features.every((f) => FEATURE_KEYS.includes(f)))) &&

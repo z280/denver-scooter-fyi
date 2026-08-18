@@ -162,12 +162,10 @@ export interface RideSessionRoute {
   /** Precision-5 encoded polyline of the chosen shape. */
   polyline: string;
   maneuvers: RouteManeuver[];
-  /** `/route`'s rider-facing `beta_warning`, captured with the chosen route
-   *  so every later surface that renders these directions (the Screen 7 nav
-   *  HUD) can show it without another fetch — the API contract requires it
-   *  wherever directions are shown. Absent once the API stops sending the
-   *  field (directions out of beta); never hardcode the text. */
-  betaWarning?: string;
+  /** `/route`'s `beta_warning`, carried so the nav HUD can keep showing it
+   *  mid-ride. Optional (docs persisted before the field existed lack it);
+   *  absent/null means the API stopped sending one — directions left beta. */
+  betaWarning?: string | null;
 }
 
 export interface RideSessionDoc {
@@ -176,7 +174,9 @@ export interface RideSessionDoc {
   screen: RideScreenId | null;
   rideId: string | null;
   /** A private ride: "My own Device" or a guest. No `tracked_rides` row, no
-   *  points, no Screen 8/9/10 — `riding → done` directly. */
+   *  points, no Screen 8/10 — `riding` ends into `survey(9)` when a route
+   *  was chosen (the nav pane's route-feedback ask; `surveyPanes`), else
+   *  straight to `done`. */
   private: boolean;
   device: RideSessionDevice | null;
   options: RideOptions;
@@ -260,16 +260,24 @@ export interface SurveyPaneGates {
   navigation: boolean;
 }
 
-/** Master Risk 16: Screen 9 as a whole needs a tracked Veo ride, then the two
- *  panes gate individually. Left = the Screen 2 "End ride survey" toggle, which
- *  exists to control exactly this pane (and is meaningless on own device, which
- *  has no GBFS ground truth). Right = a selected route, without which
- *  "How was the ${selectedRoute}?" is unanswerable. */
+/** Master Risk 16 (amended): the two Screen 9 panes gate individually, and
+ *  only the LEFT one needs a tracked Veo ride. Left = tracked + the Screen 2
+ *  "End ride survey" toggle, which exists to control exactly this pane (and
+ *  is meaningless on own device, which has no GBFS ground truth). Right = a
+ *  selected route and nothing else — without one, "How was the
+ *  ${selectedRoute}?" is unanswerable; with one, the question is answerable
+ *  on ANY ride, tracked or private (see the inline note below). */
 export function surveyPanes(doc: RideSessionDoc): SurveyPaneGates {
   const tracked = !doc.private && doc.rideId !== null;
   return {
     scooter: tracked && doc.options.end_survey && !doc.options.own_device,
-    navigation: tracked && doc.route !== null,
+    // The navigation pane needs only a chosen route, NOT a tracked ride: a
+    // private ("My own Device" / guest) ride has no tracked_rides row to
+    // survey, but the rider still rode the routing we proposed and their
+    // opinion of it is exactly as real — for those rides Screen 9 submits
+    // the pane to POST /route-feedback instead of the ride survey, and no
+    // points are promised (private rides are never points-eligible).
+    navigation: doc.route !== null,
   };
 }
 
@@ -317,7 +325,7 @@ export type RideAction =
     }
   | { type: "setDest"; dest: RideSessionDest | null }
   | { type: "setRoute"; route: RideSessionRoute | null }
-  /** Screen 6's "Start in Veo" — the default 10 s countdown. */
+  /** Screen 6's "Open in Veo" — the default 10 s countdown. */
   | { type: "startCountdown" }
   /** The ride is live. From `countdown`, or straight from `wizard:6` when the
    *  rider taps "I already started" and skips the countdown. */
@@ -337,7 +345,8 @@ export type RideAction =
       trackKeyId: string | null;
       options?: RideOptions;
     }
-  /** Screen 7's End Ride. Tracked → `ending(8)`; private → `done`. */
+  /** Screen 7's End Ride. Tracked → `ending(8)`; private → `survey(9)`
+   *  when a route was chosen, else `done`. */
   | { type: "endRide" }
   /** Screen 8's [New Destination] — loops to Screen 3 keeping the session. */
   | { type: "newDestination" }
@@ -614,8 +623,15 @@ export function reduceRideSession(
         ...endEffect,
       ];
       // Master Part 0 gates Screen 8 on "a Veo device was selected, i.e. not a
-      // private ride"; there is no `PATCH /end` to send and S9/S10 never apply.
+      // private ride"; there is no `PATCH /end` to send and S10 never applies.
+      // Screen 9 is the exception since the nav pane stopped requiring a
+      // tracked ride (`surveyPanes`): a private ride that chose a route gets
+      // its route-feedback ask before closing out, and one that didn't still
+      // goes straight to done.
       if (doc.private || doc.rideId === null) {
+        if (shouldShowSurvey(doc)) {
+          return accept(doc, withPhase(doc, "survey"), effects);
+        }
         return accept(doc, withPhase(doc, "done"), effects);
       }
       if (opts.legacyEndRide === true) {
@@ -824,7 +840,7 @@ function parseRoute(raw: unknown): RideSessionRoute | null {
   const r = raw as Record<string, unknown>;
   const profile = str(r.profile);
   if (!profile) return null;
-  const route: RideSessionRoute = {
+  return {
     profile,
     rideRouteId: str(r.rideRouteId),
     distanceM: num(r.distanceM) ?? 0,
@@ -834,9 +850,6 @@ function parseRoute(raw: unknown): RideSessionRoute | null {
       ? (r.maneuvers as RouteManeuver[])
       : [],
   };
-  const betaWarning = str(r.betaWarning);
-  if (betaWarning) route.betaWarning = betaWarning;
-  return route;
 }
 
 /** Parse a stored doc. Returns null for anything unusable — a wrong `v`, an

@@ -71,15 +71,23 @@ export async function submitDeviceReport(
  *  `DeviceFeatureReportIn` exactly — getting one wrong is a 422, not a soft
  *  failure. */
 export interface DeviceFeatureReport {
-  /** Stable per-vehicle HMAC — exactly 16 lowercase hex chars. */
-  vehicle_identifier: string;
+  /** Stable per-vehicle HMAC — exactly 16 lowercase hex chars. Optional
+   *  since the QR flow (API sql/067): a report identified only by its scan
+   *  sends no vehicle at all and the server resolves one. At least one of
+   *  this and `qr_raw_value` must be present or the API 422s. */
+  vehicle_identifier?: string;
   /** The rotating GBFS bike_id we had on screen. Audit trail only. */
   device_id?: string;
   /** As typed. NEVER validated or normalized here: the server owns the
    *  match rule, and a wrong plate is an accepted, unpaid report rather
    *  than an error — see the header of `device-features.ts` for why the
-   *  client deliberately has no opinion about it. */
-  submitted_plate: string;
+   *  client deliberately has no opinion about it. Optional when
+   *  `qr_raw_value` rides along (the scan is the proof of presence);
+   *  omit rather than sending "" — an empty plate is a 422. */
+  submitted_plate?: string;
+  /** Raw decoded QR payload, verbatim and unparsed — the server extracts
+   *  the plate, decides which vehicle it names, and logs the payload. */
+  qr_raw_value?: string;
   has_bell: boolean;
   has_cup_holder: boolean;
   has_phone_holder: boolean;
@@ -106,6 +114,14 @@ export interface DeviceFeatureReportResult {
    *  the server's ten-minute grading job runs. */
   feature_status: string;
   deduped: boolean;
+  /** The vehicle the report actually attached to — differs from the one we
+   *  sent exactly when the QR scan resolved to a different scooter and the
+   *  server re-targeted the report (API sql/067). Null from an API that
+   *  predates the field. */
+  vehicle_identifier: string | null;
+  /** null = no scan sent; true = scan resolved (and validated the report);
+   *  false = scan sent but unresolvable, typed-plate rules applied. */
+  qr_matched: boolean | null;
 }
 
 /** Submit a device-feature confirmation. Anonymous is allowed (the report
@@ -136,6 +152,11 @@ export async function submitDeviceFeatureReport(
     points_awarded: Number(data.points_awarded ?? 0),
     feature_status: String(data.feature_status ?? "needs_features_confirmed"),
     deduped: data.deduped === true,
+    vehicle_identifier:
+      typeof data.vehicle_identifier === "string"
+        ? data.vehicle_identifier
+        : null,
+    qr_matched: typeof data.qr_matched === "boolean" ? data.qr_matched : null,
   };
 }
 

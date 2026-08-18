@@ -362,6 +362,38 @@ describe("checkTypedPlate", () => {
 // ---------------------------------------------------------------------------
 
 describe("Screen 2 — selection and session sync", () => {
+  it('always renders "My Scooter/Bike" as the FIRST option, above the ranked fleet', () => {
+    // Non-Veo riders are first-class: riding your own device leads the list
+    // instead of trailing it, whatever the fleet around you looks like.
+    const near = feature("near", V1, ORIGIN);
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const rows = [...document.querySelectorAll("button.ride-option")];
+    expect(rows[0]?.textContent).toContain("My Scooter/Bike");
+    expect(document.body.textContent).not.toContain("My own Device");
+  });
+
+  it('shows a Rover candidate as "Rover", never "Trike" or unknown', () => {
+    const near = feature("near", V1, ORIGIN, { vehicle_model_name: "Rover" });
+    const devices = fakeDevices([near]);
+    const locate = fakeLocate(ORIGIN);
+    const session = newSession();
+    wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
+    openRideModal({ fastForwardTo: "2" });
+
+    const titles = [...document.querySelectorAll(".ride-option__title strong")].map(
+      (n) => n.textContent,
+    );
+    expect(titles).toContain("Rover");
+    expect(titles).not.toContain("Trike");
+    // The internal key is still the wire-format "trike".
+    expect(session.current()?.device).toBeNull(); // 0 m away but plates not primed ≠ no preselect
+  });
+
   it("auto-preselects the nearest candidate and stores it as the session device", () => {
     const near = feature("near", V1, metersNorth(5));
     const devices = fakeDevices([near]);
@@ -392,7 +424,11 @@ describe("Screen 2 — selection and session sync", () => {
     expect(document.querySelector(".ride-option.is-selected")).toBeNull();
     expect(session.current()?.device).toBeNull();
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     // renderList() rebuilds the row elements on every selection change, so
     // re-query rather than trust the pre-click reference.
@@ -408,7 +444,7 @@ describe("Screen 2 — selection and session sync", () => {
     openRideModal({ fastForwardTo: "2" });
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     expect(ownBtn).toBeTruthy();
     ownBtn.click();
@@ -431,7 +467,11 @@ describe("Screen 2 — selection and session sync", () => {
     wireRideScreenSelect({ devices, locate, session, plates: fakePlates() });
     openRideModal({ fastForwardTo: "2" });
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V1 });
     expect(session.current()?.private).toBe(true);
@@ -449,7 +489,7 @@ describe("Screen 2 — selection and session sync", () => {
     openRideModal({ fastForwardTo: "2" });
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     ownBtn.click();
     expect(session.current()?.private).toBe(true);
@@ -476,7 +516,11 @@ describe("Screen 2 — selection and session sync", () => {
 
     expect(document.querySelector('input[aria-label^="Battery"]')).toBeNull();
 
-    const row = document.querySelector("button.ride-option") as HTMLButtonElement;
+    // "My Scooter/Bike" always renders first now, so target the ranked
+    // candidate by name rather than by position.
+    const row = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("Astro"),
+    ) as HTMLButtonElement;
     row.click();
     expect(session.current()?.device).toMatchObject({ batteryConfirmed: null });
   });
@@ -510,7 +554,7 @@ describe("Screen 2 — selection and session sync", () => {
       openRideModal({ fastForwardTo: "2" });
 
       const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-        b.textContent?.includes("My own Device"),
+        b.textContent?.includes("My Scooter/Bike"),
       ) as HTMLButtonElement;
       ownBtn.click();
       expect(confirmStripHidden()).toBe(true);
@@ -618,12 +662,13 @@ describe("Screen 2 — selection and session sync", () => {
     ).toBe(true);
   });
 
-  it("disposes the injected options-panel handle both on rebuild and on screen teardown", () => {
+  it("disposes the injected options-panel handle on a real rebuild and on screen teardown", () => {
     // `RideOptionsPanelHandle.destroy()`'s own doc (ride-settings.ts) requires
     // its caller to invoke it from screen-teardown; this screen also rebuilds
-    // the panel from scratch on every render() (selection change, re-rank,
-    // etc.), so the PREVIOUS handle must be disposed before each rebuild too
-    // — otherwise an open ℹ modal from a stale panel is never told to close.
+    // the panel when one of the panel's inputs (canProceed / hasUsuals)
+    // changes, and the PREVIOUS handle must be disposed before each such
+    // rebuild — otherwise an open ℹ modal from a stale panel is never told
+    // to close.
     const disposes: ReturnType<typeof vi.fn>[] = [];
     const buildOptionsPanel = vi.fn(() => {
       const dispose = vi.fn();
@@ -642,29 +687,93 @@ describe("Screen 2 — selection and session sync", () => {
     });
     openRideModal({ fastForwardTo: "2" });
 
-    // Mount fires two synchronous rebuilds (the screen's own initial
-    // `rerank()` plus `devices.onCountsChange`'s "fires synchronously with
-    // the current counts" contract — `devices.ts`'s own doc) — every build
-    // but the very last must already have been disposed by the next one.
-    const mountBuilds = disposes.length;
-    expect(mountBuilds).toBeGreaterThanOrEqual(2);
-    for (const d of disposes.slice(0, -1)) expect(d).toHaveBeenCalledTimes(1);
-    expect(disposes[disposes.length - 1]).not.toHaveBeenCalled();
+    // Mount builds exactly once: the initial render plus
+    // `devices.onCountsChange`'s synchronous callback both run, but the
+    // second is memoized away (nothing the panel renders from changed).
+    expect(disposes.length).toBe(1);
+    expect(disposes[0]).not.toHaveBeenCalled();
 
     const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
-      b.textContent?.includes("My own Device"),
+      b.textContent?.includes("My Scooter/Bike"),
     ) as HTMLButtonElement;
     ownBtn.click();
 
-    // The rebuild triggered by selecting "My own Device" must dispose the
-    // panel handle from the previous build before replacing it.
-    expect(disposes.length).toBe(mountBuilds + 1);
-    expect(disposes[mountBuilds - 1]).toHaveBeenCalledTimes(1);
-    expect(disposes[mountBuilds]).not.toHaveBeenCalled();
+    // Selecting "My Scooter/Bike" flips canProceed — a REAL input change —
+    // so the panel rebuilds, disposing the previous handle first.
+    expect(disposes.length).toBe(2);
+    expect(disposes[0]).toHaveBeenCalledTimes(1);
+    expect(disposes[1]).not.toHaveBeenCalled();
 
     closeRideModal();
 
-    expect(disposes[mountBuilds]).toHaveBeenCalledTimes(1);
+    expect(disposes[1]).toHaveBeenCalledTimes(1);
+  });
+
+  it("flipping device ⇄ My Scooter/Bike rebuilds the panel — doc.private is a panel input", () => {
+    // canProceed stays true across this switch, but the production panel
+    // builder captures doc.private into its cascade context at build time —
+    // a memo key without it left the panel cascading against a stale
+    // privacy state (trophy options forced off on a tracked ride, or left
+    // on for a private one).
+    const buildOptionsPanel = vi.fn(() => ({ dispose: vi.fn() }));
+    // Signed in — a guest's ride is private whichever device they pick,
+    // which would hide exactly the flip this test exists to observe.
+    setAuthed(true);
+    // A device 3 m away + an accurate fix → auto-preselect on mount, so the
+    // panel is already in the canProceed=true, private=false state.
+    const devices = fakeDevices([feature("near", V1, metersNorth(3))]);
+    const locate = fakeLocate({ ...metersNorth(0), accuracy: 5 } as LngLat);
+    const session = newSession();
+    wireRideScreenSelect({
+      devices,
+      locate,
+      session,
+      plates: fakePlates(),
+      buildOptionsPanel,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    expect(session.current()?.private).toBe(false);
+    const before = buildOptionsPanel.mock.calls.length;
+
+    const ownBtn = [...document.querySelectorAll("button.ride-option")].find((b) =>
+      b.textContent?.includes("My Scooter/Bike"),
+    ) as HTMLButtonElement;
+    ownBtn.click();
+
+    expect(session.current()?.private).toBe(true);
+    expect(buildOptionsPanel.mock.calls.length).toBe(before + 1);
+  });
+
+  it("a GPS fix or feed refresh never rebuilds the panel — an open ℹ modal survives", () => {
+    // The field bug this pins: with the wizard up, fixes arrive ~1/second,
+    // and every one used to dispose-and-rebuild the options panel — whose
+    // destroy() closes any open ℹ info modal. Riders saw the modal close
+    // by itself moments after opening it.
+    const disposes: ReturnType<typeof vi.fn>[] = [];
+    const buildOptionsPanel = vi.fn(() => {
+      const dispose = vi.fn();
+      disposes.push(dispose);
+      return { dispose };
+    });
+    const devices = fakeDevices([]);
+    const locate = fakeLocate(null);
+    const session = newSession();
+    wireRideScreenSelect({
+      devices,
+      locate,
+      session,
+      plates: fakePlates(),
+      buildOptionsPanel,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    const builds = buildOptionsPanel.mock.calls.length;
+
+    locate.emitFix({ lng: -104.99, lat: 39.74, accuracy: 5 });
+    locate.emitFix({ lng: -104.98, lat: 39.75, accuracy: 5 });
+    devices.emitCounts();
+
+    expect(buildOptionsPanel.mock.calls.length).toBe(builds);
+    for (const d of disposes) expect(d).not.toHaveBeenCalled();
   });
 });
 
@@ -764,7 +873,7 @@ describe("Screen 2.5 — Usuals", () => {
     const session = createRideSessionStore({
       storage: memoryRideSessionStorage(),
     });
-    // A private ride (e.g. "My own Device") — the three 🏆 options must be
+    // A private ride (e.g. "My Scooter/Bike") — the three 🏆 options must be
     // forced off even though this Usual was saved on a real device with
     // them on.
     session.dispatch({ type: "open", options: OPTIONS, screen: "2", private: true });

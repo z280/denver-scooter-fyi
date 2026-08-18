@@ -281,13 +281,13 @@ describe("showing a ride on the map", () => {
     await panel.refresh();
 
     const meta = rows()[0].querySelector<HTMLElement>(".track-row__meta")!;
-    // "10 min · 2 points" — a distance would read "0.8 mi".
+    // "10 min · 2 waypoints" — a distance would read "0.8 mi".
     expect(meta.textContent).not.toMatch(/[\d.]+ mi\b/);
     rows()[0].querySelector<HTMLButtonElement>(".track-row__head")!.click();
     await vi.waitFor(() => expect(meta.textContent).toMatch(/[\d.]+ mi\b/));
   });
 
-  it("says so when a ride recorded no points", async () => {
+  it("says so when a ride recorded no waypoints", async () => {
     const store = await fakeStore([ride({ waypointCount: 0, batchCount: 0 })]);
     const route = fakeRoute();
     const panel = mount({ getTrackStore: async () => store, route });
@@ -295,7 +295,7 @@ describe("showing a ride on the map", () => {
 
     rows()[0].querySelector<HTMLButtonElement>(".track-row__head")!.click();
     await vi.waitFor(() =>
-      expect(rows()[0].textContent).toContain("No points were recorded"),
+      expect(rows()[0].textContent).toContain("No waypoints were recorded"),
     );
   });
 
@@ -462,20 +462,87 @@ describe("donate", () => {
   });
 });
 
-// ---------- export scaffold ----------
+// ---------- export ----------
 
-describe("GeoJSON export scaffold", () => {
-  it("is inert and announced as unavailable", async () => {
-    const store = await fakeStore([ride()]);
-    const panel = mount({ getTrackStore: async () => store });
+describe("GeoJSON export", () => {
+  it("downloads the ride as a FeatureCollection with parallel times", async () => {
+    const b0 = await batch(0, [
+      [0, 39.75, -104.99, 5],
+      [1000, 39.76, -104.98, 5],
+    ]);
+    const store = await fakeStore([ride()], [b0]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
     await panel.refresh();
 
-    const ex = rows()[0].querySelector<HTMLElement>(".track-row__export")!;
-    // Not a button: nothing here should look like it might work.
-    expect(ex.tagName).toBe("SPAN");
-    expect(ex.getAttribute("aria-disabled")).toBe("true");
-    expect(ex.tabIndex).toBe(-1);
-    expect(ex.title).toContain("coming soon");
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+
+    const [filename, text] = download.mock.calls[0] as [string, string];
+    expect(filename).toMatch(/^scooter-fyi-ride-\d{4}-\d{2}-\d{2}-\d{4}\.geojson$/);
+    const doc = JSON.parse(text);
+    expect(doc.type).toBe("FeatureCollection");
+    const feature = doc.features[0];
+    expect(feature.geometry).toEqual({
+      type: "LineString",
+      coordinates: [
+        [-104.99, 39.75],
+        [-104.98, 39.76],
+      ],
+    });
+    expect(feature.properties.track_id).toBe("ride-a");
+    expect(feature.properties.waypoint_count).toBe(2);
+    expect(feature.properties.coordinate_times).toEqual([
+      new Date(b0.t0).toISOString(),
+      new Date(b0.t0 + 1000).toISOString(),
+    ]);
+    expect(rows()[0].textContent).toContain("Exported.");
+  });
+
+  it("exports a single surviving waypoint as a Point", async () => {
+    // RFC 7946 requires two positions for a LineString; a one-fix ride is
+    // still the rider's data and still exports.
+    const b0 = await batch(0, [[0, 39.75, -104.99, 5]]);
+    const store = await fakeStore([ride()], [b0]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+    const doc = JSON.parse(download.mock.calls[0][1] as string);
+    expect(doc.features[0].geometry).toEqual({
+      type: "Point",
+      coordinates: [-104.99, 39.75],
+    });
+  });
+
+  it("refuses to download an empty file for a ride with no waypoints", async () => {
+    const store = await fakeStore([ride()]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => {
+      expect(rows()[0].textContent).toContain("No waypoints were recorded");
+    });
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("says when damaged segments were left out of the file", async () => {
+    const good = await batch(0, [[0, 39.75, -104.99, 5], [1000, 39.76, -104.98, 5]]);
+    const bad = { ...(await batch(1, [[0, 1, 1, 1]])), jws: "not-a-jws" };
+    const store = await fakeStore([ride()], [good, bad]);
+    const download = vi.fn();
+    const panel = mount({ getTrackStore: async () => store, download });
+    await panel.refresh();
+
+    rows()[0].querySelector<HTMLButtonElement>(".track-row__export")!.click();
+    await vi.waitFor(() => expect(download).toHaveBeenCalled());
+    expect(rows()[0].textContent).toContain("1 damaged segment(s) skipped");
+    const doc = JSON.parse(download.mock.calls[0][1] as string);
+    expect(doc.features[0].properties.skipped_batches).toBe(1);
   });
 });
 
@@ -494,5 +561,39 @@ describe("teardown", () => {
     const before = rows().length;
     await panel.refresh();
     expect(rows()).toHaveLength(before);
+  });
+});
+
+describe("the standing save-tracks preference lives here", () => {
+  beforeEach(() => {
+    localStorage.removeItem("scooter-fyi-save-tracks");
+  });
+
+  it("renders above the ride list, since it governs it", () => {
+    mount({ getTrackStore: async () => fakeStore([]) });
+    const row = host.querySelector(".track-pref");
+    expect(row).toBeTruthy();
+    const list = host.querySelector(".track-list")!;
+    // DOCUMENT_POSITION_FOLLOWING: the list comes after the preference.
+    expect(row!.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it("reflects the stored answer rather than always starting checked", () => {
+    localStorage.setItem("scooter-fyi-save-tracks", "0");
+    mount({ getTrackStore: async () => fakeStore([]) });
+    expect(host.querySelector<HTMLInputElement>(".track-pref__box")!.checked).toBe(false);
+  });
+
+  it("writes the rider's choice and says what it did", () => {
+    mount({ getTrackStore: async () => fakeStore([]) });
+    const box = host.querySelector<HTMLInputElement>(".track-pref__box")!;
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(localStorage.getItem("scooter-fyi-save-tracks")).toBe("0");
+    // And is explicit that turning it off is not retroactive — the rides
+    // already on the device are still there, one row below.
+    expect(host.querySelector(".account-magic-status")?.textContent)
+      .toMatch(/no longer be saved.*kept/i);
   });
 });

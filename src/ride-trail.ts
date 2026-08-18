@@ -145,7 +145,7 @@ export function createRideTrail(map: MLMap): RideTrailHandle {
       filter: ["==", ["geometry-type"], "LineString"],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": "#0072b2",
+        "line-color": "#0066ff",
         "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 18, 6],
         "line-opacity": 0.95,
       },

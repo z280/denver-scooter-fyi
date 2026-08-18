@@ -26,6 +26,7 @@ import {
   isAlreadyDonatedError,
 } from "./ride-post-s10.ts";
 import type { TrackRouteHandle } from "./track-route.ts";
+import { savesTracks, setSavesTracks } from "./track-preference.ts";
 
 /** A track flattened back into something drawable. */
 export interface TrackPath {
@@ -61,6 +62,8 @@ export interface LocalDataDeps {
   isSignedIn(): boolean;
   confirm?(message: string): boolean;
   now?(): number;
+  /** Injected for tests; defaults to a Blob + anchor-click download. */
+  download?(filename: string, text: string): void;
 }
 
 export interface LocalDataHandle {
@@ -124,6 +127,83 @@ export function summarizeRide(ride: StoredTrackRide): LocalTrackSummary {
     batchCount: ride.batchCount,
     donatable: !ride.private && ride.rideId != null && ride.batchCount > 0,
   };
+}
+
+/** One ride as a GeoJSON FeatureCollection: a single LineString feature (a
+ *  Point when only one waypoint survived — RFC 7946 requires two positions
+ *  for a LineString) with the ride's metadata in `properties`.
+ *
+ *  Timestamps ride in `properties.coordinate_times`, one ISO string per
+ *  coordinate, parallel to the geometry — RFC 7946 has no standard slot for
+ *  per-vertex time, and parallel-array-in-properties is the convention GPX
+ *  converters and geojson.io both understand. Coordinates are already in
+ *  GeoJSON [lng, lat] order and 6-decimal precision from the store. */
+export function trackToGeoJson(
+  summary: LocalTrackSummary,
+  path: TrackPath,
+): Record<string, unknown> {
+  const geometry =
+    path.coords.length === 1
+      ? { type: "Point", coordinates: path.coords[0] }
+      : { type: "LineString", coordinates: path.coords };
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry,
+        properties: {
+          name: `Scooter.fyi ride — ${formatWhen(summary.startedAtMs)}`,
+          track_id: summary.trackId,
+          ride_id: summary.rideId,
+          private: summary.private,
+          started_at: new Date(summary.startedAtMs).toISOString(),
+          ended_at:
+            summary.endedAtMs != null
+              ? new Date(summary.endedAtMs).toISOString()
+              : null,
+          duration_ms: summary.durationMs,
+          waypoint_count: path.coords.length,
+          distance_meters: Math.round(path.meters),
+          skipped_batches: path.skippedBatches,
+          coordinate_times: path.times.map((t) => new Date(t).toISOString()),
+        },
+      },
+    ],
+  };
+}
+
+/** "scooter-fyi-ride-2026-08-08-1430.geojson" — start time, UTC, minute
+ *  precision: sortable, filesystem-safe on every platform, and distinct for
+ *  any two rides a rider can actually tell apart. */
+export function geoJsonFilename(summary: LocalTrackSummary): string {
+  const stamp = new Date(summary.startedAtMs)
+    .toISOString()
+    .slice(0, 16)
+    .replace("T", "-")
+    .replace(":", "");
+  return `scooter-fyi-ride-${stamp}.geojson`;
+}
+
+/** Hand the rider a file the way every browser respects: an ephemeral
+ *  object URL on a programmatic anchor click. The URL is revoked on a
+ *  delay, not synchronously — revoking before the click settles cancels
+ *  the download in some engines. */
+function defaultDownload(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "application/geo+json" });
+  const url = URL.createObjectURL(blob);
+  // finally, so a throw anywhere in the DOM work can't strand an
+  // unrevoked object URL for the life of the session.
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }
 
 function formatDuration(ms: number | null): string {
@@ -210,7 +290,38 @@ export function buildLocalDataPanel(
   empty.hidden = true;
   const panelStatus = statusLine();
 
-  host.append(intro, warning, list, empty, panelStatus.node);
+  // The standing recording preference, above the rides it governs — this is
+  // the panel that explains what a track is and shows the ones you have, so
+  // it is the one place "do you want these at all?" reads as a real question
+  // rather than a toggle in a list. Used to be asked per ride on the pre-ride
+  // survey; see `track-preference.ts`.
+  const prefRow = el("label", "track-pref");
+  const prefBox = el("input", "track-pref__box") as HTMLInputElement;
+  prefBox.type = "checkbox";
+  prefBox.checked = savesTracks();
+  const prefText = el("span", "track-pref__text");
+  prefText.append(
+    el("span", "track-pref__label", "Save ride tracks on this device"),
+    el(
+      "span",
+      "track-pref__hint",
+      "On: every ride is recorded here for you to review, export, or donate. " +
+        "Off: nothing is recorded, and battery modelling and route improvement " +
+        "have no track to learn from.",
+    ),
+  );
+  prefRow.append(prefBox, prefText);
+  prefBox.addEventListener("change", () => {
+    setSavesTracks(prefBox.checked);
+    // Say what changed, in the same status line every other action here uses.
+    panelStatus.set(
+      prefBox.checked
+        ? "Ride tracks will be saved on this device."
+        : "Ride tracks will no longer be saved. Rides already here are kept.",
+    );
+  });
+
+  host.append(intro, prefRow, warning, list, empty, panelStatus.node);
 
   const row = (
     store: TrackStore,
@@ -225,9 +336,12 @@ export function buildLocalDataPanel(
     head.setAttribute("aria-pressed", String(selected === summary.trackId));
     head.append(el("span", "track-row__when", formatWhen(summary.startedAtMs)));
 
+    // "waypoints", never "points": this app also has a rewards points
+    // ledger, and "2 points" on a ride row reads as an award, not a track
+    // length.
     const metaBits = [
       formatDuration(summary.durationMs),
-      `${summary.waypointCount} points`,
+      `${summary.waypointCount} waypoints`,
     ];
     const meta = el("span", "track-row__meta", metaBits.join(" · "));
     head.append(meta);
@@ -275,7 +389,7 @@ export function buildLocalDataPanel(
           if (disposed || selected !== summary.trackId) return;
           const path = flattenTrackBatches(batches);
           if (path.coords.length === 0) {
-            rowStatus.set("No points were recorded for this ride.", true);
+            rowStatus.set("No waypoints were recorded for this ride.", true);
             deps.route?.clear();
             return;
           }
@@ -371,17 +485,45 @@ export function buildLocalDataPanel(
       }
     }
 
-    // ----- export (deliberately inert; see the comment)
-    // A span with no listener at all, rather than a disabled button: nothing
-    // here should look like it might work. It is scaffolding for a real
-    // exporter, which flattenTrackBatches above already gives it a seam for.
-    const exportEl = el("span", "track-row__export is-coming-soon", "Export GeoJSON");
-    exportEl.setAttribute("role", "button");
-    exportEl.setAttribute("aria-disabled", "true");
-    exportEl.setAttribute("aria-label", "Export GeoJSON — coming soon");
-    exportEl.title = "GeoJSON export is coming soon";
-    exportEl.tabIndex = -1;
-    actions.append(exportEl);
+    // ----- export
+    // Same decode path as "show on map" (flattenTrackBatches), same
+    // damaged-segment tolerance: one bad batch costs the rider that
+    // segment, and the export says so rather than failing the file.
+    const exportBtn = el("button", "text-btn track-row__export", "Export GeoJSON");
+    exportBtn.type = "button";
+    exportBtn.addEventListener("click", () => {
+      if (exportBtn.disabled) return;
+      exportBtn.disabled = true;
+      rowStatus.set("Exporting…");
+      void store.storage
+        .getBatches(summary.trackId)
+        .then((batches) => {
+          if (disposed) return;
+          const path = flattenTrackBatches(batches);
+          if (path.coords.length === 0) {
+            rowStatus.set("No waypoints were recorded for this ride.", true);
+            return;
+          }
+          const text = JSON.stringify(trackToGeoJson(summary, path), null, 2);
+          (deps.download ?? defaultDownload)(geoJsonFilename(summary), text);
+          rowStatus.set(
+            path.skippedBatches > 0
+              ? `Exported — ${path.skippedBatches} damaged segment(s) skipped.`
+              : "Exported.",
+            path.skippedBatches > 0,
+          );
+        })
+        .catch(() => {
+          // Umbrella copy: this chain can fail reading the store, building
+          // the JSON, or handing off the download, and "couldn't read"
+          // would misdescribe the latter two.
+          if (!disposed) rowStatus.set("Couldn't export this ride.", true);
+        })
+        .then(() => {
+          if (!disposed) exportBtn.disabled = false;
+        });
+    });
+    actions.append(exportBtn);
 
     // ----- delete
     const deleteBtn = el("button", "text-btn track-row__delete", "Delete");

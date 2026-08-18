@@ -78,6 +78,9 @@ export interface RideScreenAuthDeps {
    *  unavailable (older Safari). Defaults to the real thing; injected for
    *  tests (happy-dom has no Permissions API). */
   queryGeoPermission?(): Promise<GeoPermissionState>;
+  /** True when the rider arrived here mid-task — they named a destination on
+   *  the home bar and are on their way. See the skip rule below. */
+  hasDestination?(): boolean;
 }
 
 async function defaultQueryGeoPermission(): Promise<GeoPermissionState> {
@@ -142,9 +145,40 @@ export function wireRideScreenAuth(deps: RideScreenAuthDeps): () => void {
     });
   }
 
+  const hasDestination = deps.hasDestination ?? (() => false);
+
   const unregister = registerRideScreen("1", {
-    skip: () =>
-      isAuthenticated() && (gpsGranted || deps.locate.current() !== null),
+    // TWO GATES, AND ONLY ONE OF THEM IS A GATE.
+    //
+    // Location is a real prerequisite: navigation without a fix is not a
+    // degraded experience, it is no experience. Signing in is not — this
+    // screen's own copy offers "Ride as Guest", so the account was always
+    // optional and this screen was pitching, not gating.
+    //
+    // Pitching is fine to a rider who opened the wizard cold. It is not fine
+    // to one who has already typed a destination into the home bar and picked
+    // how they are getting there: they are mid-task, standing somewhere, and
+    // the app answered "take me here" with "sign in first". So once a
+    // destination is on the session, location alone decides.
+    //
+    // The sign-in offer is not lost — the profile button is always on screen,
+    // and the post-ride screens ask when there is something to attribute.
+    skip: (ctx) => {
+      // A FREE RIDE HAS NOTHING TO GATE. It is a private, local, own-device
+      // ride: there is no account to attribute it to, no destination to
+      // navigate to, and no Veo to unlock. Both gates below are about things
+      // it does not do, and the whole promise of the button is one tap — so
+      // stopping a rider on a sign-in screen here would be asking them to
+      // answer a question that has no bearing on what happens next.
+      //
+      // Location is not required either: the recorder starts and the watch
+      // fills in. Refusing to begin until a fix lands would lose the first
+      // seconds of the ride, which is the part a rider cannot go back for.
+      if (ctx.entry.freeRide) return true;
+      const located = gpsGranted || deps.locate.current() !== null;
+      if (!located) return false;
+      return isAuthenticated() || hasDestination();
+    },
     factory: (ctx: RideScreenContext): RideScreen =>
       buildScreen(ctx, {
         locate: deps.locate,
@@ -183,6 +217,12 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
 
   // ---------------- GPS ----------------
   let gpsGranted = deps.locate.current() !== null;
+
+  // The header's Next mirrors [Ride as Guest]: GPS is the only REQUIRED
+  // information on this screen (signing in is optional — guests ride too),
+  // so Next lights up as soon as location is granted.
+  const syncHeaderNext = (): void => ctx.setNextEnabled(gpsGranted);
+  syncHeaderNext();
 
   const renderGps = (): void => {
     gpsSection.replaceChildren();
@@ -228,6 +268,7 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
     if (destroyed || gpsGranted) return;
     gpsGranted = true;
     deps.onGpsGranted();
+    syncHeaderNext();
     renderGps();
     maybeAdvance();
   });
@@ -249,6 +290,7 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
       if (destroyed || gpsGranted || state !== "granted") return;
       gpsGranted = true;
       deps.onGpsGranted();
+      syncHeaderNext();
       // No prompt will fire (already granted) — safe to call outside a tap.
       // De-duped against the outer wire-time query (see `triggerOnceForGrant`'s
       // own doc comment) — whichever of the two resolves "granted" first is

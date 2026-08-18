@@ -25,6 +25,7 @@ import {
   type WizardScreenId,
 } from "./ride-session.ts";
 import type { GeocodeSearchClient, GeocodeSearchHandlers } from "./geocode-search.ts";
+import { loadFavorites, recordFavorite } from "./favorites.ts";
 import {
   MAX_RECENT_DESTS,
   RECENT_DESTS_KEY,
@@ -313,6 +314,126 @@ describe("Screen 3 — search", () => {
 // Recent destinations — rendering
 // ---------------------------------------------------------------------------
 
+describe("Screen 3 — saved places (home/work)", () => {
+  const HOME = { lat: 39.71, lng: -104.98 };
+  const WORK = { lat: 39.75, lng: -104.99 };
+
+  function flush(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("suggests Home and Work above the recents once the profile answers", async () => {
+    localStorage.setItem(
+      RECENT_DESTS_KEY,
+      JSON.stringify({
+        v: 1,
+        dests: [{ label: "Union Station", lat: 39.75, lon: -105.0, inCoverage: true }],
+      }),
+    );
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("Saved places");
+    expect(text.indexOf("🏠 Home")).toBeLessThan(text.indexOf("Union Station"));
+    expect(text).toContain("💼 Work");
+  });
+
+  it("picking Home dispatches the saved coordinates and advances", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: HOME, work: null }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const row = optionRows().find((r) => r.textContent?.includes("Home"));
+    row!.click();
+    // The bare word, not the glyph — it is what Screens 4/6 echo back.
+    expect(session.current()?.dest).toMatchObject({
+      label: "Home",
+      lat: HOME.lat,
+      lon: HOME.lng,
+    });
+    expect(currentRideScreen()).toBe("4");
+    // Permanent rows don't echo into the recents ledger — the same place
+    // twice forever would be the only possible outcome.
+    expect(loadRecentDests()).toEqual([]);
+  });
+
+  it("renders no Saved-places section when the profile has neither", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: null, work: null }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    expect(rideModalRoot()?.textContent).not.toContain("Saved places");
+  });
+
+  it("only Work set: no Home row, and the section still renders", async () => {
+    const session = sessionAt("3");
+    wire(session, { getHomeWork: async () => ({ home: null, work: WORK }) });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("Saved places");
+    expect(text).toContain("💼 Work");
+    expect(text).not.toContain("🏠 Home");
+  });
+
+  it("a rejecting or throwing loader costs only the rows, never the screen", async () => {
+    const session = sessionAt("3");
+    wire(session, {
+      getHomeWork: () => Promise.reject(new Error("profile down")),
+    });
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    // The screen is intact and searchable; there is just no Saved section.
+    expect(input()).not.toBeNull();
+    expect(rideModalRoot()?.textContent).not.toContain("Saved places");
+
+    resetRideModal();
+    document.body.replaceChildren();
+    const session2 = sessionAt("3");
+    wire(session2, {
+      getHomeWork: () => {
+        throw new Error("sync throw");
+      },
+    });
+    // A synchronously-throwing loader must not break the screen build.
+    openRideModal({ fastForwardTo: "3" });
+    await flush();
+    expect(input()).not.toBeNull();
+  });
+
+  it("a late profile answer does not stomp live search results", async () => {
+    // The rider starts typing before the profile fetch lands: the answer
+    // must be held for the next empty-input view, not re-rendered over the
+    // results list.
+    let resolveHomeWork: (p: { home: typeof HOME | null; work: null }) => void = () => {};
+    const session = sessionAt("3");
+    const fs = fakeSearch();
+    wire(session, {
+      createSearch: fs.createSearch,
+      getHomeWork: () =>
+        new Promise((resolve) => {
+          resolveHomeWork = resolve;
+        }),
+    });
+    openRideModal({ fastForwardTo: "3" });
+    // Let the (deliberately still-pending) loader be invoked so its
+    // resolver is captured, then start typing before it answers.
+    await flush();
+    typeInto("colfax");
+    fs.emitResults([result("1 Colfax Ave")], "colfax");
+    resolveHomeWork({ home: HOME, work: null });
+    await flush();
+    const text = rideModalRoot()?.textContent ?? "";
+    expect(text).toContain("1 Colfax Ave");
+    expect(text).not.toContain("Saved places");
+    // …but clearing the field brings the saved rows straight back.
+    typeInto("");
+    expect(rideModalRoot()?.textContent).toContain("🏠 Home");
+  });
+});
+
 describe("Screen 3 — recent destinations", () => {
   it("renders recent destinations when the field is empty", () => {
     localStorage.setItem(
@@ -422,5 +543,141 @@ describe("recordRecentDest / loadRecentDests — persisted round trip", () => {
     });
     expect(loadRecentDests()).toEqual([]);
     Storage.prototype.getItem = real;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Saved places (favorites.ts) — the local list, the star, the map-pick row
+// ---------------------------------------------------------------------------
+
+describe("wireRideScreenDest — saved places", () => {
+  function openAt3(overrides: Partial<Omit<RideScreenDestDeps, "session">> = {}) {
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: fakeSearch().createSearch, ...overrides });
+    openRideModal({ fastForwardTo: "3" });
+    return session;
+  }
+
+  function rowByText(text: string): HTMLButtonElement | undefined {
+    return optionRows().find((r) => r.textContent?.includes(text));
+  }
+
+  /** The pick promise threads through several microtask hops before the
+   *  naming form lands; a macrotask clears all of them regardless of how many
+   *  there are, so the test asserts on the outcome rather than on the shape of
+   *  the chain. */
+  const flush = (): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, 0));
+
+  function actions(): HTMLButtonElement[] {
+    return [...document.querySelectorAll<HTMLButtonElement>(".ride-screen-dest__action")];
+  }
+
+  it("shows a locally saved place with no account and no network", () => {
+    // The whole reason this store is local: the profile's home/work need an
+    // account and a round trip, so a signed-out rider had no saved places.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    expect(rowByText("🏠 Home")).toBeTruthy();
+  });
+
+  it("rides to the rider's own name for the place, not the address", () => {
+    // Screens 4 and 6 echo this label back ("to Home"), which is the entire
+    // point of letting a rider name somewhere.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    const session = openAt3();
+    rowByText("🏠 Home")?.click();
+    expect(session.current()?.dest?.label).toBe("Home");
+  });
+
+  it("does not echo a saved place into recent destinations", () => {
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    rowByText("🏠 Home")?.click();
+    // It is already a permanent row; showing it twice forever is the bug.
+    expect(loadRecentDests()).toEqual([]);
+  });
+
+  it("shows one Home when the profile and the local list agree", () => {
+    // Same doorstep, two sources. A rider seeing their own house twice would
+    // reasonably conclude one of them is wrong.
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74001, lon: -104.99001 });
+    openAt3({
+      getHomeWork: () =>
+        Promise.resolve({ home: { lat: 39.74, lng: -104.99 }, work: null }),
+    });
+    return Promise.resolve().then(() => {
+      expect(optionRows().filter((r) => r.textContent?.includes("Home"))).toHaveLength(1);
+    });
+  });
+
+  it("offers to save a search result, and stops the row from advancing", () => {
+    const search = fakeSearch();
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: search.createSearch });
+    openRideModal({ fastForwardTo: "3" });
+    typeInto("1226 e 10th");
+    search.emitResults([result("1226 E 10th Ave, Denver", { kind: "house" })], "1226 e 10th");
+
+    actions()[0].click();
+    // Tapping the star must not select the destination underneath it.
+    expect(session.current()?.dest ?? null).toBeNull();
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]');
+    expect(name?.value).toBe("1226 E 10th Ave, Denver");
+  });
+
+  it("saves under the name the rider typed and shows it straight away", () => {
+    const search = fakeSearch();
+    const session = sessionAt("3", true);
+    wire(session, { createSearch: search.createSearch });
+    openRideModal({ fastForwardTo: "3" });
+    typeInto("1226 e 10th");
+    search.emitResults([result("1226 E 10th Ave, Denver", { kind: "house" })], "1226 e 10th");
+    actions()[0].click();
+
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]')!;
+    name.value = "Home";
+    rowByText("Save")?.click();
+
+    expect(loadFavorites().map((f) => f.label)).toEqual(["Home"]);
+    // Saved in order to be used — the rider should not have to search again.
+    expect(input().value).toBe("");
+    expect(rowByText("Home")).toBeTruthy();
+  });
+
+  it("forgets a saved place", () => {
+    recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74, lon: -104.99 });
+    openAt3();
+    actions()[0].click();
+    expect(loadFavorites()).toEqual([]);
+    expect(rowByText("🏠 Home")).toBeFalsy();
+  });
+
+  it("offers the map-pick failsafe only when a map is wired", () => {
+    openAt3();
+    expect(rowByText("Pick a point on the map")).toBeFalsy();
+    resetRideModal();
+    document.body.replaceChildren();
+    openAt3({ pickOnMap: () => Promise.resolve(null) });
+    expect(rowByText("Pick a point on the map")).toBeTruthy();
+  });
+
+  it("names a dropped pin, so an unaddressable place can be saved", async () => {
+    // The gazebo in City Park: a real destination no geocoder will return.
+    openAt3({ pickOnMap: () => Promise.resolve({ lat: 39.7485, lng: -104.9498 }) });
+    rowByText("Pick a point on the map")?.click();
+    await flush();
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Name for this place"]')!;
+    name.value = "The gazebo";
+    rowByText("Save")?.click();
+    expect(loadFavorites()[0]).toMatchObject({ label: "The gazebo", lat: 39.7485 });
+  });
+
+  it("a cancelled map pick leaves the screen alone", async () => {
+    openAt3({ pickOnMap: () => Promise.resolve(null) });
+    rowByText("Pick a point on the map")?.click();
+    await flush();
+    expect(document.querySelector('[aria-label="Name for this place"]')).toBeNull();
+    expect(loadFavorites()).toEqual([]);
   });
 });

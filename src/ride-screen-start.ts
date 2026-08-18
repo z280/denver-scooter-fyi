@@ -1,4 +1,4 @@
-// Screen 6 — "Start in Veo" (frontend plan, `ride-screen-start.ts` row;
+// Screen 6 — "Open in Veo" (frontend plan, `ride-screen-start.ts` row;
 // master Part 0 Screen 6: "Most similar to the current pre-start page. Since
 // the scooter and its start link are known: offer Android and Apple
 // 'Start in Veo' buttons which trigger a default 10 s countdown; an
@@ -33,6 +33,13 @@
 // same `finishStart()` used by the countdown/"I already started" paths for a
 // real device. `cost_hud` no longer gates entry to this screen at all — it
 // only ever affected the HUD's own display, per its name.
+//
+// UPDATE (onboarding-friendliness pass): an own-device ("My Scooter/Bike")
+// ride now AUTO-STARTS on mount instead of showing even that one-button
+// affordance — with no Veo app in the picture, the tap answered nothing.
+// The simplified face survives only as the fallback after a failed attempt.
+// Riders on a real Veo scooter keep this page as-is: they genuinely need
+// the start link / countdown to coordinate unlocking in the Veo app.
 // ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
@@ -75,6 +82,7 @@ import {
 } from "./ride-modal.ts";
 import type { Locate, LngLat } from "./locate.ts";
 import { veoDeepLink } from "./config.ts";
+import { MODEL_NAMES, type ModelKey } from "./model-catalog.ts";
 import {
   isOwnDevice,
   selectedDevice,
@@ -182,12 +190,14 @@ export function wireRideScreenStart(deps: RideScreenStartDeps): () => void {
 // Copy / formatting helpers
 // ---------------------------------------------------------------------------
 
-function titleCase(s: string): string {
-  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
-}
-
 function deviceSummaryLabel(device: RideSessionSelectedDevice): string {
-  const name = device.model ? titleCase(device.model) : "Scooter";
+  // MODEL_NAMES, never a capitalized key: the "trike" key's rider-facing
+  // name is "Rover" (model-catalog.ts). The session stores the model as a
+  // plain string (a persisted doc may predate a key), so resolve through
+  // modelKeyOf-compatible lookup and fall back to the stored text as-is.
+  const key = device.model as ModelKey | null;
+  const name =
+    key !== null && key in MODEL_NAMES ? MODEL_NAMES[key] : device.model ?? "Scooter";
   return device.plate ? `${name} — plate ${device.plate}` : name;
 }
 
@@ -258,10 +268,10 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        "Go back and pick the scooter you're standing next to before starting in Veo.",
+        "Go back and pick the scooter you're standing next to before opening it in Veo.",
       ),
     );
-    return { title: "Start in Veo", primary: root };
+    return { title: "Open in Veo", primary: root };
   }
 
   let destroyed = false;
@@ -291,7 +301,13 @@ function buildStartScreen(
   // the resume-or-end prompt) the screen falls back to its normal, fully
   // interactive idle render. A rider is never left staring at "Starting your
   // ride…" with no control on screen.
-  const autoStart = ctx.entry.autoStart === true;
+  //
+  // An own-device ("My Scooter/Bike") ride ALWAYS auto-starts: there is no
+  // Veo app to coordinate with, so the old "Start ride mode" button was one
+  // pointless tap — non-Veo riders go straight to riding. The interactive
+  // own-device face below survives only as the fallback after a failed
+  // attempt.
+  const autoStart = ctx.entry.autoStart === true || own0;
   let autoStartSettled = false;
 
   const root = el("div", "ride-wizard__body ride-screen-start");
@@ -363,7 +379,7 @@ function buildStartScreen(
    *  private) ride immediately, same as "I already started" for a real
    *  device. */
   function renderOwnDeviceIdle(): void {
-    root.append(el("p", "ride-wizard__lede", "Your own device"));
+    root.append(el("p", "ride-wizard__lede", "My Scooter/Bike"));
     root.append(
       el(
         "p",
@@ -391,7 +407,7 @@ function buildStartScreen(
         el(
           "p",
           "ride-wizard__hint",
-          "Go back and pick the scooter you're standing next to before starting in Veo.",
+          "Go back and pick the scooter you're standing next to before opening it in Veo.",
         ),
       );
       return;
@@ -408,7 +424,7 @@ function buildStartScreen(
       el(
         "p",
         "ride-wizard__hint",
-        `Tap Start in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
+        `Tap Open in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
       ),
     );
     appendWaitingAndError();
@@ -424,12 +440,12 @@ function buildStartScreen(
     const androidBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — Android",
+      "▶️ Open in Veo — Android",
     ) as HTMLAnchorElement;
     const appleBtn = el(
       "a",
       "login-btn",
-      "▶️ Start in Veo — iPhone",
+      "▶️ Open in Veo — iPhone",
     ) as HTMLAnchorElement;
     for (const a of [androidBtn, appleBtn]) {
       if (href) {
@@ -571,17 +587,37 @@ function buildStartScreen(
     // brand-new private ride keyed on a caller-supplied id when no local
     // record exists yet) instead of the two modules independently generating
     // two unrelated ids.
+    // Self-heal the persisted screen before starting: the reducer only
+    // accepts `rideStarted` from `wizard:6`, but the shell persists this
+    // screen (main.ts's `onScreenChange` → `goto 6`) only AFTER the factory
+    // returns, so a start that fires early sees a doc still reading the
+    // previous screen. Legal (and a no-op) from any wizard screen; skipped
+    // from `countdown`, where a `goto` would un-start the countdown.
+    if (doc.state === "wizard" && doc.screen !== "6") {
+      deps.session.dispatch({ type: "goto", screen: "6" });
+    }
+
     if (doc.private) {
       const nowFn = deps.now ?? (() => Date.now());
       const randomBytesFn = deps.randomBytes ?? defaultRandomBytes;
       const trackKeyId = randomPrivateTrackId(randomBytesFn);
-      deps.session.dispatch({
+      const started = deps.session.dispatch({
         type: "rideStarted",
         rideId: null,
         startedAtMs: nowFn(),
         trackKeyId,
         private: true,
       });
+      // A rejected transition means the session doc is NOT riding — closing
+      // the wizard anyway (the pre-fix behavior) stranded the rider with no
+      // HUD and no error. Fall back to the interactive screen instead.
+      if (started?.accepted !== true) {
+        mode = "idle";
+        autoStartSettled = true;
+        errorMessage = "Couldn't start the ride — please try again.";
+        render();
+        return;
+      }
       deps.onPrivateRideStarted?.(trackKeyId);
       ctx.next();
       return;
@@ -619,13 +655,24 @@ function buildStartScreen(
       )(body, abortController.signal);
       if (destroyed) return;
       const nowFn = deps.now ?? (() => Date.now());
-      deps.session.dispatch({
+      const transition = deps.session.dispatch({
         type: "rideStarted",
         rideId: started.id,
         startedAtMs: resolveStartedAtMs(started, nowFn),
         trackKeyId: started.id,
         private: false,
       });
+      // Same guard as the private branch: never hand off on a doc that is
+      // not actually riding. The server row exists — a retry's 409 routes
+      // into the resume-or-end prompt, which can adopt it.
+      if (transition?.accepted !== true) {
+        busy = false;
+        mode = "idle";
+        autoStartSettled = true;
+        errorMessage = "Couldn't start the ride — please try again.";
+        render();
+        return;
+      }
       deps.onRideStarted?.(started);
       ctx.next();
     } catch (err) {
@@ -656,7 +703,16 @@ function buildStartScreen(
   // ---------------- mount ----------------
 
   render();
-  maybeAutoStart();
+  // Deferred out of the factory's own call stack: the shell is still
+  // mid-render when this factory runs, and the integrator persists this
+  // screen onto the session doc (`onScreenChange` → `goto 6`) only AFTER
+  // the factory returns. A synchronous auto-start here dispatched
+  // `rideStarted` against a doc still reading the PREVIOUS screen, which
+  // the reducer rejects — the flow then ran off the end with no ride
+  // started and no HUD (the 2026-08 field failure). One microtask is
+  // enough: the shell's render (onScreenChange included) is synchronous.
+  // The `goto 6` self-heal in `finishStart` covers any other early caller.
+  queueMicrotask(() => maybeAutoStart());
   const unFix = deps.locate.onFix((pos) => {
     if (destroyed) return;
     fix = pos;
@@ -673,7 +729,9 @@ function buildStartScreen(
   });
 
   return {
-    title: "Start in Veo",
+    // "Open in Veo" would be a lie over an own-device ride — no Veo app is
+    // involved anywhere in it.
+    title: own0 ? "Starting ride" : "Open in Veo",
     primary: root,
     destroy() {
       destroyed = true;

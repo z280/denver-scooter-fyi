@@ -58,6 +58,7 @@ import {
   type PointsScheduleResponse,
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
+import { openQrScanner } from "./qr-scan.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,12 @@ export interface FeatureAnswerState {
    *  features answered `true`; `prunePoorCondition` keeps it that way. */
   poor: FeatureKey[];
   plate: string;
+  /** Raw payload from a QR scan, or null when nothing has been scanned.
+   *  Stored VERBATIM and never parsed here — the server extracts the plate
+   *  and decides which scooter it names, for the same no-client-opinion
+   *  reasons as the typed plate. A scan stands in for the plate as
+   *  proof-of-presence, so either one satisfies `readyToSubmit`. */
+  qrRawValue: string | null;
 }
 
 export function emptyAnswers(): FeatureAnswerState {
@@ -172,6 +179,7 @@ export function emptyAnswers(): FeatureAnswerState {
     allGood: null,
     poor: [],
     plate: "",
+    qrRawValue: null,
   };
 }
 
@@ -193,7 +201,10 @@ export function prunePoorCondition(a: FeatureAnswerState): FeatureKey[] {
 
 /** Is the survey complete enough to send?
  *
- *  All four presence questions answered, a plate typed, and — when the rider
+ *  All four presence questions answered, a proof of presence attached (a
+ *  typed plate OR a QR scan — `requireQr` narrows that to the scan alone,
+ *  for the tools-drawer flow where the scan is also the only thing that
+ *  says WHICH scooter), and — when the rider
  *  said things are NOT all in good condition — at least one feature named.
  *  That last rule mirrors the API's own 422
  *  (`all_good_condition: false` with an empty `poor_condition` is rejected,
@@ -206,7 +217,10 @@ export function prunePoorCondition(a: FeatureAnswerState): FeatureKey[] {
  *  A rider who answered No to everything present has nothing to itemise, so
  *  the follow-up cannot be shown at all — `readyToSubmit` treats that as
  *  complete rather than unanswerable. */
-export function readyToSubmit(a: FeatureAnswerState): boolean {
+export function readyToSubmit(
+  a: FeatureAnswerState,
+  opts?: { requireQr?: boolean },
+): boolean {
   // Driven off the question list rather than four named checks, so a fifth
   // feature is gated by adding it to FEATURE_QUESTIONS and nothing else.
   if (FEATURE_QUESTIONS.some((q) => a[q.key] === null)) return false;
@@ -214,7 +228,8 @@ export function readyToSubmit(a: FeatureAnswerState): boolean {
   if (a.allGood === false && presentFeatures(a).length > 0 && a.poor.length === 0) {
     return false;
   }
-  return a.plate.trim().length > 0;
+  if (opts?.requireQr) return a.qrRawValue !== null;
+  return a.qrRawValue !== null || a.plate.trim().length > 0;
 }
 
 /** The request body. `all_good_condition` is derived from the pruned list
@@ -260,13 +275,21 @@ export function toRequestBody(
  *  Anything without a status (a genuine network failure, a thrown TypeError)
  *  falls through to the connection message, which is the honest answer when
  *  we never heard back at all. */
-export function describeSubmitError(err: unknown): string {
+export function describeSubmitError(
+  err: unknown,
+  opts?: { viaQr?: boolean },
+): string {
   const status = err instanceof ReportHttpError ? err.status : null;
   if (status === 401) {
     return "Your session expired — sign in again and your answers will earn points.";
   }
   if (status === 404) {
-    return "We don't have a record of this scooter anymore — it may have left the fleet.";
+    // In the QR-identified flow a 404 means the SCAN resolved to nothing —
+    // there was no tapped scooter to fall back to — and "we lost this
+    // scooter's record" would point the rider at entirely the wrong fix.
+    return opts?.viaQr
+      ? "That QR code didn't match any scooter we know — try scanning it again."
+      : "We don't have a record of this scooter anymore — it may have left the fleet.";
   }
   if (status === 422) {
     // Unreachable through the UI: `readyToSubmit` enforces the same rules
@@ -288,18 +311,26 @@ export function describeSubmitError(err: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface ConfirmFeaturesOptions {
-  deviceId: string;
-  vehicleIdentifier: string;
+  /** Absent in the tools-drawer flow: no scooter was tapped, so nothing
+   *  was on screen. The QR scan is the report's only identity there. */
+  deviceId?: string;
+  vehicleIdentifier?: string | null;
   /** Friendly model name for the question stem — "Does this Cosmo have…".
    *  Falls back to "scooter" when the model is unrecognized. */
   modelName?: string | null;
   status: FeatureStatus;
+  /** The tools-drawer mode: no plate field, and Send stays disabled until
+   *  a QR code has been scanned — the scan is both the proof-of-presence
+   *  and the only statement of which scooter the answers describe. */
+  requireQr?: boolean;
   lat?: number;
   lng?: number;
   /** Injected for tests; defaults to the real POST. */
   submit?: typeof submitDeviceFeatureReport;
   /** Injected for tests; defaults to `fetchPointsSchedule`. */
   loadSchedule?: typeof fetchPointsSchedule;
+  /** Injected for tests; defaults to the real camera scanner. */
+  scan?: typeof openQrScanner;
   /** Fires after a successful submission, with what the server actually
    *  paid. Lets the caller refresh its own copy of the device. */
   onSubmitted?(result: { plateValid: boolean; pointsAwarded: number }): void;
@@ -412,18 +443,31 @@ export function openConfirmFeatures(
       return;
     }
 
-    // ---- status + what it pays
-    const points = featurePointsFor(options.status, schedule);
-    const badge = el("div", `${ROOT_CLASS}__status`);
-    badge.dataset.status = options.status;
-    badge.append(
-      el("span", `${ROOT_CLASS}__status-label`, FEATURE_STATUS_LABEL[options.status]),
-      el("span", `${ROOT_CLASS}__status-points`, `+${points} pts`),
-    );
-    body.append(badge);
-    body.append(
-      el("p", `${ROOT_CLASS}__hint`, FEATURE_STATUS_HINT[options.status]),
-    );
+    // ---- status + what it pays. In the QR-identified flow we don't know
+    // which scooter this is yet, so there is no status to badge and no
+    // honest award to promise — the server picks both once the scan says
+    // which vehicle the answers describe.
+    if (options.vehicleIdentifier != null) {
+      const points = featurePointsFor(options.status, schedule);
+      const badge = el("div", `${ROOT_CLASS}__status`);
+      badge.dataset.status = options.status;
+      badge.append(
+        el("span", `${ROOT_CLASS}__status-label`, FEATURE_STATUS_LABEL[options.status]),
+        el("span", `${ROOT_CLASS}__status-points`, `+${points} pts`),
+      );
+      body.append(badge);
+      body.append(
+        el("p", `${ROOT_CLASS}__hint`, FEATURE_STATUS_HINT[options.status]),
+      );
+    } else {
+      body.append(
+        el(
+          "p",
+          `${ROOT_CLASS}__hint`,
+          "Answer for the scooter in front of you — the QR scan at the end tells us which one it is (and earns the points).",
+        ),
+      );
+    }
 
     // ---- the four presence questions
     body.append(
@@ -489,32 +533,65 @@ export function openConfirmFeatures(
       body.append(wrap);
     }
 
-    // ---- plate
+    // ---- proof of presence: the typed plate and/or the QR scan
     const plateWrap = el("div", `${ROOT_CLASS}__plate`);
-    const plateLabel = el(
-      "label",
-      `${ROOT_CLASS}__q`,
-      "To confirm, please enter the plate number under the QR code on the device",
-    );
-    plateLabel.htmlFor = "device-features-plate";
-    const plateInput = el("input", `${ROOT_CLASS}__plate-input`);
-    plateInput.id = "device-features-plate";
-    plateInput.type = "text";
-    // `inputMode` rather than `type="number"`: plates are digit strings, and
-    // a number input would strip a leading zero and offer spinners for a
-    // value that is not a quantity.
-    plateInput.inputMode = "numeric";
-    plateInput.autocomplete = "off";
-    plateInput.value = answers.plate;
-    plateInput.placeholder = "e.g. 1025543";
-    plateInput.addEventListener("input", () => {
-      answers.plate = plateInput.value;
-      // Only the Send button's disabled state depends on this, so re-sync it
-      // in place rather than re-rendering — a full render would steal focus
-      // out of the field on every keystroke.
-      syncSend();
-    });
-    plateWrap.append(plateLabel, plateInput);
+    if (!options.requireQr) {
+      const plateLabel = el(
+        "label",
+        `${ROOT_CLASS}__q`,
+        "To confirm, please enter the plate number under the QR code on the device",
+      );
+      plateLabel.htmlFor = "device-features-plate";
+      const plateInput = el("input", `${ROOT_CLASS}__plate-input`);
+      plateInput.id = "device-features-plate";
+      plateInput.type = "text";
+      // `inputMode` rather than `type="number"`: plates are digit strings, and
+      // a number input would strip a leading zero and offer spinners for a
+      // value that is not a quantity.
+      plateInput.inputMode = "numeric";
+      plateInput.autocomplete = "off";
+      plateInput.value = answers.plate;
+      plateInput.placeholder = "e.g. 1025543";
+      plateInput.addEventListener("input", () => {
+        answers.plate = plateInput.value;
+        // Only the Send button's disabled state depends on this, so re-sync it
+        // in place rather than re-rendering — a full render would steal focus
+        // out of the field on every keystroke.
+        syncSend();
+      });
+      plateWrap.append(plateLabel, plateInput);
+    } else {
+      plateWrap.append(
+        el(
+          "p",
+          `${ROOT_CLASS}__q`,
+          "To confirm — and to tell us which scooter this is — scan the QR code on the device",
+        ),
+      );
+    }
+
+    // The scan itself. Optional alongside the plate in the popup flow,
+    // mandatory (and the plate field absent) in the tools-drawer flow.
+    if (answers.qrRawValue !== null) {
+      const chip = el("div", `${ROOT_CLASS}__qr-done`);
+      chip.append(el("span", undefined, "✓ QR code captured"));
+      const rescan = el("button", `${ROOT_CLASS}__qr-rescan`, "Rescan");
+      rescan.type = "button";
+      rescan.dataset.action = "scan-qr";
+      rescan.addEventListener("click", openScanner);
+      chip.append(rescan);
+      plateWrap.append(chip);
+    } else {
+      const scanBtn = el(
+        "button",
+        `${ROOT_CLASS}__qr-btn`,
+        options.requireQr ? "📷 Scan QR code" : "📷 Or scan the QR code instead",
+      );
+      scanBtn.type = "button";
+      scanBtn.dataset.action = "scan-qr";
+      scanBtn.addEventListener("click", openScanner);
+      plateWrap.append(scanBtn);
+    }
     body.append(plateWrap);
 
     // ---- send
@@ -539,7 +616,18 @@ export function openConfirmFeatures(
   function syncSend(): void {
     const send = body.querySelector<HTMLButtonElement>('[data-action="submit"]');
     if (!send) return;
-    send.disabled = sending || !readyToSubmit(answers);
+    send.disabled =
+      sending || !readyToSubmit(answers, { requireQr: options.requireQr });
+  }
+
+  function openScanner(): void {
+    (options.scan ?? openQrScanner)({
+      prompt: "Center the QR code on the scooter's deck in the frame.",
+      onScan(raw) {
+        answers.qrRawValue = raw;
+        render();
+      },
+    });
   }
 
   function renderDone(): void {
@@ -557,16 +645,27 @@ export function openConfirmFeatures(
   }
 
   async function submit(): Promise<void> {
-    if (sending || !readyToSubmit(answers)) return;
+    if (sending || !readyToSubmit(answers, { requireQr: options.requireQr })) {
+      return;
+    }
     sending = true;
     statusLine = null;
     render();
     const post = options.submit ?? submitDeviceFeatureReport;
+    const typedPlate = answers.plate.trim();
     try {
       const result = await post({
-        vehicle_identifier: options.vehicleIdentifier,
+        // Absent in the tools-drawer flow — the scan is the identity, and
+        // the server resolves it.
+        vehicle_identifier: options.vehicleIdentifier ?? undefined,
         device_id: options.deviceId,
-        submitted_plate: answers.plate,
+        // Omitted (not sent empty) when the rider scanned instead of
+        // typing: the API 422s an empty plate, and the scan is the proof.
+        // When typed it goes AS TYPED, whitespace and all — the server
+        // stores the verbatim string as its audit record of what the
+        // rider's client actually sent.
+        submitted_plate: typedPlate ? answers.plate : undefined,
+        qr_raw_value: answers.qrRawValue ?? undefined,
         ...toRequestBody(answers),
         lat: options.lat,
         lng: options.lng,
@@ -574,16 +673,36 @@ export function openConfirmFeatures(
       if (closed) return;
       sending = false;
       done = true;
+      // When the scan resolved to a different scooter than the one the
+      // rider tapped, the server attached the answers there — say so, or
+      // the map refreshing the OTHER dot later reads as the report having
+      // vanished.
+      const retargeted =
+        result.qr_matched === true &&
+        options.vehicleIdentifier != null &&
+        result.vehicle_identifier != null &&
+        result.vehicle_identifier !== options.vehicleIdentifier;
+      const prefix = retargeted
+        ? "Your scan matched a different scooter than the one you tapped, so your answers were attached to the scanned one. "
+        : "";
       // The one place the wrong-plate rule becomes visible, and it is
       // deliberately after the fact and deliberately not scolding: the
       // report WAS accepted and does still help, it just didn't earn
       // anything. Saying "wrong plate" and nothing else would read as a
-      // rejection of work the rider actually did.
+      // rejection of work the rider actually did. A failed SCAN reads
+      // slightly differently — the rider mis-aimed nothing, the sticker
+      // just didn't resolve — so it gets its own line.
       statusLine = result.plate_valid
         ? result.points_awarded > 0
-          ? `+${result.points_awarded} pts. It can take a few minutes to show on the map.`
-          : "Logged. You've already earned points for this scooter today — this still counts toward the data."
-        : "That plate didn't match this scooter, so no points this time — your answers were still recorded.";
+          ? `${prefix}+${result.points_awarded} pts. It can take a few minutes to show on the map.`
+          : `${prefix}Logged. You've already earned points for this scooter today — this still counts toward the data.`
+        : result.qr_matched === false && !typedPlate
+          ? // "this scooter" only when one was tapped — the QR-identified
+            // flow has no preselected scooter for the phrase to point at.
+            options.vehicleIdentifier != null
+            ? "We couldn't match that scan to this scooter, so no points this time — your answers were still recorded."
+            : "We couldn't match that scan to a scooter we know, so no points this time — your answers were still recorded."
+          : "That plate didn't match this scooter, so no points this time — your answers were still recorded.";
       render();
       options.onSubmitted?.({
         plateValid: result.plate_valid,
@@ -592,7 +711,9 @@ export function openConfirmFeatures(
     } catch (err) {
       if (closed) return;
       sending = false;
-      statusLine = describeSubmitError(err);
+      statusLine = describeSubmitError(err, {
+        viaQr: options.requireQr === true,
+      });
       render();
     }
   }

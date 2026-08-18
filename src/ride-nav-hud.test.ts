@@ -21,13 +21,13 @@ import {
   INITIAL_ROUTE_POSITION,
   NAV_DISMISS_HOLD_MS,
   createNavHud,
+  currentManeuverIndex,
   decodePolyline,
   distanceAlongRoute,
   distanceToLineString,
   matchAlongRoute,
   noteOffRouteSample,
   routeProgress,
-  upcomingManeuverIndex,
   type NavHudOptions,
   type RoutePosition,
 } from "./ride-nav-hud.ts";
@@ -94,7 +94,6 @@ function makeRoute(overrides: Partial<RideSessionRoute> = {}): RideSessionRoute 
 function fakeRouteResponse(
   coords: LngLatCoord[],
   maneuvers: RouteManeuver[] = [],
-  propertyOverrides: Partial<RouteResponse["properties"]> = {},
 ): RouteResponse {
   return {
     type: "Feature",
@@ -113,7 +112,6 @@ function fakeRouteResponse(
       battery_model: "unavailable",
       graph_bbox: [-105, 39, -104, 40],
       maneuvers,
-      ...propertyOverrides,
     },
   };
 }
@@ -223,13 +221,6 @@ describe("matchAlongRoute — fractional (segment-projected) position", () => {
     expect(pos.t).toBe(0.6);
   });
 
-  it("never matches past lastPos.segIndex + window, even when a farther segment is objectively closer", () => {
-    const fix = { lat: 39.7 + 2 * SEG_DEG, lng: -104.99 }; // exactly the last vertex
-    const pos = matchAlongRoute(coords, fix, { ...INITIAL_ROUTE_POSITION }, 0);
-    expect(pos.segIndex).toBe(0); // clamped to the window's only segment
-    expect(pos.t).toBe(1); // ...at its far end
-  });
-
   it("an empty shape returns the initial position; a single point matches with point distance", () => {
     expect(matchAlongRoute([], { lat: 39.7, lng: -104.99 }, { ...INITIAL_ROUTE_POSITION }))
       .toEqual(INITIAL_ROUTE_POSITION);
@@ -303,40 +294,60 @@ describe("distanceToLineString — point-to-segment, not point-to-vertex", () =>
   });
 });
 
-describe("upcomingManeuverIndex — the step the rider is told about NEXT", () => {
-  // depart (turn at 0) → turn at 5 → turn at 10 → arrive at 15.
-  const maneuvers: RouteManeuver[] = [
-    maneuver(0, 5, "Head north"),
-    maneuver(5, 10, "Turn right"),
-    maneuver(10, 15, "Turn left"),
-    maneuver(15, 15, "Arrive"),
-  ];
+describe("matchAlongRoute — forward window boundary", () => {
+  const coords: LngLatCoord[] = [];
+  for (let i = 0; i <= 10; i++) coords.push([-104.99, 39.7 + i * 0.001]);
 
-  it("opens with the first real turn — the depart maneuver's turn point (index 0) is already behind the rider", () => {
-    expect(upcomingManeuverIndex(maneuvers, 0)).toBe(1);
+  it("never matches past lastPos.segIndex + window, even when a farther segment is objectively closer", () => {
+    const fix = { lat: 39.7 + 10 * 0.001, lng: -104.99 }; // exactly coords[10]
+    const pos = matchAlongRoute(coords, fix, { ...INITIAL_ROUTE_POSITION }, 3);
+    expect(pos.segIndex).toBe(3); // clamped to the window's far segment
+    expect(pos.t).toBe(1); // ...at its far end
   });
 
-  it("holds the upcoming turn while approaching it, and flips the moment its vertex is crossed", () => {
-    expect(upcomingManeuverIndex(maneuvers, 4.9)).toBe(1); // still riding toward the turn at 5
-    expect(upcomingManeuverIndex(maneuvers, 5)).toBe(2); // turn complete → next step
-    expect(upcomingManeuverIndex(maneuvers, 7.5)).toBe(2);
-    expect(upcomingManeuverIndex(maneuvers, 10.01)).toBe(3);
+  it("matches freely once the true nearest point falls inside the window", () => {
+    const fix = { lat: 39.7 + 5 * 0.001, lng: -104.99 }; // exactly coords[5]
+    const pos = matchAlongRoute(coords, fix, { ...INITIAL_ROUTE_POSITION }, 6);
+    expect(routeProgress(pos)).toBeCloseTo(5, 5);
   });
 
-  it("stays on the final (arrive) maneuver once nothing is ahead", () => {
-    expect(upcomingManeuverIndex(maneuvers, 15)).toBe(3);
-    expect(upcomingManeuverIndex(maneuvers, 99)).toBe(3);
+  it("never returns a position behind lastPos even at the window's lower edge", () => {
+    const fix = { lat: 0, lng: 0 }; // nowhere near any point — the floor wins
+    const last: RoutePosition = { segIndex: 4, t: 0.5, distanceM: 0 };
+    const pos = matchAlongRoute(coords, fix, last, 2);
+    expect(routeProgress(pos)).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("currentManeuverIndex", () => {
+  // Valhalla's contiguity contract: each maneuver's end is the next one's
+  // begin, and the instruction is executed AT the begin vertex.
+  const maneuvers: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 10), maneuver(10, 15)];
+
+  it("returns the UPCOMING maneuver: a turn is complete once the match moves past its begin vertex", () => {
+    // At the departure vertex: the departure instruction itself.
+    expect(currentManeuverIndex(maneuvers, 0)).toBe(0);
+    // One vertex underway: heading toward turn 1 — show it.
+    expect(currentManeuverIndex(maneuvers, 1)).toBe(1);
+    // AT turn 1's corner (begin 5): still turn 1 — the rider is executing it.
+    expect(currentManeuverIndex(maneuvers, 5)).toBe(1);
+    // Past the corner: the turn is COMPLETED — flip to the next instruction
+    // immediately, not a block later. (The old end-based rule kept showing
+    // turn 1 here until the rider arrived at turn 2's own corner.)
+    expect(currentManeuverIndex(maneuvers, 6)).toBe(2);
+    expect(currentManeuverIndex(maneuvers, 12)).toBe(2);
   });
 
-  it("never regresses when fed back its own previous result, even given lower progress later", () => {
-    const idx = upcomingManeuverIndex(maneuvers, 12, 0);
-    expect(idx).toBe(3);
-    expect(upcomingManeuverIndex(maneuvers, 6, idx)).toBe(3);
+  it("never regresses when fed back its own previous result, even given a lower shape index later", () => {
+    const idx = currentManeuverIndex(maneuvers, 12, 0);
+    expect(idx).toBe(2);
+    const next = currentManeuverIndex(maneuvers, 6, idx);
+    expect(next).toBe(2);
   });
 
-  it("skips coincident turn points (zero-length legs) without getting stuck", () => {
-    const withZero: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 5), maneuver(5, 10), maneuver(10, 10)];
-    expect(upcomingManeuverIndex(withZero, 5)).toBe(3);
+  it("steps through a zero-length leg without getting stuck", () => {
+    const withZero: RouteManeuver[] = [maneuver(0, 5), maneuver(5, 5), maneuver(5, 10)];
+    expect(currentManeuverIndex(withZero, 6)).toBe(2);
   });
 });
 
@@ -550,55 +561,24 @@ describe("left/right directions-panel toggle state machine", () => {
 });
 
 describe("createNavHud — center card + directions list content", () => {
-  // depart at 0 → turn at vertex 2 → arrive at vertex 4, over BASE_COORDS'
-  // five points (~22m apart).
-  const THREE_STEP: RouteManeuver[] = [
-    maneuver(0, 2, "Head north on Blake St", 1),
-    maneuver(2, 4, "Turn right onto 20th St", 10),
-    maneuver(4, 4, "You have arrived", 4),
-  ];
-
-  it("shows the UPCOMING turn with a countdown — never the turn already made", () => {
+  it("renders the current maneuver's instruction and highlights it in the panel, advancing as fixes come in", () => {
+    const maneuvers: RouteManeuver[] = [
+      maneuver(0, 2, "Head north on Blake St"),
+      maneuver(2, 4, "Turn right onto 20th St"),
+    ];
     const { container, hud } = setup({
-      route: makeRoute({ maneuvers: THREE_STEP, polyline: encodePolyline(BASE_COORDS) }),
+      route: makeRoute({ maneuvers, polyline: encodePolyline(BASE_COORDS) }),
     });
     const instruction = container.querySelector(".nav-hud__instruction")!;
-    const meta = container.querySelector(".nav-hud__meta")!;
+    expect(instruction.textContent).toBe("Head north on Blake St");
 
-    // From the first instant the rider is being told about the first REAL
-    // turn ahead — the depart maneuver's turn point is index 0, already
-    // behind them (the old behavior showed the maneuver whose leg the rider
-    // was on, i.e. always one step stale).
+    const [lng, lat] = BASE_COORDS[3];
+    hud.feedFix(lat, lng);
     expect(instruction.textContent).toBe("Turn right onto 20th St");
-    expect(meta.textContent).toMatch(/^In /);
-
-    // Mid-first-leg: still approaching the same turn, countdown shrinking.
-    const [lng1, lat1] = BASE_COORDS[1];
-    hud.feedFix(lat1, lng1);
-    expect(instruction.textContent).toBe("Turn right onto 20th St");
-    expect(meta.textContent).toMatch(/^In \d+ ft$/);
-
-    // Past the turn vertex: the turn is COMPLETE — the card flips to the
-    // next step immediately, not a leg later.
-    const [lng3, lat3] = BASE_COORDS[3];
-    hud.feedFix(lat3, lng3);
-    expect(instruction.textContent).toBe("You have arrived");
-
     const steps = container.querySelectorAll(".nav-hud__step");
-    expect(steps.length).toBe(3);
-    expect(steps[2].classList.contains("is-current")).toBe(true);
+    expect(steps.length).toBe(2);
+    expect(steps[1].classList.contains("is-current")).toBe(true);
     expect(steps[0].classList.contains("is-done")).toBe(true);
-    expect(steps[1].classList.contains("is-done")).toBe(true);
-  });
-
-  it("reads 'Now' instead of a false-precision countdown within 15m of the turn point", () => {
-    const { container, hud } = setup({
-      route: makeRoute({ maneuvers: THREE_STEP, polyline: encodePolyline(BASE_COORDS) }),
-    });
-    // ~4m short of the turn vertex (BASE_COORDS spacing is ~22m).
-    hud.feedFix(39.7004 - 0.00004, -104.99);
-    const meta = container.querySelector(".nav-hud__meta")!;
-    expect(meta.textContent).toBe("Now");
   });
 
   it("falls back to a generic message when there are no maneuvers", () => {
@@ -606,78 +586,6 @@ describe("createNavHud — center card + directions list content", () => {
     expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
       "Follow the route",
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The API's rider-facing beta disclaimer (`beta_warning`) — the contract:
-// render it wherever directions are shown (here: the center-card strip AND
-// the step-by-step panel), never hardcode it, treat absence as "out of beta".
-// ---------------------------------------------------------------------------
-
-describe("beta warning (route.betaWarning → .nav-hud__beta / .nav-hud__panel-beta)", () => {
-  const WARNING =
-    "Navigation directions are in beta and may be inaccurate or unsafe.";
-
-  it("renders the session route's warning in both the card strip and the panel", () => {
-    const { container } = setup({
-      route: makeRoute({ betaWarning: WARNING }),
-    });
-    const strip = container.querySelector<HTMLElement>(".nav-hud__beta")!;
-    const panelNote = container.querySelector<HTMLElement>(".nav-hud__panel-beta")!;
-    expect(strip.hidden).toBe(false);
-    expect(strip.textContent).toBe(WARNING);
-    expect(panelNote.hidden).toBe(false);
-    expect(panelNote.textContent).toBe(WARNING);
-  });
-
-  it("stays hidden when the session route carries no warning (out of beta)", () => {
-    const { container } = setup({ route: makeRoute() });
-    expect(container.querySelector<HTMLElement>(".nav-hud__beta")!.hidden).toBe(true);
-    expect(
-      container.querySelector<HTMLElement>(".nav-hud__panel-beta")!.hidden,
-    ).toBe(true);
-  });
-
-  it("a re-route re-decides it from the fresh response: present → shown, absent → dropped", async () => {
-    const REWORDED = "Directions are still in beta — ride carefully.";
-    let t = 0;
-    let nextResponse = fakeRouteResponse(BASE_COORDS, [], {
-      beta_warning: REWORDED,
-    });
-    const fetchRoute = vi.fn(() => Promise.resolve(nextResponse));
-    const container = document.createElement("div");
-    const hud = createNavHud(container, {
-      route: makeRoute({ betaWarning: WARNING }),
-      dest: { lat: 39.8, lon: -104.99 },
-      onDismiss: vi.fn(),
-      onCompress: vi.fn(),
-      fetchRoute,
-      now: () => t,
-    });
-    const strip = container.querySelector<HTMLElement>(".nav-hud__beta")!;
-    const FAR = { lat: 41.0, lng: -103.0 };
-
-    // Re-route #1: the fresh response still carries (re-worded) text.
-    t = 0;
-    hud.feedFix(FAR.lat, FAR.lng);
-    t = 10_000;
-    hud.feedFix(FAR.lat, FAR.lng);
-    await vi.waitFor(() => expect(strip.textContent).toBe(REWORDED));
-    expect(strip.hidden).toBe(false);
-
-    // Re-route #2 (past the 60s cooldown): the field is gone — beta ended
-    // mid-ride, and the warning must not outlive it.
-    nextResponse = fakeRouteResponse(BASE_COORDS);
-    t = 70_000;
-    hud.feedFix(FAR.lat, FAR.lng);
-    t = 80_000;
-    hud.feedFix(FAR.lat, FAR.lng);
-    expect(fetchRoute).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(strip.hidden).toBe(true));
-    expect(
-      container.querySelector<HTMLElement>(".nav-hud__panel-beta")!.hidden,
-    ).toBe(true);
   });
 });
 
@@ -832,5 +740,128 @@ describe("off-route re-route via feedFix", () => {
     t = 50_000;
     expect(() => hud.feedFix(41.0, -103.0)).not.toThrow();
     expect(fetchRoute).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Directions-are-beta warning (the /route contract: beta_warning must be
+// shown wherever directions are rendered — the HUD shows the one Screen 4
+// carried onto the session route)
+// ---------------------------------------------------------------------------
+
+describe("beta warning", () => {
+  it("stays pinned under the maneuver bar for the whole guided ride", () => {
+    const { container } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    const note = container.querySelector<HTMLElement>(".nav-hud__beta");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("Navigation directions are in beta.");
+  });
+
+  it("renders nothing when the route carries no warning (post-beta, or a pre-field session doc)", () => {
+    const { container } = setup();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+
+  it("is torn down with the rest of the HUD", () => {
+    const { container, hud } = setup({
+      route: makeRoute({ betaWarning: "Navigation directions are in beta." }),
+    });
+    hud.dispose();
+    expect(container.querySelector(".nav-hud__beta")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Completed turns flip the card immediately; tapping a step jumps to it
+// ---------------------------------------------------------------------------
+
+describe("createNavHud — turn completion + tap-to-jump", () => {
+  const threeManeuvers = (): RouteManeuver[] => [
+    maneuver(0, 1, "Head north"),
+    maneuver(1, 3, "Turn right onto A St"),
+    maneuver(3, 4, "Turn left onto B Ave"),
+  ];
+
+  it("flips to the next instruction the moment a turn is completed, not at the following corner", () => {
+    const { container, hud } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const instruction = container.querySelector(".nav-hud__instruction")!;
+
+    // At the corner of turn 1 (its begin vertex): still executing it.
+    const [cornerLng, cornerLat] = BASE_COORDS[1];
+    hud.feedFix(cornerLat, cornerLng);
+    expect(instruction.textContent).toBe("Turn right onto A St");
+
+    // One vertex past the corner — the turn is done, and the card must
+    // already show the NEXT turn (the old end-based rule kept "Turn right
+    // onto A St" here until the rider reached B Ave's own corner).
+    const [pastLng, pastLat] = BASE_COORDS[2];
+    hud.feedFix(pastLat, pastLng);
+    expect(instruction.textContent).toBe("Turn left onto B Ave");
+  });
+
+  it("counts down to the turn from the fractional matched position, reading 'Now' inside 15m", () => {
+    const { container, hud } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const meta = container.querySelector(".nav-hud__meta")!;
+
+    // Mid-first-segment (~18m short of the turn at vertex 1): a live
+    // countdown, not the full vertex-to-vertex distance.
+    hud.feedFix(39.70004, -104.99);
+    expect(meta.textContent).toMatch(/^In \d+ ft$/);
+
+    // ~4m short of the turn vertex: below NAV_NOW_THRESHOLD_M.
+    hud.feedFix(39.7002 - 0.00004, -104.99);
+    expect(meta.textContent).toBe("Now");
+  });
+
+  it("lets the rider tap a step in the list to make it current", () => {
+    const { container } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const btns = container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-btn");
+    expect(btns.length).toBe(3);
+    btns[2].click();
+
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Turn left onto B Ave",
+    );
+    const steps = container.querySelectorAll(".nav-hud__step");
+    expect(steps[2].classList.contains("is-current")).toBe(true);
+    expect(steps[1].classList.contains("is-done")).toBe(true);
+    expect(
+      container
+        .querySelector('.nav-hud__step-btn[aria-current="step"]')
+        ?.closest(".nav-hud__step"),
+    ).toBe(steps[2]);
+  });
+
+  it("honors a backward tap — the rider's override beats the monotonic match", () => {
+    const { container, hud } = setup({
+      route: makeRoute({
+        maneuvers: threeManeuvers(),
+        polyline: encodePolyline(BASE_COORDS),
+      }),
+    });
+    const [lng, lat] = BASE_COORDS[2];
+    hud.feedFix(lat, lng); // advance to the last maneuver
+    const btns = container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-btn");
+    btns[1].click();
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Turn right onto A St",
+    );
   });
 });

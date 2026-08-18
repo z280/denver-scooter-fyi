@@ -49,6 +49,7 @@ import {
 import { distanceMeters, type Locate, type LngLat } from "./locate.ts";
 import type { Devices, ModelKey } from "./devices.ts";
 import { modelKeyOf } from "./devices.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import { GbfsPlates } from "./gbfs.ts";
 import {
   VEHICLE_IDENTIFIER_RE,
@@ -233,7 +234,9 @@ export type Selection =
   | null;
 
 function titleFor(c: Candidate): string {
-  const name = c.model ? c.model[0].toUpperCase() + c.model.slice(1) : "the scooter";
+  // MODEL_NAMES, never a capitalized key: the "trike" key's rider-facing
+  // name is "Rover" (model-catalog.ts).
+  const name = c.model ? MODEL_NAMES[c.model] : "the scooter";
   return c.plate ? `${name} (plate ${c.plate})` : name;
 }
 
@@ -348,7 +351,19 @@ export function wireRideScreenSelect(deps: RideScreenSelectDeps): () => void {
       // if that dispatch somehow didn't land, the rider gets this screen
       // rather than a flow that reaches Screen 6 with nothing selected and
       // silently runs off the end.
-      return ctx.entry.preflight !== undefined && doc?.device != null;
+      // Nothing to select. "My Scooter/Bike" is one of this screen's own
+      // options, and `own_device` IS that answer — a rider who told the home
+      // bar they had their own wheels has already given it. Asking again,
+      // with a list of six Cosmos they cannot ride, is the friction the home
+      // bar exists to remove.
+      if (doc?.options.own_device) return true;
+      // A device the rider has actually committed to: the popup's survey, or
+      // the walk flow, which routed them to it on foot. Gated on the device
+      // being on the doc too: if that dispatch didn't land, the rider gets
+      // this screen rather than a flow that reaches Screen 6 with nothing
+      // selected and silently runs off the end.
+      const committed = ctx.entry.preflight !== undefined || ctx.entry.deviceConfirmed === true;
+      return committed && doc?.device != null;
     },
     factory: (ctx) => buildSelectScreen(ctx, resolved),
   });
@@ -382,7 +397,19 @@ function buildSelectScreen(
   // "from the consumer's screen-teardown (ctx.onCleanup)" so an open ℹ modal
   // closes with the screen; also disposed before every rebuild below, since
   // each `buildOptionsPanel()` call replaces the previous panel's DOM.
+  //
+  // REBUILDS ARE MEMOIZED on the panel's actual inputs (`optionsPanelKey`).
+  // render() runs on every GPS fix (~1/sec with the wizard up) and every
+  // devices-feed refresh, and an unconditional dispose-and-rebuild here is
+  // how the ℹ info modals used to close BY THEMSELVES moments after
+  // opening: the fix-driven rebuild disposed the panel, and the panel's
+  // destroy() dutifully closed its open modal. Nothing the panel renders
+  // depends on the fix or the feed — only on whether [NEXT >>] should be
+  // enabled and whether [Usuals] exists — so a rebuild outside those two
+  // changing is pure destruction: it also stole focus from any panel
+  // control the rider was touching.
   let optionsPanelHandle: { dispose?(): void } | undefined;
+  let optionsPanelKey: string | null = null;
 
   // ---------------- confirm strip ----------------
   // Plate-only now — no Battery % field (see the module's FRICTION-REDUCTION
@@ -585,6 +612,9 @@ function buildSelectScreen(
     renderList();
     syncSessionDevice();
     buildOptionsPanel();
+    // The header's own Next mirrors the options panel's [NEXT >>]: enabled
+    // once a real device or "My Scooter/Bike" is picked.
+    ctx.setNextEnabled(nextEnabled());
     // The plate field only ever makes sense for manual entry: a list/auto-
     // selected candidate's plate already came from the GBFS match (nothing
     // to confirm), and "My own Device" has no plate at all in the session
@@ -596,6 +626,18 @@ function buildSelectScreen(
 
   function renderList(): void {
     listEl.replaceChildren();
+
+    // "My Scooter/Bike" ALWAYS renders first — riding your own (non-Veo)
+    // device is a first-class choice, not an afterthought buried under the
+    // fleet list.
+    const ownLi = el("li");
+    const ownRow = el("button", "ride-option");
+    ownRow.type = "button";
+    ownRow.classList.toggle("is-selected", selection?.kind === "own");
+    ownRow.append(el("div", "ride-option__title", "My Scooter/Bike"));
+    ownRow.addEventListener("click", selectOwn);
+    ownLi.append(ownRow);
+    listEl.append(ownLi);
 
     if (fix === null) {
       listEl.append(
@@ -631,7 +673,7 @@ function buildSelectScreen(
         title.append(glyph);
       }
       title.append(
-        el("strong", undefined, c.model ? c.model[0].toUpperCase() + c.model.slice(1) : "Scooter"),
+        el("strong", undefined, c.model ? MODEL_NAMES[c.model] : "Scooter"),
       );
       if (c.plate) title.append(el("span", "ride-option__desc", `Plate ${c.plate}`));
       const meta = el(
@@ -661,18 +703,23 @@ function buildSelectScreen(
     manualRow.addEventListener("click", selectManual);
     manualLi.append(manualRow);
     listEl.append(manualLi);
-
-    const ownLi = el("li");
-    const ownRow = el("button", "ride-option");
-    ownRow.type = "button";
-    ownRow.classList.toggle("is-selected", selection?.kind === "own");
-    ownRow.append(el("div", "ride-option__title", "My own Device"));
-    ownRow.addEventListener("click", selectOwn);
-    ownLi.append(ownRow);
-    listEl.append(ownLi);
   }
 
   function buildOptionsPanel(): void {
+    // See the `optionsPanelKey` note above: skip the rebuild when no
+    // input the panel renders from has changed, so a GPS fix or feed
+    // refresh can never close an open ℹ modal or steal focus mid-toggle.
+    // doc.private IS such an input: the production builder captures it
+    // into the panel's cascade context at build time, and switching
+    // between "My Scooter/Bike" and a real Veo device flips it while
+    // canProceed stays true — a key without it left the panel applying
+    // cascades against a stale privacy state (forcing trophy options
+    // off on a tracked ride, or leaving them on for a private one).
+    const key = `${nextEnabled()}|${usualsAvailable}|${
+      deps.session.current()?.private ?? false
+    }`;
+    if (optionsPanelKey === key) return;
+    optionsPanelKey = key;
     optionsPanelHandle?.dispose?.();
     optionsPanelHandle = undefined;
     optionsPanelEl.replaceChildren();
@@ -818,6 +865,9 @@ function buildUsualsScreen(
 ): RideScreen {
   let destroyed = false;
   const root = el("div", "ride-wizard__body ride-screen-usuals");
+  // Nothing on this detour is required — the header Next simply returns to
+  // Screen 2 (a detour's `next()` is `back()`), same as Cancel.
+  ctx.setNextEnabled(true);
   const cancelBtn = el("button", "login-btn login-btn--secondary", "Cancel");
   cancelBtn.type = "button";
   cancelBtn.addEventListener("click", () => ctx.back());

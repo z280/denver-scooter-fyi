@@ -842,3 +842,81 @@ describe("wireRideModal", () => {
     expect(isRideModalEnabled()).toBe(false);
   });
 });
+
+// ---------- header Next ----------
+
+describe("header Next button", () => {
+  function headerNext(): HTMLButtonElement {
+    const btn = rideModalRoot()?.querySelector<HTMLButtonElement>(
+      ".ride-modal__next",
+    );
+    if (!btn) throw new Error("header next button not found");
+    return btn;
+  }
+
+  it("renders on every screen, to the left of the ✕, disabled by default", () => {
+    const s1 = fakeScreen("1");
+    registerRideScreen("1", s1.factory);
+    openRideModal();
+    const btn = headerNext();
+    expect(btn.disabled).toBe(true);
+    // Sits immediately before the close button in the header's end group.
+    expect(btn.nextElementSibling?.classList.contains("ride-modal__close")).toBe(
+      true,
+    );
+  });
+
+  it("setNextEnabled(true) lights it up, and a tap advances the flow", () => {
+    const s1 = fakeScreen("1");
+    const s2 = fakeScreen("2");
+    registerRideScreen("1", s1.factory);
+    registerRideScreen("2", s2.factory);
+    openRideModal();
+    s1.ctx()!.setNextEnabled(true);
+    expect(headerNext().disabled).toBe(false);
+    headerNext().click();
+    expect(currentRideScreen()).toBe("2");
+  });
+
+  it("resets to disabled on every screen change — information missing until the new screen says otherwise", () => {
+    const s1 = fakeScreen("1");
+    const s2 = fakeScreen("2");
+    registerRideScreen("1", s1.factory);
+    registerRideScreen("2", s2.factory);
+    openRideModal();
+    s1.ctx()!.setNextEnabled(true);
+    headerNext().click();
+    expect(currentRideScreen()).toBe("2");
+    expect(headerNext().disabled).toBe(true);
+  });
+
+  it("runs the screen's own onHeaderNext when it declares one", () => {
+    const onHeaderNext = vi.fn();
+    let ctx: RideScreenContext | null = null;
+    registerRideScreen("1", (c) => {
+      ctx = c;
+      const primary = document.createElement("div");
+      return { title: "One", primary, onHeaderNext };
+    });
+    registerRideScreen("2", fakeScreen("2").factory);
+    openRideModal();
+    ctx!.setNextEnabled(true);
+    headerNext().click();
+    expect(onHeaderNext).toHaveBeenCalledTimes(1);
+    // The override owns advancing; the shell must not also call next().
+    expect(currentRideScreen()).toBe("1");
+  });
+
+  it("a stale context cannot flip the button after its screen was replaced", () => {
+    const s1 = fakeScreen("1");
+    const s2 = fakeScreen("2");
+    registerRideScreen("1", s1.factory);
+    registerRideScreen("2", s2.factory);
+    openRideModal();
+    const stale = s1.ctx()!;
+    stale.setNextEnabled(true);
+    headerNext().click(); // -> screen 2, button reset to disabled
+    stale.setNextEnabled(true);
+    expect(headerNext().disabled).toBe(true);
+  });
+});

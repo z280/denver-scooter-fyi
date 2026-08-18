@@ -29,36 +29,24 @@
 // deliberately longer hold to trigger by accident. The two constants living
 // in different files at different values is the point, not an oversight.
 //
-// ── Maneuver display: the UPCOMING turn, not the one already made ───────
-// A Valhalla maneuver's instruction ("Turn right onto 20th St") is executed
-// AT its `begin_shape_index` — the maneuver's own leg is the stretch AFTER
-// that turn. Guidance therefore always shows the NEXT maneuver ahead of the
-// rider's along-route position (the first one whose `begin_shape_index` is
-// still in front), with a live "In 400 ft" countdown to that turn point;
-// the instant the turn vertex is crossed, the card flips to the step after
-// it. (An earlier revision showed the maneuver whose LEG the rider was on —
-// i.e. the turn they had already completed — for the whole block until the
-// next one, which read as "navigation is a step behind". The depart
-// maneuver is the deliberate flip side: its instruction executes at index
-// 0, so from the first fix the card already names the first real turn.)
-// The final (arrive) maneuver has nothing after it and stays up once
-// reached.
-//
-// ── Along-route matching: MONOTONIC fractional position ────────────────
+// ── Maneuver advance: MONOTONIC fractional along-route position ────────
 // The route's shape (decoded from the session doc's `route.polyline`) is
 // matched against each GPS fix by projecting the fix onto the shape's
 // SEGMENTS — not snapping to its vertices — yielding a fractional position
-// (segment index + 0..1 offset along it). Vertex snapping stalls on sparse
-// polylines (a rider mid-way down a 160 m segment reads as "still at the
-// turn" until past its midpoint), which is exactly what made turn
-// completion feel late and the countdown jumpy. The search is constrained
-// to a forward-looking WINDOW starting at the last matched segment — never
+// (segment index + 0..1 offset along it, `RoutePosition`). Vertex snapping
+// stalls on sparse polylines (a rider mid-way down a 160 m segment reads
+// as "still at the turn" until past its midpoint), which made turn
+// completion late and the countdown jumpy. The search is constrained to a
+// forward-looking WINDOW starting at the last matched segment — never
 // regressing even when a later fix is geometrically closer to an earlier
 // segment. Plain nearest matching breaks on out-and-back routes (the
 // return leg runs back past geometry the outbound leg already used) and on
-// a GPS jump landing across a switchback. A separate, UNCONSTRAINED
-// measurement (searched over the whole shape, no window) still runs on
-// every fix and feeds the off-route test below (`distanceToLineString`).
+// a GPS jump landing across a switchback (a noisy fix can land closer, as
+// the crow flies, to an already-passed leg than to the true next one).
+// A separate, UNCONSTRAINED measurement (searched over the whole shape, no
+// window) still runs on every fix and feeds the off-route test below
+// (`distanceToLineString`) — same point-to-segment math, no monotonic
+// constraint, because a wandering rider must still read as off-route.
 //
 // ── Off-route re-route ──────────────────────────────────────────────────
 // >50m from the route line, sustained for 10s, triggers a re-route: a fresh
@@ -189,6 +177,50 @@ function projectOntoSegmentXY(
   return { t, distance: Math.hypot(p[0] - projX, p[1] - projY) };
 }
 
+/** Minimum perpendicular (point-to-LINE, not point-to-vertex) distance,
+ *  meters, from `fix` to any segment of `coords`. Review fix: vertex-only
+ *  nearest-point matching can badly over-report distance on a sparse
+ *  polyline — a rider at the exact midpoint of a 160m straight segment is
+ *  ~80m from either endpoint despite being 0m from the route LINE, which
+ *  would wrongly declare them off-route and trigger a reroute every
+ *  cooldown. GeoJSON LineString semantics never guarantee vertices dense
+ *  enough for vertex distance to stand in for line distance, so the
+ *  off-route sample below measures the line directly. Uses a local
+ *  equirectangular (flat-earth) projection centered on `fix` — accurate to
+ *  well under a meter of error at city scale over segment lengths this
+ *  short, ample margin for a 50m threshold. Unlike `matchAlongRoute` this
+ *  search is UNWINDOWED (the whole shape) and is used ONLY for the
+ *  off-route sample, per the frontend plan. An empty `coords` returns
+ *  `Infinity` — nothing to measure against; a single-point `coords` falls
+ *  back to point distance. */
+export function distanceToLineString(
+  coords: readonly LngLatCoord[],
+  fix: ShapeFix,
+): number {
+  if (coords.length === 0) return Infinity;
+  if (coords.length === 1) {
+    const [lng, lat] = coords[0];
+    return distanceMeters({ lat, lng }, { lat: fix.lat, lng: fix.lng });
+  }
+  const latRad = (fix.lat * Math.PI) / 180;
+  const mPerDegLat = 111_320;
+  const mPerDegLng = 111_320 * Math.cos(latRad);
+  const toXY = (lng: number, lat: number): [number, number] => [
+    (lng - fix.lng) * mPerDegLng,
+    (lat - fix.lat) * mPerDegLat,
+  ];
+  const fixXY: [number, number] = [0, 0];
+
+  let best = Infinity;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const [lng1, lat1] = coords[i];
+    const [lng2, lat2] = coords[i + 1];
+    const d = projectOntoSegmentXY(fixXY, toXY(lng1, lat1), toXY(lng2, lat2)).distance;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 /** One step of MONOTONIC along-route matching: project the fix onto every
  *  segment in the forward window `[lastPos.segIndex, lastPos.segIndex +
  *  windowSegments]` and take the closest (ties go to the EARLIEST segment,
@@ -242,71 +274,35 @@ export function matchAlongRoute(
   return best;
 }
 
-/** Minimum perpendicular (point-to-LINE, not point-to-vertex) distance,
- *  meters, from `fix` to any segment of `coords`. Review fix: vertex-only
- *  nearest-point matching can badly over-report distance on a sparse
- *  polyline — a rider at the exact midpoint of a 160m straight segment is
- *  ~80m from either endpoint despite being 0m from the route LINE, which
- *  would wrongly declare them off-route and trigger a reroute every
- *  cooldown. GeoJSON LineString semantics never guarantee vertices dense
- *  enough for vertex distance to stand in for line distance, so the
- *  off-route sample below measures the line directly. Uses a local
- *  equirectangular (flat-earth) projection centered on `fix` — accurate to
- *  well under a meter of error at city scale over segment lengths this
- *  short, ample margin for a 50m threshold. Unlike `matchAlongRoute` this
- *  search is UNWINDOWED (the whole shape) and is used ONLY for the
- *  off-route sample, per the frontend plan. An empty `coords` returns
- *  `Infinity` — nothing to measure against; a single-point `coords` falls
- *  back to point distance. */
-export function distanceToLineString(
-  coords: readonly LngLatCoord[],
-  fix: ShapeFix,
-): number {
-  if (coords.length === 0) return Infinity;
-  if (coords.length === 1) {
-    const [lng, lat] = coords[0];
-    return distanceMeters({ lat, lng }, { lat: fix.lat, lng: fix.lng });
-  }
-  const latRad = (fix.lat * Math.PI) / 180;
-  const mPerDegLat = 111_320;
-  const mPerDegLng = 111_320 * Math.cos(latRad);
-  const toXY = (lng: number, lat: number): [number, number] => [
-    (lng - fix.lng) * mPerDegLng,
-    (lat - fix.lat) * mPerDegLat,
-  ];
-  const fixXY: [number, number] = [0, 0];
-
-  let best = Infinity;
-  for (let i = 0; i < coords.length - 1; i++) {
-    const [lng1, lat1] = coords[i];
-    const [lng2, lat2] = coords[i + 1];
-    const d = projectOntoSegmentXY(fixXY, toXY(lng1, lat1), toXY(lng2, lat2)).distance;
-    if (d < best) best = d;
-  }
-  return best;
-}
-
-/** The maneuver the rider should be TOLD ABOUT next: the first one whose
- *  `begin_shape_index` (its turn point) is still AHEAD of `progress`, or
- *  the final (arrive) maneuver once nothing is. Feed the previous call's
- *  result back as `fromIndex` so this is monotonic across a whole ride even
- *  if progress ever mis-reported (it shouldn't — `matchAlongRoute` is
- *  itself monotonic). Note the deliberate semantics at the boundary:
- *  `begin_shape_index <= progress` means the turn vertex has been crossed —
- *  the turn is COMPLETE and the card flips to the step after it. The
- *  depart maneuver (begin index 0) is "complete" from the first instant,
- *  so guidance opens with the first real turn rather than restating the
- *  street the rider is already on. */
-export function upcomingManeuverIndex(
+/** The UPCOMING maneuver for the matched shape progress — the turn the
+ *  rider is heading toward, advancing forward only from `fromIndex` (the
+ *  previous call's result — feed it back in so this is monotonic across a
+ *  whole ride, exactly like `matchAlongRoute`). `matchedShapeIndex` may be
+ *  fractional (`routeProgress`): progress 2.5 is strictly past a turn at
+ *  vertex 2.
+ *
+ *  A maneuver's instruction is executed AT its `begin_shape_index` (its
+ *  span is the road you are on AFTER the turn, and Valhalla makes
+ *  `end_i === begin_{i+1}`), so a turn is COMPLETED the moment the match
+ *  moves strictly past its begin vertex — and the card must flip to the
+ *  next instruction right there. The original rule here advanced on
+ *  `matched >= end_shape_index`, which is the NEXT turn's location: after
+ *  completing a turn the HUD kept showing it for the entire block and only
+ *  "picked it up" on arriving at the following corner.
+ *
+ *  Zero-length legs (`end <= begin`, which the API is not expected to send)
+ *  fall out naturally: a chain of equal begin vertices is stepped through
+ *  in one call without wedging. */
+export function currentManeuverIndex(
   maneuvers: readonly RouteManeuver[],
-  progress: number,
+  matchedShapeIndex: number,
   fromIndex: number = 0,
 ): number {
   if (maneuvers.length === 0) return 0;
   let idx = Math.max(0, Math.min(fromIndex, maneuvers.length - 1));
   while (
     idx < maneuvers.length - 1 &&
-    maneuvers[idx].begin_shape_index <= progress
+    matchedShapeIndex > maneuvers[idx].begin_shape_index
   ) {
     idx++;
   }
@@ -617,15 +613,8 @@ export function createNavHud(
   let coords: LngLatCoord[] = decodePolyline(opts.route.polyline);
   let maneuvers: RouteManeuver[] = opts.route.maneuvers.slice();
   let profile = opts.route.profile;
-  // The API's rider-facing `beta_warning`, carried on the session doc's route
-  // from Screen 4's `/route` response. The contract: render it wherever
-  // directions are shown — here, that is BOTH the center card (a strip under
-  // it, visible for the whole guided ride) and the step-by-step panel. A
-  // re-route's fresh response re-decides it: still present → keep showing it
-  // (possibly re-worded server-side); absent → directions left beta, drop it.
-  let betaWarning: string | null = opts.route.betaWarning ?? null;
   let pos: RoutePosition = { ...INITIAL_ROUTE_POSITION };
-  let upcomingIdx = upcomingManeuverIndex(maneuvers, routeProgress(pos), 0);
+  let currentManeuverIdx = 0;
   let offRoute: OffRouteState = { ...INITIAL_OFF_ROUTE_STATE };
   let panelSide: "left" | "right" | null = null;
   let destroyed = false;
@@ -675,17 +664,7 @@ export function createNavHud(
   );
   rightBtn.appendChild(svgArrowIcon("right"));
 
-  // The card and the beta strip stack in a column between the two arrows —
-  // the strip rides directly under the instruction it disclaims.
-  const betaEl = document.createElement("p");
-  betaEl.className = "nav-hud__beta";
-  betaEl.setAttribute("role", "note");
-  betaEl.hidden = true;
-  const center = document.createElement("div");
-  center.className = "nav-hud__center";
-  center.append(card, betaEl);
-
-  bar.append(leftBtn, center, rightBtn);
+  bar.append(leftBtn, card, rightBtn);
 
   const panel = document.createElement("div");
   panel.className = "nav-hud__panel";
@@ -704,17 +683,24 @@ export function createNavHud(
   panelClose.textContent = "×";
   panelHead.append(panelTitle, panelClose);
 
-  const panelBetaEl = document.createElement("p");
-  panelBetaEl.className = "nav-hud__panel-beta";
-  panelBetaEl.setAttribute("role", "note");
-  panelBetaEl.hidden = true;
-
   const stepsList = document.createElement("ol");
   stepsList.className = "nav-hud__steps";
 
-  panel.append(panelHead, panelBetaEl, stepsList);
+  panel.append(panelHead, stepsList);
 
-  container.append(bar, panel);
+  // The API's directions-are-beta disclaimer, kept on screen for the whole
+  // guided ride (the /route contract: show it wherever directions are
+  // rendered). Text comes off the route the rider chose on Screen 4 —
+  // never hardcoded, so it vanishes on its own when directions leave beta
+  // and the API stops sending it.
+  const betaEl = document.createElement("div");
+  betaEl.className = "nav-hud__beta";
+  if (opts.route.betaWarning) {
+    betaEl.textContent = `⚠️ ${opts.route.betaWarning}`;
+    container.append(bar, betaEl, panel);
+  } else {
+    container.append(bar, panel);
+  }
 
   // ---------------- panel + dismiss state machine ----------------
 
@@ -745,6 +731,7 @@ export function createNavHud(
     rerouteAbort?.abort();
     for (const fn of cleanupFns) fn();
     bar.remove();
+    betaEl.remove();
     panel.remove();
     container.classList.remove("nav-hud");
     if (fireDismiss) {
@@ -800,11 +787,7 @@ export function createNavHud(
   // ---------------- rendering ----------------
 
   function renderCard(): void {
-    // The card names the UPCOMING maneuver — the turn the rider is riding
-    // TOWARD — with a countdown to its turn point. See the module header:
-    // showing the maneuver whose leg the rider was on meant showing the
-    // turn they had already made.
-    const maneuver = maneuvers[upcomingIdx] ?? null;
+    const maneuver = maneuvers[currentManeuverIdx] ?? null;
     if (!maneuver) {
       instructionEl.textContent = "Follow the route";
       metaEl.textContent = "";
@@ -812,9 +795,14 @@ export function createNavHud(
       return;
     }
     instructionEl.textContent = maneuver.instruction || "Continue";
-    const toTurnM = distanceAlongRoute(coords, pos, maneuver.begin_shape_index);
+    // Distance to where the maneuver is EXECUTED (its begin vertex), not to
+    // the end of the road it puts you on — the card shows the upcoming
+    // turn, and the number that matters is how far away that turn is.
+    // Measured from the FRACTIONAL matched position, so the countdown
+    // shrinks smoothly between sparse shape points instead of stepping.
+    const remaining = distanceAlongRoute(coords, pos, maneuver.begin_shape_index);
     const distLabel =
-      toTurnM < NAV_NOW_THRESHOLD_M ? "Now" : `In ${formatDistanceShort(toTurnM)}`;
+      remaining < NAV_NOW_THRESHOLD_M ? "Now" : `In ${formatDistanceShort(remaining)}`;
     const streets = maneuver.street_names.join(" / ");
     metaEl.textContent = [distLabel, streets]
       .filter((s) => s !== "")
@@ -827,32 +815,68 @@ export function createNavHud(
     maneuvers.forEach((m, i) => {
       const li = document.createElement("li");
       li.className = "nav-hud__step";
-      if (i === upcomingIdx) li.classList.add("is-current");
-      if (i < upcomingIdx) li.classList.add("is-done");
+      if (i === currentManeuverIdx) li.classList.add("is-current");
+      if (i < currentManeuverIdx) li.classList.add("is-done");
+      // Each step is a real button: tapping it makes that maneuver the
+      // current one — the rider's manual override for when GPS matching
+      // lags the real ride (tunnels, urban canyons, a wedged match) or
+      // when they want to peek ahead. See jumpToStep for what it resets.
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "nav-hud__step-btn";
+      btn.dataset.step = String(i);
+      if (i === currentManeuverIdx) btn.setAttribute("aria-current", "step");
       const text = document.createElement("span");
       text.className = "nav-hud__step-text";
       text.textContent = m.instruction || "Continue";
-      li.appendChild(text);
+      btn.appendChild(text);
       if (m.street_names.length > 0) {
         const streets = document.createElement("span");
         streets.className = "nav-hud__step-streets";
         streets.textContent = m.street_names.join(" / ");
-        li.appendChild(streets);
+        btn.appendChild(streets);
       }
+      li.appendChild(btn);
       stepsList.appendChild(li);
     });
   }
 
-  function renderBeta(): void {
-    betaEl.textContent = betaWarning ?? "";
-    betaEl.hidden = betaWarning === null;
-    panelBetaEl.textContent = betaWarning ?? "";
-    panelBetaEl.hidden = betaWarning === null;
+  /** Make step `i` the current maneuver, at the rider's request. Also moves
+   *  the matched position to that maneuver's begin vertex so the remaining
+   *  distance and the monotonic matcher both resume from the step the rider
+   *  says they are on — a forward jump un-wedges a lagging match, and a
+   *  backward jump is honored too (the next fixes simply re-advance if GPS
+   *  disagrees, because the forward window reopens from the earlier
+   *  vertex). */
+  function jumpToStep(i: number): void {
+    if (destroyed || maneuvers.length === 0) return;
+    const idx = Math.max(0, Math.min(i, maneuvers.length - 1));
+    currentManeuverIdx = idx;
+    pos = {
+      segIndex: Math.max(0, maneuvers[idx].begin_shape_index),
+      t: 0,
+      distanceM: Infinity,
+    };
+    renderCard();
+    renderPanel();
   }
+
+  // One delegated listener rather than one per row: renderPanel rebuilds
+  // the rows on every fix (replaceChildren), and per-row listeners would
+  // have to be re-attached each time.
+  const onStepClick = (e: Event): void => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".nav-hud__step-btn",
+    );
+    if (!btn || !stepsList.contains(btn)) return;
+    const i = Number(btn.dataset.step);
+    if (Number.isInteger(i)) jumpToStep(i);
+  };
+  stepsList.addEventListener("click", onStepClick);
+  cleanupFns.push(() => stepsList.removeEventListener("click", onStepClick));
 
   renderCard();
   renderPanel();
-  renderBeta();
 
   // ---------------- off-route re-route ----------------
 
@@ -876,18 +900,13 @@ export function createNavHud(
         (p) => [p[0], p[1]] as LngLatCoord,
       );
       maneuvers = resp.properties.maneuvers ?? [];
-      // Re-decided from the FRESH response, not carried over: an absent
-      // field means directions left beta mid-ride, and the warning must not
-      // outlive it (the API contract says never hardcode/persist the text).
-      betaWarning = resp.properties.beta_warning ?? null;
       pos = { ...INITIAL_ROUTE_POSITION };
-      upcomingIdx = upcomingManeuverIndex(maneuvers, routeProgress(pos), 0);
+      currentManeuverIdx = 0;
       // The excursion is over — a brand new shape starting from "here" —
       // but keep `lastRerouteAtMs` so the cooldown still applies.
       offRoute = { sinceMs: null, lastRerouteAtMs: offRoute.lastRerouteAtMs };
       renderCard();
       renderPanel();
-      renderBeta();
       opts.onRouteUpdate?.({
         coordinates: coords.slice(),
         maneuvers: maneuvers.slice(),
@@ -917,10 +936,10 @@ export function createNavHud(
         pos,
         NAV_MATCH_FORWARD_WINDOW_POINTS,
       );
-      upcomingIdx = upcomingManeuverIndex(
+      currentManeuverIdx = currentManeuverIndex(
         maneuvers,
         routeProgress(pos),
-        upcomingIdx,
+        currentManeuverIdx,
       );
 
       // The off-route sample measures distance to the route LINE over the

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 //
-// Screen 6 — "Start in Veo". Covers: the skip predicate's device+cost_hud
+// Screen 6 — "Open in Veo". Covers: the skip predicate's device+cost_hud
 // matrix, that the Android/Apple buttons carry the literal SAME Adjust link,
 // that the default countdown can never silently drift from ride-hud.ts's own
 // default, the countdown → POST /tracked-rides → `rideStarted` → handoff
@@ -20,6 +20,7 @@ import {
   openRideModal,
   resetRideModal,
   rideModalRoot,
+  wireRideModal,
 } from "./ride-modal.ts";
 import {
   createRideSessionStore,
@@ -260,7 +261,7 @@ describe("START_COUNTDOWN_S", () => {
 // The Adjust link — literal equality, both buttons.
 // ---------------------------------------------------------------------------
 
-describe("Start in Veo buttons", () => {
+describe("Open in Veo buttons", () => {
   it("Android and Apple resolve to the literal SAME Adjust link", () => {
     const session = sessionAt(DEVICE, true);
     wire(session);
@@ -377,10 +378,10 @@ describe('"I already started"', () => {
 });
 
 // ---------------------------------------------------------------------------
-// "Start in Veo" — the timed countdown path.
+// "Open in Veo" — the timed countdown path.
 // ---------------------------------------------------------------------------
 
-describe("Start in Veo — timed countdown", () => {
+describe("Open in Veo — timed countdown", () => {
   it("ticks down from START_COUNTDOWN_S, then starts the ride and hands off", async () => {
     vi.useFakeTimers();
     const session = sessionAt(DEVICE, true);
@@ -593,7 +594,81 @@ describe("guest / private rides — never call the authed start endpoint", () =>
 // reach `riding` and hand off, exactly like a normal Veo-device ride.
 // ---------------------------------------------------------------------------
 
-describe("own device — Screen 6 is now universal", () => {
+// ---------------------------------------------------------------------------
+// Integration regression — the 2026-08 field failure. main.ts persists each
+// screen onto the session doc via `onScreenChange` AFTER the screen factory
+// has already run, so at auto-start time the doc still reads the PREVIOUS
+// screen. Pre-fix, the synchronous own-device auto-start dispatched
+// `rideStarted` from `wizard:2`, the reducer rejected it, and the flow ran
+// off the end anyway: wizard closed, no ride, no HUD. These tests wire the
+// same onScreenChange main.ts does instead of pre-seeding the doc at "6".
+// ---------------------------------------------------------------------------
+
+describe("shell persists the screen only after the factory runs", () => {
+  function mainLikeWiring(store: RideSessionStore): void {
+    wireRideModal({
+      onScreenChange: (id) => {
+        store.dispatch({ type: "goto", screen: id });
+      },
+    });
+  }
+
+  it("own-device auto-start still reaches riding from a doc reading wizard:2", async () => {
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: OWN_DEVICE });
+    mainLikeWiring(store);
+    const onPrivateRideStarted = vi.fn();
+    wire(store, { onPrivateRideStarted });
+    openRideModal({ fastForwardTo: "6" });
+
+    await vi.waitFor(() => expect(store.current()?.state).toBe("riding"));
+    expect(store.current()?.rideId).toBeNull();
+    expect(store.current()?.private).toBe(true);
+    expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
+    expect(rideModalRoot()).toBeNull();
+  });
+
+  it("entry.autoStart on a private guest ride reaches riding from wizard:2 too", async () => {
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: DEVICE, private: true });
+    mainLikeWiring(store);
+    const startTrackedRide = vi.fn();
+    wire(store, { startTrackedRide });
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+
+    await vi.waitFor(() => expect(store.current()?.state).toBe("riding"));
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(store.current()?.private).toBe(true);
+  });
+
+  it("never closes the wizard on a rejected rideStarted — shows an error instead", async () => {
+    // Force a rejection the self-heal cannot fix: a doc pinned in countdown
+    // with a rideId (goto is illegal there, and rideStarted from countdown
+    // IS legal — so instead pin the doc by replacing dispatch with one that
+    // rejects rideStarted). Simplest honest probe: a store whose doc is at
+    // wizard:2 with a dispatch wrapper that drops goto, so the self-heal
+    // silently fails and rideStarted stays illegal.
+    const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
+    store.dispatch({ type: "open", options: baseOptions(true), screen: "2" });
+    store.dispatch({ type: "setDevice", device: OWN_DEVICE });
+    const gotoLess: typeof store = {
+      ...store,
+      dispatch: (a) => (a.type === "goto" ? null : store.dispatch(a)),
+    };
+    wire(gotoLess as never);
+    openRideModal({ fastForwardTo: "6" });
+
+    await vi.waitFor(() =>
+      expect(root().textContent).toContain("Couldn't start the ride"),
+    );
+    expect(store.current()?.state).toBe("wizard");
+    expect(rideModalRoot()).not.toBeNull();
+  });
+});
+
+describe('own device ("My Scooter/Bike") — auto-starts, no Veo page', () => {
   function ownDeviceSession(): RideSessionStore {
     const store = createRideSessionStore({ storage: memoryRideSessionStorage() });
     store.dispatch({ type: "open", options: baseOptions(true), screen: "6" });
@@ -601,16 +676,7 @@ describe("own device — Screen 6 is now universal", () => {
     return store;
   }
 
-  it("renders a simplified 'Start ride mode' affordance — no Veo links, no countdown", () => {
-    const session = ownDeviceSession();
-    wire(session);
-    openRideModal({ fastForwardTo: "6" });
-    expect(root().textContent).toContain("Your own device");
-    expect(anchors().length).toBe(0);
-    expect(() => buttonWithText("Start ride mode")).not.toThrow();
-  });
-
-  it("Start ride mode reaches riding (private, no server call) and hands off", async () => {
+  it("reaches riding on mount (private, no server call) and hands off, untouched", async () => {
     const session = ownDeviceSession();
     const startTrackedRide = vi.fn();
     const onRideStarted = vi.fn();
@@ -622,8 +688,6 @@ describe("own device — Screen 6 is now universal", () => {
       now: () => 1_700_000_000_000,
     });
     openRideModal({ fastForwardTo: "6" });
-
-    buttonWithText("Start ride mode").click();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -636,9 +700,9 @@ describe("own device — Screen 6 is now universal", () => {
     expect(doc?.private).toBe(true);
     expect(doc?.startedAtMs).toBe(1_700_000_000_000);
 
-    // Bug #2: `onPrivateRideStarted` must fire with the SAME trackKeyId the
-    // doc already carries, so the caller can attach a local recorder under
-    // that exact id.
+    // `onPrivateRideStarted` must fire with the SAME trackKeyId the doc
+    // already carries, so the caller can attach a local recorder under that
+    // exact id.
     expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
     expect(onPrivateRideStarted).toHaveBeenCalledWith(doc?.trackKeyId);
     expect(doc?.trackKeyId).toMatch(/^private-[0-9a-f]{12}$/);
@@ -647,14 +711,51 @@ describe("own device — Screen 6 is now universal", () => {
     expect(currentRideScreen()).toBeNull();
   });
 
-  it("GPS gating still applies: the Start button is disabled with no fix", () => {
+  it("waits for a GPS fix rather than failing on the spot, then starts", async () => {
     const session = ownDeviceSession();
     const locate = fakeLocate(null);
     wire(session, { locate });
     openRideModal({ fastForwardTo: "6" });
-    expect(buttonWithText("Start ride mode").disabled).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.current()?.state).toBe("wizard");
+    expect(root().textContent).toContain("Waiting for your location");
+    // No Veo anything while it waits — this is the non-Veo path.
+    expect(anchors().length).toBe(0);
+    expect(root().textContent).not.toContain("Open in Veo");
+
     locate.emitFix(FIX);
-    expect(buttonWithText("Start ride mode").disabled).toBe(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.current()?.state).toBe("riding");
+  });
+
+  it('a failed attempt falls back to the interactive "My Scooter/Bike" face, never a dead spinner', async () => {
+    // A private start has no network to fail on, but it CAN lose its fix
+    // between the auto-attempt arming and the dispatch: a locate whose
+    // onFix fires but whose current() reads null models exactly that.
+    const session = ownDeviceSession();
+    const listeners = new Set<(pos: LngLat) => void>();
+    const flakyLocate: LocateLike = {
+      current: () => null,
+      onFix: (cb) => {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    };
+    wire(session, { locate: flakyLocate });
+    openRideModal({ fastForwardTo: "6" });
+    for (const cb of [...listeners]) cb(FIX);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.current()?.state).toBe("wizard");
+    expect(root().textContent).toContain("My Scooter/Bike");
+    expect(root().textContent).toContain("We lost your location");
+    expect(() => buttonWithText("Start ride mode")).not.toThrow();
+    // Still no Veo anything, even on the fallback face.
+    expect(anchors().length).toBe(0);
   });
 });
 

@@ -11,7 +11,12 @@
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
-import { FIRST_DEVICE_LAYER, ALL_MODELS, type ModelKey } from "./devices.ts";
+import {
+  FIRST_DEVICE_LAYER,
+  ALL_MODELS,
+  ROVER_AREA_WARNING,
+  type ModelKey,
+} from "./devices.ts";
 
 /** The slice of the device layer the HUD drives: ride-scoped tap behavior
  *  and on-map visibility filtering. */
@@ -34,6 +39,7 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
@@ -727,6 +733,10 @@ export class RideHud {
         const on = this.rideModels.has(model);
         btn.classList.toggle("is-on", on);
         btn.setAttribute("aria-pressed", String(on));
+        // Rover service-area caveat, mirroring the Filters drawer's note:
+        // visible whenever the Show selection includes the Rover.
+        const note = this.root.querySelector<HTMLElement>("#hud-rover-note");
+        if (note) note.hidden = !this.rideModels.has("trike");
         this.applyRideModels();
         break;
       }
@@ -784,7 +794,11 @@ export class RideHud {
     return ALL_MODELS
       .map((m) => {
         const on = this.rideModels.has(m);
-        const label = m[0].toUpperCase() + m.slice(1);
+        // MODEL_NAMES, never a capitalized key: the raw "trike" key is how
+        // Rovers leaked out as "Trike" (model-catalog.ts) — this chip row
+        // was the one surface PR 63's sweep missed, disagreeing with the
+        // Rover note right beside it.
+        const label = MODEL_NAMES[m] ?? m[0].toUpperCase() + m.slice(1);
         return `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="dev" data-model="${m}" aria-pressed="${on}">${label}</button>`;
       })
       .join("");
@@ -1266,6 +1280,7 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
+          <p id="hud-rover-note" class="control-hint control-hint--warning"${this.rideModels.has("trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           <div class="hud-adjust-row hud-devrow">
             <span class="hud-devrow__label">Display</span>
             ${this.displayChipsMarkup()}

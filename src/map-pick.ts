@@ -78,7 +78,18 @@ export function createMapPick(
     bar?.remove();
     bar = null;
     map.getCanvas().style.cursor = "";
-    deps.onModeChange?.(false);
+    // LEAVE PICK MODE ON THE NEXT TASK, not inside this click.
+    //
+    // `onModeChange(false)` is what tells devices.ts to stop suppressing
+    // popups. This handler is registered when the map is created, but the
+    // device layers' own click handler is registered later (main.ts calls
+    // devices.addLayers() long after createMapPick), and MapLibre dispatches
+    // in registration order — so clearing the flag here means the device
+    // handler runs a moment later in the SAME click, sees pick mode already
+    // over, and opens a scooter popup on top of the point the rider just
+    // chose. Deferring one task lets every handler for this click finish
+    // while the pick is still notionally in progress.
+    setTimeout(() => deps.onModeChange?.(false), 0);
   };
 
   const finish = (p: PickedPoint | null): void => {

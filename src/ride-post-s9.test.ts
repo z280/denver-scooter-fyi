@@ -28,8 +28,10 @@ import {
   SURVEY_ISSUE_OPTIONS,
   blankSurveyFormState,
   buildRidePostS9Screen,
+  buildRouteFeedbackPayload,
   buildSurveyPayload,
   describeQualitativeProgress,
+  hasNavAnswers,
   issueLabel,
   issueToken,
   modelBonusQuestionFor,
@@ -231,9 +233,21 @@ describe("Screen 9 pane gating", () => {
     expect(shouldShowRidePostS9(doc)).toBe(false);
   });
 
-  it("a private ride never shows either pane even with end_survey/route set", () => {
+  it("a private ride keeps the nav pane (never the scooter pane)", () => {
+    // A private ride has no tracked ride to survey, but the rider still
+    // rode the chosen route — the nav pane stays up and submits to
+    // POST /route-feedback instead. Without a route there is nothing to
+    // ask about at all, so Screen 9 is skipped entirely.
     const doc = { ...makeDoc({ endSurvey: true, route: ROUTE }), private: true };
-    expect(shouldShowRidePostS9(doc)).toBe(false);
+    expect(shouldShowRidePostS9(doc)).toBe(true);
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc)));
+    expect(screen.primary.querySelector(".ride-post-s9__pane--scooter")).toBeNull();
+    expect(screen.primary.querySelector(".ride-post-s9__pane--nav")).not.toBeNull();
+    const routeless = {
+      ...makeDoc({ endSurvey: true, route: null }),
+      private: true,
+    };
+    expect(shouldShowRidePostS9(routeless)).toBe(false);
   });
 
   it("spec correction: the nav pane gates on `route !== null`, not on `rideRouteId !== null` — an unpersisted route (A3 404-tolerated, or nav_improvement off) still renders the pane", () => {
@@ -682,6 +696,102 @@ describe("the postSurvey payload for a full submission", () => {
 // ---------------------------------------------------------------------------
 // route profile labels
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The private-ride path — "My own Device" / guest route feedback
+// ---------------------------------------------------------------------------
+
+describe("route feedback from a private ride", () => {
+  function privateDoc(route: RideSessionRoute | null = ROUTE): RideSessionDoc {
+    return {
+      ...makeDoc({ endSurvey: true, route }),
+      private: true,
+      rideId: null,
+    };
+  }
+
+  it("promises no points anywhere on the pane", () => {
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(privateDoc())));
+    const title = screen.primary.querySelector(".ride-post-s9__pane-title")!;
+    expect(title.textContent).toBe("Navigation Feedback");
+    expect(title.textContent).not.toContain("pts");
+    // The qualitative coaching hint exists to chase a bonus that will not
+    // be paid here, so it stays empty.
+    expect(
+      screen.primary.querySelector(".ride-post-s9__char-hint")?.textContent,
+    ).toBe("");
+  });
+
+  it("submits the nav answers to POST /route-feedback with the route inline", async () => {
+    const postRouteFeedback = vi
+      .fn()
+      .mockResolvedValue({ id: 1, created_at: "2026-08-10T00:00:00Z" });
+    const postSurvey = vi.fn();
+    const dispatch = vi.fn().mockReturnValue({ accepted: true });
+    const session: SessionLike = { current: () => privateDoc(), dispatch };
+    const onSubmitted = vi.fn();
+    const screen = buildRidePostS9Screen(
+      baseDeps(session, { postRouteFeedback, postSurvey, onSubmitted }),
+    );
+    clickScale(screen.primary, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 8);
+    clickYesNo(screen.primary, "Did you deviate from the proposed routing?", "No");
+    screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+
+    expect(postSurvey).not.toHaveBeenCalled();
+    expect(postRouteFeedback).toHaveBeenCalledExactlyOnceWith({
+      route_profile: ROUTE.profile,
+      distance_m: ROUTE.distanceM,
+      duration_s: ROUTE.durationS,
+      nav_route_rating: 8,
+      nav_deviated: false,
+      nav_deviated_needs_improvement: null,
+      nav_nps: null,
+      nav_qualitative: null,
+    });
+    // The screen still finishes the ride session like any survey…
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "surveyDone" }),
+    );
+    // …and echoes an honest empty award list.
+    expect(onSubmitted).toHaveBeenCalledWith({ points: [] });
+  });
+
+  it("nudges instead of posting an empty body", async () => {
+    const postRouteFeedback = vi.fn();
+    const screen = buildRidePostS9Screen(
+      baseDeps(stubSession(privateDoc()), { postRouteFeedback }),
+    );
+    screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(postRouteFeedback).not.toHaveBeenCalled();
+    expect(screen.primary.textContent).toContain("answer a question, or Skip");
+  });
+});
+
+describe("buildRouteFeedbackPayload", () => {
+  const route = { profile: "shade", distanceM: 3200.5, durationS: 840 };
+
+  it("drops the follow-up with a non-Yes deviation and nulls blank text", () => {
+    const state = blankSurveyFormState();
+    state.navDeviated = false;
+    state.navDeviatedNeedsImprovement = true; // stale — must not survive
+    state.navQualitative = "   ";
+    const body = buildRouteFeedbackPayload(state, route);
+    expect(body.nav_deviated_needs_improvement).toBeNull();
+    expect(body.nav_qualitative).toBeNull();
+    expect(body.route_profile).toBe("shade");
+  });
+
+  it("hasNavAnswers counts only substantive answers", () => {
+    const state = blankSurveyFormState();
+    expect(hasNavAnswers(state)).toBe(false);
+    state.navQualitative = "   ";
+    expect(hasNavAnswers(state)).toBe(false);
+    state.navNps = 7;
+    expect(hasNavAnswers(state)).toBe(true);
+  });
+});
 
 describe("routeProfileLabel", () => {
   it("maps the four deployed Valhalla profiles to the owner's copy", () => {

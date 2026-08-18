@@ -36,6 +36,16 @@ export interface DeviceProperties {
   spatial_status: string;
   // ----- Public per-device fields (always potentially present on
   // /api/v1/devices/current; values may still be null when upstream omits them).
+  /** "Lunar 🐸" — a label a rider can say out loud, derived from the
+   *  identifier and never stored (sql/073). */
+  public_name?: string | null;
+  /** "928" — the last three characters of the plate, as printed on the deck.
+   *  This is what tells two Lunar 🐸s apart when you are standing between
+   *  them, so it is on the public payload. The RAW plate is still admin-only;
+   *  the suffix is public because Veo publishes the whole plate themselves in
+   *  free_bike_status, keyed by the same id we emit as `device_id`.
+   *  Null for a device whose plate we have never resolved. */
+  plate_suffix?: string | null;
   /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
   vehicle_identifier?: string | null;
   /** True when the scooter is out of service (low battery, fault, impound). */
@@ -1167,6 +1177,136 @@ export function postSurvey(
   );
 }
 
+// --- Route feedback without a tracked ride (private rides) -----------------
+
+/** The survey's navigation vocabulary with the route described inline —
+ *  a private ("My own Device" / guest) ride has no tracked_rides row for
+ *  `postSurvey` to key on and no ride_routes row to link, so the profile
+ *  and the client's own distance/duration figures ride along instead. */
+export interface RouteFeedbackIn {
+  route_profile: string;
+  distance_m?: number | null;
+  duration_s?: number | null;
+  nav_route_rating?: number | null;
+  nav_deviated?: boolean | null;
+  nav_deviated_needs_improvement?: boolean | null;
+  nav_nps?: number | null;
+  nav_qualitative?: string | null;
+}
+
+/** Submit navigation feedback for a ride the survey can't reach. Anonymous
+ *  is allowed — guests are signed out, so there may be no auth token to
+ *  send at all (auth here, not the ride-session doc: that is a different
+ *  "session" this function never touches); a bearer token rides along when
+ *  signed in, for attribution only — nothing is awarded either way,
+ *  because private rides are never points-eligible. */
+export async function postRouteFeedback(
+  body: RouteFeedbackIn,
+  signal?: AbortSignal,
+): Promise<{ id: number; created_at: string }> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  const auth = getAuth();
+  if (auth) headers.Authorization = `Bearer ${auth.token}`;
+  const res = await fetch(`${API_BASE}/api/v1/route-feedback`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await apiErrorFrom(res, `HTTP ${res.status}`);
+    trackApiError("/api/v1/route-feedback", res.status, err.errorKey);
+    throw err;
+  }
+  return (await res.json()) as { id: number; created_at: string };
+}
+
+// --- Admin analytics (telemetry_daily rollups) -----------------------------
+// Both endpoints are require_admin server-side; the client only offers the
+// Admin Tools buttons to a session the server has already called an admin
+// (isAdminSession), but the endpoints enforce it regardless.
+
+/** One `GET /private/analytics/daily` row — all-events per-day totals.
+ *  `max_event_visitors` is a LOWER bound (per-event-name distinct counts
+ *  can't be summed across names); page_load's count is the practical
+ *  daily-active figure, which is what MAX picks up in practice. */
+export interface AnalyticsDailyRow {
+  day: string;
+  events: number;
+  max_event_visitors: number;
+  max_event_sessions: number;
+}
+
+export function fetchAnalyticsDaily(
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ days: number; daily: AnalyticsDailyRow[] }> {
+  return authedFetchJSON(`/api/v1/private/analytics/daily?days=${days}`, {
+    signal,
+  });
+}
+
+/** One `GET /private/analytics/events` row. May be several rows per day
+ *  (the rollup is per city_id) — sum per day before charting. */
+export interface AnalyticsEventDailyRow {
+  day: string;
+  city_id: number | null;
+  events: number;
+  visitors: number;
+  sessions: number;
+  prop_summary: unknown;
+}
+
+export function fetchAnalyticsEventDaily(
+  name: string,
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ name: string; days: number; daily: AnalyticsEventDailyRow[] }> {
+  return authedFetchJSON(
+    `/api/v1/private/analytics/events?name=${encodeURIComponent(name)}&days=${days}`,
+    { signal },
+  );
+}
+
+// --- Fleet history (Tools → Devices over time) -----------------------------
+
+/** Per-model slice of one hourly sample — the same three status counts the
+ *  fleet-level fields carry, so every metric breaks down by model. A
+ *  model's total is the three summed. */
+export interface DeviceModelCounts {
+  available: number;
+  reserved: number;
+  out_of_service: number;
+}
+
+/** One hourly fleet sample from `GET /devices/history/hourly` — the LAST
+ *  observation cycle in that hour, Denver-core scope. The status/model
+ *  breakdowns are null for hours predating the snapshot table (or an
+ *  ingest outage): the total still comes from the core metrics, and null
+ *  means "unknown", never zero. */
+export interface DeviceHistoryHour {
+  /** ISO timestamp truncated to the hour, e.g. "2026-08-10T14:00:00+00:00". */
+  hour: string;
+  total: number;
+  available: number | null;
+  reserved: number | null;
+  out_of_service: number | null;
+  /** Keyed by the feed's own model display names ("Astro", "Rover", …). */
+  models: Record<string, DeviceModelCounts> | null;
+}
+
+/** Public — the same aggregate fleet count the map footer already shows,
+ *  just over time. `days` is clamped server-side to 1..14. */
+export function fetchDeviceHistoryHourly(
+  days: number,
+  signal?: AbortSignal,
+): Promise<{ days: number; hours: DeviceHistoryHour[] }> {
+  return getJSON(`/api/v1/devices/history/hourly?days=${days}`, signal);
+}
+
 // --- Chosen route persistence (Screen 4) ----------------------------------
 
 /** `[lat, lon]` — the order `POST /ride-routes` expects, and the reverse of
@@ -1244,14 +1384,14 @@ export interface RouteProperties {
   battery_model: "regression" | "unavailable";
   /** `[w, s, e, n]`, echoed on every response so clients can pre-filter. */
   graph_bbox: [number, number, number, number];
-  /** Rider-facing beta disclaimer. Present on EVERY response while
-   *  navigation directions are in beta; the API contract requires clients to
-   *  render it (or an equivalent warning) anywhere directions are shown to a
-   *  rider. The field disappears from the payload when directions leave
-   *  beta — never hardcode its text, and treat absence as "no warning". */
-  beta_warning?: string;
   /** Present only with `maneuvers: true`. */
   maneuvers?: RouteManeuver[];
+  /** Present on every response while navigation is in beta: rider-facing
+   *  text the API requires clients to show wherever directions are
+   *  rendered. Server-controlled on purpose — the field disappears when
+   *  directions leave beta, so never hardcode the copy; render it iff
+   *  present. */
+  beta_warning?: string | null;
   diagnostics?: Record<string, unknown>;
 }
 
@@ -1298,6 +1438,192 @@ export function fetchRoute(
   );
 }
 
+/** The walk to the scooter — Valhalla pedestrian costing on the same tiles the
+ *  ride profiles use (`GET /api/v1/route/walk`).
+ *
+ *  Deliberately not one of the ride profiles: those exclude the High Injury
+ *  Network, which is a sensible thing to avoid riding along and a nonsense
+ *  thing to avoid walking along. */
+export interface WalkRoute {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+  properties: {
+    mode: "walk";
+    distance_meters: number;
+    duration_seconds: number;
+    maneuvers?: { instruction: string; begin_shape_index: number }[];
+  };
+}
+
+export function fetchWalkRoute(
+  from: [number, number],
+  to: [number, number],
+  opts: { maneuvers?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<WalkRoute> {
+  return getJSON<WalkRoute>(
+    `/api/v1/route/walk${query({
+      from: `${from[0]},${from[1]}`,
+      to: `${to[0]},${to[1]}`,
+      maneuvers: opts.maneuvers ? "true" : undefined,
+    })}`,
+    signal,
+  );
+}
+
+/** One genuinely different road to the destination (`GET /route/options`).
+ *
+ *  The server routes every profile and groups by the shape that comes back, so
+ *  this list has one entry per ROAD rather than one per profile name. `also`
+ *  names the other profiles that produce this same road — folded, not hidden,
+ *  so a rider looking for "the shaded one" can see that it is this one. */
+/** A dibs claim, as the server records it.
+ *
+ *  The claim lives on the phone; this registers it so the CERTIFICATE can be
+ *  verified by somebody who has no reason to trust the phone. `claimed_at` is
+ *  the server's, which is the whole point — a timestamp the holder can edit
+ *  settles no argument. */
+export interface DibsRegistration {
+  id: string;
+  claimed_at: string;
+  expires_at: string;
+  verify_url: string;
+  qr_url: string;
+}
+
+export function registerDibs(
+  claim: {
+    vehicle_identifier: string;
+    vehicle_name: string;
+    plate: string | null;
+    claimed_by: string;
+    provider?: string;
+    device_type?: string;
+    lat?: number | null;
+    lon?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<DibsRegistration> {
+  // SESSION-AUTHED, and the UI gates on it (see `canCallDibs` in devices.ts).
+  //
+  // It was not always: this used to be described as "unauthenticated on
+  // purpose" so a signed-out rider could claim and appear on the certificate
+  // as the anonymous form — but the call itself has always been
+  // `authedFetchJSON`, which throws NO_AUTH before the request leaves the
+  // browser. So a signed-out claim failed instantly, the caller's `.catch`
+  // swallowed it, and the certificate reported "couldn't reach the server"
+  // about a server it never called.
+  //
+  // Resolved by making the product match the code rather than the reverse:
+  // dibs needs an account. A certificate that names nobody is weak evidence
+  // in the argument it exists to settle, and an anonymous claim is free to
+  // make in unlimited numbers.
+  return authedFetchJSON<DibsRegistration>("/api/v1/dibs", {
+    method: "POST",
+    body: claim,
+    signal,
+  });
+}
+
+/** Somebody's live claim on a vehicle, as anyone can see it.
+ *
+ *  Public and unauthenticated: the second person in a dibs argument is
+ *  exactly who needs this, and they may not have an account. Carries only the
+ *  public handle the claimant chose — a name to argue with, not a way to find
+ *  somebody. */
+export interface VehicleDibs {
+  id: string;
+  claimed_by: string;
+  claimed_at: string;
+  expires_at: string;
+  denver_time: string;
+  certificate_url: string;
+}
+
+/** Every live claim in the city, keyed by vehicle identifier.
+ *
+ *  One small response per device refresh rather than a request per popup:
+ *  dibs are rare, and this way the popup already knows the answer when it
+ *  opens. */
+export function liveDibs(
+  signal?: AbortSignal,
+): Promise<{ dibs: Record<string, VehicleDibs> }> {
+  return getJSON<{ dibs: Record<string, VehicleDibs> }>("/api/v1/dibs/live", signal);
+}
+
+/** Give a claim back before it expires.
+ *
+ *  Fire-and-forget from the caller's point of view but NOT optional: the
+ *  server row is what every other rider's map reads, and dropping only the
+ *  local copy leaves that scooter dimmed for everyone else — and reading as a
+ *  STRANGER's claim to the person who just released it, since "is this mine?"
+ *  is answered by the local record they have already deleted.
+ *
+ *  Unauthenticated by design: possession of the claim id is the credential,
+ *  exactly as it is for the certificate URL it appears in. */
+export async function releaseDibs(dibsId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/dibs/${encodeURIComponent(dibsId)}/release`, {
+    method: "POST",
+    keepalive: true,
+  });
+}
+
+export interface RouteOption {
+  key: string;
+  label: string;
+  also: { key: string; label: string }[];
+  distance_meters: number | null;
+  duration_seconds: number;
+  elevation_gain_meters: number | null;
+  battery_percent_estimate: number | null;
+  battery_percent_low: number | null;
+  battery_percent_high: number | null;
+  battery_model: string;
+  /** What is left in the battery on arrival, given the charge that was passed
+   *  in. Named by what the rider HAS on arrival, so `_low` is the bad case. */
+  arrival_percent: number | null;
+  arrival_percent_low: number | null;
+  arrival_percent_high: number | null;
+  /** Null when no starting charge was supplied — there is no honest answer
+   *  without it, and a cheerful default would be the dishonest one. */
+  will_make_it: boolean | null;
+  reserve_percent: number;
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+}
+
+export interface RouteOptionsResponse {
+  graph_bbox: [number, number, number, number];
+  beta_warning?: string;
+  /** Profiles that could not be routed at all — the High Injury Network
+   *  exclusions mean `safe` can legitimately find nothing where `express`
+   *  does. Reported rather than silently dropped. */
+  profiles_unavailable: string[];
+  options: RouteOption[];
+}
+
+export function fetchRouteOptions(
+  q: {
+    from: [number, number];
+    to: [number, number];
+    vehicle_model?: string;
+    battery_percent?: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<RouteOptionsResponse> {
+  return getJSON<RouteOptionsResponse>(
+    `/api/v1/route/options${query({
+      from: `${q.from[0]},${q.from[1]}`,
+      to: `${q.to[0]},${q.to[1]}`,
+      vehicle_model: q.vehicle_model,
+      battery_percent:
+        q.battery_percent === null || q.battery_percent === undefined
+          ? undefined
+          : String(q.battery_percent),
+    })}`,
+    signal,
+  );
+}
+
 export interface RouteProfile {
   key: string;
   label: string;
@@ -1307,9 +1633,6 @@ export interface RouteProfile {
 export interface RouteProfilesResponse {
   default: string;
   graph_bbox: [number, number, number, number];
-  /** Same rider-facing beta disclaimer as `RouteProperties.beta_warning` —
-   *  see that field's doc comment. Absent once directions leave beta. */
-  beta_warning?: string;
   profiles: RouteProfile[];
 }
 

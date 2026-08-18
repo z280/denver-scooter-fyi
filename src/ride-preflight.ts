@@ -9,20 +9,23 @@
 // "which scooter", and re-asking is the single loudest piece of friction
 // left in the flow.
 //
-// So this is a shortcut, not a second wizard. Three toggles and (sometimes)
+// So this is a shortcut, not a second wizard. Two toggles and (sometimes)
 // one either/or, then straight into ride mode — skipping every screen the
 // answers make unnecessary and visiting every screen they make necessary.
 //
-// THE THREE TOGGLES, and why these three:
+// THE TWO TOGGLES, and why these two:
 //   Navigation directions      default OFF  — turn-by-turn is heavier (two
 //                                             more screens and a geocode);
 //                                             off keeps "grab it and go".
-//   Save Tracks to Local Device default ON  — the app's community-data
-//                                             mission, and it is local-only
-//                                             until a rider donates it.
 //   Veo cost HUD               default ON   — the reason most riders open
 //                                             ride mode at all.
 // These match `ride-settings.ts`'s `defaultRideOptions()` field for field.
+//
+// It was three. "Save Tracks to Local Device" left because it was never
+// really a per-ride question — the answer a rider gives is the answer they
+// give every time, so asking it each ride only bought a screen. It is one
+// standing setting now, in Settings → Local Data, owned by
+// `track-preference.ts`, and this modal reads it rather than asking.
 // They are the same `RideOptions` fields the wizard's own Screen 2 panel
 // writes — this module does not invent a parallel settings vocabulary, it
 // just asks about three of them in one breath.
@@ -30,7 +33,7 @@
 // WHERE THE ANSWERS SEND YOU (`preflightLanding` below is the whole rule):
 //   navigation ON   -> Screen 3 (destination) -> 4 (routes) -> 6
 //   navigation OFF  -> Screen 6 directly
-//   "give me a link" -> Screen 6 renders its Start-in-Veo buttons normally
+//   "give me a link" -> Screen 6 renders its Open-in-Veo buttons normally
 //   "already started"/cost HUD off -> Screen 6 auto-starts on mount
 //
 // Screen 6 is ALWAYS in the flow, even when the rider has nothing left to
@@ -59,6 +62,7 @@ import {
   type RideStartIntent,
   type ScreenId,
 } from "./ride-modal.ts";
+import { savesTracks } from "./track-preference.ts";
 
 export type { RidePreflightChoices, RideStartIntent };
 
@@ -130,11 +134,12 @@ const ROWS: readonly {
     label: "Navigation directions",
     hint: "Turn-by-turn to a destination you pick next. Off = straight to riding.",
   },
-  {
-    key: "save_tracks",
-    label: "Save Tracks to Local Device",
-    hint: "Your route is recorded on this phone only. Nothing is sent unless you donate it after the ride.",
-  },
+  // No "Save Tracks to Local Device" row. It is one standing answer per
+  // rider now, set in Settings → Local Data and read from
+  // `track-preference.ts` — a rider who wants their tracks wants them every
+  // ride, and asking again each time only ever produced the same answer at
+  // the cost of a screen. `RidePreflightChoices.save_tracks` still carries
+  // it to the session doc; it just isn't asked here.
   {
     key: "cost_hud",
     label: "Veo cost HUD",
@@ -153,7 +158,7 @@ export interface RidePreflightOptions {
   /** 16-hex identifier to preselect on Screen 2. */
   vehicleIdentifier?: string | null;
   /** Plate, when resolved. Feeds Screen 2's manual path and Screen 6's
-   *  Start-in-Veo deep link. */
+   *  Open-in-Veo deep link. */
   plate?: string | null;
   /** Starting answers. Defaults to `PREFLIGHT_DEFAULTS`; a caller can seed
    *  from a previous session. */
@@ -204,6 +209,11 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
 
   const answers: RidePreflightAnswers = {
     ...PREFLIGHT_DEFAULTS,
+    // The rider's standing choice, read fresh at open time — this modal no
+    // longer has a row for it, so a stale module-load copy would be the only
+    // value it ever carried and a rider who turned tracking off in Settings
+    // would keep recording.
+    save_tracks: savesTracks(),
     ...options.initial,
   };
   const cleanupFns: (() => void)[] = [];
@@ -298,7 +308,7 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
 
       const choices: readonly { intent: RideStartIntent; label: string }[] = [
         { intent: "already-started", label: "I started the Veo already" },
-        { intent: "need-link", label: "Give me a link to Start" },
+        { intent: "need-link", label: "Give me a link to Open in Veo" },
       ];
       const opts = el("div", `${ROOT_CLASS}__startopts`);
       for (const choice of choices) {
@@ -383,9 +393,9 @@ export function describeNext(answers: RidePreflightAnswers): string {
   if (answers.navigation) {
     return autoStart
       ? "Next: pick a destination and a route, then ride mode starts."
-      : "Next: pick a destination and a route, then your link to start in Veo.";
+      : "Next: pick a destination and a route, then your link to open in Veo.";
   }
   return autoStart
     ? "Next: ride mode starts."
-    : "Next: your link to start in Veo.";
+    : "Next: your link to open in Veo.";
 }
