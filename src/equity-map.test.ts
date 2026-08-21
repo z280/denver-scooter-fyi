@@ -112,6 +112,16 @@ describe("the tap explainer", () => {
     expect(explainerHtml(null)).toContain("$1 unlock");
   });
 
+  it("escapes what it interpolates", () => {
+    // openFloatingModal escapes the TITLE only and takes bodyHtml raw, so
+    // escaping the body's values is this function's job. Nothing reaching it
+    // today is untrusted; the escape is here so that stays true by
+    // construction rather than by where the caller happens to source names.
+    const html = explainerHtml('EQ_<img src=x onerror=alert(1)>');
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
   it("says the discount is automatic, not something to enroll in", () => {
     // Exhibit A §5.2 says Veo "shall" apply it to any qualifying trip. A
     // rider who thinks it is an opt-in program never asks why they did not

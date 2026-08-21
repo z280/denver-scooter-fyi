@@ -1,5 +1,6 @@
 import type { LngLatBoundsLike } from "maplibre-gl";
 import type { BoundaryLayer } from "./api.ts";
+import { EQUITY_AREA_COLOR } from "./equity-areas.ts";
 
 /** Fit-to-Denver bounding box: [west, south] .. [east, north]. */
 export const DENVER_BOUNDS: LngLatBoundsLike = [
@@ -67,6 +68,23 @@ export const OVERLAYS: OverlayDef[] = [
  *     finds the answer here rather than in a year-old commit message.
  *
  *  Adding one back to `OVERLAYS` is all it takes to put it on screen. */
+/** The official Equity Area map's label and color.
+ *
+ *  NOT in `OVERLAYS` — the Areas drawer gives it a dedicated switch rather
+ *  than a checkbox in the outline list, and its polygons are drawn by
+ *  equity-map.ts from the bundled asset, not by `Overlays.toggle`.
+ *
+ *  It still needs an entry in `OVERLAY_BY_LAYER` below, because the layer is
+ *  reachable through two OTHER doors that both go through
+ *  `Overlays.ensureLayer` and read `.color` from there: the choropleth
+ *  select and the area filter's category list. Leaving it out crashed both
+ *  with "Cannot read properties of undefined (reading 'color')". */
+export const EQUITY_AREA_OVERLAY: OverlayDef = {
+  layer: "equity",
+  label: "Equity Areas",
+  color: EQUITY_AREA_COLOR,
+};
+
 export const RETIRED_OVERLAYS: OverlayDef[] = [
   { layer: "v1", label: "Disadvantaged Areas (v1)", color: "#e53935" },
   { layer: "v2", label: "Disadvantaged Areas (v2)", color: "#8e24aa" },
@@ -97,7 +115,12 @@ const EQUITY_RANK_OVERLAYS: OverlayDef[] = EQUITY_RANK_NUMBERS.map((r) => ({
  *  offers — a missing entry is an undefined dereference at draw time, not a
  *  type error, because the Record is asserted rather than inferred. */
 export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEntries(
-  [...OVERLAYS, ...RETIRED_OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
+  [
+    ...OVERLAYS,
+    EQUITY_AREA_OVERLAY,
+    ...RETIRED_OVERLAYS,
+    ...EQUITY_RANK_OVERLAYS,
+  ].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
 // Whether Google sign-in is offered — and the GIS client id to init with —

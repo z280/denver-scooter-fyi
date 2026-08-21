@@ -66,18 +66,36 @@ export function indicatorState(
   return { areaName: equityAreaAt(lng, lat)?.region_name ?? null };
 }
 
+/** Minimal HTML escape for values interpolated below.
+ *
+ *  `openFloatingModal` escapes only the TITLE and takes `bodyHtml` raw, so
+ *  escaping the body's interpolated values is this function's job. Today
+ *  every one of them is ours — an `EQ_\d{3}` name out of a bundled asset,
+ *  and two copy constants — so nothing here is currently exploitable. It is
+ *  escaped anyway because the safety rests entirely on where the data comes
+ *  from, and the next caller to pass this a region name from the API (the
+ *  `equity` boundary endpoint serves the same shape) would not think to
+ *  check. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 /** Body markup for the explainer, quoting the contract terms verbatim.
  *  `openModal` is injected rather than imported so this module doesn't pull
  *  in devices.ts (and the whole map popup stack) just to render a dialog. */
 export function explainerHtml(areaName: string | null): string {
   const where = areaName
-    ? `<p class="equity-explainer__where">You're looking at <strong>${prettyEquityArea(areaName)}</strong>.</p>`
+    ? `<p class="equity-explainer__where">You're looking at <strong>${escapeHtml(prettyEquityArea(areaName))}</strong>.</p>`
     : "";
   return `
     <div class="equity-explainer">
       ${where}
-      <p class="equity-explainer__quote">${EQUITY_DISCOUNT_NOTICE}</p>
-      <p class="equity-explainer__note">${EQUITY_AREA_UNLOCK_NOTE}</p>
+      <p class="equity-explainer__quote">${escapeHtml(EQUITY_DISCOUNT_NOTICE)}</p>
+      <p class="equity-explainer__note">${escapeHtml(EQUITY_AREA_UNLOCK_NOTE)}</p>
       <p class="equity-explainer__note">
         The discount applies to a ride that <strong>starts or ends</strong> in
         an equity area — not only one that stays inside the whole way, and you
@@ -107,9 +125,11 @@ export class EquityAreaMap {
     private readonly openModal: (title: string, bodyHtml: string) => void,
   ) {}
 
-  /** Wire the chip and start watching the map. Loads the geometry lazily:
-   *  the first `move` after the fetch lands is what reveals the chip, and
-   *  the map fires those constantly, so no explicit re-render is needed. */
+  /** Wire the chip and start watching the map. Loads the geometry lazily,
+   *  then syncs once when it lands — a rider who opens the app already
+   *  centred on an equity area and never touches the map would otherwise
+   *  wait for a `move` that never comes. After that the map's own `move`
+   *  and `zoomend` events keep it current. */
   wire(): void {
     this.chip.addEventListener("click", () => this.explain());
     this.map.on("move", () => this.syncIndicator());

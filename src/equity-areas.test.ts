@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EQUITY_AREAS_URL,
+  EQUITY_AREA_COLOR,
   EQUITY_AREA_UNLOCK_NOTE,
   EQUITY_DISCOUNT_NOTICE,
   EQUITY_INDICATOR_LABEL,
@@ -192,6 +193,42 @@ describe("copy", () => {
     // Riders saw "Equity Area 001" under v1/v2; the map changed underneath
     // them, the vocabulary should not.
     expect(prettyEquityArea("EQ_014")).toBe("Equity Area 014");
+  });
+});
+
+describe("every boundary layer resolves a label and color", () => {
+  it("covers the official equity layer", async () => {
+    // Regression, PR #78 review: `equity` was added to the BoundaryLayer
+    // union without a matching OVERLAY_BY_LAYER entry. The Record is
+    // ASSERTED rather than inferred, so TypeScript said nothing and the
+    // choropleth's "Equity Areas" option and the area filter's category of
+    // the same name both crashed in Overlays.ensureLayer with
+    // "Cannot read properties of undefined (reading 'color')".
+    const { OVERLAY_BY_LAYER } = await import("./config.ts");
+    const def = OVERLAY_BY_LAYER["equity"];
+    expect(def).toBeDefined();
+    expect(def.color).toBe(EQUITY_AREA_COLOR);
+    expect(def.label).toBeTruthy();
+  });
+
+  it("covers EVERY layer in the union, not just the one that broke", async () => {
+    // The assertion cast means any future layer can repeat this exactly.
+    // Enumerated here so adding one to api.ts without a def fails a test
+    // instead of a rider's browser.
+    const { OVERLAY_BY_LAYER } = await import("./config.ts");
+    const layers = [
+      "equity",
+      "neighborhood",
+      "council_district",
+      "community_network",
+      "v1",
+      "v2",
+      "er1", "er2", "er3", "er4", "er5", "er6",
+    ] as const;
+    for (const layer of layers) {
+      expect(OVERLAY_BY_LAYER[layer], `no OverlayDef for ${layer}`).toBeDefined();
+      expect(OVERLAY_BY_LAYER[layer].color, `no color for ${layer}`).toBeTruthy();
+    }
   });
 });
 

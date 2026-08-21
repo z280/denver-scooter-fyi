@@ -10,7 +10,10 @@
 
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
-import { EQUITY_DISCOUNT_NOTICE } from "./equity-areas.ts";
+import {
+  EQUITY_DISCOUNT_NOTICE,
+  EQUITY_INDICATOR_LABEL,
+} from "./equity-areas.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
 import {
   FIRST_DEVICE_LAYER,
@@ -1242,7 +1245,7 @@ export class RideHud {
         <div class="hud-corner hud-corner--tr">
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
         </div>
-        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity Area · $0.13/min</div>
+        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ ${EQUITY_INDICATOR_LABEL}</div>
         <div class="hud-rotate-badge">
           <button type="button" class="hud-rotate-badge__close" data-hud="dismiss-landscape-hint" aria-label="Dismiss">&times;</button>
           ${rotateIconMarkup("hud-rotate-badge__icon")}
