@@ -45,7 +45,7 @@
     </script>
     <meta
       name="description"
-      content="Live interactive map of every Denver Veo scooter and e-bike, with disadvantaged-area overlays and daily compliance status."
+      content="Live interactive map of every Denver Veo scooter and e-bike, with the city's official Equity Area map and daily compliance status."
     />
     <title>Denver Veo Scooter &amp; E-Bike Map</title>
     <!-- The real mark, not an emoji: a glyph favicon renders in whatever the
@@ -460,8 +460,10 @@
               <select id="area-filter-category" class="select">
                 <option value="">Choose a category…</option>
                 <option value="community_network">City Region</option>
-                <option value="v1">Disadvantaged Areas (v1)</option>
-                <option value="v2">Disadvantaged Areas (v2)</option>
+                <!-- One equity option, not two: the city named the official
+                     map, so "v1 or v2?" is no longer a question to put to a
+                     rider filtering a scooter list. -->
+                <option value="equity">Equity Areas</option>
                 <option value="council_district">Council District</option>
                 <option value="neighborhood">Neighborhood</option>
               </select>
@@ -621,6 +623,24 @@
         <button class="drawer-close" type="button" aria-label="Close Areas">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- The official Equity Area map gets its own section rather than a
+             fourth checkbox in the list below. It is not one boundary set
+             among several: it is the map the Veo contract is measured
+             against, and the one that decides whether a rider is owed a
+             discount. OFF by default all the same — see wireEquityAreas(). -->
+        <section class="control-group" aria-labelledby="equity-areas-label">
+          <h3 id="equity-areas-label" class="control-label">Equity areas</h3>
+          <p class="control-hint">
+            The City of Denver's official Equity Area map for the Veo
+            contract. Rides that start or end inside one should be billed at
+            $0.13/min. Same map this app's compliance numbers use.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="equity-areas-toggle" />
+            <span>Show equity areas on map</span>
+          </label>
+        </section>
+
         <section class="control-group" aria-labelledby="layers-label">
           <h3 id="layers-label" class="control-label">Boundary outlines</h3>
           <ul class="layer-list" id="layer-list">
@@ -632,8 +652,11 @@
           <h3 id="choropleth-label" class="control-label">Color regions by device density</h3>
           <select id="choropleth-select" class="select" aria-labelledby="choropleth-label">
             <option value="">Off</option>
-            <option value="v1">Disadvantaged Areas (v1)</option>
-            <option value="v2">Disadvantaged Areas (v2)</option>
+            <!-- The two "Disadvantaged Areas" versions are gone: the city
+                 named the official map in August 2026, so offering both
+                 candidates asked riders to pick a winner in a settled
+                 argument. -->
+            <option value="equity">Equity Areas</option>
             <option value="neighborhood">Neighborhoods</option>
             <option value="council_district">City Council Districts</option>
             <option value="community_network">City Regions</option>
@@ -788,10 +811,15 @@
         <section class="control-group" aria-labelledby="tools-compliance-label">
           <h3 id="tools-compliance-label" class="control-label">Equity Compliance</h3>
           <p class="control-hint">
-            Daily SLA compliance status and the equity-rank estimator.
+            Whether Veo hit the contract's 30% equity-area deployment target
+            — today's status, and a red/green calendar of this month and
+            last.
           </p>
           <button id="tools-open-compliance" class="preset-btn" type="button">
             ✅ Open Equity Compliance
+          </button>
+          <button id="tools-compliance-calendar" class="preset-btn" type="button">
+            📅 Compliance calendar
           </button>
         </section>
 
@@ -846,25 +874,22 @@
           <div class="compliance-loading">Loading compliance…</div>
         </div>
 
-        <section class="control-group" id="equity-ranks" aria-labelledby="equity-ranks-label">
-          <h3 id="equity-ranks-label" class="control-label">Equity ranks (estimate)</h3>
+        <!-- The "Equity ranks (estimate)" picker lived here: six toggles
+             letting a rider choose which of DOTI's ranked tiers to estimate
+             compliance against, because the city would not say which bound
+             the contract. It said, in August 2026. A control whose entire
+             purpose was to hedge an open question does not survive the
+             question being answered, so the card above now reports one
+             number against one map. -->
+        <section class="control-group" aria-labelledby="compliance-calendar-label">
+          <h3 id="compliance-calendar-label" class="control-label">Day by day</h3>
           <p class="control-hint">
-            The city ranked equity areas 1–6 but hasn't said which bind the SLA.
-            Pick the ranks to estimate against.
+            Every day of this month and last, green where Veo met the 30%
+            equity-area target and red where it missed.
           </p>
-          <div id="rank-toggles" class="rank-toggles" role="group" aria-labelledby="equity-ranks-label">
-            <button class="rank-btn" type="button" data-rank="1" aria-pressed="false">1</button>
-            <button class="rank-btn" type="button" data-rank="2" aria-pressed="false">2</button>
-            <button class="rank-btn" type="button" data-rank="3" aria-pressed="false">3</button>
-            <button class="rank-btn" type="button" data-rank="4" aria-pressed="false">4</button>
-            <button class="rank-btn" type="button" data-rank="5" aria-pressed="false">5</button>
-            <button class="rank-btn" type="button" data-rank="6" aria-pressed="false">6</button>
-          </div>
-          <div id="equity-rank-metric" class="equity-metric" aria-live="polite"></div>
-          <label class="switch equity-overlay-switch">
-            <input type="checkbox" id="equity-selected-overlay-mirror" />
-            <span>Show selected ranks on map</span>
-          </label>
+          <button id="compliance-open-calendar" class="preset-btn" type="button">
+            📅 Compliance calendar
+          </button>
         </section>
       </div>
     </aside>
@@ -1095,6 +1120,24 @@
         alt="We See You Veo"
       />
     </a>
+
+    <!-- Equity-area indicator. Bottom-centre, above the freshness footer:
+         it is a claim about where the map is, so it sits over the map, and
+         it is the one piece of chrome here that is worth money to a rider.
+         Revealed by equity-map.ts when the map is zoomed into an official
+         Equity Area; tapping it opens the contract terms verbatim.
+
+         A real <button>, not a styled div: it is tappable, it opens a
+         dialog, and a rider using a screen reader should hear it announced
+         as something they can act on. aria-live so it is announced when it
+         appears rather than only when focus lands on it. -->
+    <button
+      id="equity-indicator"
+      class="equity-indicator"
+      type="button"
+      aria-live="polite"
+      hidden
+    ></button>
 
     <!-- Freshness footer (bottom-right) -->
     <div id="freshness" class="freshness" role="status" aria-live="polite">

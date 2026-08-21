@@ -43,9 +43,8 @@ sent, and no account id is ever attached (only a signed-in yes/no flag).
 The **About** drawer has an "Allow private analytics" switch that turns the
 whole thing off for your browser (stored locally, works signed out), and
 Global Privacy Control is honored automatically. `localStorage` otherwise
-holds only your own settings (theme, rate plan, equity ranks,
-install-prompt dismissal, the analytics opt-out, and a same-day-visit date
-stamp). Recorded ride tracks live in IndexedDB on your own device and are
+holds only your own settings (theme, rate plan, install-prompt
+dismissal, the analytics opt-out, and a same-day-visit date stamp). Recorded ride tracks live in IndexedDB on your own device and are
 uploaded only if you choose to donate one; the **Local Data** tab in the
 Account drawer is where you can look at them, hand one over, or delete it.
 That is not the same as "no data is recorded": the API stores a reporter IP
@@ -117,8 +116,8 @@ sessions. The authoritative, machine-readable retention policy is
 
   Ride start goes fullscreen with a best-effort landscape lock; the summary
   prices the trip under Lime's typical rates — what competition would have
-  cost — and prompts an equity-discount receipt check for rides touching a
-  disadvantaged area.
+  cost — and, for a ride that started or ended in an official Equity Area,
+  quotes the contract's $0.13/min term and asks you to check your receipt.
 - Controls grouped by attribute in a left activity bar:
   - **Devices** — type filter (All / Scooters / E-bikes), availability
     switch, a unified battery block: quartile filter buttons plus a
@@ -131,8 +130,9 @@ sessions. The authoritative, machine-readable retention policy is
     `vehicle_use_type`, since Veo mislabels `form_factor`). An unrecognized
     model shows "Veo Unknown — Tell us!" with a one-tap report form
     (description + optional camera photo) that POSTs to the audit API.
-  - **Areas** — five toggleable boundary outlines (Disadvantaged Areas
-    v1/v2, Neighborhoods, City Council Districts, City Regions), choropleth
+  - **Areas** — an **Equity areas** switch (off by default) drawing the
+    city's official Equity Area map, three toggleable boundary outlines
+    (Neighborhoods, City Council Districts, City Regions), choropleth
     coloring by live device density, an **H3 hexagon** tool
     (Off/Large/Medium/Small, shaded by any of six server-computed per-cell
     metrics — device density, trips started, starts/hour peak, avg
@@ -140,16 +140,34 @@ sessions. The authoritative, machine-readable retention policy is
     mutually exclusive with the choropleth), and an "Only show devices
     in…" area filter. With an area type chosen, clicking a region directly
     on the map adds or removes it from the filter.
-  - **Tools** — dense-cluster finder.
+  - **Tools** — dense-cluster finder, the compliance calendar, and
+    devices-over-time.
   - **About Scooter.fyi** — who runs this and why, the beta disclaimer,
     the non-commercial and pro-consumer commitments, links to the privacy
     policy and terms, and the "Allow private analytics" switch.
-  - **Equity Compliance** — daily gauge (avg % of devices in v1 areas vs.
-    the 30% threshold), or PENDING before the daily window is computed. Also
-    hosts the **equity-rank estimate**: the city ranked equity areas 1–6 but
-    hasn't said which bind the SLA, so you pick a rank set (default 1 + 2)
-    and get a live "% of the fleet inside the selected ranks" figure, plus an
-    "Equity Ranking (Selected)" union overlay in the Areas drawer.
+  - **Equity Compliance** — daily gauge (avg % of devices in the city's
+    official Equity Areas vs. the 30% threshold), or PENDING before the
+    daily window is computed. Also opens the **compliance calendar**: every
+    day of this month and last, green where Veo met the target and red
+    where it missed — with unmeasured days drawn as unmeasured rather than
+    as failures.
+
+    The **equity-rank estimate** that lived here is gone. It let you pick
+    which of the city's six ranked tiers to estimate against, because the
+    city had not said which bound the SLA. In August 2026 it did, and named
+    a single official map; a control whose whole purpose was to hedge an
+    open question does not survive the question being answered. The
+    superseded maps (Disadvantaged Areas v1/v2, ranks er1–er6) are still
+    computed and served by the API — the compliance history runs through
+    them — they are simply no longer drawn. See `src/config.ts`'s
+    `RETIRED_OVERLAYS`.
+- **Equity-area indicator.** Zoom into one of the city's official Equity
+  Areas and a chip appears over the map: *Equity Area · $0.13/min*. Tapping
+  it quotes the contract term verbatim — rides that stop or start in the
+  area should be billed at that rate — and asks you to screenshot your
+  receipt if the discount is missing. It is deliberately NOT gated on the
+  Areas overlay being switched on: a discount you only learn about by going
+  looking for it is the exact asymmetry this app exists to correct.
 - Active-filter chips float over the map — one per live constraint, each
   with a ✕ to clear it — so closed drawers never hide the map's state.
 - Bottom-right freshness footer: `as of HH:MM · Displaying x out of y`.

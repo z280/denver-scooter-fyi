@@ -10,6 +10,7 @@
 
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
+import { EQUITY_DISCOUNT_NOTICE } from "./equity-areas.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
 import {
   FIRST_DEVICE_LAYER,
@@ -381,7 +382,9 @@ export class RideHud {
 
   constructor(
     container: HTMLElement,
-    /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
+    /** Lazily resolves the city's official Equity Area polygons for the
+     *  start/end flags — the same map the on-screen indicator and the
+     *  compliance numbers use. */
     private readonly equityZones: () => Promise<IndexedFeature[]>,
     /** The main map — the HUD frames it and drives a follow-cam during a
      *  ride, so the rider sees themselves move instead of a blank panel. */
@@ -1238,7 +1241,7 @@ export class RideHud {
         <div class="hud-corner hud-corner--tr">
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
         </div>
-        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity zone</div>
+        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity Area · $0.13/min</div>
         <div class="hud-rotate-badge">
           <button type="button" class="hud-rotate-badge__close" data-hud="dismiss-landscape-hint" aria-label="Dismiss">&times;</button>
           ${rotateIconMarkup("hud-rotate-badge__icon")}
@@ -1729,9 +1732,12 @@ export class RideHud {
            ${passDesc} would have covered this ride${leftoverClause}.</p>`
         : "";
 
+    // The exact contract terms, not a paraphrase: this is the sentence a
+    // rider may end up quoting at Veo support, and the screenshot ask is
+    // the part that makes the difference provable later.
     const zoneLine = zoneRide
-      ? `<p class="hud-zone">🏷️ This ride ${this.startedInZone ? "started" : "ended"} in an equity zone —
-         Veo owes you the contract discount. Open the Veo app → History and check your receipt.</p>`
+      ? `<p class="hud-zone">🏷️ This ride ${this.startedInZone ? "started" : "ended"} in an Equity Area.
+         ${EQUITY_DISCOUNT_NOTICE} Open the Veo app → History to check.</p>`
       : "";
 
     this.setState("summary");

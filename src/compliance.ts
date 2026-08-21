@@ -18,7 +18,16 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-type Version = "v1" | "v2";
+// The card used to render TWO sections, "V1 Disadvantaged Areas Map" and
+// "V2", side by side — the two candidate equity maps, shown together
+// because the city had not said which one the contract bound. It said, in
+// August 2026: neither, it is the official Equity Area map. So the card
+// reports ONE number now, against that map.
+//
+// The v1/v2 fields are still on the wire and still the record for the
+// period before the clarification. They are not rendered here: a compliance
+// card whose job is to answer "is Veo meeting the contract today" should
+// not present three candidate answers to a question with one.
 
 /** Per-feed network budget. Without this, a single stalled endpoint keeps its
  *  fetch pending forever; because we render via Promise.allSettled (waits for
@@ -69,8 +78,7 @@ export async function renderCompliance(root: HTMLElement): Promise<void> {
     }
 
     const card = el("div", "compliance__card");
-    card.append(renderVersionSection("v1", snapshot, sla));
-    card.append(renderVersionSection("v2", snapshot, sla));
+    card.append(renderOfficialSection(snapshot, sla));
     if (sla) {
       card.append(
         el(
@@ -92,52 +100,50 @@ export async function renderCompliance(root: HTMLElement): Promise<void> {
   }
 }
 
-function renderVersionSection(
-  v: Version,
+function renderOfficialSection(
   snapshot: SnapshotMetadataResponse | null,
   sla: ComplianceResponse | null,
 ): HTMLElement {
   const section = el("section", "compliance__section");
 
   const head = el("div", "compliance__head");
-  const title = el(
-    "span",
-    "compliance__title",
-    `${v.toUpperCase()} Disadvantaged Areas Map`,
-  );
-  head.append(title);
-  if (sla) {
-    const pass = v === "v1" ? sla.compliance_v1_pass : sla.compliance_v2_pass;
+  head.append(el("span", "compliance__title", "Official Equity Area Map"));
+
+  const currentPct = toNum(snapshot?.percent_all_devices_equity);
+  const slaPct = toNum(sla?.avg_percent_all_devices_equity);
+  // Only the SERVER's boolean colors the pill. Deriving it here from the
+  // percentage would mean a rounding difference between the two could show
+  // a PASS pill over a failing number.
+  const slaPass = sla?.compliance_equity_pass ?? null;
+
+  if (slaPass !== null) {
     head.append(
       el(
         "span",
-        `compliance__pill ${pass ? "is-pass" : "is-fail"}`,
-        pass ? "PASS" : "FAIL",
+        `compliance__pill ${slaPass ? "is-pass" : "is-fail"}`,
+        slaPass ? "PASS" : "FAIL",
       ),
     );
   }
   section.append(head);
 
-  const currentPct = toNum(
-    v === "v1"
-      ? snapshot?.percent_all_devices_v1
-      : snapshot?.percent_all_devices_v2,
-  );
-  const slaPct = toNum(
-    sla
-      ? v === "v1"
-        ? sla.avg_percent_all_devices_v1
-        : sla.avg_percent_all_devices_v2
-      : null,
-  );
-  const slaPass = sla
-    ? v === "v1"
-      ? sla.compliance_v1_pass
-      : sla.compliance_v2_pass
-    : null;
+  section.append(renderRow("Current %", currentPct, evalPass(currentPct)));
+  section.append(renderRow("SLA Window %", slaPct, slaPass));
 
-  section.append(renderRow(`Current %`, currentPct, evalPass(currentPct)));
-  section.append(renderRow(`SLA Window %`, slaPct, slaPass));
+  // An SLA row exists but carries no equity figure. That is a real, nameable
+  // state, not an error: the day predates the official map and the server's
+  // reprocessing job has not reached it yet. Saying so beats two "—" rows
+  // that read as a broken card, and beats a 0% that reads as a failure.
+  if (sla && slaPct === null) {
+    section.append(
+      el(
+        "div",
+        "compliance__foot",
+        "This day predates the city's official Equity Area map — it's being " +
+          "reprocessed against it. Check the calendar for days already done.",
+      ),
+    );
+  }
 
   return section;
 }
