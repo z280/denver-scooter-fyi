@@ -2358,9 +2358,18 @@ body.is-map-picking .home-bar {
   bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
   /* Centred over the map rather than pinned to a corner: the two corners
      are taken (freshness bottom-right, HUD controls bottom-left), and this
-     is the one thing on screen a rider might be owed money over. */
-  left: 50%;
-  transform: translateX(-50%);
+     is the one thing on screen a rider might be owed money over.
+
+     Centred by auto margins between left:0 and right:0, NOT by the usual
+     `left: 50%; translateX(-50%)`. That idiom silently caps the element's
+     available width at 50vw — everything from the 50% line to the right
+     edge — so on a phone the label wrapped to two lines and the chip
+     reflowed as you panned, which reads as a glitch rather than a notice.
+     `width: fit-content` keeps it shrink-wrapped to the text. */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
   /* Same band as the freshness readout (27): any open drawer or wizard
      should win the overlap — a rider reading a panel is not looking at the
      map this describes. */

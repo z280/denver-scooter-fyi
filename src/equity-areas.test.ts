@@ -16,7 +16,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EQUITY_AREAS_URL,
+  EQUITY_AREA_UNLOCK_NOTE,
   EQUITY_DISCOUNT_NOTICE,
+  EQUITY_INDICATOR_LABEL,
   EQUITY_INDICATOR_MIN_ZOOM,
   __resetEquityAreasForTest,
   equityAreaAt,
@@ -164,6 +166,26 @@ describe("copy", () => {
         "this area should cost $0.13/min, please screenshot your receipt if " +
         "you do not see this discount!",
     );
+  });
+
+  it("never quotes the per-minute rate without the unlock beside it", () => {
+    // Exhibit C's Equity Area row is $1 + $0.13/min. A rider told only
+    // "$0.13/min" reads the $1 line on their receipt as the discount having
+    // been ignored — and either complains wrongly or drops a real claim.
+    // Both halves travel together, everywhere the rate is stated.
+    // The chip uses the app's compact "25¢/min" shorthand so it fits one
+    // line on a phone; the modal spells the same figure out longhand.
+    expect(EQUITY_INDICATOR_LABEL).toContain("$1");
+    expect(EQUITY_INDICATOR_LABEL).toContain("13¢/min");
+    expect(EQUITY_DISCOUNT_NOTICE).toContain("$0.13/min");
+    expect(EQUITY_AREA_UNLOCK_NOTE).toContain("$1 unlock");
+  });
+
+  it("cites the contract's own worked example, not an invented one", () => {
+    // $2.30 for 10 minutes against a $4.90 base fare, straight from
+    // Exhibit C. ride-cost.test.ts asserts the arithmetic agrees.
+    expect(EQUITY_AREA_UNLOCK_NOTE).toContain("$2.30");
+    expect(EQUITY_AREA_UNLOCK_NOTE).toContain("$4.90");
   });
 
   it("labels an area the way the retired maps did", () => {

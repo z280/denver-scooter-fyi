@@ -287,10 +287,29 @@ export function veoParkingReportUrl(r: ParkingReportInput): string {
 // Veo's Denver rates are locked in the city licensing agreement for the
 // contract's duration, so constants are safe. All amounts in cents.
 
+// TWO DIFFERENT THINGS, both of which the contract calls "equity" ---------
+//
+// Exhibit C's pricing table has four rows, and this app long carried only
+// three of them. The one it was missing is the one that matters most to a
+// rider standing in an equity area:
+//
+//   * RATE_PLANS below are RIDER TIERS — which pricing bracket a person is
+//     enrolled in. The rider picks theirs; it applies to every ride they
+//     take, anywhere in the city.
+//
+//   * EQUITY_AREA_RATE is GEOGRAPHIC and AUTOMATIC. Exhibit A §5.2 obliges
+//     Veo to discount "any trip that starts or ends within a designated
+//     Equity Area" — the rider does not opt in, does not enroll, and does
+//     not have to know it exists. Exhibit C prices it at $1 + $0.13/min.
+//
+// They are orthogonal axes, and conflating them is how a rider gets talked
+// out of a refund. See EQUITY_AREA_RATE below.
+
 // One flat list, VeoPlus variants included (per Zeke, PR #37): rate is a
 // single field, not a rate + a separate VeoPlus checkbox. The Pass waives
-// the unlock fee, so its variants just carry unlockCents: 0. Equity gets no
-// variant — its unlock is already free, so a Pass changes nothing.
+// the unlock fee, so its variants just carry unlockCents: 0. The Access
+// tier gets no variant — its unlock is already free, so a Pass changes
+// nothing.
 export type RatePlanKey =
   | "resident"
   | "resident_plus"
@@ -312,11 +331,45 @@ export const RATE_PLANS: RatePlan[] = [
   { key: "resident_plus", label: "Resident w/ VeoPlus Pass — free unlocks + 25¢/min", unlockCents: 0, perMinCents: 25, veoPlus: true },
   { key: "visitor", label: "Visitor — $1 + 39¢/min", unlockCents: 100, perMinCents: 39 },
   { key: "visitor_plus", label: "Visitor w/ VeoPlus Pass — free unlocks + 39¢/min", unlockCents: 0, perMinCents: 39, veoPlus: true },
-  // Equity program: 60 free min/day, then 15¢/min with no unlock fee. The
-  // ticker can't know how much of today's free hour is left, so it prices
-  // minutes beyond 60 and labels the estimate accordingly.
-  { key: "equity", label: "Equity program — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
+  // Denver's income-qualified rider tier — Exhibit C calls it the Access
+  // Program. 60 free min/day, then 15¢/min with no unlock fee; the ticker
+  // can't know how much of today's free hour is left, so it prices minutes
+  // beyond 60 and labels the estimate accordingly.
+  //
+  // The KEY stays "equity" because it is the server's `rate_plan` enum
+  // value (see toApiRatePlan / the API's PUT /api/v1/profile) and riders
+  // already have it stored — renaming it is a cross-repo migration, not a
+  // relabel. The LABEL changed because "Equity program" and "Equity Area"
+  // are different contract rows, and a rider who reads this line as the
+  // area discount concludes they are already getting it.
+  { key: "equity", label: "Access Program (income-qualified) — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
 ];
+
+/** Exhibit C, "Equity Area Pricing" row: $1 unlock + $0.13/minute, fixed
+ *  for the whole contract term (May 2026 – May 2029) and adjustable only
+ *  for documented cost-of-service increases with DOTI approval
+ *  (Exhibit A §7.1).
+ *
+ *  Deliberately NOT a member of RATE_PLANS. Every entry there is something
+ *  a rider chooses; this is something the contract obliges Veo to apply on
+ *  its own, to any trip that starts or ends in an Equity Area, whatever
+ *  tier the rider is on (Exhibit A §5.2, "shall"). Putting it in the picker
+ *  would frame an automatic entitlement as an option you have to know to
+ *  select — which is the failure mode this whole app exists to correct.
+ *
+ *  Note the $1 unlock. It is easy to read "$0.13/min" as the whole story
+ *  and then read a $1 line on a receipt as the discount having been
+ *  ignored. It hasn't; the unlock is in the contract's own row.
+ *
+ *  One thing Exhibit C does NOT say: whether a VeoPlus Pass waives this
+ *  unlock the way it waives the standard one. The Equity Area row has no
+ *  Pass variant and no "Maximums" figure at all, unlike Base Price
+ *  ($0.49/min cap), Resident Pass ($0.33/min) and Access ($0.19/min). So
+ *  the rate is modeled exactly as written, with no inferred interaction. */
+export const EQUITY_AREA_RATE = {
+  unlockCents: 100,
+  perMinCents: 13,
+} as const;
 
 /** One purchasable comparator pass: a flat price for a block of riding
  *  minutes, unlocks included (no per-ride unlock charge). */

@@ -49,17 +49,37 @@ export const EQUITY_AREA_COLOR = "#6a1b9a";
  *  rider is. Roughly a 12-block view. */
 export const EQUITY_INDICATOR_MIN_ZOOM = 13.5;
 
-/** The rider-facing explanation, verbatim as the city's contract terms were
- *  given to us. Exported as a constant because it is quoted in three places
- *  (the indicator's modal, the tests, and the ride summary) and a paraphrase
- *  in any one of them is a different promise. */
+/** The rider-facing explanation, verbatim. Exported as a constant because
+ *  it is quoted in three places (the indicator's modal, the tests, and the
+ *  ride summary) and a paraphrase in any one of them is a different
+ *  promise.
+ *
+ *  Backed by Exhibit A §5.2 ("shall implement a pricing structure that
+ *  automatically provides a fare discount for any trip that starts or ends
+ *  within a designated Equity Area") and priced by Exhibit C's Equity Area
+ *  Pricing row. */
 export const EQUITY_DISCOUNT_NOTICE =
   "Veo contract with City of Denver says rides that stop or start in this " +
   "area should cost $0.13/min, please screenshot your receipt if you do " +
   "not see this discount!";
 
-/** Short form for the indicator chip itself. */
-export const EQUITY_INDICATOR_LABEL = "Equity Area · $0.13/min";
+/** The unlock fee that goes with that per-minute rate.
+ *
+ *  Stated wherever the notice is, and deliberately not folded into it: a
+ *  rider who reads "$0.13/min" as the whole fare, then sees a $1 line on
+ *  their receipt, concludes the discount was not applied and either goes to
+ *  support with a bad complaint or gives up on a good one. Exhibit C's
+ *  Equity Area row is $1 + $0.13/min; both halves are the discount. */
+export const EQUITY_AREA_UNLOCK_NOTE =
+  "That rate comes with a $1 unlock, same as the standard fare — so a " +
+  "10-minute ride should land near $2.30, against $4.90 at the base price.";
+
+/** Short form for the indicator chip itself. Carries the unlock so the chip
+ *  is not itself the thing that misleads, in the "25¢/min" shorthand the
+ *  rate-plan labels already use — the long "$0.13/min" form wrapped this
+ *  onto two lines on a phone, and a floating chip that reflows as you pan
+ *  reads as a glitch. Same number; the modal spells it out longhand. */
+export const EQUITY_INDICATOR_LABEL = "Equity Area · $1 + 13¢/min";
 
 export interface EquityAreaProperties {
   region_name: string;

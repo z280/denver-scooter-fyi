@@ -108,6 +108,17 @@ describe("the tap explainer", () => {
     expect(anonymous).not.toContain("Equity Area <");
   });
 
+  it("states the unlock fee alongside the per-minute rate", () => {
+    expect(explainerHtml(null)).toContain("$1 unlock");
+  });
+
+  it("says the discount is automatic, not something to enroll in", () => {
+    // Exhibit A §5.2 says Veo "shall" apply it to any qualifying trip. A
+    // rider who thinks it is an opt-in program never asks why they did not
+    // get it.
+    expect(explainerHtml(null)).toContain("automatically");
+  });
+
   it("says the discount covers rides that start OR end in the area", () => {
     // The most common misreading of the contract term, and the one that
     // costs a rider the refund: they assume the whole ride has to be inside.
@@ -164,7 +175,10 @@ describe("EquityAreaMap", () => {
     const { eq, chip } = setup();
     eq.wire();
     await vi.waitFor(() => expect(chip.hidden).toBe(false));
-    expect(chip.textContent).toContain("$0.13/min");
+    // Both halves of Exhibit C's Equity Area row, so the chip itself is not
+    // what misleads a rider about the $1 line on their receipt.
+    expect(chip.textContent).toContain("13¢/min");
+    expect(chip.textContent).toContain("$1");
   });
 
   it("hides the chip when the map leaves the area", async () => {

@@ -2,7 +2,13 @@
 // never sees Veo's billing clock, which is why the HUD has clock-sync
 // nudges and the summary allows editing the duration.
 
-import { COMPARATOR, RATE_PLANS, type RatePlan, type RatePlanKey } from "./config.ts";
+import {
+  COMPARATOR,
+  EQUITY_AREA_RATE,
+  RATE_PLANS,
+  type RatePlan,
+  type RatePlanKey,
+} from "./config.ts";
 import { fetchPricing as defaultFetchPricing, type ApiRatePlan } from "./api.ts";
 
 const RATE_STORAGE_KEY = "scooter_fyi.rate_plan";
@@ -19,7 +25,7 @@ export function billableMinutes(elapsedMs: number): number {
 
 /** The two components `rideCostCents` sums, exposed so `estimateWithTax` can
  *  build its `{unlock, perMin}` breakdown from the SAME minute-billing logic
- *  — including the equity plan's 60-free-minutes credit — rather than
+ *  — including the Access tier's 60-free-minutes credit — rather than
  *  re-deriving (and risking silently bypassing) it. This is the one place
  *  that logic lives; both `rideCostCents` and `estimateWithTax` are thin
  *  wrappers around it. */
@@ -29,8 +35,11 @@ function costComponents(
 ): { unlockCents: number; perMinCents: number } {
   let minutes = billableMinutes(elapsedMs);
   if (plan.key === "equity") {
-    // 60 free minutes/day; the ticker can't know how much of today's hour
-    // is already spent, so it optimistically prices only the overflow.
+    // The Access Program's 60 free minutes/day (the `equity` KEY is the
+    // server's enum value for that tier — not the geographic Equity Area
+    // discount, which is priced by equityAreaCostCents below). The ticker
+    // can't know how much of today's hour is already spent, so it
+    // optimistically prices only the overflow.
     minutes = Math.max(0, minutes - 60);
   }
   // VeoPlus (free unlocks) is a plan variant now — its unlockCents is 0.
@@ -40,6 +49,36 @@ function costComponents(
 export function rideCostCents(plan: RatePlan, elapsedMs: number): number {
   const { unlockCents, perMinCents } = costComponents(plan, elapsedMs);
   return unlockCents + perMinCents;
+}
+
+// ---------- Equity Area pricing (Exhibit A §5.2 / Exhibit C) ----------
+// Separate from the plan math above on purpose: this is not a tier a rider
+// selects, it is a discount the contract obliges Veo to apply to any trip
+// that starts or ends in an Equity Area, regardless of tier. So it takes no
+// RatePlan — passing one would invite the question "which plan's rules also
+// apply?", and the answer per Exhibit C is none of them: it is a flat
+// $1 + $0.13/min with no free-minute credit and no Pass variant.
+
+/** What a ride touching an Equity Area should cost, pre-tax, in cents. */
+export function equityAreaCostCents(elapsedMs: number): number {
+  return (
+    EQUITY_AREA_RATE.unlockCents +
+    billableMinutes(elapsedMs) * EQUITY_AREA_RATE.perMinCents
+  );
+}
+
+/** The same figure broken out for the ride summary, so a rider can put it
+ *  line-for-line beside the receipt in the Veo app. Same tax treatment as
+ *  `estimateWithTax` — the discount is on the fare, not on the tax. */
+export function equityAreaEstimateWithTax(
+  elapsedMs: number,
+  taxRate: number = currentTaxRate(),
+): RideCostBreakdown {
+  const unlock = EQUITY_AREA_RATE.unlockCents;
+  const perMin = billableMinutes(elapsedMs) * EQUITY_AREA_RATE.perMinCents;
+  const subtotal = unlock + perMin;
+  const tax = Math.round(subtotal * taxRate);
+  return { unlock, perMin, tax, total: subtotal + tax };
 }
 
 /** The comparator-pass purchase this ride is priced against — the ladder
@@ -143,16 +182,17 @@ export function resetTaxRateForTests(rate: number = DEFAULT_TAX_RATE): void {
 }
 
 export interface RideCostBreakdown {
-  /** Unlock fee, cents (0 for VeoPlus variants and the equity plan). */
+  /** Unlock fee, cents (0 for VeoPlus variants and the Access tier; $1 for
+   *  the Equity Area rate, which has its own unlock — see EQUITY_AREA_RATE). */
   unlock: number;
-  /** Per-minute charge, cents — already net of the equity plan's 60
+  /** Per-minute charge, cents — already net of the Access tier's 60
    *  free-minutes credit, via the same `costComponents` `rideCostCents` uses. */
   perMin: number;
   /** Sales tax on `unlock + perMin`, cents, rounded to the nearest cent. */
   tax: number;
-  /** `unlock + perMin + tax`. Additive-true: a `0` unlock/perMin (equity, or
-   *  any VeoPlus variant before the free minutes run out) renders as an
-   *  honest `$0.00` component, never folded away. */
+  /** `unlock + perMin + tax`. Additive-true: a `0` unlock/perMin (the Access
+   *  tier, or any VeoPlus variant before the free minutes run out) renders as
+   *  an honest `$0.00` component, never folded away. */
   total: number;
 }
 

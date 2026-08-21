@@ -33,6 +33,7 @@ import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   billableMinutes,
   comparatorPassQuote,
+  equityAreaCostCents,
   formatCents,
   planFor,
   rideCostCents,
@@ -1700,6 +1701,13 @@ export class RideHud {
     const deltaCents = veoCents - passQuote.cents;
     const zoneRide = this.startedInZone || endedInZone;
 
+    // A ride that touched an Equity Area should be billed at the contract's
+    // own rate ($1 + 13¢/min, Exhibit C), whatever tier the rider is on.
+    // That number is the entire point of the flag: "you may be owed a
+    // discount" is a thing to shrug at, "you should have been charged $2.30"
+    // is a thing to go and check.
+    const equityAreaCents = zoneRide ? equityAreaCostCents(elapsed) : null;
+
     const rows: string[] = [
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
@@ -1707,8 +1715,13 @@ export class RideHud {
         `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
         formatCents(veoCents),
       ),
-      row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)),
     ];
+    if (equityAreaCents !== null) {
+      rows.push(
+        row("Should be (Equity Area rate)", formatCents(equityAreaCents)),
+      );
+    }
+    rows.push(row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)));
 
     const veoPlusLine = plan.veoPlus
       ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
@@ -1735,9 +1748,21 @@ export class RideHud {
     // The exact contract terms, not a paraphrase: this is the sentence a
     // rider may end up quoting at Veo support, and the screenshot ask is
     // the part that makes the difference provable later.
+    // Only claim an overcharge when the plan rate actually exceeds the area
+    // rate. An Access-tier rider inside their 60 free minutes already pays
+    // less than $1 + 13¢/min, and telling them they were overcharged would
+    // send them to support with a complaint that is not true.
+    const owedCents =
+      equityAreaCents !== null ? veoCents - equityAreaCents : 0;
+    const owedClause =
+      owedCents > 0
+        ? ` At your usual rate this ride would be ${formatCents(veoCents)}, so the discount is worth about ${formatCents(owedCents)} here.`
+        : "";
     const zoneLine = zoneRide
       ? `<p class="hud-zone">🏷️ This ride ${this.startedInZone ? "started" : "ended"} in an Equity Area.
-         ${EQUITY_DISCOUNT_NOTICE} Open the Veo app → History to check.</p>`
+         ${EQUITY_DISCOUNT_NOTICE} That rate carries a $1 unlock, so expect
+         about ${formatCents(equityAreaCents ?? 0)} for ${billableMinutes(elapsed)} min.${owedClause}
+         Open the Veo app → History to check.</p>`
       : "";
 
     this.setState("summary");

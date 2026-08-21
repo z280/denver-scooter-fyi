@@ -31,6 +31,7 @@ import type { Map as MLMap } from "maplibre-gl";
 import { FIRST_DEVICE_LAYER } from "./devices.ts";
 import {
   EQUITY_AREA_COLOR,
+  EQUITY_AREA_UNLOCK_NOTE,
   EQUITY_DISCOUNT_NOTICE,
   EQUITY_INDICATOR_LABEL,
   EQUITY_INDICATOR_MIN_ZOOM,
@@ -76,11 +77,13 @@ export function explainerHtml(areaName: string | null): string {
     <div class="equity-explainer">
       ${where}
       <p class="equity-explainer__quote">${EQUITY_DISCOUNT_NOTICE}</p>
+      <p class="equity-explainer__note">${EQUITY_AREA_UNLOCK_NOTE}</p>
       <p class="equity-explainer__note">
         The discount applies to a ride that <strong>starts or ends</strong> in
-        an equity area — not only one that stays inside the whole way. If your
-        receipt charges the standard rate, the screenshot is what makes the
-        difference provable later.
+        an equity area — not only one that stays inside the whole way, and you
+        do not have to enroll in anything: the contract says Veo applies it
+        automatically. If your receipt charges the standard rate, the
+        screenshot is what makes the difference provable later.
       </p>
       <p class="equity-explainer__note equity-explainer__note--source">
         Boundaries: the City of Denver's official Equity Area map for the Veo
