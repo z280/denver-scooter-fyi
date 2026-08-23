@@ -10,6 +10,7 @@ import {
   type BoundaryResponse,
 } from "./api.ts";
 import { OVERLAY_BY_LAYER } from "./config.ts";
+import { loadEquityAreas } from "./equity-areas.ts";
 import { FIRST_DEVICE_LAYER } from "./devices.ts";
 import { commas } from "./util.ts";
 
@@ -26,6 +27,38 @@ function fillId(layer: BoundaryLayer) {
 }
 function lineId(layer: BoundaryLayer) {
   return `bnd-${layer}-line`;
+}
+
+/** The bundled equity map, wrapped in the BoundaryResponse envelope the
+ *  rest of this module expects. `metadata.bbox` is computed here rather
+ *  than stored in the asset so the two cannot disagree. */
+async function loadEquityAreasAsBoundary(): Promise<BoundaryResponse> {
+  const data = await loadEquityAreas();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const f of data.features) {
+    const polys =
+      f.geometry.type === "Polygon"
+        ? [f.geometry.coordinates]
+        : f.geometry.coordinates;
+    for (const poly of polys) {
+      for (const [x, y] of poly[0] as [number, number][]) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return {
+    type: "FeatureCollection",
+    metadata: {
+      region_category: "equity_areas",
+      region_type: "equity",
+      feature_count: data.features.length,
+      bbox: [minX, minY, maxX, maxY],
+    },
+    features: data.features as BoundaryResponse["features"],
+  };
 }
 
 export class Overlays {
@@ -87,11 +120,21 @@ export class Overlays {
     });
   }
 
-  /** Fetch (and cache) a boundary layer's data without touching the map. */
+  /** Fetch (and cache) a boundary layer's data without touching the map.
+   *
+   *  The official `equity` layer is served from the bundled copy rather than
+   *  the API. It is the same geometry, and going local means the one layer
+   *  that carries a claim about a rider's money — see equity-areas.ts —
+   *  cannot be missing because a deploy landed in the wrong order or a CDN
+   *  served something stale. Every other layer comes from the API as
+   *  before. */
   async loadBoundary(layer: BoundaryLayer): Promise<BoundaryResponse> {
     let data = this.cache.get(layer);
     if (!data) {
-      data = await fetchBoundary(layer);
+      data =
+        layer === "equity"
+          ? await loadEquityAreasAsBoundary()
+          : await fetchBoundary(layer);
       this.cache.set(layer, data);
     }
     return data;

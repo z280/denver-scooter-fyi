@@ -20,15 +20,23 @@ export interface AreaFilterState {
   polygons: IndexedFeature<BoundaryProperties>[] | null;
   /**
    * Overlay to display. `subset` is the list of region_names to show; null
-   * means show every region of the layer (used for v1/v2 which select all).
+   * means show every region of the layer (used by the equity maps, which
+   * select all — see ALL_OR_NOTHING).
    * `display: null` means no overlay is filter-managed right now (main.ts
    * should release whatever it was previously managing).
    */
   display: { layer: BoundaryLayer; subset: string[] | null } | null;
 }
 
-/** Layers where any selection means "all regions of that layer". */
-const ALL_OR_NOTHING: ReadonlySet<BoundaryLayer> = new Set(["v1", "v2"]);
+/** Layers where any selection means "all regions of that layer".
+ *
+ *  These are the equity maps, whose regions are ordinally named (EQ_014,
+ *  V1_007) and mean nothing to a rider picking from a list — "Equity Area
+ *  014" is not a place anyone can locate. Filtering to one of the thirty is
+ *  a question nobody asks; filtering to "the equity areas" is the whole
+ *  point. v1/v2 stay listed here because the layers still exist even though
+ *  the UI no longer offers them (config.ts's RETIRED_OVERLAYS). */
+const ALL_OR_NOTHING: ReadonlySet<BoundaryLayer> = new Set(["equity", "v1", "v2"]);
 
 export class AreaFilter {
   private enabled = false;

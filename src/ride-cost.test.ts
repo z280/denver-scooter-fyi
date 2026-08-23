@@ -5,12 +5,19 @@
 // stay out of scope here — this lane only touches the cost math.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RATE_PLANS, type RatePlan, type RatePlanKey } from "./config.ts";
+import {
+  EQUITY_AREA_RATE,
+  RATE_PLANS,
+  type RatePlan,
+  type RatePlanKey,
+} from "./config.ts";
 import {
   DEFAULT_TAX_RATE,
   billableMinutes,
   comparatorPassQuote,
   currentTaxRate,
+  equityAreaCostCents,
+  equityAreaEstimateWithTax,
   estimateWithTax,
   refreshTaxRate,
   resetTaxRateForTests,
@@ -52,17 +59,29 @@ describe("rideCostCents — unchanged after the tax-breakdown refactor", () => {
     expect(rideCostCents(plan("visitor_plus"), 12 * MIN)).toBe(12 * 39);
   });
 
-  it("equity: within the 60 free minutes/day costs nothing", () => {
+  // The `equity` KEY is the Access Program tier (income-qualified, 60 free
+  // min/day) — the server's rate_plan enum value. NOT the geographic Equity
+  // Area discount, which is priced separately below.
+  it("access tier: within the 60 free minutes/day costs nothing", () => {
     expect(rideCostCents(plan("equity"), 30 * MIN)).toBe(0);
     expect(rideCostCents(plan("equity"), 60 * MIN)).toBe(0);
   });
 
-  it("equity: exactly one minute over the free window bills one minute at 15¢", () => {
+  it("access tier: exactly one minute over the free window bills one minute at 15¢", () => {
     expect(rideCostCents(plan("equity"), 61 * MIN)).toBe(15);
   });
 
-  it("equity: 70 min bills the 10 min overflow at 15¢/min, no unlock fee", () => {
+  it("access tier: 70 min bills the 10 min overflow at 15¢/min, no unlock fee", () => {
     expect(rideCostCents(plan("equity"), 70 * MIN)).toBe(10 * 15);
+  });
+
+  it("the Access tier is not offered under a name that reads as the area discount", () => {
+    // Two different Exhibit C rows. A rider who reads the tier's label as
+    // the geographic discount concludes they are already receiving it and
+    // never checks a receipt.
+    const label = plan("equity").label;
+    expect(label).toContain("Access Program");
+    expect(label).not.toMatch(/Equity Area/i);
   });
 
   it("billable minutes round up (Veo bills per started minute)", () => {
@@ -251,5 +270,63 @@ describe("comparatorPassQuote", () => {
 
   it("bills per started minute, same as the metered comparator (30:01 needs the 60 pass)", () => {
     expect(comparatorPassQuote(30 * MIN + 1000).cents).toBe(499);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Equity Area pricing — Exhibit A §5.2 (the obligation) and Exhibit C (the
+// rate). This is the number a rider holds up against their receipt, so the
+// arithmetic gets pinned to the figures the contract itself states.
+// ---------------------------------------------------------------------------
+describe("equity area pricing", () => {
+  it("is $1 unlock + 13¢/min, exactly as Exhibit C states it", () => {
+    expect(EQUITY_AREA_RATE.unlockCents).toBe(100);
+    expect(EQUITY_AREA_RATE.perMinCents).toBe(13);
+  });
+
+  it("prices the contract's own worked example: $2.30 for 10 minutes", () => {
+    // Exhibit C spells this out — 10 min / 1 mi is $2.30 against a $4.90
+    // base fare. If this assertion ever fails, the app and the contract
+    // disagree about the discount, which is the one thing it cannot do.
+    expect(equityAreaCostCents(10 * MIN)).toBe(230);
+  });
+
+  it("charges the unlock once, not per minute", () => {
+    expect(equityAreaCostCents(1 * MIN)).toBe(100 + 13);
+    expect(equityAreaCostCents(20 * MIN)).toBe(100 + 20 * 13);
+  });
+
+  it("bills per started minute, like every other Veo rate", () => {
+    expect(equityAreaCostCents(61_000)).toBe(100 + 2 * 13);
+  });
+
+  it("gives no free-minute credit — that belongs to the Access tier", () => {
+    // The two were conflated before; a 30-minute area ride is NOT free.
+    expect(equityAreaCostCents(30 * MIN)).toBe(100 + 30 * 13);
+    expect(equityAreaCostCents(30 * MIN)).not.toBe(
+      rideCostCents(plan("equity"), 30 * MIN),
+    );
+  });
+
+  it("is cheaper than every standard tier for a typical ride", () => {
+    // The whole claim the indicator makes. If this stopped holding, the
+    // app would be telling riders to chase a discount that costs them more.
+    const ride = 10 * MIN;
+    const area = equityAreaCostCents(ride);
+    for (const key of ["resident", "resident_plus", "visitor", "visitor_plus"] as const) {
+      expect(area).toBeLessThan(rideCostCents(plan(key), ride));
+    }
+  });
+
+  it("breaks the fare out for the summary, taxed like any other", () => {
+    resetTaxRateForTests(0.1);
+    const b = equityAreaEstimateWithTax(10 * MIN);
+    expect(b.unlock).toBe(100);
+    expect(b.perMin).toBe(130);
+    expect(b.tax).toBe(23);          // 10% of $2.30
+    expect(b.total).toBe(253);
+    // Additive-true, same contract as estimateWithTax.
+    expect(b.unlock + b.perMin + b.tax).toBe(b.total);
+    resetTaxRateForTests();
   });
 });

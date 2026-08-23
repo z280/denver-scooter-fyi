@@ -10,6 +10,10 @@
 
 import maplibregl, { type Map as MLMap } from "maplibre-gl";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
+import {
+  EQUITY_DISCOUNT_NOTICE,
+  EQUITY_INDICATOR_LABEL,
+} from "./equity-areas.ts";
 import { distanceMeters, type LngLat } from "./locate.ts";
 import {
   FIRST_DEVICE_LAYER,
@@ -32,6 +36,7 @@ import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   billableMinutes,
   comparatorPassQuote,
+  equityAreaCostCents,
   formatCents,
   planFor,
   rideCostCents,
@@ -381,7 +386,9 @@ export class RideHud {
 
   constructor(
     container: HTMLElement,
-    /** Lazily resolves the v1∪v2 equity polygons for the start/end flags. */
+    /** Lazily resolves the city's official Equity Area polygons for the
+     *  start/end flags — the same map the on-screen indicator and the
+     *  compliance numbers use. */
     private readonly equityZones: () => Promise<IndexedFeature[]>,
     /** The main map — the HUD frames it and drives a follow-cam during a
      *  ride, so the rider sees themselves move instead of a blank panel. */
@@ -1238,7 +1245,7 @@ export class RideHud {
         <div class="hud-corner hud-corner--tr">
           <span class="hud-readout hud-readout--mph"><b id="hud-mph">0</b><i>mph</i></span>
         </div>
-        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ Equity zone</div>
+        <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ ${EQUITY_INDICATOR_LABEL}</div>
         <div class="hud-rotate-badge">
           <button type="button" class="hud-rotate-badge__close" data-hud="dismiss-landscape-hint" aria-label="Dismiss">&times;</button>
           ${rotateIconMarkup("hud-rotate-badge__icon")}
@@ -1697,6 +1704,13 @@ export class RideHud {
     const deltaCents = veoCents - passQuote.cents;
     const zoneRide = this.startedInZone || endedInZone;
 
+    // A ride that touched an Equity Area should be billed at the contract's
+    // own rate ($1 + 13¢/min, Exhibit C), whatever tier the rider is on.
+    // That number is the entire point of the flag: "you may be owed a
+    // discount" is a thing to shrug at, "you should have been charged $2.30"
+    // is a thing to go and check.
+    const equityAreaCents = zoneRide ? equityAreaCostCents(elapsed) : null;
+
     const rows: string[] = [
       row("Duration", formatClock(elapsed)),
       row("Distance", `${miles.toFixed(1)} mi`),
@@ -1704,8 +1718,13 @@ export class RideHud {
         `Est. Veo cost (${plan.key.replace("_plus", ", VeoPlus")})`,
         formatCents(veoCents),
       ),
-      row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)),
     ];
+    if (equityAreaCents !== null) {
+      rows.push(
+        row("Should be (Equity Area rate)", formatCents(equityAreaCents)),
+      );
+    }
+    rows.push(row(`With a ${COMPARATOR.name} pass`, formatCents(passQuote.cents)));
 
     const veoPlusLine = plan.veoPlus
       ? `<p class="hud-note">VeoPlus Pass applied — unlock fee waived.</p>`
@@ -1729,9 +1748,24 @@ export class RideHud {
            ${passDesc} would have covered this ride${leftoverClause}.</p>`
         : "";
 
+    // The exact contract terms, not a paraphrase: this is the sentence a
+    // rider may end up quoting at Veo support, and the screenshot ask is
+    // the part that makes the difference provable later.
+    // Only claim an overcharge when the plan rate actually exceeds the area
+    // rate. An Access-tier rider inside their 60 free minutes already pays
+    // less than $1 + 13¢/min, and telling them they were overcharged would
+    // send them to support with a complaint that is not true.
+    const owedCents =
+      equityAreaCents !== null ? veoCents - equityAreaCents : 0;
+    const owedClause =
+      owedCents > 0
+        ? ` At your usual rate this ride would be ${formatCents(veoCents)}, so the discount is worth about ${formatCents(owedCents)} here.`
+        : "";
     const zoneLine = zoneRide
-      ? `<p class="hud-zone">🏷️ This ride ${this.startedInZone ? "started" : "ended"} in an equity zone —
-         Veo owes you the contract discount. Open the Veo app → History and check your receipt.</p>`
+      ? `<p class="hud-zone">🏷️ This ride ${this.startedInZone ? "started" : "ended"} in an Equity Area.
+         ${EQUITY_DISCOUNT_NOTICE} That rate carries a $1 unlock, so expect
+         about ${formatCents(equityAreaCents ?? 0)} for ${billableMinutes(elapsed)} min.${owedClause}
+         Open the Veo app → History to check.</p>`
       : "";
 
     this.setState("summary");

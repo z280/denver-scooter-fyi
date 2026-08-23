@@ -11,6 +11,14 @@
 /sprites/*
   Cache-Control: public, max-age=604800
 
+# The city's official Equity Area map. A stable name and effectively static
+# content — the city has clarified it once and would announce a change —
+# but not `immutable`: this file decides whether a rider is told they are
+# owed a discount, so a corrected boundary should reach them within a day
+# rather than whenever their browser next evicts it.
+/equity-areas.geojson
+  Cache-Control: public, max-age=86400
+
 # The basemap archive has a stable name; cache a day so a regen propagates.
 /denver.pmtiles
   Cache-Control: public, max-age=86400
