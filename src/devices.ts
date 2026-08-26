@@ -1211,19 +1211,20 @@ export class Devices {
       // from `/route/options` once a scooter is CHOSEN. This is what can be
       // said before paying for that call, so it is hedged in words as well
       // as rounded to 5.
-      const reachDest = this.tripDest;
+      // Keyed on the TRIP, deliberately, not on the filter — see `tripDest`.
+      const dest = this.tripDest;
       let arrivalBlock = "";
-      if (reachDest) {
+      if (dest) {
         const arriveAt = estimatedArrivalPercent({
           rangeMeters: asNumber(props.current_range_meters),
           batteryPercent: asNumber(props.battery_percent),
           scooter: { lat: coords[1], lng: coords[0] },
-          dest: reachDest,
+          dest,
         });
         const verdict = canReach({
           rangeMeters: asNumber(props.current_range_meters),
           scooter: { lat: coords[1], lng: coords[0] },
-          dest: reachDest,
+          dest,
         });
         if (verdict === "no") {
           arrivalBlock = `<div class="device-popup__arrival is-short">
