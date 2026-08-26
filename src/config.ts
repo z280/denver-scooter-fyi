@@ -1,5 +1,6 @@
 import type { LngLatBoundsLike } from "maplibre-gl";
 import type { BoundaryLayer } from "./api.ts";
+import { EQUITY_AREA_COLOR } from "./equity-areas.ts";
 
 /** Fit-to-Denver bounding box: [west, south] .. [east, north]. */
 export const DENVER_BOUNDS: LngLatBoundsLike = [
@@ -17,7 +18,10 @@ export const BASEMAP_PMTILES_URL =
 /** Device positions repoll cadence. Upstream only updates every ~10 min. */
 export const REFRESH_MS = 90_000;
 
-/** Contractual SLA threshold for avg_percent_all_devices_v1 (RFP §3.0). */
+/** Contractual SLA threshold for avg_percent_all_devices_equity (RFP §3.0)
+ *  — the share of the fleet the contract requires in equity areas over the
+ *  6-9 AM window. The server computes pass/fail with this same number; it
+ *  is repeated here only to draw the target line on the gauge. */
 export const COMPLIANCE_THRESHOLD = 30;
 
 /** Colorblind-safe (Okabe–Ito) device colors. */
@@ -34,24 +38,66 @@ export interface OverlayDef {
   color: string;
 }
 
-/** The five boundary overlays, with the exact required UI labels. */
+/** The boundary overlays offered in the Areas drawer.
+ *
+ *  The two "Disadvantaged Areas" versions are NOT here any more. They were
+ *  the city's two candidate equity maps, drawn side by side because the
+ *  contract negotiations cited both and nobody would say which one bound
+ *  the SLA. In August 2026 the city said: neither — it is the map in
+ *  equity-areas.ts. Showing all three would ask a rider to adjudicate a
+ *  question that has been answered, so the official one gets its own
+ *  control (see the Areas drawer's "Equity areas" section) and these are
+ *  retired to RETIRED_OVERLAYS below. */
 export const OVERLAYS: OverlayDef[] = [
-  { layer: "v1", label: "Disadvantaged Areas (v1)", color: "#e53935" },
-  { layer: "v2", label: "Disadvantaged Areas (v2)", color: "#8e24aa" },
   { layer: "neighborhood", label: "Neighborhoods", color: "#1e88e5" },
   { layer: "council_district", label: "City Council Districts", color: "#00897b" },
   { layer: "community_network", label: "City Regions", color: "#6d4c41" },
 ];
 
-/** Equity-rank tiers er1..er6. One shared color so the "Equity Ranking
- *  (Selected)" union reads as a single overlay regardless of which ranks
- *  are on. Kept out of OVERLAYS so they don't each get an individual
- *  boundary-outline checkbox — the rank toggles live in the compliance
- *  drawer and drive the union overlay instead. */
+/** The superseded equity maps: v1/v2 and the six ranked tiers.
+ *
+ *  RETIRED, NOT DELETED — deliberately, in three senses:
+ *
+ *   * The API still computes, stores and serves all of them, and still
+ *     carries their history back to 2025. This app is an audit tool; the
+ *     record of what the numbers looked like under the old maps is part of
+ *     what it is for.
+ *   * `OVERLAY_BY_LAYER` below still resolves them, so overlays.ts can
+ *     still draw one if something asks — nothing in the shipping UI does.
+ *   * Whoever comes to this file wondering where the v1/v2 checkboxes went
+ *     finds the answer here rather than in a year-old commit message.
+ *
+ *  Adding one back to `OVERLAYS` is all it takes to put it on screen. */
+/** The official Equity Area map's label and color.
+ *
+ *  NOT in `OVERLAYS` — the Areas drawer gives it a dedicated switch rather
+ *  than a checkbox in the outline list, and its polygons are drawn by
+ *  equity-map.ts from the bundled asset, not by `Overlays.toggle`.
+ *
+ *  It still needs an entry in `OVERLAY_BY_LAYER` below, because the layer is
+ *  reachable through two OTHER doors that both go through
+ *  `Overlays.ensureLayer` and read `.color` from there: the choropleth
+ *  select and the area filter's category list. Leaving it out crashed both
+ *  with "Cannot read properties of undefined (reading 'color')". */
+export const EQUITY_AREA_OVERLAY: OverlayDef = {
+  layer: "equity",
+  label: "Equity Areas",
+  color: EQUITY_AREA_COLOR,
+};
+
+export const RETIRED_OVERLAYS: OverlayDef[] = [
+  { layer: "v1", label: "Disadvantaged Areas (v1)", color: "#e53935" },
+  { layer: "v2", label: "Disadvantaged Areas (v2)", color: "#8e24aa" },
+];
+
+/** Equity-rank tiers er1..er6 — retired alongside v1/v2, for the same
+ *  reason and on the same terms. The rank picker they drove (a rider
+ *  choosing which tiers to estimate against, because the city had not said)
+ *  is gone from the compliance drawer; the constants stay so the layers
+ *  remain nameable and drawable. */
 export const EQUITY_RANK_COLOR = "#7b1fa2";
 export const EQUITY_RANK_NUMBERS = [1, 2, 3, 4, 5, 6] as const;
 export type EquityRank = (typeof EQUITY_RANK_NUMBERS)[number];
-export const EQUITY_RANK_DEFAULT: readonly EquityRank[] = [1, 2];
 
 export function equityRankLayer(rank: EquityRank): BoundaryLayer {
   return `er${rank}` as BoundaryLayer;
@@ -63,10 +109,18 @@ const EQUITY_RANK_OVERLAYS: OverlayDef[] = EQUITY_RANK_NUMBERS.map((r) => ({
   color: EQUITY_RANK_COLOR,
 }));
 
-/** Color/label lookup for every layer, including the equity ranks (which
- *  aren't in OVERLAYS). overlays.ts reads `.color` from here for er layers. */
+/** Color/label lookup for EVERY layer, retired ones included. overlays.ts
+ *  reads `.color` from here whenever it materializes a layer, so this must
+ *  stay exhaustive over BoundaryLayer even for layers the UI no longer
+ *  offers — a missing entry is an undefined dereference at draw time, not a
+ *  type error, because the Record is asserted rather than inferred. */
 export const OVERLAY_BY_LAYER: Record<BoundaryLayer, OverlayDef> = Object.fromEntries(
-  [...OVERLAYS, ...EQUITY_RANK_OVERLAYS].map((o) => [o.layer, o]),
+  [
+    ...OVERLAYS,
+    EQUITY_AREA_OVERLAY,
+    ...RETIRED_OVERLAYS,
+    ...EQUITY_RANK_OVERLAYS,
+  ].map((o) => [o.layer, o]),
 ) as Record<BoundaryLayer, OverlayDef>;
 
 // Whether Google sign-in is offered — and the GIS client id to init with —
@@ -256,10 +310,29 @@ export function veoParkingReportUrl(r: ParkingReportInput): string {
 // Veo's Denver rates are locked in the city licensing agreement for the
 // contract's duration, so constants are safe. All amounts in cents.
 
+// TWO DIFFERENT THINGS, both of which the contract calls "equity" ---------
+//
+// Exhibit C's pricing table has four rows, and this app long carried only
+// three of them. The one it was missing is the one that matters most to a
+// rider standing in an equity area:
+//
+//   * RATE_PLANS below are RIDER TIERS — which pricing bracket a person is
+//     enrolled in. The rider picks theirs; it applies to every ride they
+//     take, anywhere in the city.
+//
+//   * EQUITY_AREA_RATE is GEOGRAPHIC and AUTOMATIC. Exhibit A §5.2 obliges
+//     Veo to discount "any trip that starts or ends within a designated
+//     Equity Area" — the rider does not opt in, does not enroll, and does
+//     not have to know it exists. Exhibit C prices it at $1 + $0.13/min.
+//
+// They are orthogonal axes, and conflating them is how a rider gets talked
+// out of a refund. See EQUITY_AREA_RATE below.
+
 // One flat list, VeoPlus variants included (per Zeke, PR #37): rate is a
 // single field, not a rate + a separate VeoPlus checkbox. The Pass waives
-// the unlock fee, so its variants just carry unlockCents: 0. Equity gets no
-// variant — its unlock is already free, so a Pass changes nothing.
+// the unlock fee, so its variants just carry unlockCents: 0. The Access
+// tier gets no variant — its unlock is already free, so a Pass changes
+// nothing.
 export type RatePlanKey =
   | "resident"
   | "resident_plus"
@@ -281,11 +354,45 @@ export const RATE_PLANS: RatePlan[] = [
   { key: "resident_plus", label: "Resident w/ VeoPlus Pass — free unlocks + 25¢/min", unlockCents: 0, perMinCents: 25, veoPlus: true },
   { key: "visitor", label: "Visitor — $1 + 39¢/min", unlockCents: 100, perMinCents: 39 },
   { key: "visitor_plus", label: "Visitor w/ VeoPlus Pass — free unlocks + 39¢/min", unlockCents: 0, perMinCents: 39, veoPlus: true },
-  // Equity program: 60 free min/day, then 15¢/min with no unlock fee. The
-  // ticker can't know how much of today's free hour is left, so it prices
-  // minutes beyond 60 and labels the estimate accordingly.
-  { key: "equity", label: "Equity program — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
+  // Denver's income-qualified rider tier — Exhibit C calls it the Access
+  // Program. 60 free min/day, then 15¢/min with no unlock fee; the ticker
+  // can't know how much of today's free hour is left, so it prices minutes
+  // beyond 60 and labels the estimate accordingly.
+  //
+  // The KEY stays "equity" because it is the server's `rate_plan` enum
+  // value (see toApiRatePlan / the API's PUT /api/v1/profile) and riders
+  // already have it stored — renaming it is a cross-repo migration, not a
+  // relabel. The LABEL changed because "Equity program" and "Equity Area"
+  // are different contract rows, and a rider who reads this line as the
+  // area discount concludes they are already getting it.
+  { key: "equity", label: "Access Program (income-qualified) — 60 free min/day, then 15¢/min", unlockCents: 0, perMinCents: 15 },
 ];
+
+/** Exhibit C, "Equity Area Pricing" row: $1 unlock + $0.13/minute, fixed
+ *  for the whole contract term (May 2026 – May 2029) and adjustable only
+ *  for documented cost-of-service increases with DOTI approval
+ *  (Exhibit A §7.1).
+ *
+ *  Deliberately NOT a member of RATE_PLANS. Every entry there is something
+ *  a rider chooses; this is something the contract obliges Veo to apply on
+ *  its own, to any trip that starts or ends in an Equity Area, whatever
+ *  tier the rider is on (Exhibit A §5.2, "shall"). Putting it in the picker
+ *  would frame an automatic entitlement as an option you have to know to
+ *  select — which is the failure mode this whole app exists to correct.
+ *
+ *  Note the $1 unlock. It is easy to read "$0.13/min" as the whole story
+ *  and then read a $1 line on a receipt as the discount having been
+ *  ignored. It hasn't; the unlock is in the contract's own row.
+ *
+ *  One thing Exhibit C does NOT say: whether a VeoPlus Pass waives this
+ *  unlock the way it waives the standard one. The Equity Area row has no
+ *  Pass variant and no "Maximums" figure at all, unlike Base Price
+ *  ($0.49/min cap), Resident Pass ($0.33/min) and Access ($0.19/min). So
+ *  the rate is modeled exactly as written, with no inferred interaction. */
+export const EQUITY_AREA_RATE = {
+  unlockCents: 100,
+  perMinCents: 13,
+} as const;
 
 /** One purchasable comparator pass: a flat price for a block of riding
  *  minutes, unlocks included (no per-ride unlock charge). */

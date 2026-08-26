@@ -1015,6 +1015,17 @@ body:not(.ribbon-open) .drawer-tabs {
 }
 
 /* "You've got dibs" — a confirmation, not a document. */
+/* An alert that cost the rider something. Louder ink and a heavier edge —
+   never colour alone: the words change, the glyph changes (🚫 vs ✋), and
+   `taken` does not auto-dismiss at all. */
+.dibs-toast--urgent {
+  border-color: var(--fail);
+  box-shadow: 0 0 0 1px var(--fail), var(--shadow);
+}
+.dibs-toast--urgent .dibs-toast__text strong {
+  color: var(--fail);
+}
+
 .dibs-toast {
   position: fixed;
   left: 50%;
@@ -1708,7 +1719,22 @@ body.ride-active .dibs-toast {
   text-align: center;
 }
 /* One surface owns the bottom of the screen at a time. */
-body.arrival-open .home-bar {
+/* ...UNLESS THE RIDER OPENED IT ON PURPOSE. The arrival panel's "Change"
+   button calls `openForDestination`, and hiding the home bar unconditionally
+   meant that button opened a sheet nobody could see — it looked like a dead
+   control, which is exactly how it was reported.
+
+   So the rule now hides the RESTING PILL, which is the thing that would
+   otherwise sit under the arrival panel competing for the same corner. An
+   open sheet is the rider's current business and owns the bottom of the
+   screen; the arrival panel steps aside for it below. */
+body.arrival-open .home-bar:not(.is-open) {
+  display: none;
+}
+/* One surface at a time, still — just the other way round while the sheet is
+   up. `:has()` because the panel is a sibling of the home bar, not a
+   descendant, so there is nothing to select down from. */
+body.arrival-open:has(.home-bar.is-open) .arrival {
   display: none;
 }
 /* ...including the map's own. The arrival panel is centred and nearly the
@@ -1943,6 +1969,22 @@ body.ride-active .arrival {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* CAPPED, AND IT SCROLLS. An account with real history has a long recents
+     list, and this sheet grows upward from the bottom of the screen — so on
+     a well-used account it ran up into the top bar and the ribbon.
+
+     Bounded by the VIEWPORT rather than by a row count: the number of rows
+     that fit is a function of screen height, and a fixed count is wrong on
+     both a small phone and a desktop. 42vh leaves the map visible above the
+     sheet, which is the whole point of the floating design, and the input
+     and start line are outside this box so they never scroll away. */
+  max-height: 42vh;
+  overflow-y: auto;
+  /* Momentum scrolling inside a fixed sheet, and no scroll chaining out to
+     the map behind it — dragging past the end of this list should stop, not
+     pan Denver. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 /* Pinned Home / Work. The layout rule is enforced here rather than in a
    branch: `is-pair` splits the row in two, `is-single` gives the one button
@@ -2306,60 +2348,243 @@ body.is-map-picking .home-bar {
   color: var(--fail);
 }
 
-/* ---------- Equity rank toggles ---------- */
-.rank-toggles {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 4px;
-}
-.rank-btn {
+/* ---------- Equity areas: on-map indicator + tap explainer ----------
+   The rank-toggle styles that lived here (.rank-toggles / .rank-btn /
+   .equity-metric) went with the control they dressed: the city named the
+   official Equity Area map, so there is nothing left to pick between. */
+
+.equity-indicator {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
+  /* Centred over the map rather than pinned to a corner: the two corners
+     are taken (freshness bottom-right, HUD controls bottom-left), and this
+     is the one thing on screen a rider might be owed money over.
+
+     Centred by auto margins between left:0 and right:0, NOT by the usual
+     `left: 50%; translateX(-50%)`. That idiom silently caps the element's
+     available width at 50vw — everything from the 50% line to the right
+     edge — so on a phone the label wrapped to two lines and the chip
+     reflowed as you panned, which reads as a glitch rather than a notice.
+     `width: fit-content` keeps it shrink-wrapped to the text. */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
+  /* Same band as the freshness readout (27): any open drawer or wizard
+     should win the overlap — a rider reading a panel is not looking at the
+     map this describes. */
+  z-index: 27;
+  max-width: min(92vw, 340px);
   appearance: none;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  color: #fff;
+  background: #6a1b9a;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.equity-indicator::before {
+  content: "📍";
+  font-size: 14px;
+}
+.equity-indicator:hover,
+.equity-indicator:focus-visible {
+  background: #7b1fa2;
+}
+/* `hidden` loses to `display: inline-flex` on specificity, and this chip is
+   hidden far more often than it is shown. */
+.equity-indicator[hidden] {
+  display: none;
+}
+/* Portrait phones: the mode bar sits along the bottom, so lift the chip
+   clear of it rather than stacking on top. */
+@media (max-height: 620px) {
+  .equity-indicator {
+    font-size: 12px;
+    padding: 7px 12px;
+  }
+}
+
+.equity-explainer__where {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+/* The contract's own words, set apart so it reads as a quotation and not as
+   this app's promise. */
+.equity-explainer__quote {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--fg);
   background: var(--bg-elev);
-  padding: 8px 0;
+  border-left: 4px solid #6a1b9a;
+  border-radius: 0 10px 10px 0;
+}
+.equity-explainer__note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.equity-explainer__note--source {
+  margin-bottom: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* ---------- Compliance calendar ---------- */
+.cal__lede {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.cal--loading {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--fg-muted);
+}
+.cal__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.cal__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.cal__swatch.is-pass {
+  background: var(--pass);
+  border-color: var(--pass);
+}
+.cal__swatch.is-fail {
+  background: var(--fail);
+  border-color: var(--fail);
+}
+/* An empty cell reads as "nothing rendered here" unless its edge is
+   visible, and in dark mode --border against --bg-elev nearly vanishes.
+   The muted foreground carries in both themes, so the absence is legibly
+   deliberate — which matters, because "we have no number" is a claim this
+   calendar is making on purpose. */
+.cal__swatch.is-no-data {
+  background: var(--bg-elev);
+  border-color: var(--fg-muted);
+}
+/* Striped, not a fourth flat color: "we have not measured this yet" should
+   read as visibly unlike a verdict, at a glance, without the legend. */
+.cal__swatch.is-pending {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bg-elev),
+    var(--bg-elev) 3px,
+    var(--fg-muted) 3px,
+    var(--fg-muted) 5px
+  );
+}
+.cal__month + .cal__month {
+  margin-top: 20px;
+}
+.cal__title {
+  margin: 0 0 8px;
   font-size: 14px;
   font-weight: 700;
   color: var(--fg);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
 }
-.rank-btn:hover:not([disabled]) {
-  border-color: #7b1fa2;
+.cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
 }
-.rank-btn.is-active {
-  background: #7b1fa2;
-  border-color: #7b1fa2;
-  color: #fff;
-}
-.rank-btn[disabled] {
-  opacity: 0.5;
-  cursor: progress;
-}
-.equity-metric {
-  margin-top: 10px;
-  font-size: 13px;
-  color: var(--fg);
-  line-height: 1.4;
-}
-.equity-metric strong {
-  font-size: 16px;
-}
-.equity-metric__ranks {
-  color: #7b1fa2;
+.cal__weekday {
+  text-align: center;
+  font-size: 11px;
   font-weight: 600;
-}
-/* The equity purple is a data color (matches the overlay), but as text it
-   fails contrast on the dark panel — lighten it there. */
-:root[data-theme="dark"] .equity-metric__ranks {
-  color: #d2a8ff;
-}
-.equity-metric__count {
   color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
+  padding-bottom: 2px;
 }
-.equity-overlay-switch {
-  margin-top: 12px;
+.cal__cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+.cal__cell.is-no-data {
+  border-color: var(--fg-muted);
+}
+.cal__cell--blank {
+  border: none;
+  background: none;
+}
+/* A day that has not happened is drawn as an empty slot: nobody is owed a
+   compliance number for tomorrow. */
+.cal__cell--future {
+  border-style: dashed;
+  background: none;
+  opacity: 0.5;
+}
+.cal__cell.is-pass {
+  background: var(--pass);
+  border-color: var(--pass);
+  color: #fff;
+  font-weight: 700;
+}
+.cal__cell.is-fail {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #fff;
+  font-weight: 700;
+}
+.cal__cell.is-pending {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bg-elev),
+    var(--bg-elev) 4px,
+    var(--border) 4px,
+    var(--border) 7px
+  );
+}
+.cal__summary {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.cal__note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.cal__note--source {
+  margin-top: 10px;
 }
 
 /* ---------- Layer toggles ---------- */

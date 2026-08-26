@@ -46,6 +46,7 @@ import {
   type LngLat,
 } from "./locate.ts";
 import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import { requestDibsNotifications } from "./dibs-notify.ts";
 import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
 import {
@@ -1956,6 +1957,12 @@ export class Devices {
               lon: at.lon,
             });
             showDibsConfirmation(claim);
+            // ASK NOW, NOT AT LOAD. Somebody who has just tapped "call dibs"
+            // has a reason to be interrupted and knows what about; the same
+            // prompt on arrival at the map is the one everybody denies
+            // reflexively, and a denial is permanent. A refusal costs
+            // nothing here — every alert still lands in the app.
+            void requestDibsNotifications();
             this.refreshOpenPopup();
             void registerDibs({
               vehicle_identifier: claim.vehicleIdentifier,
@@ -1990,7 +1997,16 @@ export class Devices {
             // they are together — a rack, a plaza, a group walking to the
             // same spot. Anything else is one rider hedging across the city,
             // which makes the map worse for everybody including them.
-            const verdict = canCallDibs(at);
+            const verdict = canCallDibs(at, Date.now(), isAuthenticated());
+            if (verdict.kind === "signed_out") {
+              // Said where the tap happened, not as a modal: this is a
+              // reason, not an error, and the rider can still ride the
+              // scooter — dibs is the only thing they are missing.
+              showHint(
+                "Sign in to call dibs — a certificate has to name somebody.",
+              );
+              return;
+            }
             if (verdict.kind === "at_limit") {
               showDibsLimit(verdict.held);
               return;

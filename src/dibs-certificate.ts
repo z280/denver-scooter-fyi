@@ -23,6 +23,7 @@ import {
   denverStamp,
   type Dibs,
 } from "./dibs.ts";
+import type { DibsAlert } from "./dibs-notify.ts";
 import { fyiSvg, markSvg } from "./mark.ts";
 import { track } from "./telemetry.ts";
 
@@ -277,6 +278,47 @@ function el<K extends keyof HTMLElementTagNameMap>(
  *
  *  It dismisses itself, because a confirmation that needs dismissing is a
  *  second thing to do about something that already succeeded. */
+/** The in-app half of a dibs alert.
+ *
+ *  Shown ALWAYS, alongside the OS notification rather than instead of it: a
+ *  rider who happens to be looking at the screen should not be the one person
+ *  who misses the message, and permission may well have been denied anyway.
+ *
+ *  Shares `.dibs-toast` with the confirmation above, and the same singleton
+ *  rule — one toast at a time, because two stacked notices about one scooter
+ *  is how a rider learns to ignore both. `taken` and `five_left` are the two
+ *  that cost something, so they hold longer and read louder; the shape and
+ *  the words carry that as well as the colour.
+ *
+ *  No auto-dismiss for `taken`. The others are about a clock still running
+ *  and go away on their own; "somebody took it" is a fact the rider has to
+ *  actually see, and dismissing it for them is how they walk another block. */
+export function showDibsAlertToast(alert: DibsAlert, text: string): void {
+  document.querySelector(".dibs-toast")?.remove();
+
+  const urgent = alert === "taken" || alert === "five_left";
+  const toast = el("div", `dibs-toast${urgent ? " dibs-toast--urgent" : ""}`);
+  // `alert`, not `status`: these interrupt on purpose.
+  toast.setAttribute("role", urgent ? "alert" : "status");
+
+  const body = el("div", "dibs-toast__text");
+  body.append(el("strong", "", text));
+  toast.append(
+    el("span", "dibs-toast__glyph", alert === "taken" ? "🚫" : "✋"),
+    body,
+  );
+
+  const close = el("button", "dibs-toast__view", "Dismiss");
+  close.type = "button";
+  close.addEventListener("click", () => toast.remove());
+  toast.append(close);
+
+  document.body.append(toast);
+  if (alert !== "taken") {
+    window.setTimeout(() => toast.remove(), 12_000);
+  }
+}
+
 export function showDibsConfirmation(dibs: Dibs): void {
   document.querySelector(".dibs-toast")?.remove();
 

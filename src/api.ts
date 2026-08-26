@@ -13,14 +13,21 @@ export const API_BASE = import.meta.env.DEV ? "" : "https://data.scooter.fyi";
 export type FormFactor = "scooter" | "bicycle" | "unknown";
 
 export type BoundaryLayer =
-  | "v1"
-  | "v2"
+  // The city's official Equity Area map — the one the Veo contract binds,
+  // as clarified in August 2026. The app draws this from a bundled copy
+  // (see equity-areas.ts) rather than this endpoint, so that a rider is
+  // never told the discount boundary is unavailable; the endpoint is the
+  // same geometry and stays here for parity and for other consumers.
+  | "equity"
   | "neighborhood"
   | "council_district"
   | "community_network"
-  // Equity-rank tiers er1..er6 from the city's ranked equity map. The city
-  // hasn't said which ranks bind the SLA, so the UI lets users pick a set
-  // to estimate against rather than hardcoding one.
+  // ----- Retired equity maps. The API still computes, stores and serves
+  // every one of these, and the compliance history runs back through them,
+  // so they stay nameable. Nothing in the shipping UI draws them — see
+  // config.ts's RETIRED_OVERLAYS.
+  | "v1"
+  | "v2"
   | "er1"
   | "er2"
   | "er3"
@@ -162,6 +169,15 @@ export interface ComplianceResponse {
   window_end_ts: string;
   snapshot_count: number;
   avg_total_devices_denver: number;
+  /** The contractual figure: the 6-9 AM window average against the city's
+   *  official Equity Area map. Optional and nullable because a day that
+   *  PREDATES the map has no value here until the server's reprocessing
+   *  job reaches it — which the card renders as pending, not as a failure
+   *  (see compliance.ts). */
+  avg_percent_all_devices_equity?: number | null;
+  compliance_equity_pass?: boolean | null;
+  /** Retired maps, still returned by the API and still the record for the
+   *  period before the city named the official one. Not rendered. */
   avg_percent_all_devices_v1: number;
   avg_percent_all_devices_v2: number;
   compliance_v1_pass: boolean;
@@ -176,10 +192,57 @@ export interface SnapshotMetadataResponse {
   cycle_id: string;
   snapshot_time: string;
   total_devices_denver: number;
+  /** Right-now share of the fleet inside the city's official Equity Area
+   *  map. Optional: an API deployed before the map shipped omits it, which
+   *  the card renders as pending rather than as 0%. */
+  total_devices_equity?: number | null;
+  percent_all_devices_equity?: number | null;
+  /** Retired maps — see ComplianceResponse. */
   total_devices_v1: number;
   total_devices_v2: number;
   percent_all_devices_v1: number | null;
   percent_all_devices_v2: number | null;
+}
+
+// ---------- Compliance calendar ----------
+
+/** How a single day reads on the compliance calendar. `no_data` and
+ *  `pending` are deliberately distinct from `fail`: one means the daily job
+ *  never computed the day, the other that the day predates the official map
+ *  and the server's reprocessing job has not reached it. Neither is Veo
+ *  missing the target, and colouring either red would say it did. */
+export type ComplianceDayStatus = "pass" | "fail" | "no_data" | "pending";
+
+export interface ComplianceCalendarDay {
+  /** YYYY-MM-DD, Denver-local. */
+  date: string;
+  status: ComplianceDayStatus;
+  /** Window average for the day, or null when there isn't one. */
+  percent: number | null;
+  snapshot_count: number;
+  /** Server-computed against Denver's clock — the visitor's may not be. */
+  in_future: boolean;
+}
+
+export interface ComplianceCalendarMonth {
+  /** YYYY-MM. */
+  month: string;
+  first_date: string;
+  last_date: string;
+  days: ComplianceCalendarDay[];
+  pass_days: number;
+  fail_days: number;
+}
+
+export interface ComplianceCalendarResponse {
+  /** Which equity map the calendar was computed against. */
+  group: string;
+  /** The percentage the pass/fail colouring is drawn against. */
+  threshold: number;
+  /** Denver's today, so the client doesn't need its own clock. */
+  today: string;
+  /** Oldest month first. */
+  months: ComplianceCalendarMonth[];
 }
 
 /** Returned when an endpoint has no data yet (503 cold-start). */
@@ -803,6 +866,22 @@ export function fetchLatestSnapshot(
   signal?: AbortSignal,
 ): Promise<SnapshotMetadataResponse> {
   return getJSON<SnapshotMetadataResponse>("/api/v1/snapshots/latest", signal);
+}
+
+/** Per-day compliance pass/fail for whole calendar months.
+ *
+ *  `months` counts BACKWARDS from the current Denver month, so the default
+ *  of 2 is "this month and last" — exactly what the calendar renders. The
+ *  server returns every day of every month, including empty and future
+ *  ones, so the grid never has to invent a cell. */
+export function fetchComplianceCalendar(
+  months = 2,
+  signal?: AbortSignal,
+): Promise<ComplianceCalendarResponse> {
+  return getJSON<ComplianceCalendarResponse>(
+    `/api/v1/compliance/calendar?count=${months}`,
+    signal,
+  );
 }
 
 // ===========================================================================
@@ -1504,10 +1583,20 @@ export function registerDibs(
   },
   signal?: AbortSignal,
 ): Promise<DibsRegistration> {
-  // Unauthenticated on purpose: a rider who has not signed in can still call
-  // dibs, and the certificate names them as the anonymous form. Requiring an
-  // account here would make the friendliest thing in the app the one that
-  // asks for a login first.
+  // SESSION-AUTHED, and the UI gates on it (see `canCallDibs` in devices.ts).
+  //
+  // It was not always: this used to be described as "unauthenticated on
+  // purpose" so a signed-out rider could claim and appear on the certificate
+  // as the anonymous form — but the call itself has always been
+  // `authedFetchJSON`, which throws NO_AUTH before the request leaves the
+  // browser. So a signed-out claim failed instantly, the caller's `.catch`
+  // swallowed it, and the certificate reported "couldn't reach the server"
+  // about a server it never called.
+  //
+  // Resolved by making the product match the code rather than the reverse:
+  // dibs needs an account. A certificate that names nobody is weak evidence
+  // in the argument it exists to settle, and an anonymous claim is free to
+  // make in unlimited numbers.
   return authedFetchJSON<DibsRegistration>("/api/v1/dibs", {
     method: "POST",
     body: claim,

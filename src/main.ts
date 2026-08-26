@@ -14,7 +14,8 @@ import { createMap } from "./map.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
-import { openDibsCertificate } from "./dibs-certificate.ts";
+import { openDibsCertificate, showDibsAlertToast } from "./dibs-certificate.ts";
+import { createDibsNotifier } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -35,10 +36,12 @@ import {
   type GaugeDisplay,
   type GaugeThickness,
   type GaugePlacement,
+  openFloatingModal,
 } from "./devices.ts";
 import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
+import { openComplianceCalendar } from "./compliance-calendar.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
 import {
@@ -55,7 +58,8 @@ import {
 import { Locate } from "./locate.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
-import { EquityRanks } from "./equity.ts";
+import { EquityAreaMap } from "./equity-map.ts";
+import { equityAreaFeatures } from "./equity-areas.ts";
 import {
   HexDensity,
   TERRITORY_HEX_SIZE,
@@ -112,6 +116,7 @@ import {
   recordProgress,
   saveDibs,
   type Dibs,
+  loadDibs,
 } from "./dibs.ts";
 import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
@@ -131,8 +136,7 @@ import {
   writeTabHint,
   type AccountTabId,
 } from "./account-tabs.ts";
-import { type EquityRank } from "./config.ts";
-import { indexFeature, type IndexedFeature } from "./geo.ts";
+import { type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
@@ -289,7 +293,13 @@ const rideSession: RideSessionStore = createRideSessionStore({
   legacyEndRide: false,
 });
 const overlays = new Overlays(map, need("choropleth-legend"));
-const equity = new EquityRanks(overlays, () => renderEquityMetric());
+// The city's official Equity Area map: the polygon overlay (off by
+// default) and the on-screen "$0.13/min" indicator. Replaces the equity-rank
+// estimator, whose whole premise — that the city hadn't said which ranks
+// bind the SLA — stopped being true in August 2026.
+const equityAreas = new EquityAreaMap(map, need("equity-indicator"), (t, b) =>
+  openFloatingModal(t, b),
+);
 const hexDensity = new HexDensity(map, need("hexbin-legend"), {
   // The territory readout's "claim your colors" hint lands on Community,
   // where the ruling colors it's pointing at actually live.
@@ -365,6 +375,16 @@ need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () =>
 });
 // Public, unlike the admin reports below — the hourly fleet history is the
 // same aggregate count the map footer already shows, just over time.
+// The compliance calendar, reachable from two places on purpose: Tools,
+// where a rider browsing what the app can do will find it, and inside
+// Equity Compliance, where someone already reading today's number wants
+// "and what about the other days".
+for (const id of ["tools-compliance-calendar", "compliance-open-calendar"]) {
+  need<HTMLButtonElement>(id).addEventListener("click", () => {
+    openComplianceCalendar();
+  });
+}
+
 need<HTMLButtonElement>("tools-devices-history").addEventListener("click", () => {
   openAnalyticsReport("devices");
 });
@@ -633,17 +653,15 @@ if (!isAuthenticated()) {
 
 // ---------- Ride HUD ----------
 
-// The v1∪v2 disadvantaged-area polygons power the HUD's equity-ride flags.
-// Fetched lazily on first ride and cached (loadBoundary caches too).
-let equityZonesCache: Promise<IndexedFeature[]> | null = null;
+// The HUD's equity-ride flags. These used to be the UNION of the two
+// candidate maps (v1 ∪ v2) — the generous reading, chosen because the city
+// had not said which one bound the contract and flagging a ride the rider
+// might be owed a discount for beat missing one. The city has since said,
+// so the union is no longer the honest answer: the official map is, and it
+// is the same map the on-screen indicator and the compliance numbers use.
+// equity-areas.ts caches the fetch, so a ride pays for it at most once.
 function equityZones(): Promise<IndexedFeature[]> {
-  equityZonesCache ??= Promise.all([
-    overlays.loadBoundary("v1"),
-    overlays.loadBoundary("v2"),
-  ]).then((responses) =>
-    responses.flatMap((r) => r.features.map((f) => indexFeature(f))),
-  );
-  return equityZonesCache;
+  return equityAreaFeatures();
 }
 
 // The 🧭 Ride button (data-mode="riding") is bound in wireModes() alongside
@@ -995,8 +1013,9 @@ map.on("load", async () => {
     apply: (s) => applyFilterSnapshot(s),
     suggestName: () => filterSummary() || "All devices",
   });
-  wireEquityRanks();
+  wireEquityAreas();
   wireIgnoreDibs();
+  wireDibsAlerts();
   wireReachFilter();
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
@@ -1035,7 +1054,6 @@ map.on("load", async () => {
     devices.setData(resp);
     window.dispatchEvent(new Event("scooter:devices-refreshed"));
     refreshLiveDibs();
-    equity.update(resp.features);
     const visible = devices.visibleFeatures();
     clusters.update(visible);
     freshness.update(
@@ -1395,8 +1413,9 @@ map.on("load", async () => {
     });
   });
 
-  // Warm the default-selected ranks' polygons so the estimate populates.
-  void equity.warm();
+  // Start watching the map for the equity-area indicator. Loads the
+  // polygons lazily and reveals the chip on the first move after they land.
+  equityAreas.wire();
   startRefreshLoop();
 
   // First-run tour + progressive discovery tips. Wired last: the tour's
@@ -2902,6 +2921,109 @@ let dibsClaimant = "Someone with the app";
  *  claims, and a dibs lookup must never be why the map stops updating. */
 let myDibs: MyDibsHandle | null = null;
 
+/** How often held claims are re-checked for an alert.
+ *
+ *  Ticks rather than timers, per `dibs-notify.ts`: a backgrounded tab that
+ *  sleeps through its exact window fires on the next tick it gets instead of
+ *  silently skipping the message. Fifteen seconds is well inside the
+ *  resolution of anything here — the tightest alert is a five-minute
+ *  countdown — and cheap enough to leave running for the life of the page. */
+const DIBS_TICK_MS = 15_000;
+
+let dibsNotifier: ReturnType<typeof createDibsNotifier> | null = null;
+
+/** Wire the four dibs alerts to something that actually fires them.
+ *
+ *  `dibs-notify.ts` had every message, the vibration and the dedupe written
+ *  and tested, and was connected to nothing — so the rule the certificate
+ *  now prints ("Scooter.fyi will try to notify you if the device you have
+ *  dibs on is no longer available") was a promise with no mechanism.
+ *
+ *  Three drivers, because the four alerts have two different sources:
+ *
+ *    tick   — the clock. Every held claim, every 15s. Covers the grace
+ *             warning (which fires while the rider has NOT set off, so the
+ *             walk flow cannot be its source) and both countdowns.
+ *    taken  — the world. The scooter left the feed or went in use. Checked on
+ *             every device refresh, which is the only moment that fact
+ *             changes, and independently from the walk's own watcher so a
+ *             rider who claimed but has not set off is still told.
+ *    forget — a claim that ended. Released, expired, or ridden.
+ */
+function wireDibsAlerts(): void {
+  dibsNotifier = createDibsNotifier({
+    // ALWAYS shown, even when the OS notification also fires: a rider
+    // looking at the screen should not be the one person who misses it.
+    inApp: (alert, text) => showDibsAlertToast(alert, text),
+    // Tapping "RUN!" lands on the walk, not on a cold map.
+    onResume: (d) => {
+      void beginWalkToVehicle({
+        name: d.vehicleName,
+        plate: d.plate ?? null,
+        vehicleIdentifier: d.vehicleIdentifier,
+        lat: d.lat,
+        lng: d.lon,
+      });
+    },
+  });
+
+  const known = new Set<string>();
+
+  const sweep = (): void => {
+    const held = loadDibs();
+    const live = new Set(held.map((d) => d.vehicleIdentifier));
+    // A claim that has gone — released, expired, or ridden — must not keep
+    // its fired-alert history, or re-claiming the same scooter would be
+    // silent.
+    for (const vid of known) {
+      if (!live.has(vid)) {
+        dibsNotifier?.forget(vid);
+        known.delete(vid);
+      }
+    }
+    for (const d of held) {
+      known.add(d.vehicleIdentifier);
+      dibsNotifier?.tick(d);
+    }
+  };
+
+  sweep();
+  window.setInterval(sweep, DIBS_TICK_MS);
+
+  // "It's gone" is about the WORLD, not the clock, so it is checked where
+  // the world changes: each device refresh. `is_reserved` means IN USE on
+  // this operator rather than a held booking, so either flag going up means
+  // somebody else has it.
+  window.addEventListener("scooter:devices-refreshed", () => {
+    for (const d of loadDibs()) {
+      const f = devices
+        .allFeatures()
+        .find((x) => x.properties.vehicle_identifier === d.vehicleIdentifier);
+      const props = f?.properties as unknown as Record<string, unknown> | undefined;
+      const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+      // Absent from the feed entirely counts too: a scooter that vanished
+      // is at least as gone as one marked in use.
+      const gone =
+        f === undefined || truthy(props?.is_reserved) || truthy(props?.is_disabled);
+      if (gone) dibsNotifier?.taken(d);
+    }
+  });
+}
+
+/** How often live claims are re-fetched.
+ *
+ *  FASTER THAN THE DEVICE REFRESH (90s), because the two are different kinds
+ *  of data. A device snapshot is a whole city of vehicles that move on an
+ *  ingest cycle; the claims are a handful of rows that turn over in minutes
+ *  and are the thing two riders can disagree about while standing next to
+ *  each other. Riding the slow cadence meant somebody could call dibs and
+ *  the next rider's map would keep offering them that scooter for up to a
+ *  minute and a half.
+ *
+ *  Cheap enough to justify: `/api/v1/dibs/live` returns the live claims for
+ *  the whole city, which is a handful of rows, not thousands. */
+const DIBS_REFRESH_MS = 25_000;
+
 function refreshLiveDibs(): void {
   void liveDibs()
     .then(({ dibs }) => {
@@ -3135,83 +3257,31 @@ function beginWalkToVehicle(info: {
   return true;
 }
 
-// ---------- Equity ranks ----------
+// ---------- Equity areas ----------
 
-// Rank toggles (1–6, default 1+2) drive a live "% of the fleet in the
-// selected ranks" estimate and the "Equity Ranking (Selected)" map overlay.
-// The two overlay checkboxes (one in Areas, one beside the toggles) mirror
-// each other and the underlying overlay state.
-function wireEquityRanks(): void {
-  const rankBtns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#rank-toggles .rank-btn"),
-  );
-  // ONE checkbox now, not two. The Areas drawer carried a mirrored copy of
-  // this control, which put equity ranking in front of every rider looking at
-  // boundary outlines — a compliance-analysis feature advertising itself from
-  // a general map surface. The remaining one lives beside the rank toggles it
-  // belongs to, inside Equity Compliance.
-  const overlayInputs = [
-    need<HTMLInputElement>("equity-selected-overlay-mirror"),
-  ];
-
-  const syncRankButtons = () => {
-    const selected = equity.getSelected();
-    for (const btn of rankBtns) {
-      const on = selected.has(Number(btn.dataset.rank) as EquityRank);
-      btn.classList.toggle("is-active", on);
-      btn.setAttribute("aria-pressed", String(on));
-    }
-  };
-  syncRankButtons();
-
-  for (const btn of rankBtns) {
-    btn.addEventListener("click", async () => {
-      const rank = Number(btn.dataset.rank) as EquityRank;
-      const nowOn = !equity.getSelected().has(rank);
-      btn.disabled = true;
-      try {
-        await equity.toggleRank(rank, nowOn);
-      } finally {
-        btn.disabled = false;
-      }
-      syncRankButtons();
-    });
-  }
-
-  const setOverlay = async (visible: boolean, source: HTMLInputElement) => {
-    for (const input of overlayInputs) input.checked = visible;
-    source.disabled = true;
+// One switch, in Areas: draw the city's official Equity Area map. OFF by
+// default — it is a compliance boundary covering a large share of the city,
+// and someone opening this app to find a scooter did not ask for a purple
+// wash over their neighborhood.
+//
+// Note what is NOT gated on this switch: the on-screen indicator. A rider
+// who never turns the polygons on still gets told when they are looking at
+// an equity area, because otherwise the discount stays discoverable only to
+// people already looking for it — the exact asymmetry this app exists to
+// correct.
+function wireEquityAreas(): void {
+  const toggle = need<HTMLInputElement>("equity-areas-toggle");
+  toggle.addEventListener("change", async () => {
+    toggle.disabled = true;
     try {
-      await equity.setOverlayVisible(visible);
+      await equityAreas.setOverlayVisible(toggle.checked);
+    } catch (e) {
+      console.error("equity areas overlay failed", e);
+      toggle.checked = false;
     } finally {
-      source.disabled = false;
+      toggle.disabled = false;
     }
-  };
-  for (const input of overlayInputs) {
-    input.addEventListener("change", () => void setOverlay(input.checked, input));
-  }
-}
-
-function renderEquityMetric(): void {
-  const el = document.getElementById("equity-rank-metric");
-  if (!el) return;
-  const selected = [...equity.getSelected()].sort((a, b) => a - b);
-  if (selected.length === 0) {
-    el.textContent = "Select one or more ranks to estimate.";
-    return;
-  }
-  const { percent, inside, total } = equity.estimate();
-  const ranks = `Ranks ${selected.join(", ")}`;
-  if (percent === null) {
-    el.textContent = equity.isUnavailable()
-      ? "Equity-rank boundaries aren't published yet — check back once the city map is live."
-      : `${ranks}: computing…`;
-    return;
-  }
-  el.innerHTML =
-    `<strong>${percent.toFixed(1)}%</strong> of devices are in ` +
-    `<span class="equity-metric__ranks">${ranks}</span> right now ` +
-    `<span class="equity-metric__count">(${inside.toLocaleString()} of ${total.toLocaleString()})</span>`;
+  });
 }
 
 /** The Filters drawer's accordion sections: one open at a time. Native
@@ -3639,12 +3709,9 @@ function startRefreshLoop(): void {
     try {
       const resp = await fetchDevicesAuto(inFlight.signal, fetchIncludes());
       devices.setData(resp);
-    window.dispatchEvent(new Event("scooter:devices-refreshed"));
-    refreshLiveDibs();
       // The watcher listens on this: a scooter can go at any tick.
       window.dispatchEvent(new Event("scooter:devices-refreshed"));
-      equity.update(resp.features);
-      const visible = devices.visibleFeatures();
+        const visible = devices.visibleFeatures();
       clusters.update(visible);
       freshness.update(
         resp.metadata.snapshot_time,
@@ -3662,8 +3729,20 @@ function startRefreshLoop(): void {
   };
 
   setInterval(tick, REFRESH_MS);
+  // Claims on their own, shorter clock — see DIBS_REFRESH_MS. Skipped while
+  // hidden for the same reason the device tick is: a backgrounded tab
+  // polling is a battery cost with nobody looking at the result.
+  setInterval(() => {
+    if (!document.hidden) refreshLiveDibs();
+  }, DIBS_REFRESH_MS);
   // Refresh immediately when the tab becomes visible again after being hidden.
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void tick();
+    if (document.hidden) return;
+    void tick();
+    // Claims too, and not only on the 25s clock: coming back to the app is
+    // exactly the moment a rider looks at whether their scooter is still
+    // theirs, and waiting a quarter of a minute to find out is the lag this
+    // whole cadence exists to remove.
+    refreshLiveDibs();
   });
 }
