@@ -35,8 +35,24 @@ export interface PendingTrip {
 
 let pending: PendingTrip | null = null;
 
+/** Announced on every change, so surfaces that depend on there BEING a trip
+ *  can re-read rather than be told by each writer individually.
+ *
+ *  The "can get me there" filter is the first such surface: it is a claim
+ *  about a specific destination, so its control has to appear and disappear
+ *  with one. Three functions here set `pending`, and wiring each of them to
+ *  each listener is how one of them eventually gets missed. */
+function announce(): void {
+  try {
+    window.dispatchEvent(new Event("scooter:trip-changed"));
+  } catch {
+    /* no window (tests, SSR) — the value is still correct for a direct read */
+  }
+}
+
 export function setPendingTrip(trip: PendingTrip): void {
   pending = trip;
+  announce();
 }
 
 /** Read WITHOUT consuming — for a caller that needs to know a trip is waiting
@@ -51,9 +67,11 @@ export function peekPendingTrip(): PendingTrip | null {
 export function takePendingTrip(): PendingTrip | null {
   const trip = pending;
   pending = null;
+  announce();
   return trip;
 }
 
 export function clearPendingTrip(): void {
   pending = null;
+  announce();
 }

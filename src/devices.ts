@@ -18,6 +18,7 @@ import {
   type ParkingReportInput,
 } from "./config.ts";
 import { GbfsPlates } from "./gbfs.ts";
+import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
@@ -331,6 +332,59 @@ export class Devices {
    *  satisfy a minimum. */
   private minBattery = 0;
   private quality: QualityFilter = "any";
+  /** Where the rider is going, or null when no trip is set.
+   *
+   *  TWO FIELDS, NOT ONE, and this is the reason. A single `reachDest` used to
+   *  mean both "there is somewhere to arrive" and "the rider ticked the
+   *  filter", and the card's arrival line keyed off it — so the estimate only
+   *  appeared for a rider who had ALSO found and ticked a filter, and the
+   *  "probably won't reach" branch could never render at all, because by the
+   *  time it was set `apply` had already removed every such scooter from the
+   *  map.
+   *
+   *  Having a destination is what the CARD needs; wanting the map thinned is a
+   *  separate ask. Tapping a scooter with a trip set now answers the question
+   *  whether or not the filter is on, which is the question the feature is
+   *  named after. */
+  private tripDest: { lat: number; lon: number } | null = null;
+  /** Whether the rider asked to hide the ones that cannot make it. Only ever
+   *  acts together with `tripDest` — a filter with nothing to reach is off. */
+  private reachFilterEnabled = false;
+
+  /** Tell the map where the rider is going, or null when the trip is cleared. */
+  setTripDest(dest: { lat: number; lon: number } | null): void {
+    const same =
+      (this.tripDest === null && dest === null) ||
+      (this.tripDest !== null && dest !== null &&
+        this.tripDest.lat === dest.lat && this.tripDest.lon === dest.lon);
+    if (same) return;
+    this.tripDest = dest;
+    this.applyAndRefresh();
+  }
+
+  /** Hide the ones that cannot make it, or stop hiding them. */
+  setReachFilter(on: boolean): void {
+    if (this.reachFilterEnabled === on) return;
+    this.reachFilterEnabled = on;
+    this.applyAndRefresh();
+  }
+
+  /** Repaint the map AND rebuild any open card.
+   *
+   *  `apply` alone leaves an open popup showing what it said when it opened.
+   *  Toggling the filter with a card open used to do exactly that — the map
+   *  thinned and the card sat there stale — because `apply` only calls
+   *  `setData`. `setVehicleDibs` already pairs the two for the same reason. */
+  private applyAndRefresh(): void {
+    this.apply();
+    this.refreshOpenPopup();
+  }
+
+  /** Whether the filter is on, for the chip row. A filter with no destination
+   *  left to reach is not on, whatever the checkbox last said. */
+  reachFilterOn(): boolean {
+    return this.reachFilterEnabled && this.tripDest !== null;
+  }
   /** Features filter (crowdsourced equipment). Empty = off; see
    *  `matchesFeatureFilter` for the require/AND/¯\_(ツ)_/¯ semantics. */
   private featureFilter = new Set<FeatureFilterKey>();
@@ -1145,6 +1199,44 @@ export class Devices {
       // The rating is not lost, it MOVES: the stats list below carries it in
       // the old dot-and-label form, with its reasons. Two facts, each said
       // once, in the order they matter.
+      // WHAT YOU'D ARRIVE WITH, when there is somewhere to arrive.
+      //
+      // The one number a rider actually wants off this card once they have a
+      // destination, and the one they were being asked to work out in their
+      // head from a percentage and a map scale. Only shown when a trip is
+      // set — with nowhere to go it is an answer to no question.
+      //
+      // The cheap estimate, deliberately: the modelled answer (fitted from
+      // real rides, elevation and temperature included, with a band) arrives
+      // from `/route/options` once a scooter is CHOSEN. This is what can be
+      // said before paying for that call, so it is hedged in words as well
+      // as rounded to 5.
+      // Keyed on the TRIP, deliberately, not on the filter — see `tripDest`.
+      const dest = this.tripDest;
+      let arrivalBlock = "";
+      if (dest) {
+        const arriveAt = estimatedArrivalPercent({
+          rangeMeters: asNumber(props.current_range_meters),
+          batteryPercent: asNumber(props.battery_percent),
+          scooter: { lat: coords[1], lng: coords[0] },
+          dest,
+        });
+        const verdict = canReach({
+          rangeMeters: asNumber(props.current_range_meters),
+          scooter: { lat: coords[1], lng: coords[0] },
+          dest,
+        });
+        if (verdict === "no") {
+          arrivalBlock = `<div class="device-popup__arrival is-short">
+            🪫 Probably won't reach your destination</div>`;
+        } else if (arriveAt !== null) {
+          arrivalBlock = `<div class="device-popup__arrival">
+            🔋 About ${arriveAt}% left when you arrive
+            <span class="device-popup__hint">estimate — exact figure once you pick a route</span>
+          </div>`;
+        }
+      }
+
       const verdictBlock = heldByOther
         ? `<div class="device-popup__verdict device-popup__verdict--dibs">
              <span class="device-popup__verdict-glyph" aria-hidden="true">🚫</span>
@@ -1649,6 +1741,7 @@ export class Devices {
           `<div class="device-popup">
              ${headerBlock}
              ${verdictBlock}
+             ${arrivalBlock}
              <div class="device-popup__body">
                <div class="device-popup__col">
                  ${actionRow}
@@ -2696,6 +2789,27 @@ export class Devices {
       feats = feats.filter((f) => {
         const pct = asNumber(f.properties.battery_percent);
         return pct !== null && pct >= min;
+      });
+    }
+    // "Only ones that can get me there." Off unless the rider has BOTH set a
+    // destination and asked for it — this is a claim about a specific trip,
+    // so it cannot be a standing preference the way a battery floor is.
+    //
+    // `unknown` survives the filter. A vehicle the feed gave no range for is
+    // not a vehicle that cannot make it, and hiding working scooters on the
+    // strength of a missing field is a worse error than showing one that
+    // turns out to be short.
+    if (this.reachFilterEnabled && this.tripDest) {
+      const dest = this.tripDest;
+      feats = feats.filter((f) => {
+        const [lng, lat] = f.geometry.coordinates;
+        return (
+          canReach({
+            rangeMeters: asNumber(f.properties.current_range_meters),
+            scooter: { lat, lng },
+            dest,
+          }) !== "no"
+        );
       });
     }
     if (this.quality !== "any") {
