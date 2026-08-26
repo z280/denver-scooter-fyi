@@ -1705,7 +1705,7 @@ function wireIgnoreDibs(): void {
   });
 }
 
-/** "Only ones that can get me there."
+/** "Only ones that can get me there," and what you would arrive with.
  *
  *  THE CHEAP TIER of the will-it-make-it question. `/route/options` already
  *  answers it properly, from the pessimistic end of the battery model's band
@@ -1717,7 +1717,13 @@ function wireIgnoreDibs(): void {
  *
  *  The row only exists while a trip does. The filter is a claim about a
  *  SPECIFIC destination, so it cannot be a standing preference: clearing the
- *  trip clears the filter, because there is nothing left to reach. */
+ *  trip clears the filter, because there is nothing left to reach.
+ *
+ *  The DESTINATION is pushed to the map whenever there is one, independently
+ *  of the checkbox. The card's "what you'd arrive with" line depends on having
+ *  somewhere to arrive, not on the rider having asked for the map to be
+ *  thinned — those were one field once, and the estimate went missing for
+ *  everyone who never found the filter. */
 function wireReachFilter(): void {
   const row = document.getElementById("reach-row");
   const cb = need<HTMLInputElement>("reach-filter");
@@ -1729,9 +1735,12 @@ function wireReachFilter(): void {
       // The destination went; so does the claim about it.
       cb.checked = false;
     }
-    devices.setReachDest(
-      cb.checked && trip ? { lat: trip.dest.lat, lon: trip.dest.lon } : null,
-    );
+    // The destination and the filter are pushed SEPARATELY. The card's
+    // arrival line needs somewhere to arrive; hiding the ones that cannot
+    // make it is a different ask, and a rider who has not ticked the filter
+    // should still be told what they would arrive with.
+    devices.setTripDest(trip ? { lat: trip.dest.lat, lon: trip.dest.lon } : null);
+    devices.setReachFilter(cb.checked && trip !== null);
     refreshChips();
   };
 
