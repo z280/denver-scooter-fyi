@@ -115,6 +115,10 @@ import {
   type MyScootersHandle,
 } from "./my-scooters-panel.ts";
 import {
+  wireRideSpecPanel,
+  type RideSpecPanelHandle,
+} from "./ride-spec-panel.ts";
+import {
   dibsOn,
   dropDibs,
   recordProgress,
@@ -415,6 +419,9 @@ const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 // drawer UI stays in sync.
 const chips = new FilterChips(need("filter-chips"));
 let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
+/** The ideal-scooter bridge. Null when its markup is absent (a page that
+ *  does not carry the Filters drawer). */
+let rideSpecPanel: RideSpecPanelHandle | null = null;
 let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
 let minBatteryPct = 0;
 let qualityOn: QualityFilter = "any";
@@ -1019,6 +1026,13 @@ map.on("load", async () => {
     apply: (s) => applyFilterSnapshot(s),
     suggestName: () => filterSummary() || "All devices",
   });
+  // The ideal-scooter bridge rides the SAME seam as the presets — one
+  // function to read the drawer, one to drive it — so there is no second
+  // notion anywhere of what "the current filters" are.
+  rideSpecPanel = wireRideSpecPanel({
+    snapshot: snapshotFilters,
+    apply: (s) => applyFilterSnapshot(s),
+  });
   wireEquityAreas();
   wireIgnoreDibs();
   wireDibsAlerts();
@@ -1072,6 +1086,11 @@ map.on("load", async () => {
   devices.onCountsChange((visible, total) => {
     freshness.setCounts(visible, total);
     freshness.setViewportCount(countDevicesInViewport());
+    // Every filter change lands here, which is exactly what the ideal-scooter
+    // toggle needs: it clears itself the moment the map stops matching the
+    // spec it claims to be showing. Reusing this rather than adding a second
+    // change signal keeps "the filters changed" a single fact.
+    rideSpecPanel?.onFiltersChanged();
   });
   map.on("moveend", () => {
     freshness.setViewportCount(countDevicesInViewport());
