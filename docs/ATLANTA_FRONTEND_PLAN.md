@@ -117,6 +117,23 @@ credibility-sensitive screen in the product — the same failure
 
 ---
 
+## 4a. Dwell degrades per operator, not per city
+
+`ATLANTA_PLAN.md` §2c revises the obvious reading: dwell is not lost with
+the vehicle id. Lime supports a real per-vehicle dwell clock (epoch-scoped
+`bike_id`, position-stitched across the rare boundary, 95.4% unambiguous at
+2 m); Bird supports location-level dwell only, because it re-mints every
+cycle.
+
+The frontend consequence is that the dwell/freshness affordances must key
+off a **per-operator** capability, not a per-city one. A single
+`stable_vehicle_id` boolean hung on the city would either black out dwell
+for Lime, which works, or promise it for Bird, which does not. This is the
+one place in the Atlanta build where two operators in the same city
+genuinely disagree about what the UI can show, and the components that
+render dwell (`freshness.ts` and the device popups) need to take the
+capability as an argument rather than reading it once at boot.
+
 ## 5. Things with no Atlanta equivalent, that will be missed
 
 - **"Unlock in Veo"** (`veoDeepLink`) — Bird and Lime publish only
