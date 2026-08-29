@@ -80,13 +80,19 @@ import {
   supportsPhotos,
   uploadDevicePhoto,
 } from "./device-photos.ts";
-import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
+import {
+  ALL_MODELS,
+  ALL_RIDE_TYPES,
+  MODELS_BY_RIDE_TYPE,
+  RIDE_TYPE_BY_MODEL,
+  modelKeyOf,
+  rideTypeOf,
+  type ModelKey,
+  type RideType,
+} from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
-/** Ride posture, the primary "what am I sitting on" split. Derived from the
- *  server-corrected `vehicle_use_type` with model names as tiebreaker. */
-export type RideType = "sitting" | "standing";
 export type QualityFilter = "any" | "no-risk" | "ok-only";
 /** What the marker's inner badge depicts. */
 export type IconStyle = "use" | "model" | "data";
@@ -96,23 +102,20 @@ export type ModelIcon = "comic" | "letter";
 /** Which signal colors the gauge ring (and the "data" badge). */
 export type DataSource = "battery" | "reliability";
 
-export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
 // The model line-up moved to its own dependency-free module so
 // filter-presets.ts can share it without importing maplibre (review fix:
 // a second hardcoded list there would reintroduce the exact
 // "new model hidden by old preset" bug the presets change prevents).
 // Re-exported here so the many existing importers keep one import site.
-export { ALL_MODELS };
-export type { ModelKey };
-/** Which recognized models serve each ride type — the Astro is the only
- *  standing scooter in the line-up; everything else is seated. Drives the
- *  Filters drawer's ride-type → model sync (main.ts), which exists to keep
- *  the two deliberately-redundant controls from combining into a dead
- *  filter (ride type: seated, model: Astro → nothing shown). */
-export const MODELS_BY_RIDE_TYPE: Record<RideType, readonly ModelKey[]> = {
-  standing: ["astro"],
-  sitting: ["cosmo", "apollo", "trike"],
-};
+//
+// `RideType` and the two model↔posture maps followed it there, and then
+// `modelKeyOf`/`rideTypeOf` did too, for the same reason one step further
+// on: ride-spec.ts has to ask "is this a Cosmo, and is a Cosmo the kind of
+// thing you sit on" without importing the map layer. Everything below is a
+// re-export, not a second definition.
+export { ALL_MODELS, ALL_RIDE_TYPES, MODELS_BY_RIDE_TYPE, RIDE_TYPE_BY_MODEL };
+export { modelKeyOf, rideTypeOf };
+export type { ModelKey, RideType };
 
 /** Shown wherever the rider filters FOR Rovers (the Filters drawer's model
  *  card and the ride HUD's Show pill): Veo's Rover service area is smaller
@@ -3099,44 +3102,6 @@ function normalizeTier(v: unknown): ReliabilityTier | null {
   if (v === "ok" || v === "unknown" || v === "risk") return v;
   if (v === "high_risk" || v === "high-risk") return "risk";
   return null;
-}
-
-/** Ride posture for the "Device use" icon style and the ride-type filter:
- *  the server-corrected `vehicle_use_type` decides, with the seated models
- *  (Cosmo, Apollo, Rover) as the tiebreaker when it's absent. */
-export function rideTypeOf(p: {
-  vehicle_use_type?: string | null;
-  vehicle_model_name?: string | null;
-}): RideType {
-  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
-  if (
-    p.vehicle_use_type === "sitting" ||
-    model === "cosmo" ||
-    model === "apollo" ||
-    model === "trike" ||
-    model === "rover"
-  ) {
-    return "sitting";
-  }
-  return "standing";
-}
-
-/** Recognized Veo model, or null for mystery hardware. Veo's marketing name
- *  for the three-wheeler is "Rover" — accept it alongside the feed's
- *  historical "trike" spelling, but keep the INTERNAL key "trike": it is
- *  baked into saved filter presets, sprite ids, and the `vehicle_model`
- *  field the routing API receives, so the key is wire format, not copy. */
-export function modelKeyOf(p: {
-  vehicle_model_name?: string | null;
-}): ModelKey | null {
-  const model = (p.vehicle_model_name ?? "").trim().toLowerCase();
-  if (model === "rover") return "trike";
-  return model === "astro" ||
-    model === "cosmo" ||
-    model === "apollo" ||
-    model === "trike"
-    ? (model as ModelKey)
-    : null;
 }
 
 /** Text-field expression for the "Range" display: e.g. "73%". Empty
