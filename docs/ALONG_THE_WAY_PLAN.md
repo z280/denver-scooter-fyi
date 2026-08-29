@@ -53,7 +53,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `along-the-way.ts` | 2 | The **client-cheap corridor scorer**. `rankCorridor(features, {from, to, spec})` → `CorridorCandidate[]`, straight-line, no network, using `reach.ts`'s `DETOUR_FACTOR` and `straightLineMeters`. Pure. |
 | `trip-plan.ts` | 3 | The state machine (`SEARCHING → CLAIMED → LOST → RECLAIMING → …`), the swap budget, the permanent `exclude` list, the auto-accept envelope. Pure reducer plus an injected effects interface. **The owner of "what am I walking to and why".** |
 | `swap-card.ts` | 3 | Only the *offer* face — the decision the rider has to make when a swap falls outside the auto-accept envelope. An accepted swap has no card; it re-renders the arrival panel. |
-| `my-scooters.ts` | 4 | Favourite vehicles: the list, the scan-gated add flow, nicknames, the per-favourite availability opt-in, and the live-state rendering **including the withheld-position case**. |
+| `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** The panel that renders them is still to build; splitting them out first is what makes the withholding rule testable, including the cached-dot regression that would defeat it. |
 | `equity-savings.ts` | 5 | Cost optimizer: start-in-area bonus, stopover finder, break-even math. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
 | `arrival-panel.ts` *(existing)* | 3 | Gains a **swapped** face and a `reportSwap()` beside its `reportGone()`. |
 | `dibs-notify.ts` *(existing)* | 3 | Gains `swapped` and `swap_offer` alerts, and the rule that they **replace** `taken`. |
