@@ -336,6 +336,29 @@
           <!-- Save name row / saved-set list, rendered by filter-presets.ts -->
           <div id="preset-panel"></div>
           <p class="control-hint">Saved on this device only, for now.</p>
+
+          <!-- ---------- My ideal scooter (ride-spec-panel.ts) ----------
+               A spec is not a saved filter: it says what the rider will
+               RIDE, it is saved to the account, and the trip search relaxes
+               its preferences rather than returning nothing. It lives beside
+               the presets because that is where a rider looking for "apply
+               this to the map" will look, and the bridge between the two is
+               the toggle below. -->
+          <h4 class="control-sublabel" id="spec-label">My ideal scooter</h4>
+          <label class="switch">
+            <input type="checkbox" id="spec-apply-toggle" />
+            <span>Show only my ideal scooters</span>
+          </label>
+          <p class="control-hint" id="spec-apply-hint">
+            The map can only show or hide, so your preferences count as
+            requirements here.
+          </p>
+          <div class="preset-actions" role="group" aria-labelledby="spec-label">
+            <button id="spec-edit" class="preset-btn" type="button">🛴 Edit my ideal scooter</button>
+            <button id="spec-save-from-filters" class="preset-btn" type="button">💾 Save these as my ideal scooter</button>
+          </div>
+          <!-- Attachment / detachment status, rendered by ride-spec-panel.ts -->
+          <div id="spec-panel"></div>
           </div>
         </details>
 

@@ -1991,6 +1991,66 @@ export async function deleteRideUsual(
 }
 
 // ---------------------------------------------------------------------------
+// Ride specs — a rider's saved "ideal scooter" (sql/080). Same store and the
+// same four handlers as the Usuals above, with a different kind and a cap of
+// five; the API stores the blob verbatim and never reads inside it.
+//
+// `settings` is deliberately typed as an opaque record here rather than as
+// `RideSpec`: the shape belongs to ride-spec.ts, which validates it on read
+// (`readSpec`) precisely because nothing between here and the database will.
+// Typing it strictly at the boundary would be a claim this layer cannot
+// make good on — the server will hand back whatever an older or newer client
+// stored.
+// ---------------------------------------------------------------------------
+
+export interface RideSpecRecord {
+  name: string;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RideSpecsResponse {
+  ride_specs: RideSpecRecord[];
+}
+
+/** Saved specs, most recently updated first. Unwraps the envelope. */
+export async function listRideSpecs(
+  signal?: AbortSignal,
+): Promise<RideSpecRecord[]> {
+  const res = await authedFetchJSON<RideSpecsResponse>(
+    "/api/v1/profile/ride-specs",
+    { signal },
+  );
+  return res?.ride_specs ?? [];
+}
+
+/** Create or replace a spec (wholesale — the API never merges blobs).
+ *  409 at the 5-spec cap (overwriting an existing name still works),
+ *  413 over 16 KB, 422 on a name longer than 64 characters. */
+export function putRideSpec(
+  name: string,
+  settings: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<RideSpecRecord> {
+  return authedFetchJSON<RideSpecRecord>(
+    `/api/v1/profile/ride-specs/${encodeURIComponent(name)}`,
+    { method: "PUT", body: { settings }, signal },
+  );
+}
+
+/** Delete a spec. 404 when absent. */
+export async function deleteRideSpec(
+  name: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await authedFetchJSON<unknown>(
+    `/api/v1/profile/ride-specs/${encodeURIComponent(name)}`,
+    { method: "DELETE", signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Admin allowlist (GET/POST/DELETE /api/v1/private/admins). Admin-only —
 // require_admin on every route, so a non-admin gets ApiError 403 and the UI
 // that calls these is only ever rendered for admins anyway.

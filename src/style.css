@@ -8810,3 +8810,52 @@ input[data-ride-keypad="on"] {
 .drawer-tab[hidden] {
   display: none;
 }
+
+/* ---------- ride-spec-panel.ts: the "my ideal scooter" sheet ----------
+   Borrows the .ranks-modal shell (backdrop, card, head, close) and widens
+   it: this sheet carries five requirement groups plus the relaxation
+   ladder, where the ranks card carries a paragraph. Scrolls inside the
+   card rather than growing the page, so the header and the Save row stay
+   reachable on a phone in landscape. */
+.spec-sheet {
+  width: min(420px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.spec-sheet__body {
+  overflow-y: auto;
+  margin-top: 8px;
+}
+.spec-sheet__body .control-sublabel {
+  margin-top: 14px;
+}
+.spec-sheet .quick-filters {
+  gap: 4px 12px;
+}
+/* Slider or number input with its readout beside it. */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.range-row input[type="range"] {
+  flex: 1;
+}
+.range-row input[type="number"] {
+  width: 5em;
+}
+/* The relaxation ladder, shown rather than described: a rider who can see
+   what will be given up, and in what order, can tell at a glance whether
+   they have marked the right things "must". */
+.spec-ladder {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.spec-ladder__list {
+  margin: 4px 0 0;
+  padding-left: 1.4em;
+  font-size: 13px;
+  color: var(--fg-muted);
+}

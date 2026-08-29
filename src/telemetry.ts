@@ -64,6 +64,16 @@ export const TELEMETRY_EVENTS = [
   // features
   "control_change",
   "filter_preset",
+  // The ideal-scooter bridge, both directions plus the one failure mode
+  // worth measuring. `spec_detached_from_map` is the interesting one: if it
+  // fires much more often than `spec_applied_to_map`, the projection is
+  // producing a map riders immediately want to change, which means the spec
+  // sheet is asking the wrong questions.
+  "spec_applied_to_map",
+  "spec_detached_from_map",
+  "spec_saved_from_map",
+  // Whether specs actually reach accounts, or stop at the device.
+  "spec_saved",
   "area_filter",
   "geocode_search",
   "hex_tool",

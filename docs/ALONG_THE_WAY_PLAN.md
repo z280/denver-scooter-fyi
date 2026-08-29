@@ -48,7 +48,8 @@ New unless marked. Phase numbers refer to the master plan §4.
 | Module | Phase | Responsibility |
 |---|---|---|
 | `ride-spec.ts` | 1 | The Spec type, its must/prefer split, the relaxation ladder, `matches(device, spec)`, and **the projection to and from a `FilterSnapshot`**. **Pure — no DOM, no network, no map.** The one place that answers "does this vehicle qualify?". |
-| `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, and the per-field must/prefer switch. Save / load / delete against `/api/v1/profile/ride-specs`, syncing on the `setRatePlanSyncHook` pattern. Owns both ends of the map bridge's UI. |
+| `ride-spec-store.ts` | 1 | Where specs live (account when signed in, one localStorage slot when not, server wins) and — the part the presets have no equivalent of — **the attachment**: which spec is driving the map, and whether it still is. No DOM. Split out of the panel while building it, because attach/detach is a rule and rules belong somewhere a test can reach without one. |
+| `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, the per-field must/prefer switch, and the relaxation ladder rendered live so a rider can see what they are agreeing to give up. Owns both ends of the map bridge's UI and holds no rule of its own. |
 | `along-the-way.ts` | 2 | The **client-cheap corridor scorer**. `rankCorridor(features, {from, to, spec})` → `CorridorCandidate[]`, straight-line, no network, using `reach.ts`'s `DETOUR_FACTOR` and `straightLineMeters`. Pure. |
 | `trip-plan.ts` | 3 | The state machine (`SEARCHING → CLAIMED → LOST → RECLAIMING → …`), the swap budget, the permanent `exclude` list, the auto-accept envelope. Pure reducer plus an injected effects interface. **The owner of "what am I walking to and why".** |
 | `swap-card.ts` | 3 | Only the *offer* face — the decision the rider has to make when a swap falls outside the auto-accept envelope. An accepted swap has no card; it re-renders the arrival panel. |
@@ -140,12 +141,29 @@ of the feature rather than an export button. The seam already exists:
 > requirements here.*
 
 `toFilterSnapshot(spec, current)` projects onto the live filter state,
-preserving the map-only fields (`area`, `rideTypes`, `hideUnavailable`) from
-`current` because the spec has nothing to say about them. The projection is
-**lossy in exactly one direction, and the helper line above is the whole
-disclosure**: the map has no way to draw "preferred", so musts and prefers
-both become plain filters. A rider who wanted the softer behaviour still has
-it everywhere the ranking runs.
+preserving `area` and `rideTypes` from `current` because the spec has nothing
+to say about geography or about a control whose work the model list already
+does.
+
+`hideUnavailable` is **forced ON** rather than carried through — a correction
+to this document's first draft, made while building it. Availability is the
+one requirement a spec never relaxes, so a view labelled "your ideal scooters"
+that includes one somebody is riding is simply a false label.
+
+The projection is **lossy in two directions**, and only the first of them is
+worth putting in front of a rider:
+
+1. The map has no way to draw "preferred", so **musts and prefers both become
+   plain filters**. That is what the helper line above says, and it is the
+   difference a rider would otherwise notice and not understand.
+2. The result is a **superset** of what the spec accepts: a model filter keeps
+   mystery hardware visible (`devices.ts`, deliberately — it is what the
+   model-report flow feeds on), while the spec rejects an unnamed vehicle
+   against a model requirement. So a scooter can be on the map under this
+   toggle and still not be one the trip search would offer. Documented in
+   `toFilterSnapshot`'s own doc comment rather than in the UI: the population
+   it affects is small, and the sentence explaining it costs more attention
+   than it saves.
 
 **Map → spec.** A button in the Filters drawer, beside Save preset:
 
