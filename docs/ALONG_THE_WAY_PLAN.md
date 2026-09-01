@@ -53,7 +53,8 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `along-the-way.ts` | 2 | The **client-cheap corridor scorer**. `rankCorridor(features, {from, to, spec})` → `CorridorCandidate[]`, straight-line, no network, using `reach.ts`'s `DETOUR_FACTOR` and `straightLineMeters`. Pure. |
 | `trip-plan.ts` | 3 | The state machine (`SEARCHING → CLAIMED → LOST → RECLAIMING → …`), the swap budget, the permanent `exclude` list, the auto-accept envelope. Pure reducer plus an injected effects interface. **The owner of "what am I walking to and why".** |
 | `swap-card.ts` | 3 | Only the *offer* face — the decision the rider has to make when a swap falls outside the auto-accept envelope. An accepted swap has no card; it re-renders the arrival panel. |
-| `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** The panel that renders them is still to build; splitting them out first is what makes the withholding rule testable, including the cached-dot regression that would defeat it. |
+| `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** Split from the panel so the withholding rule is testable without a DOM, including the cached-dot regression that would defeat it. |
+| `my-scooters-panel.ts` | 4 | The Tools-drawer list and the one button that keeps a scooter. Renders; decides nothing. Every judgement it shows comes from `my-scooters.ts` or from the server — it does not check the 75 m, parse the payload, or work out which scooter was scanned. |
 | `equity-savings.ts` | 5 | Cost optimizer: start-in-area bonus, stopover finder, break-even math. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
 | `arrival-panel.ts` *(existing)* | 3 | Gains a **swapped** face and a `reportSwap()` beside its `reportGone()`. |
 | `dibs-notify.ts` *(existing)* | 3 | Gains `swapped` and `swap_offer` alerts, and the rule that they **replace** `taken`. |
@@ -446,9 +447,12 @@ different storage layers and two different privacy postures in one module.
 Entry points, all of them at moments the rider is already standing at the
 scooter with the camera in reach:
 
-- the device popup's ⭐ action, beside ☑️ Confirm Features;
-- the end of a successful QR scan — *"Keep this one?"*;
-- the end of a features confirmation — same prompt.
+- the device popup's ⭐ action, beside ☑️ Confirm Features (shipped);
+- the panel's own **⭐ Keep a scooter** button, for a scooter the rider never
+  tapped on the map (shipped — and the reason `vehicle_identifier` is optional
+  on the API);
+- the end of a successful QR scan or features confirmation — *"Keep this
+  one?"* (not yet).
 
 The flow is: `openQrScanner()` (existing, untouched) → raw payload →
 `POST /api/v1/profile/favorite-devices` with the payload, the current fix, and

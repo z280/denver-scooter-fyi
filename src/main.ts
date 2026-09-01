@@ -111,6 +111,10 @@ import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
+  wireMyScooters,
+  type MyScootersHandle,
+} from "./my-scooters-panel.ts";
+import {
   dibsOn,
   dropDibs,
   recordProgress,
@@ -418,6 +422,8 @@ let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
+/** My Scooters, in the Tools drawer. Null until boot wires it. */
+let myScooters: MyScootersHandle | null = null;
 let clearModelFilter: () => void = () => {};
 let clearFeatureFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
@@ -1017,6 +1023,28 @@ map.on("load", async () => {
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
+  // My Scooters, in Tools beside My dibs. The popup's ⭐ and the panel's own
+  // button both run `keep()`, so there is one flow and one set of failure
+  // sentences rather than two that drift apart.
+  myScooters = wireMyScooters({
+    section: need("tools-my-scooters"),
+    list: need("my-scooters-list"),
+    keepButton: need<HTMLButtonElement>("my-scooters-keep"),
+    status: need("my-scooters-status"),
+    locate,
+    onShowOnMap: (f) => {
+      if (typeof f.lat === "number" && typeof f.lon === "number") {
+        map.easeTo({ center: [f.lon, f.lat], zoom: 17 });
+      }
+    },
+  });
+  // The popup's star names the vehicle it was opened on, but the SCAN still
+  // decides which scooter is kept — the server refuses a payload that names a
+  // different one rather than quietly keeping the neighbour.
+  devices.setKeepHandler(({ vehicleIdentifier }) => {
+    void myScooters?.keep({ vehicleIdentifier });
+  });
+
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
   // `refreshLiveDibs` already does for a claim landing.

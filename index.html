@@ -774,6 +774,29 @@
           <ul class="my-dibs" id="my-dibs-list"></ul>
         </section>
 
+        <!-- My Scooters. Directly below My dibs because they are the same
+             shape — a short personal list of specific vehicles, meaningful
+             only signed in — and a rider looking for "the scooters I keep"
+             looks where "the claims I hold" already is. Below rather than
+             above because dibs EXPIRE and these do not. Hidden while signed
+             out: keeping one needs an account, and an empty heading is a
+             permanent reminder of a feature you cannot use.
+             Populated by wireMyScooters(). -->
+        <section class="control-group" id="tools-my-scooters"
+                 aria-labelledby="tools-my-scooters-label" hidden>
+          <h3 id="tools-my-scooters-label" class="control-label">My Scooters</h3>
+          <p class="finder-help">
+            Scooters you&rsquo;ve kept. We&rsquo;ll show you where one is
+            parked &mdash; never where it&rsquo;s going while somebody is
+            riding it.
+          </p>
+          <ul class="my-scooters" id="my-scooters-list"></ul>
+          <button id="my-scooters-keep" class="preset-btn" type="button">
+            &#11088; Keep a scooter
+          </button>
+          <p class="finder-help" id="my-scooters-status" role="status" aria-live="polite" hidden></p>
+        </section>
+
         <section class="control-group" aria-labelledby="finder-label">
           <h3 id="finder-label" class="control-label">Find dense device clusters</h3>
           <p class="finder-help">Groups of devices within 30&nbsp;ft of each other.</p>
