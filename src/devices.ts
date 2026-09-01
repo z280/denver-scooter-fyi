@@ -538,6 +538,19 @@ export class Devices {
     this.rideInterceptor = fn;
   }
 
+  /** "Keep this one" — the popup's star. Injected the same way the ride
+   *  interceptor is, so this file stays free of the favourites API, the QR
+   *  scanner and the rules around both: it renders a button and forwards a
+   *  tap. Absent means no star, which is what a page without the Tools
+   *  drawer gets. */
+  private keepHandler:
+    | ((info: { vehicleIdentifier: string; name: string }) => void)
+    | null = null;
+
+  setKeepHandler(fn: typeof Devices.prototype.keepHandler): void {
+    this.keepHandler = fn;
+  }
+
   constructor(
     private readonly map: Map,
     private readonly locate: Locate,
@@ -1707,6 +1720,16 @@ export class Devices {
       // same rule the pinned Home/Work row follows. Either one can be absent:
       // Open in Veo needs a plate and proximity, Confirm Features disappears
       // once the features are confirmed.
+      // ⭐ Keep this one. Offered only where it could work: a 16-hex
+      // identifier to keep, and a handler wired up. NOT gated on proximity
+      // here even though keeping needs it — the server owns that rule, and a
+      // second copy of the 75 m check in the client is one deploy away from
+      // disagreeing with it. A rider who taps this too far away gets the
+      // server's own sentence back, which names the distance.
+      const keepBtn =
+        vid.length >= 16 && this.keepHandler
+          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep" data-action="keep-scooter" aria-haspopup="dialog">⭐ Keep this one</button>`
+          : "";
       const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
       const startFeatureRow = pairCount
         ? `<div class="device-popup__pair ${pairCount === 1 ? "is-single" : "is-pair"}">
@@ -1721,6 +1744,7 @@ export class Devices {
           ${rideBtn}
           ${certBtn}
           ${startFeatureRow}
+          ${keepBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
           ${photoRow}
@@ -2086,6 +2110,14 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
+      // ⭐ Keep this one — My Scooters (API sql/081). Everything about what
+      // that means lives behind the handler.
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
+        ?.addEventListener("click", () => {
+          this.keepHandler?.({ vehicleIdentifier: vid, name: headerName });
+        });
+
       // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="confirm-features"]')

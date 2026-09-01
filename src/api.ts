@@ -2042,3 +2042,105 @@ export async function removeAdmin(email: string): Promise<AdminWriteResult> {
     { method: "DELETE" },
   );
 }
+
+// ---------------------------------------------------------------------------
+// My Scooters (sql/081) — vehicles a rider kept after proving at the kerb.
+//
+// TWO SERVER RULES THE CLIENT MUST NOT SECOND-GUESS:
+//
+//   The GATE. Keeping one needs a QR payload AND a fix within 75 m of the
+//   vehicle. The client validates NEITHER — it sends the raw payload, exactly
+//   as `qr-scan.ts`'s header says it should, and lets the server resolve and
+//   judge. `vehicle_identifier` is optional: the scan is the identity.
+//
+//   The WITHHOLDING. `lat`/`lon`/`battery_percent`/`current_range_meters` are
+//   ABSENT — not null — whenever `position_withheld` is true, which it is for
+//   any vehicle somebody is riding. The optional fields below are optional
+//   because of that rule, and a renderer must key off the FLAG rather than
+//   off the absence: reading a missing lat as "loading" and falling back to a
+//   cached one is precisely the accident the flag exists to prevent.
+// ---------------------------------------------------------------------------
+
+export type FavoriteState = "available" | "unavailable" | "in_use" | "gone";
+
+export interface FavoriteDevice {
+  vehicle_identifier: string;
+  nickname: string | null;
+  state: FavoriteState;
+  /** True ⇒ the position and charge fields below are absent, on purpose. */
+  position_withheld: boolean;
+  notify_on_available: boolean;
+  verified_at: string | null;
+  created_at: string | null;
+  last_seen_at: string | null;
+  vehicle_model_name: string | null;
+  vehicle_use_type: string | null;
+  lat?: number | null;
+  lon?: number | null;
+  battery_percent?: number | null;
+  current_range_meters?: number | null;
+}
+
+export interface FavoriteDevicesResponse {
+  favorite_devices: FavoriteDevice[];
+  /** Served rather than hardcoded, so the panel's "you have N of M" cannot
+   *  disagree with the cap the server actually enforces. */
+  max_favorites: number;
+}
+
+export function listFavoriteDevices(
+  signal?: AbortSignal,
+): Promise<FavoriteDevicesResponse> {
+  return authedFetchJSON<FavoriteDevicesResponse>(
+    "/api/v1/profile/favorite-devices",
+    { signal },
+  );
+}
+
+export interface KeepDeviceIn {
+  qr_raw_value: string;
+  lat: number;
+  lng: number;
+  vehicle_identifier?: string;
+  nickname?: string;
+}
+
+export interface KeepDeviceResult {
+  favorite: FavoriteDevice | null;
+  already_favorited: boolean;
+  points_awarded: number;
+}
+
+/** Keep a vehicle. `ApiError.status` carries the refusal:
+ *  400 `qr_mismatch` / `unknown_device`, 403 `too_far_from_device`,
+ *  409 `favorite_limit_reached`. */
+export function keepFavoriteDevice(
+  body: KeepDeviceIn,
+  signal?: AbortSignal,
+): Promise<KeepDeviceResult> {
+  return authedFetchJSON<KeepDeviceResult>(
+    "/api/v1/profile/favorite-devices",
+    { method: "POST", body, signal },
+  );
+}
+
+export function updateFavoriteDevice(
+  vehicleIdentifier: string,
+  body: { nickname?: string; notify_on_available?: boolean },
+  signal?: AbortSignal,
+): Promise<{ favorite: FavoriteDevice | null }> {
+  return authedFetchJSON<{ favorite: FavoriteDevice | null }>(
+    `/api/v1/profile/favorite-devices/${encodeURIComponent(vehicleIdentifier)}`,
+    { method: "PATCH", body, signal },
+  );
+}
+
+export async function forgetFavoriteDevice(
+  vehicleIdentifier: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await authedFetchJSON<unknown>(
+    `/api/v1/profile/favorite-devices/${encodeURIComponent(vehicleIdentifier)}`,
+    { method: "DELETE", signal },
+  );
+}
