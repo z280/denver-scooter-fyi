@@ -212,6 +212,13 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
 
   const keep: MyScootersHandle["keep"] = (prefill) =>
     new Promise<void>((resolve) => {
+      let keepStarted = false;
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
       if (busy) return resolve();
       if (!signedIn()) {
         say("Sign in to keep a scooter.");
@@ -221,12 +228,13 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
       scan({
         prompt: "Scan the QR code on the scooter you want to keep.",
         onScan(raw) {
+          keepStarted = true;
           const here = deps.locate.current();
           if (!here) {
             // The server would refuse this anyway, for the same reason. Said
             // here so the rider is not sent to the camera twice.
             say("Turn location on — we have to know you're standing at it.");
-            return resolve();
+            return finish();
           }
           busy = true;
           say("Keeping…");
@@ -258,13 +266,16 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
             .catch((err) => say(keepErrorMessage(err)))
             .finally(() => {
               busy = false;
-              resolve();
+              finish();
             });
         },
         onClose() {
-          // Dismissed without a scan. `onScan` resolves its own path, so this
-          // only fires for a genuine cancel — and a cancel is not an error.
-          resolve();
+          // openQrScanner closes before it delivers onScan, so a successful
+          // scan reaches us as onClose → onScan in one turn. Wait a microtask:
+          // if onScan starts the keep path, it will set `keepStarted` first.
+          queueMicrotask(() => {
+            if (!keepStarted) finish();
+          });
         },
       });
     });

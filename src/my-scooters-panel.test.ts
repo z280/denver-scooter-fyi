@@ -62,6 +62,7 @@ interface HarnessOpts {
   signedIn?: boolean;
   keep?: ReturnType<typeof vi.fn>;
   scanPayload?: string | null;
+  scan?(o: { onScan(raw: string): void; onClose?(): void }): () => void;
 }
 
 function harness(opts: HarnessOpts = {}) {
@@ -79,11 +80,14 @@ function harness(opts: HarnessOpts = {}) {
     }));
   const updateFn = vi.fn(async () => ({ favorite: null }));
   const forgetFn = vi.fn(async () => undefined);
-  const scan = vi.fn((o: { onScan(raw: string): void; onClose?(): void }) => {
-    if (opts.scanPayload === null) o.onClose?.();
-    else o.onScan(opts.scanPayload ?? "https://veoride.com/x?number=10-25 543");
-    return () => {};
-  });
+  const scan = vi.fn(
+    opts.scan ??
+      ((o: { onScan(raw: string): void; onClose?(): void }) => {
+        if (opts.scanPayload === null) o.onClose?.();
+        else o.onScan(opts.scanPayload ?? "https://veoride.com/x?number=10-25 543");
+        return () => {};
+      }),
+  );
 
   const handle: MyScootersHandle = wireMyScooters({
     section: section(),
@@ -259,6 +263,42 @@ describe("keeping a scooter", () => {
     await flush();
     expect(status().textContent).toContain("standing at this one");
     expect(status().textContent).toContain("212");
+  });
+
+  it("waits for the keep request even though the scanner closes first", async () => {
+    let releaseKeep: (() => void) | undefined;
+    const keep = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseKeep = () =>
+            resolve({
+              favorite: fav(),
+              already_favorited: false,
+              points_awarded: 100,
+            });
+        }),
+    );
+    const h = harness({
+      keep,
+      scan(o) {
+        o.onClose?.();
+        o.onScan("https://veoride.com/x?number=10-25 543");
+        return () => {};
+      },
+    });
+
+    let settled = false;
+    const done = h.handle.keep().then(() => {
+      settled = true;
+    });
+
+    await flush();
+    expect(keep).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    releaseKeep?.();
+    await done;
+    expect(settled).toBe(true);
   });
 
   it("says nothing and calls nothing when the camera is dismissed", async () => {

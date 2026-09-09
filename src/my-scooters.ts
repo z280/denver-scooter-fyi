@@ -74,7 +74,7 @@ export function locationOf(f: FavoriteDevice): FavoriteLocation {
     const reason = f.state === "gone" ? "gone" : "in_use";
     return {
       kind: "withheld",
-      reason: f.state,
+      reason,
       sentence: WITHHELD_SENTENCE[reason],
     };
   }

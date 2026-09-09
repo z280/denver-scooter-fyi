@@ -64,6 +64,15 @@ describe("locationOf", () => {
     expect(loc.kind).toBe("withheld");
   });
 
+  it("keeps the withheld reason aligned with the withheld sentence", () => {
+    const loc = locationOf(fav({ state: "available", position_withheld: true }));
+    expect(loc).toMatchObject({
+      kind: "withheld",
+      reason: "in_use",
+      sentence: WITHHELD_SENTENCE.in_use,
+    });
+  });
+
   it("does not invent a position when there is neither a flag nor coordinates", () => {
     const loc = locationOf(fav({ position_withheld: false, lat: null, lon: null }));
     expect(loc.kind).toBe("withheld");
