@@ -2044,7 +2044,7 @@ export async function removeAdmin(email: string): Promise<AdminWriteResult> {
 }
 
 // ---------------------------------------------------------------------------
-// My Scooters (sql/081) — vehicles a rider kept after proving at the kerb.
+// Favorite Scooters (sql/081) — vehicles a rider kept after proving at the kerb.
 //
 // TWO SERVER RULES THE CLIENT MUST NOT SECOND-GUESS:
 //

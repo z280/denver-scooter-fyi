@@ -1,4 +1,4 @@
-// The My Scooters panel — the Tools drawer list, and the one button that
+// The Favorite Scooters panel — the Tools drawer list, and the one button that
 // keeps a scooter.
 //
 // It renders; it decides nothing. Every judgement it shows comes from

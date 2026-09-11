@@ -422,7 +422,7 @@ let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
-/** My Scooters, in the Tools drawer. Null until boot wires it. */
+/** Favorite Scooters, in the Tools drawer. Null until boot wires it. */
 let myScooters: MyScootersHandle | null = null;
 let clearModelFilter: () => void = () => {};
 let clearFeatureFilter: () => void = () => {};
@@ -1023,7 +1023,7 @@ map.on("load", async () => {
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
-  // My Scooters, in Tools beside My dibs. The popup's ⭐ and the panel's own
+  // Favorite Scooters, in Tools beside My dibs. The popup's ⭐ and the panel's own
   // button both run `keep()`, so there is one flow and one set of failure
   // sentences rather than two that drift apart.
   myScooters = wireMyScooters({

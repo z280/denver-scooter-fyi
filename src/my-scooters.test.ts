@@ -1,4 +1,4 @@
-// My Scooters' presentation rules.
+// Favorite Scooters' presentation rules.
 //
 // The one that matters is the withholding: a kept vehicle's position is
 // absent while somebody is riding it, and the row has to SAY so rather than
@@ -116,14 +116,14 @@ describe("favoriteTitle", () => {
   });
 
   it("ignores a blank nickname", () => {
-    expect(favoriteTitle(fav({ nickname: "   " }))).toBe("My Cosmo");
+    expect(favoriteTitle(fav({ nickname: "   " }))).toBe("Favorite Cosmo");
   });
 
   it("never prints the identifier at a rider", () => {
     // A 16-hex database key on screen is how an app tells somebody it does
     // not really know what it is showing them.
     const title = favoriteTitle(fav({ nickname: null, vehicle_model_name: null }));
-    expect(title).toBe("My scooter");
+    expect(title).toBe("Favorite scooter");
     expect(title).not.toContain("8c4a");
   });
 });

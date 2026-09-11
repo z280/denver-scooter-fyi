@@ -2110,7 +2110,7 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
-      // ⭐ Keep this one — My Scooters (API sql/081). Everything about what
+      // ⭐ Keep this one — Favorite Scooters (API sql/081). Everything about what
       // that means lives behind the handler.
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')

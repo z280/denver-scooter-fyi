@@ -9,7 +9,7 @@ Planned 2026-08-29 against `main` (13e2215). Branch:
 `claude/along-way-upgrades-feature-piml2p`.
 **Revision 2** — the spec is now rider-facing ("my ideal scooter") and applies
 to the map in one tap (§1.3, a **reversal** of revision 1's decision), and
-**My Scooters** — favouriting individual vehicles behind a QR scan — joins as
+**Favorite Scooters** — favouriting individual vehicles behind a QR scan — joins as
 Phase 4 (§4).
 
 ## House rules that bind every phase
@@ -396,7 +396,7 @@ one is already where the rider is looking.
 
 Dibs is not a reservation. Nothing in this program holds a vehicle, and no
 copy anywhere in it may imply otherwise — not the spec panel, not the swap
-card, not the notifications, and **not My Scooters**. `sql/076`'s header and
+card, not the notifications, and **not Favorite Scooters**. `sql/076`'s header and
 `dibs.ts`'s both spend their opening paragraphs on this point, and an
 auto-claiming feature is exactly the one that would erode it. "We called it
 for you" is true. "We're holding it" is not.
@@ -425,7 +425,7 @@ Ships last, off, behind telemetry that can answer whether anybody accepts it.
 
 ---
 
-## Phase 4 — My Scooters
+## Phase 4 — Favorite Scooters
 
 Independent of Phases 1–3 and cheap: the scanner, the decoder, the validation
 endpoint and the points bonus all exist. This is a list, a gate, and one rule
@@ -508,7 +508,7 @@ the app to see where, which they were going to do anyway.
 
 ### 4.5 On the map
 
-- A "My Scooters" filter chip beside the existing filter chips.
+- A "Favorite Scooters" filter chip beside the existing filter chips.
 - Favourites drawn with a distinct marker **whether or not the chip is on** —
   spotting yours is the whole point — but only when parked, per §4.3.
 - The device popup shows the nickname where it has one.

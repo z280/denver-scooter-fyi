@@ -64,7 +64,7 @@ export const TELEMETRY_EVENTS = [
   // features
   "control_change",
   "filter_preset",
-  // My Scooters. `favorite_added` carries WHICH entry point (the panel's
+  // Favorite Scooters. `favorite_added` carries WHICH entry point (the panel's
   // button or the device popup's star) and whether it was already kept —
   // the ratio of those answers is what says whether the popup star is
   // pulling its weight. `favorite_removed` carries why. Never a

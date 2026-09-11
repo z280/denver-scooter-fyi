@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 //
-// The My Scooters panel, through the DOM.
+// The Favorite Scooters panel, through the DOM.
 //
 // `my-scooters.ts` holds the rules and is tested there. What is only testable
 // here is that the rendered row obeys them — in particular the one that

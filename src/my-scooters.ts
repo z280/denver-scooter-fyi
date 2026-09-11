@@ -101,8 +101,8 @@ export function locationOf(f: FavoriteDevice): FavoriteLocation {
  *  really know what it is showing. */
 export function favoriteTitle(f: FavoriteDevice): string {
   if (f.nickname && f.nickname.trim()) return f.nickname.trim();
-  if (f.vehicle_model_name) return `My ${f.vehicle_model_name}`;
-  return "My scooter";
+  if (f.vehicle_model_name) return `Favorite ${f.vehicle_model_name}`;
+  return "Favorite scooter";
 }
 
 /** The sentence for a refusal, in the rider's terms.
