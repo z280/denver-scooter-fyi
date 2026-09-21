@@ -8810,3 +8810,67 @@ input[data-ride-keypad="on"] {
 .drawer-tab[hidden] {
   display: none;
 }
+
+/* ---------- my-scooters-panel.ts: the Tools drawer list ----------
+   Deliberately the .my-dibs treatment with a different accent: the two
+   sit one above the other and are the same kind of object (a short list
+   of specific vehicles), so a rider should not have to learn two
+   layouts to read them. */
+.my-scooters {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.my-scooters__item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--bg-elev);
+}
+.my-scooters__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.my-scooters__name {
+  font-weight: 600;
+}
+.my-scooters__state {
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.my-scooters__state.is-available {
+  color: var(--ok, #2e7d32);
+}
+.my-scooters__state.is-in_use,
+.my-scooters__state.is-gone {
+  font-style: italic;
+}
+.my-scooters__where,
+.my-scooters__withheld {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+/* The withheld sentence is the feature explaining itself, not an error —
+   it must not read as a failure state, so it gets the same weight as a
+   position would. */
+.my-scooters__withheld {
+  font-style: italic;
+}
+.my-scooters__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.my-scooters__actions .switch {
+  margin: 0;
+  font-size: 13px;
+}
