@@ -33,6 +33,44 @@ function scooter(
 
 const tierOf = (s: ReliabilitySignals) => assessReliability(s, NOW).tier;
 
+describe("low battery → never 'likely rideable'", () => {
+  // A scooter sitting on 4% may well refuse to start, or be gone for a
+  // battery swap by the time the rider gets there. The tier must not promise
+  // a ride it can't deliver — but it must not claim a failure either, so the
+  // verdict is "unknown", not "risk".
+  it("stays ok at exactly 10%", () => {
+    expect(tierOf(scooter(2, 8, { battery_percent: 10 }))).toBe("ok");
+  });
+
+  it("demotes to unknown just under the floor", () => {
+    expect(tierOf(scooter(2, 8, { battery_percent: 9 }))).toBe("unknown");
+  });
+
+  it("demotes an empty scooter to unknown, not risk", () => {
+    expect(tierOf(scooter(2, 8, { battery_percent: 0 }))).toBe("unknown");
+  });
+
+  it("ignores a missing battery reading rather than reading it as 0%", () => {
+    expect(tierOf(scooter(2, 8))).toBe("ok");
+    expect(tierOf(scooter(2, 8, { battery_percent: null }))).toBe("ok");
+  });
+
+  it("reads the string-flattened value MapLibre hands back", () => {
+    // Feature properties come through the map click path as strings.
+    expect(tierOf(scooter(2, 8, { battery_percent: "4" }))).toBe("unknown");
+  });
+
+  it("still reports risk when there is real failure evidence too", () => {
+    const s = scooter(2, 8, { battery_percent: 3, number_failed_starts: 2 });
+    expect(tierOf(s)).toBe("risk");
+  });
+
+  it("explains itself with the charge level", () => {
+    const info = assessReliability(scooter(2, 8, { battery_percent: 6 }), NOW);
+    expect(info.reasons.join(" ")).toContain("6%");
+  });
+});
+
 describe("peer-median dwell → unknown", () => {
   it("stays ok when the dwell ratio is under 2×", () => {
     // 34h on a 20h-median block: 1.7× — under the ratio and under the 36h floor.
