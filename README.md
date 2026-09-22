@@ -61,7 +61,9 @@ sessions. The authoritative, machine-readable retention policy is
 - Device markers clustered at low zoom; click a dot for a full detail popup.
 - **Reliability tiers**: every device is scored likely-rideable / unknown /
   high-risk from quality flags, negative reports, failed starts, and dwell
-  time. High-risk "ghost" devices render faded; the popup explains the
+  time. A charge under 10% also drops a device out of likely-rideable —
+  riders report near-empty scooters often refuse to start or get pulled for
+  a swap mid-walk. High-risk "ghost" devices render faded; the popup explains the
   verdict in plain language and, when it's risky, points at the nearest
   likely-rideable alternative with a one-tap jump.
 - **Walk economics** (opt-in location): straight-line walk time to any

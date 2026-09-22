@@ -33,6 +33,10 @@ export const RELIABILITY_LABEL: Record<ReliabilityTier, string> = {
  *  string-flattened when they ride through MapLibre feature properties. */
 export interface ReliabilitySignals {
   is_disabled?: boolean | string | null;
+  /** 0-100 SoC. Server-supplied on the public payload, else derived in
+   *  `annotateBatteryPercent` — which runs BEFORE this assessment, so the
+   *  low-battery floor below sees the same number the popup prints. */
+  battery_percent?: number | string | null;
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
   number_failed_starts?: number | string | null;
@@ -84,6 +88,15 @@ const UNKNOWN_DWELL_RATIO = 2;
 const UNKNOWN_FLOOR_HOURS = 36;
 const UNKNOWN_FLOOR_RATIO = 16;
 
+/** Below this SoC a scooter can't be called "likely rideable" any more.
+ *  Rider reports are consistent that a near-empty one often refuses to start,
+ *  or gets pulled for a battery swap while you're still walking to it — so
+ *  the clean bill of health is withheld. It demotes to "unknown" and not
+ *  "high risk": the evidence says "don't promise this one", not "this one is
+ *  broken". Mirror of `_RELIABILITY_MIN_BATTERY_PCT` in the API's
+ *  src/quality.py. */
+const MIN_BATTERY_PCT = 10;
+
 /** Earliest dwell (hours) at which the peer-median ratio may say "unknown".
  *  Mirror of `unknown_dwell_floor_hours` in the API's src/quality.py. */
 function unknownDwellFloorHours(peerMedian: number): number {
@@ -98,17 +111,21 @@ function unknownDwellFloorHours(peerMedian: number): number {
  *  peer-relative dwell outlier (≥48h dwell, ≥p90 among H3 r9-kRing(1)
  *  neighbors, ≥3× the peer median).
  *  unknown: never state-tracked (no failed-start/dwell inputs); quality
- *  is undefined (disabled / reserved / no range data); exactly 1 failed
- *  start without enough dwell to corroborate it as risk; or dwell ≥2×
+ *  is undefined (disabled / reserved / no range data); battery below 10%;
+ *  exactly 1 failed start without enough dwell to corroborate it as risk;
+ *  or dwell ≥2×
  *  the peer median AND past the min(36h, 16× median) patience floor (a
  *  softer, earlier-warning version of the risk-tier outlier check above —
  *  just the ratio, no percentile).
  *  ok: everything else.
  *
- *  Reliability collapses only the FAILURE signals ("will it unlock?");
- *  battery lives in quality_designation and deliberately doesn't feed
- *  this. Used as the fallback when the server omits the tier and to
- *  build the human-readable reasons in every case. */
+ *  Reliability collapses the FAILURE signals ("will it unlock?"); how far
+ *  a charge gets you is a different question and lives in the battery
+ *  bucket and quality_designation, which deliberately don't feed this.
+ *  The sub-10% floor is the one place battery does enter, and it is not a
+ *  range judgement — see MIN_BATTERY_PCT. Used as the fallback when the
+ *  server omits the tier and to build the human-readable reasons in every
+ *  case. */
 export function assessReliability(
   p: ReliabilitySignals,
   now: number = Date.now(),
@@ -164,8 +181,9 @@ export function assessReliability(
     };
   }
 
-  // ---- unknown: no state tracking, quality undefined, a single
-  // uncorroborated failed start, or a milder peer-relative dwell outlier.
+  // ---- unknown: no state tracking, quality undefined, a near-empty
+  // battery, a single uncorroborated failed start, or a milder
+  // peer-relative dwell outlier.
   if (failed === null && idleHours === null) {
     return { tier: "unknown", reasons: ["not state-tracked yet"] };
   }
@@ -174,6 +192,13 @@ export function assessReliability(
   }
   if (p.quality_designation === "N/A" || p.quality_designation === "n/a") {
     return { tier: "unknown", reasons: ["no quality data"] };
+  }
+  const battery = num(p.battery_percent);
+  if (battery !== null && battery < MIN_BATTERY_PCT) {
+    return {
+      tier: "unknown",
+      reasons: [`battery ${Math.round(battery)}% — may not start`],
+    };
   }
   if (failed === 1) {
     return {
