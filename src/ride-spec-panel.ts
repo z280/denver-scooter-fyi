@@ -139,39 +139,47 @@ export function wireRideSpecPanel(
    *  not read back as rider edits. */
   let applying = false;
 
-  const status = (text: string, kind: "note" | "detached" = "note"): void => {
-    const p = el("p", kind === "detached" ? "preset-note" : "preset-note", text);
+  const status = (text: string): void => {
+    const p = el("p", "preset-note", text);
     p.setAttribute("role", "status");
     panel.replaceChildren(p);
   };
 
   const clearStatus = (): void => panel.replaceChildren();
 
-  const renderDetached = (name: string): void => {
+  /** Takes the attachment that ENDED, not a name.
+   *
+   *  Both halves have to come from it: the label, and the spec the button
+   *  re-applies. Sourcing either from `chosen` would let the message name one
+   *  spec while the tap applies another, any time the list reloaded while
+   *  attached — which it does on every Edit and after every save. */
+  const renderDetached = (was: { name: string; spec: RideSpec }): void => {
     // Not just "detached": the rider needs the name to know what they can go
     // back to, and one tap to do it.
     const wrap = el("div", "preset-note");
     wrap.setAttribute("role", "status");
     wrap.append(
-      el("span", undefined, `Filters changed — no longer showing “${name}”. `),
+      el("span", undefined, `Filters changed — no longer showing “${was.name}”. `),
     );
-    const back = el("button", "text-btn", `Back to “${name}”`);
+    const back = el("button", "text-btn", `Back to “${was.name}”`);
     back.type = "button";
     back.addEventListener("click", () => {
-      void applySpec();
+      void applySpec(was);
     });
     wrap.append(back);
     panel.replaceChildren(wrap);
   };
 
   // ---- spec → map ---------------------------------------------------------
-  const applySpec = async (): Promise<void> => {
-    if (!chosen) return;
-    const projected = attachment.attach(
-      chosen.name,
-      chosen.spec,
-      deps.snapshot(),
-    );
+  /** Applies `target`, defaulting to the panel's current selection. The
+   *  parameter exists for "Back to X", which must re-apply the spec that
+   *  detached and not whatever is selected now. */
+  const applySpec = async (
+    target?: { name: string; spec: RideSpec },
+  ): Promise<void> => {
+    const use = target ?? chosen;
+    if (!use) return;
+    const projected = attachment.attach(use.name, use.spec, deps.snapshot());
     toggle.checked = true;
     applying = true;
     try {
@@ -179,7 +187,7 @@ export function wireRideSpecPanel(
     } finally {
       applying = false;
     }
-    status(`Showing only “${chosen.name}”.`);
+    status(`Showing only “${use.name}”.`);
     track("spec_applied_to_map", { source: "drawer" });
   };
 
@@ -312,6 +320,10 @@ export function wireRideSpecPanel(
           .map(([k]) => k);
         draft = { ...draft, models: on };
         anyModelBox.checked = false;
+        // The ladder has a models rung (widenModelsToPosture), so a model
+        // change can add or remove a step. Every other control here re-renders
+        // it; this one did not, and the list went stale.
+        renderLadder();
       });
       modelBoxes.set(key, box);
       label.append(box, el("span", undefined, MODEL_NAMES[key]));
@@ -325,6 +337,7 @@ export function wireRideSpecPanel(
         draft = { ...draft, models: [] };
       }
       modelWrap.hidden = anyModelBox.checked;
+      renderLadder();
     });
     modelWrap.hidden = draft.models === null;
     body.append(modelWrap, mustSwitch("models"));
@@ -595,15 +608,18 @@ export function wireRideSpecPanel(
       // projection — without this, applying a spec would detach it halfway
       // through applying it.
       if (applying) return;
-      if (attachment.noticeFilterChange(deps.snapshot())) {
-        const name = chosen?.name ?? LOCAL_SPEC_NAME;
+      const ended = attachment.noticeFilterChange(deps.snapshot());
+      if (ended) {
         toggle.checked = false;
-        renderDetached(name);
+        renderDetached(ended);
         track("spec_detached_from_map", {});
       }
     },
     activeSpec(): RideSpec | null {
-      return attachment.get() ? (chosen?.spec ?? null) : null;
+      // The attachment's spec, never the current selection: the map was
+      // projected from the former, and the two part company whenever the
+      // list reloads while attached.
+      return attachment.attachedSpec;
     },
     destroy(): void {
       for (const fn of cleanupFns.splice(0)) fn();

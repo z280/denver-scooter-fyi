@@ -172,6 +172,16 @@ export async function deleteSpec(
 export interface Attachment {
   /** The spec's name, for the drawer's "showing: Commuter" line. */
   name: string;
+  /** The spec that produced `projected` — carried here rather than looked up
+   *  from the panel's current selection when needed.
+   *
+   *  The panel's `chosen` is a MOVING TARGET: reloading the list can pick a
+   *  different spec (the attached one was deleted elsewhere, or renamed), and
+   *  even a same-named row is a fresh object that may have been edited on
+   *  another device. Anything that asks "which spec is the map showing?" has
+   *  to be answered from the attachment, or it answers about a spec the map
+   *  was never projected from. */
+  spec: RideSpec;
   /** What the map looked like BEFORE the projection, so turning the toggle
    *  off restores what the rider had rather than a default. */
   restore: FilterSnapshot;
@@ -188,8 +198,13 @@ export interface Attachment {
  *  could see), not filter state, and comparing it would detach a spec the
  *  moment a preset from an older lineup was loaded alongside. */
 export function sameFilters(a: FilterSnapshot, b: FilterSnapshot): boolean {
+  // JSON rather than `join(",")`: a joined list collides when an entry
+  // contains the separator, so two different area selections could compare
+  // equal and the toggle would stay lit over filters it no longer describes.
+  // No region name has a comma in it today — but this function is what makes
+  // the detachment rule true, and it should not rest on that staying so.
   const set = (xs: readonly string[] | undefined): string =>
-    [...(xs ?? [])].sort().join(",");
+    JSON.stringify([...(xs ?? [])].sort());
   return (
     set(a.rideTypes) === set(b.rideTypes) &&
     set(a.models) === set(b.models) &&
@@ -219,11 +234,17 @@ export class SpecAttachment {
     return this.current?.name ?? null;
   }
 
+  /** The spec the map is actually showing, or null. The only correct source
+   *  for that question — see `Attachment.spec`. */
+  get attachedSpec(): RideSpec | null {
+    return this.current?.spec ?? null;
+  }
+
   /** Project `spec` onto `live` and remember both sides. The caller applies
    *  the returned snapshot; this only records what it should look like. */
   attach(name: string, spec: RideSpec, live: FilterSnapshot): FilterSnapshot {
     const projected = toFilterSnapshot(spec, live);
-    this.current = { name, restore: live, projected };
+    this.current = { name, spec, restore: live, projected };
     return projected;
   }
 
@@ -235,19 +256,25 @@ export class SpecAttachment {
     return restore;
   }
 
-  /** Hand this every filter change. Returns true when the change was a rider
-   *  edit that ended the attachment — which is the moment the toggle has to
-   *  clear and say what it detached from.
+  /** Hand this every filter change. Returns the attachment that ENDED when
+   *  the change was a rider edit, and null when nothing changed hands — which
+   *  is the moment the toggle has to clear and say what it detached from.
+   *
+   *  Returns the attachment rather than a boolean so the caller cannot label
+   *  that message from its own current selection, which is a different thing
+   *  and can have moved on (see `Attachment.spec`). The answer and the thing
+   *  it is about travel together.
    *
    *  Compares against the PROJECTION rather than tracking who called what: a
    *  flag saying "this change was mine" is one `await` away from being wrong,
    *  and the question is really "does the map still show the spec", which the
    *  snapshot answers directly. */
-  noticeFilterChange(live: FilterSnapshot): boolean {
-    if (!this.current) return false;
-    if (sameFilters(live, this.current.projected)) return false;
+  noticeFilterChange(live: FilterSnapshot): Attachment | null {
+    if (!this.current) return null;
+    if (sameFilters(live, this.current.projected)) return null;
+    const ended = this.current;
     this.current = null;
-    return true;
+    return ended;
   }
 
   /** Re-apply the spec after a detach — "back to Commuter". Returns null when

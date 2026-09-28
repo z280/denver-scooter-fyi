@@ -226,6 +226,21 @@ describe("sameFilters", () => {
     }
   });
 
+  it("does not confuse two subsets that join to the same string", () => {
+    // `sort().join(",")` collided here: ["a,b"] and ["a","b"] both flatten to
+    // "a,b", so a real change of area would have compared equal and the
+    // toggle would have stayed lit over filters it no longer described.
+    const a: FilterSnapshot = {
+      ...LIVE,
+      area: { layer: "neighborhood", subset: ["a,b"] },
+    };
+    const b: FilterSnapshot = {
+      ...LIVE,
+      area: { layer: "neighborhood", subset: ["a", "b"] },
+    };
+    expect(sameFilters(a, b)).toBe(false);
+  });
+
   it("notices a change of subset within the same layer", () => {
     const a: FilterSnapshot = {
       ...LIVE,
@@ -258,7 +273,7 @@ describe("SpecAttachment", () => {
   it("stays attached when the map matches the projection", () => {
     const a = new SpecAttachment();
     const projected = a.attach("Commuter", COMMUTER, LIVE);
-    expect(a.noticeFilterChange(projected)).toBe(false);
+    expect(a.noticeFilterChange(projected)).toBeNull();
     expect(a.attachedName).toBe("Commuter");
   });
 
@@ -266,17 +281,31 @@ describe("SpecAttachment", () => {
     const a = new SpecAttachment();
     const projected = a.attach("Commuter", COMMUTER, LIVE);
     const reordered = { ...projected, models: [...projected.models].reverse() };
-    expect(a.noticeFilterChange(reordered)).toBe(false);
+    expect(a.noticeFilterChange(reordered)).toBeNull();
   });
 
-  it("detaches on the first rider edit, and says so once", () => {
+  it("detaches on the first rider edit, and hands back what ended", () => {
+    // The RETURN is the fix: it carries the name and the spec that actually
+    // detached, so a caller cannot label the message — or decide what "Back
+    // to X" re-applies — from its own selection, which may have moved on.
     const a = new SpecAttachment();
     const projected = a.attach("Commuter", COMMUTER, LIVE);
     const edited = { ...projected, minBattery: 90 };
-    expect(a.noticeFilterChange(edited)).toBe(true);
+    const ended = a.noticeFilterChange(edited);
+    expect(ended?.name).toBe("Commuter");
+    expect(ended?.spec).toEqual(COMMUTER);
     expect(a.attachedName).toBeNull();
     // ...and does not keep announcing it on every later change.
-    expect(a.noticeFilterChange({ ...edited, quality: "ok-only" })).toBe(false);
+    expect(a.noticeFilterChange({ ...edited, quality: "ok-only" })).toBeNull();
+  });
+
+  it("reports the attached spec, not just its name", () => {
+    const a = new SpecAttachment();
+    expect(a.attachedSpec).toBeNull();
+    a.attach("Commuter", COMMUTER, LIVE);
+    expect(a.attachedSpec).toEqual(COMMUTER);
+    a.detachAndRestore();
+    expect(a.attachedSpec).toBeNull();
   });
 
   it("restores what the rider had before the toggle went on", () => {

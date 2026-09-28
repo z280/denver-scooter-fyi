@@ -50,6 +50,11 @@ function markup(): void {
 /** A stand-in Filters drawer: `apply` writes into the same variable
  *  `snapshot` reads, which is exactly the relationship main.ts's
  *  `applyFilterSnapshot` / `snapshotFilters` pair has. */
+/** The handle the most recent `harness().wire()` produced, so a test can ask
+ *  the panel what it believes without threading it through every helper. */
+let lastHandle: RideSpecPanelHandle | null = null;
+const currentHandle = (): RideSpecPanelHandle | null => lastHandle;
+
 function harness(initial: FilterSnapshot = BASE) {
   let live: FilterSnapshot = initial;
   const applied: FilterSnapshot[] = [];
@@ -90,6 +95,7 @@ function harness(initial: FilterSnapshot = BASE) {
     },
     wire(): RideSpecPanelHandle {
       handle = wireRideSpecPanel(this.deps)!;
+      lastHandle = handle;
       return handle;
     },
     /** A rider nudging a control. */
@@ -271,5 +277,118 @@ describe("activeSpec", () => {
 
     h.edit({ minBattery: 90 });
     expect(handle.activeSpec()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The attached spec and the selected spec are different things
+// ---------------------------------------------------------------------------
+describe("when the list reloads while a spec is attached", () => {
+  // `chosen` is a MOVING TARGET: reloading picks a different spec if the
+  // attached one was deleted or renamed elsewhere. Everything that answers
+  // "which spec is the map showing?" must come from the attachment, or the
+  // panel names one spec while acting on another.
+  const OTHER: RideSpec = {
+    ...defaultSpec(),
+    models: ["astro"],
+    minBattery: 90,
+  };
+
+  /** Attach the local spec, then swap what a reload would find. Clicking Edit
+   *  is what reloads the list in this panel. */
+  async function attachedThenReplaced() {
+    saveLocalSpec(COMMUTER);
+    const h = harness();
+    h.wire();
+    await flush();
+
+    toggle().checked = true;
+    toggle().dispatchEvent(new Event("change"));
+    await flush();
+    expect(toggle().checked).toBe(true);
+
+    // The attached spec is gone from storage; a reload now finds OTHER.
+    saveLocalSpec(OTHER);
+    editBtn().click();
+    await flush();
+    document.querySelector(".ranks-modal")?.remove(); // close the sheet
+
+    return h;
+  }
+
+  it("still reports the spec the map was projected from", async () => {
+    await attachedThenReplaced();
+    // activeSpec() must be the attached one, not whatever reloading selected.
+    expect(currentHandle()!.activeSpec()).toEqual(COMMUTER);
+  });
+
+  it("names the spec that detached, not the one now selected", async () => {
+    const h = await attachedThenReplaced();
+    h.edit({ minBattery: 5 });
+    expect(panelText()).toContain(LOCAL_SPEC_NAME);
+    expect(currentHandle()!.activeSpec()).toBeNull();
+  });
+
+  it("re-applies the spec that detached when Back is tapped", async () => {
+    // The bug this guards: Back was wired to `applySpec()`, which used the
+    // CURRENT selection — so the button could say "Back to X" and apply Y.
+    const h = await attachedThenReplaced();
+    h.edit({ minBattery: 5 });
+
+    const back = document
+      .getElementById("spec-panel")!
+      .querySelector("button") as HTMLButtonElement;
+    back.click();
+    await flush();
+
+    expect(h.applied.at(-1)).toEqual(toFilterSnapshot(COMMUTER, h.live));
+    expect(currentHandle()!.activeSpec()).toEqual(COMMUTER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The sheet's relaxation ladder
+// ---------------------------------------------------------------------------
+describe("the ladder re-renders when the model choice changes", () => {
+  // The ladder has a models rung (widenModelsToPosture), so a model change can
+  // add or remove a step. Every other control in the sheet re-rendered it;
+  // the model checkboxes did not, and the list a rider reads before deciding
+  // what to mark "must" went stale.
+  async function openSheet() {
+    saveLocalSpec({ ...defaultSpec(), models: null });
+    const h = harness();
+    h.wire();
+    await flush();
+    editBtn().click();
+    await flush();
+    return h;
+  }
+
+  const ladderText = () =>
+    document.querySelector(".spec-ladder")?.textContent ?? "";
+
+  it("gains a rung when the rider narrows to one seated model", async () => {
+    await openSheet();
+    // "Any model" has nothing to widen to, so no models rung.
+    expect(ladderText()).toContain("Everything here is a must");
+
+    const anyModel = document.querySelector(
+      ".ranks-modal input[type=checkbox]",
+    ) as HTMLInputElement;
+    anyModel.checked = false;
+    anyModel.dispatchEvent(new Event("change"));
+
+    const boxes = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        ".quick-filters input[type=checkbox]",
+      ),
+    ];
+    const cosmo = boxes.find(
+      (b) => b.parentElement?.textContent?.includes("Cosmo"),
+    )!;
+    cosmo.checked = true;
+    cosmo.dispatchEvent(new Event("change"));
+
+    expect(ladderText()).toContain("any seated model");
   });
 });
