@@ -16,6 +16,7 @@ import {
 import type { DeviceProperties } from "./api.ts";
 import type { FilterSnapshot } from "./filter-presets.ts";
 import { ALL_MODELS } from "./model-catalog.ts";
+import { assessReliability } from "./reliability.ts";
 
 // A device the way the wire actually delivers one: `device_features` may be a
 // JSON STRING (MapLibre flattens properties), and an unconfirmed feature is
@@ -30,6 +31,8 @@ function device(over: Partial<DeviceProperties> = {}): DeviceProperties {
     ...over,
   } as DeviceProperties;
 }
+
+const deviceProps = () => device();
 
 function spec(over: Partial<RideSpec> = {}): RideSpec {
   return { ...defaultSpec(), ...over };
@@ -505,5 +508,34 @@ describe("FEATURE_RELAX_ORDER", () => {
   it("covers every filterable feature, so no requirement is unrelaxable by omission", () => {
     const s = spec({ features: [...FEATURE_RELAX_ORDER] });
     expect(relax(s, 99).features).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inherited rules
+// ---------------------------------------------------------------------------
+describe("a quality requirement inherits whatever the reliability layer decides", () => {
+  // `matches` reads `reliability_tier` — the ANNOTATED one — rather than
+  // re-deriving a verdict from the raw signals. That is the whole reason the
+  // low-battery floor (added to reliability.ts after this module was written)
+  // applies to a spec without a line of code here.
+  //
+  // Coupling the two modules in the test the same way production couples
+  // them, so a future change that gave ride-spec its own opinion about
+  // rideability would fail here rather than silently diverging from the map.
+  const lowBattery = assessReliability({ battery_percent: 6 });
+
+  it("demotes a near-empty scooter out of ok-only, without ride-spec knowing why", () => {
+    expect(lowBattery.tier).not.toBe("ok");
+    const device = () => ({ ...deviceProps(), reliability_tier: lowBattery.tier });
+    expect(matches(device(), spec({ minQuality: "ok-only" })).unmet).toEqual([
+      "min_quality",
+    ]);
+  });
+
+  it("still admits it under no-risk, because the floor means 'unproven', not 'broken'", () => {
+    expect(lowBattery.tier).toBe("unknown");
+    const device = { ...deviceProps(), reliability_tier: lowBattery.tier };
+    expect(matches(device, spec({ minQuality: "no-risk" })).unmet).toEqual([]);
   });
 });

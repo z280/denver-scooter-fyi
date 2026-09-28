@@ -8858,6 +8858,8 @@ input[data-ride-keypad="on"] {
   padding-left: 1.4em;
   font-size: 13px;
   color: var(--fg-muted);
+}
+
 /* ---------- my-scooters-panel.ts: the Tools drawer list ----------
    Deliberately the .my-dibs treatment with a different accent: the two
    sit one above the other and are the same kind of object (a short list
