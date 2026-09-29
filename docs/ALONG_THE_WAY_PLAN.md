@@ -11,6 +11,13 @@ Planned 2026-08-29 against `main` (13e2215). Branch:
 to the map in one tap (§1.3, a **reversal** of revision 1's decision), and
 **Favorite Scooters** — favouriting individual vehicles behind a QR scan — joins as
 Phase 4 (§4).
+**Revision 3b** — **Phase 8, the receipt** (§8): check whether a trip was
+charged per Exhibit C, copy a complaint, and — consented — contribute to an
+evidence pile that can say whether the Equity Area discount is applied at all.
+The image never leaves the device. Phase 5b's separate "stopover" search is
+**deleted**: an Equity Area stopover is just a hand-off whose pickup was
+chosen for the discount, so it is a cost term in the Phase 2 planner rather
+than a second mechanism.
 **Revision 3a — Phases 2 and 3 were built on a misreading, and are rewritten.**
 Revisions 1–2 had the rider *walking* to the scooter matching their spec; the
 ask was always that they **ride** to it, handing off to it en route (§2, §3;
@@ -69,7 +76,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied, announced and reversible (§3.1). |
 | `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** Split from the panel so the withholding rule is testable without a DOM, including the cached-dot regression that would defeat it. |
 | `my-scooters-panel.ts` | 4 | The Tools-drawer list and the one button that keeps a scooter. Renders; decides nothing. Every judgement it shows comes from `my-scooters.ts` or from the server — it does not check the 75 m, parse the payload, or work out which scooter was scanned. |
-| `equity-savings.ts` | 5 | Cost optimizer: start-in-area bonus, stopover finder, break-even math. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
+| `equity-savings.ts` | 5 | Cost terms, not a second optimizer: the start-in-area bonus and `equityLegRate` for the Phase 2 planner's money term. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
 | `arrival-panel.ts` *(existing)* | 3 | Gains a **re-solved** face and a `reportResolve()` beside its `reportGone()`. |
 | `dibs-notify.ts` *(existing)* | 3 | Gains a `resolved` alert that **replaces** `taken`, and the rule that a re-solve changing nothing actionable is not announced at all. |
 | `device-watch.ts` *(existing)* | 3 | Unchanged in behaviour. Its `onGone` callback stops being a dead end. |
@@ -547,11 +554,17 @@ geometry — and owns neither. Three answers:
 - `startInAreaSaving(candidate, spec, plan)` — the Phase 5a win: this vehicle
   is inside the polygon, so the whole trip is discounted for one unlock. In
   dollars, next to the extra walking minutes it costs.
-- `stopoverSaving(routeGeometry, plan)` — Phase 5b. Two tiers: sample the
-  route the app **already has** against the bundled polygons (the same
-  `isInEquityArea` the on-screen indicator uses) and see whether it already
-  crosses one — in which case the detour is zero and the only cost is the
-  second unlock. Only if it does not is a second routing call worth spending.
+- `equityLegRate(leg)` — Phase 5b, **and it is no longer a search**. Revision
+  3b deleted `stopoverSaving`: an Equity Area stopover is just a hand-off
+  (§2) whose pickup happens to sit inside a polygon, so this returns the
+  per-minute rate a leg is billed at — $1 + 13¢/min when it starts or ends
+  inside one — and the Phase 2 planner's money term does the rest. Equity
+  hand-offs then appear in the ordinary plan list, ranked against everything
+  else, instead of on a card of their own.
+
+  The cheap tier still applies: sample the route the app **already has**
+  against the bundled polygons (the same `isInEquityArea` the on-screen
+  indicator uses). A route already crossing one costs nothing extra to detect.
 
 `RatePlanKey === "equity"` returns `null` from every one of them. The Access
 tier is 60 free min/day then 15¢/min with no unlock; the Equity Area rate is
@@ -561,7 +574,9 @@ advice we do not give.
 
 ### 5.2 Where it surfaces
 
-Phase 5a is a **chip on a candidate row** — *"starts in an Equity Area · saves
+Phase 5b has **no surface of its own** — an equity hand-off is a plan in the
+plan list like any other, with a chip naming why it is cheap. Phase 5a is a
+**chip on a candidate row** — *"starts in an Equity Area · saves
 $1.80 · 2 min more walking"* — because that is where the rider is choosing.
 Phase 5b is a **card on the route screen**, after a route exists, carrying all
 four of these on the same card as the saving:
@@ -772,6 +787,103 @@ such audit, and it leaves the audit behind as a test:
 
 ---
 
+## Phase 8 — The receipt
+
+Master plan §12. **The only phase in this program that adds a new stored data
+category**, and the most sensitive one — so the house rules below are not
+boilerplate.
+
+### 8.1 The architecture decision, first, because everything follows from it
+
+**The image never leaves the device.** OCR runs on-device, the rider confirms
+what was read, and only the **confirmed fields** upload. The evidence pile
+needs numbers, not photographs.
+
+Say that to riders in those words. "We store photos of your account and your
+receipts" and "we store figures you checked yourself" are different products,
+and only the second is worth building.
+
+If on-device OCR cannot be made accurate enough to ship, the fallback is
+**manual entry** — never an upload.
+
+### 8.2 Modules
+
+| Module | Responsibility |
+|---|---|
+| `receipt-read.ts` | On-device extraction: screenshot → `{ start, end, minutes, unlockCents, perMinCents, totalCents, from?, to? }`. **Pure given a bitmap.** Owns the format quirks and nothing else. |
+| `receipt-verdict.ts` | The three-part bar (§8.4) → `"overcharged" \| "correct" \| "cannot_tell"` plus the reason. **Pure.** Never touches the DOM and never phrases an accusation. |
+| `receipt-panel.ts` | Drop zone, the confirm-what-we-read step, the verdict, the copy button, the contribute toggle. Renders; decides nothing. |
+| `account-confirm.ts` | Profile screenshot **or** typing, yielding the account identifier and **nothing else**. |
+| `equity-areas.ts` *(existing)* | **Untouched.** `isInEquityArea` already answers the geographic half. |
+| `ride-cost.ts` *(existing)* | **Untouched.** `RATE_PLANS` and `EQUITY_AREA_RATE` are what "expected charge" means. |
+| `config.ts` *(existing)* | Gains the support address, in one place beside the rate plans. |
+
+### 8.3 Confirm what we read — the step that must not be skippable
+
+The extracted figures are shown **over the rider's own screenshot**, field by
+field, editable, before anything is copied or submitted. Not a toast, not a
+summary line: the actual numbers, where they came from, waiting for a tap.
+
+This is the whole defence against risk 15. Receipt layouts change without
+notice, and a misread total is a rider sent to lose an argument in public.
+
+### 8.4 The bar, and why "cannot tell" is a feature
+
+All three, or no claim is made:
+
+1. the trip **demonstrably** starts or ends inside an Equity Area polygon;
+2. the charged rate **demonstrably** is not $1 + 13¢/min;
+3. the rider has **confirmed** the figures.
+
+**Many receipts show time and money but no geography**, and the question is
+geographic. So: match by time to the rider's own tracked ride when one exists
+and use its geometry; when none does, check the arithmetic only and return
+`cannot_tell` with the reason. VeoPlus stays unmodelled per master plan
+§9.2.3 — a receipt differing only by that unlock is `cannot_tell`, not an
+overcharge.
+
+### 8.5 The complaint
+
+One tap copies a prefilled body. **The rider sends it**, from their own
+address, to the support address in `config.ts`. The app never sends it, and
+this is not a limitation to route around: sending it would mean this project
+asserting a contract claim on somebody's behalf, from an address they do not
+control.
+
+Trip, charge, expected charge, then the Exhibit A §5.2 citation underneath.
+Facts and a reference, no adjectives — at the single-receipt level an
+overcharge is indistinguishable from a bug, and the body should read like the
+billing query it is.
+
+### 8.6 Contributing, and withdrawing
+
+Checking your own receipt contributes **nothing** by default. Contributing is a
+separate deliberate tap, and the panel must show what leaves the device: the
+date, the area, the charged rate and the expected rate. Not coordinates, not
+the account identifier, not the image.
+
+Withdrawal is offered wherever the submissions are listed and must actually
+delete — a consent you cannot withdraw is not one.
+
+### 8.7 Tests
+
+- A receipt with no locations and no matching tracked ride returns
+  `cannot_tell`, never `overcharged` — the single most important assertion in
+  this phase.
+- A receipt differing from the expected charge only by the $1 unlock, for a
+  VeoPlus rider, returns `cannot_tell`.
+- A trip starting inside a polygon and charged at the base rate returns
+  `overcharged`, and the copied body contains the trip, both figures and the
+  citation.
+- The copy button is unreachable until the rider has confirmed the figures.
+- `account-confirm.ts` yields the identifier and no other field, from a
+  fixture containing a name, phone and card fragment.
+- The contribute payload contains no coordinates, no account identifier and
+  no image, asserted field-by-field against an allowlist rather than by
+  spot-check.
+
+---
+
 ## Telemetry
 
 Added to `TELEMETRY_EVENTS` here and `ALLOWED_EVENTS` in the API, same PR,
@@ -791,8 +903,12 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | `favorite_added` | `entry` (`popup` \| `after_scan` \| `after_features`) |
 | `favorite_removed` | `reason` (`rider` \| `gone`) |
 | `favorite_available_alert` | `opened` (bool) |
-| `equity_savings_shown` | `kind` (`start` \| `stopover`) |
+| `equity_savings_shown` | `kind` (`start` \| `hand_off`) |
 | `equity_savings_taken` | `kind` |
+| `receipt_checked` | `source` (`screenshot` \| `manual`), `had_tracked_ride` (bool) |
+| `receipt_verdict` | `verdict` (`overcharged` \| `correct` \| `cannot_tell`), `reason` — **no amounts, ever** |
+| `receipt_complaint_copied` | — |
+| `receipt_contributed` | `withdrawn` (bool) |
 
 These are the only way to answer whether the feature works: whether riders
 actually choose hand-off plans over direct ones, how often a pickup is lost
