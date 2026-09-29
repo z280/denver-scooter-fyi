@@ -71,7 +71,6 @@ function territoryPayload(): LeaderboardMapResponse {
           points: 88,
           ruling_color: "#7c54cd",
           ruling_border_color: "#382264",
-          ruling_alpha: 0.6,
         },
         runners_up: [],
       },

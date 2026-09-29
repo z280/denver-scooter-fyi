@@ -1124,13 +1124,9 @@ export function renderSignedInAccount(
       const fillGrid = makeGrid("fill");
       const borderGrid = makeGrid("border");
 
-      // No fill-opacity slider. It used to live here, writing
-      // `ruling_alpha`, which made the map's legibility a per-rider
-      // setting: one territory at 10% next to one at 100% read as "empty"
-      // versus "solid" rather than as two equal claims, and turning yours
-      // up was a way to shout. Every territory now renders at
-      // TERRITORY_FILL_OPACITY, so a hexagon's shade says who holds it and
-      // nothing else. The preview below shows exactly that.
+      // No fill-opacity control: every territory renders at
+      // TERRITORY_FILL_OPACITY (see its comment), and the preview below
+      // shows exactly that.
       const previewRow = el("div", "alpha-row");
 
       const applyBtn = el("button", "login-btn", "Apply");
@@ -1162,8 +1158,6 @@ export function renderSignedInAccount(
         if (!fill || !border) return;
         applyBtn.disabled = true;
         colorsStatus.set("Claiming…");
-        // `ruling_alpha` is deliberately NOT sent: nothing reads it any
-        // more, and writing it would keep a dead setting looking alive.
         savePatch({ ruling_color: fill, ruling_border_color: border })
           .then(() => {
             colorsStatus.set("Saved — this pair is yours.");

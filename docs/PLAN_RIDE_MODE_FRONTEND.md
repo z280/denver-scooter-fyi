@@ -171,10 +171,9 @@ rankings are a panel, so the map keeps working while you read them.
   snaps the size control to **Large** and disables Medium/Small (Off stays live); picking any other
   metric unlocks them. `setView(size, metric)` is the single entry point both setters go through,
   so that snap costs one fetch rather than two and never paints an empty intermediate frame.
-- **Fill opacity is a constant** (`TERRITORY_FILL_OPACITY`, 0.55). It used to be per-rider
-  (`ruling_alpha`, set by a slider beside the ruling colors), which made map legibility a personal
-  setting and let a rider make their own hexes shout. The slider is gone from the profile, the
-  field is no longer sent on save, and nothing in this app reads it. Neutral defaults are still a
+- **Fill opacity is a constant** (`TERRITORY_FILL_OPACITY`, 0.55), not a per-rider setting: a
+  per-rider opacity made map legibility personal and let a rider make their own hexes shout. The
+  API drops its per-rider field as well (scooter-fyi-api `sql/085`). Neutral defaults are still a
   frontend decision (the API sends null): no leader → no fill + hairline `#8a8f98` @ 0.15 outline;
   leader with unclaimed colors → `#8a8f98` @ 0.22 fill + opaque border.
 - **Triple-click** (`triple-click.ts`): three clicks on the same cell inside 600 ms — measured

@@ -56,7 +56,6 @@ const CLAIMED_CELL: LeaderboardCell = {
     points: 88,
     ruling_color: "#7c54cd",
     ruling_border_color: "#382264",
-    ruling_alpha: 0.6,
   },
   runners_up: [
     {
@@ -64,7 +63,6 @@ const CLAIMED_CELL: LeaderboardCell = {
       points: 30,
       ruling_color: null,
       ruling_border_color: null,
-      ruling_alpha: null,
     },
   ],
 };
@@ -114,7 +112,6 @@ describe("leaderboardMapToFeatureCollection", () => {
             points: 12,
             ruling_color: null,
             ruling_border_color: null,
-            ruling_alpha: null,
           },
         },
       }),
@@ -135,21 +132,24 @@ describe("leaderboardMapToFeatureCollection", () => {
     expect(props.lineOpacity).toBe(1);
   });
 
-  it("ignores ruling_alpha and fills at the one global opacity", () => {
-    const shouty: LeaderboardCell = {
-      ...CLAIMED_CELL,
-      leader: { ...CLAIMED_CELL.leader!, ruling_alpha: 1 },
-    };
-    const meek: LeaderboardCell = {
-      ...CLAIMED_CELL,
-      leader: { ...CLAIMED_CELL.leader!, ruling_alpha: 0.1 },
-    };
-    const of = (cell: LeaderboardCell): number =>
-      leaderboardMapToFeatureCollection(baseResponse({ [CELL_CLAIMED]: cell }))
-        .features[0]!.properties.fillOpacity;
-    expect(of(shouty)).toBe(TERRITORY_FILL_OPACITY);
-    expect(of(meek)).toBe(TERRITORY_FILL_OPACITY);
-    expect(of(shouty)).toBe(of(meek));
+  it("fills every claimed cell at the one global opacity", () => {
+    const props = leaderboardMapToFeatureCollection(
+      baseResponse({ [CELL_CLAIMED]: CLAIMED_CELL }),
+    ).features[0]!.properties;
+    expect(props.fillOpacity).toBe(TERRITORY_FILL_OPACITY);
+  });
+
+  it("an API that still sends the retired ruling_alpha changes nothing", () => {
+    // Either deploy order between this client and the API is safe: a
+    // response that still carries the old per-rider opacity is just JSON
+    // with one extra key, and one without it is what the types describe.
+    const current = baseResponse({ [CELL_CLAIMED]: CLAIMED_CELL });
+    const legacy = JSON.parse(JSON.stringify(current)) as LeaderboardMapResponse;
+    const leader = legacy.cells[CELL_CLAIMED]!.leader as unknown as Record<string, unknown>;
+    leader.ruling_alpha = 1;
+    expect(leaderboardMapToFeatureCollection(legacy)).toEqual(
+      leaderboardMapToFeatureCollection(current),
+    );
   });
 
   it("carries the cell id on each feature (the triple-click readout reads it)", () => {
@@ -221,14 +221,8 @@ describe("buildLeaderboardDetailHtml", () => {
     expect(html).toContain(CELL_CLAIMED);
   });
 
-  it("swatches the leader at the global opacity, not their stored alpha", () => {
-    const html = buildLeaderboardDetailHtml({
-      ...base,
-      cell: {
-        ...CLAIMED_CELL,
-        leader: { ...CLAIMED_CELL.leader!, ruling_alpha: 1 },
-      },
-    });
+  it("swatches the leader at the global opacity", () => {
+    const html = buildLeaderboardDetailHtml({ ...base, cell: CLAIMED_CELL });
     expect(html).toContain(hexWithAlpha("#7c54cd", TERRITORY_FILL_OPACITY));
     expect(html).not.toContain("rgba(124, 84, 205, 1)");
   });

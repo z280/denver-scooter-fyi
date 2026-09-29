@@ -36,14 +36,10 @@ export const LEADERBOARD_NEUTRAL_COLOR = "#8a8f98";
 
 /** THE fill opacity for every claimed territory hexagon, everywhere.
  *
- *  Riders used to set this themselves, per account, through a slider next
- *  to their ruling colors (`ruling_alpha`, still on the wire). That made
- *  the map's legibility a per-rider setting: one territory at 0.10 and its
- *  neighbor at 1.00 read as "empty" versus "solid" rather than as two
- *  claims of equal weight, and a rider could make their own hexes shout by
- *  turning theirs up. A single constant is the fix — the shade of a cell
- *  now says who holds it and nothing else. The slider is gone from the
- *  profile and `ruling_alpha` is not read anywhere in this app. */
+ *  Deliberately not a per-rider setting: one territory at 0.10 next to one
+ *  at 1.00 reads as "empty" versus "solid" rather than as two claims of
+ *  equal weight, and a rider could make their own hexes shout. One
+ *  constant means the shade of a cell says who holds it and nothing else. */
 export const TERRITORY_FILL_OPACITY = 0.55;
 
 const NO_LEADER_LINE_OPACITY = 0.15;
@@ -93,7 +89,6 @@ function cellPaint(
   return {
     hasLeader: true,
     fillColor: leader.ruling_color,
-    // Not `leader.ruling_alpha` — see TERRITORY_FILL_OPACITY.
     fillOpacity: TERRITORY_FILL_OPACITY,
     lineColor: leader.ruling_border_color,
     lineOpacity: OPAQUE,
