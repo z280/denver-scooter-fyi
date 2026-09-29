@@ -560,8 +560,6 @@ export interface Profile {
    *  unique and always set (or cleared) together. */
   ruling_color: string | null;
   ruling_border_color: string | null;
-  /** 0.10–1.00, default 0.60; applies to the fill only. */
-  ruling_alpha: number | null;
   badges: ProfileBadge[];
 }
 
@@ -585,7 +583,6 @@ export type ProfileUpdate = Partial<
     | "royalty_title"
     | "ruling_color"
     | "ruling_border_color"
-    | "ruling_alpha"
   >
 >;
 
@@ -1845,12 +1842,6 @@ export interface LeaderboardEntry {
    *  default — neutral fills are the frontend's decision. */
   ruling_color: string | null;
   ruling_border_color: string | null;
-  /** Still on the wire, and deliberately UNREAD by this client: territory
-   *  fills render at `leaderboard.ts`'s single `TERRITORY_FILL_OPACITY`, so
-   *  every hexagon on the map is equally legible regardless of what any one
-   *  rider once picked. The field stays typed because the API still sends
-   *  it; nothing here should start honoring it again. */
-  ruling_alpha: number | null;
 }
 
 export interface LeaderboardCell {

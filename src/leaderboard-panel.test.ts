@@ -31,7 +31,6 @@ const TALLY: LeaderboardRegionalResponse = {
       points: 1312,
       ruling_color: "#7c54cd",
       ruling_border_color: "#382264",
-      ruling_alpha: 0.6,
     },
     {
       rank: 2,
@@ -39,7 +38,6 @@ const TALLY: LeaderboardRegionalResponse = {
       points: 210,
       ruling_color: null,
       ruling_border_color: null,
-      ruling_alpha: null,
     },
   ],
 };

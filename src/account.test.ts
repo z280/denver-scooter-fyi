@@ -58,7 +58,6 @@ const PROFILE: Profile = {
   display_name: "Queen Brave 🦉",
   ruling_color: null,
   ruling_border_color: null,
-  ruling_alpha: null,
   badges: [],
 } as unknown as Profile;
 
