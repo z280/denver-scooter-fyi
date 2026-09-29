@@ -11,6 +11,12 @@ Planned 2026-08-29 against `main` (13e2215). Branch:
 to the map in one tap (§1.3, a **reversal** of revision 1's decision), and
 **Favorite Scooters** — favouriting individual vehicles behind a QR scan — joins as
 Phase 4 (§4).
+**Revision 3** — two cleanup phases at the end, both frontend-only: **Phase 6,
+one app, one mode** (§6) closes the seams left by the mode teardown, and
+**Phase 7, the walkthrough** (§7) rewrites the intro tour against the UI that
+results and switches it back on. Revision 3 also retires the API's
+`find_ride_pref` preference kind, which meant what a `ride_spec` means and had
+no caller in this repo — see the vocabulary note below.
 
 ## House rules that bind every phase
 
@@ -63,6 +69,9 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `favorites.ts` *(existing)* | 4 | **Untouched.** Saved *places*, not vehicles; §4.1 says why they must not be merged. |
 | `qr-scan.ts` *(existing)* | 4 | **Untouched.** Reused as-is — it already opens the camera, decodes, and hands back the raw payload with no opinion about what it means. |
 | `api.ts` *(existing)* | 1–5 | `fetchTripCandidates`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`. |
+| `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
+| `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
+| `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
 | `main.ts` *(existing)* | 1–5 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, and the spec bridge hooked to the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`). Nothing else. |
 
 ---
@@ -109,6 +118,27 @@ exists to have fixed once already — and `toFilterSnapshot` must set
 `knownModels` for the same reason.
 
 ### 1.2 Storage
+
+**Four things in this app sound alike. The question each answers is the only
+reliable way to tell them apart:**
+
+| | The question | Where it lives | Scope |
+|---|---|---|---|
+| **Filters** | what is drawn on the map *right now*? | the Filters drawer | this session |
+| **Preset** (`filter-presets.ts`) | a filter set worth reusing | `localStorage` | this browser |
+| **Spec** (`ride-spec.ts`) | what will I **ride**? | account, kind `ride_spec` | the account |
+| **Usual** (`ride-settings.ts`) | how should the ride **screen** behave? | account, kind `ride_mode_usual` | the account |
+
+A preset is **not** a small spec: it has no `must`, no relaxation order and no
+opinion about whether a vehicle is acceptable — it is a remembered *view*, and
+promoting one is the lossy bridge in §1.3. A Usual is **not** a spec for the
+screen: it never mentions a vehicle. The spec picks the scooter; the Usual
+dresses the screen you look at once you are on it.
+
+There used to be a fifth. The API carried a `find_ride_pref` preference kind —
+a single unnamed "what am I willing to ride" blob — which is what a spec is.
+This repo never called it. It is retired in the API's `sql/082`, so there is
+exactly one account-level answer to "what will I ride", and it is the spec.
 
 Signed in: `/api/v1/profile/ride-specs` (named, max 5). Signed out:
 `localStorage["scooter_fyi.ride_spec"]`, single unnamed spec, same shape.
@@ -579,6 +609,193 @@ suppressed.
 
 ---
 
+## Phase 6 — One app, one mode
+
+Master plan §10. **This phase is entirely ours** — no endpoint, no migration,
+no stored field. It is the only phase in the program with nothing to wait for.
+
+### 6.1 The frame
+
+Most of the mode teardown already happened in this repo, and `wireModes()` in
+`main.ts` documents it: **ONE MAP** (entering a ride flow no longer wipes
+filters, forces `hideUnavailable`, hides drawer tabs or fetches a lean
+payload), **NO ANALYSIS MODE**, and a home bar that asks "where are you
+going?" instead of asking the rider which of our surfaces they want. The
+destination already rides along through `pending-trip.ts`, so Screen 3 opens
+pre-filled rather than asking twice.
+
+What is left is scaffolding, and scaffolding that still costs. Four seams.
+
+### 6.2 Seam 1 — `#mode-switch`, the hidden bar we click
+
+`index.html` still carries `#mode-switch` with two `hidden` buttons, and the
+home bar enters a ride by synthetically clicking one of them. The markup
+comment is honest about why: every mode preset was wired to those buttons, and
+clicking them moved the entry point without re-deriving any behaviour. Right
+for the move; wrong to leave.
+
+Two files already have to know about the seam — `wireFreshnessCollapse()` was
+corrected to lift `#home-bar` rather than `#mode-switch`, and
+`install-prompt.ts` carries the same note. A third will get it wrong.
+
+**The work:** lift what `wireModes()` does for `data-mode="ride"` and
+`data-mode="riding"` into two named functions the home bar calls directly;
+delete the element; delete the `setActive`/`aria-pressed` bookkeeping that has
+displayed nothing since the bar went `hidden`.
+
+**Two traps, both already written down in the source:**
+
+- `resetIconography` and `setSelect` are kept alive by bare `void` statements
+  because they are the only writers of the iconography state, and deleting
+  them makes whole drawer branches unreachable. `wireModes()` says so. Either
+  untangle that knot **as its own change**, or leave both `void`s and the
+  comment exactly as they are. A tidier-looking diff is not a reason.
+- Closing the HUD currently hands the bar back to "whichever mode was active
+  before". With no bar, that has to become explicit state, or the rider lands
+  nowhere.
+
+### 6.3 Seam 2 — two model filters, opposite empty sets
+
+`devices.ts` holds `rideModelFilter` (HUD "Show" pills) alongside the Filters
+drawer's `models`:
+
+| | `null` | empty set |
+|---|---|---|
+| drawer `models` | every model | **every model** |
+| `rideModelFilter` | no ride filter | **none** |
+
+Both are documented, both are right in isolation, one map applies both. Same
+gesture — deselect everything — opposite outcome, with nothing in the UI to
+tell them apart.
+
+**The work:** one concept, one meaning for the empty set. If the HUD really
+needs "show none" (it may — the pills are a live control, not a search), it
+becomes a **named** state, not an empty selection that inverts its meaning one
+drawer away.
+
+### 6.4 Seam 3 — the spec stops at the ride
+
+Phase 1 stores, syncs and attaches a spec. `rideModelFilterFor()` in
+`ride-hud.ts` never reads it. A rider who has said "only Cosmos, must have a
+basket" opens the HUD to everything and says it again in pills.
+
+This is the same failure `ride-preflight.ts` exists to fix a screen earlier —
+its header calls re-asking an answered question "the single loudest piece of
+friction left in the flow" — and it takes the same fix: read the answer that
+already exists.
+
+**The work:** with a spec attached, the ride surface opens honouring it and
+names which spec. Changing the pills **detaches**, exactly as §1.3's
+attach/detach rule already specifies for the map — reuse
+`ride-spec-store.ts`'s `noticeFilterChange`, do not invent a second notion of
+"this no longer matches".
+
+### 6.5 Seam 4 — one settings vocabulary across two entrances
+
+Two ways in, correctly different: the wizard (`ride-modal.ts`, Screens 1–6)
+for a rider with nothing in mind, the pre-flight (`ride-preflight.ts`) for one
+already standing at a scooter. **This phase does not merge them** — collapsing
+them recreates exactly the friction the pre-flight removes.
+
+What it fixes is drift. `ride-preflight.ts` already holds the line ("this
+module does not invent a parallel settings vocabulary"), and
+`track-preference.ts` is the worked precedent in the other direction: "Save
+Tracks to Local Device" was asked every ride until somebody noticed the answer
+never changed, and it became one standing setting in Settings → Local Data.
+
+**The work:** put every question either flow asks to that test — *per-ride, or
+standing?* — and move the standing ones out. Rename `RideOptions.theme` while
+here: it is the Screen 4 route-preview basemap flavour, not the app theme,
+which is why `ride-settings.ts` deliberately has no Theme row and a paragraph
+explaining the absence. A field that needs a paragraph is misnamed.
+
+### 6.6 Tests
+
+- `#mode-switch` is absent from `index.html`, and no module queries it.
+- Entering and leaving a ride leaves every filter, drawer tab and iconography
+  setting exactly as it was — the ONE MAP guarantee, now asserted rather than
+  described.
+- One property over both filter paths: an empty model selection produces the
+  same visible set in the drawer and in the HUD, or the HUD's "none" is a
+  distinct named state that the drawer has no way to express.
+- With a spec attached, the HUD's initial pill state equals
+  `toFilterSnapshot(spec).models`; changing a pill detaches, once.
+- No `RideOptions` field is written by two surfaces meaning two things.
+
+### 6.7 Out of bounds
+
+- No new stored field, no new endpoint. Nothing here is a retention question.
+- No preset comes back. Every seam closes by **deleting** mode machinery.
+- **No default on the wheels toggle.** `home-bar.ts` states why neither option
+  is preselected; "reducing friction" is precisely the argument that would
+  undo it, and it is wrong for the same reason it was wrong the first time.
+
+---
+
+## Phase 7 — The walkthrough, restored
+
+Master plan §11. Also entirely ours.
+
+The seven-screen tour (`onboarding.ts`) still exists and is still replayable
+from About, but `ONBOARDING_AUTOSHOW = false` in `main.ts`, with a comment
+saying it is off "while the tour is rewritten". This is that rewrite, and it
+is **last** because a tour is a description and the thing being described
+should stop moving first (master plan §4).
+
+### 7.1 What is broken
+
+**Mechanically:** `onStartExploring` ends the tour by clicking
+`#mode-switch .mode-btn[data-mode="ride"]` — `hidden` today, deleted by Phase
+6. The tour's final promise is a click into the seam §6.2 removes. Its other
+two effects (switch the legend on, fire the one-time "tap any scooter" nudge)
+are still fine and stay.
+
+**Editorially:** two of seven screens describe a UI that moved. `ride-mode`
+sells "Ride Mode" as a place you go — the mode vocabulary this app has spent
+several PRs removing. `models` promises "save your favorite combos and reuse
+them in one tap", which is presets: true, but now sitting beside specs, and
+the tour is where a new rider forms their idea of the difference. The other
+five (`welcome`, `features`, `rideability`, `routing`, `contribute`,
+`territory`) still describe things that exist.
+
+### 7.2 The rule
+
+**The tour describes the app; the app does not chase the tour.** If a screen
+is wrong, the screen changes — never the other way round. No surface survives
+in this app because the walkthrough mentions it.
+
+### 7.3 What ships
+
+- The CTA lands on the home bar's "where are you going?" instead of clicking
+  a deleted element.
+- `ride-mode` is rewritten around what the rider actually gets: a landscape
+  dashboard while riding, with no claim that it is a mode they switch into.
+- `models` separates a saved **view** from a saved **spec** in one sentence,
+  in master plan §2's vocabulary, and points at the one-tap bridge.
+- Phases 1 and 4 earn a screen or a sentence each. A rider who only discovers
+  "my ideal scooter" or "My Scooters" by accident is a rider we did not tell.
+- `ONBOARDING_AUTOSHOW` goes back to `true`. It was always one line — the
+  point of it being one line is that turning it on is a decision, not a
+  revert.
+- Still once per browser, still replayable from About, still skippable on
+  every screen.
+
+### 7.4 Tests
+
+`ONBOARDING_SCREENS` is already exported so a "what does the tour promise"
+audit can read the copy without opening the overlay. This phase is the first
+such audit, and it leaves the audit behind as a test:
+
+- Every selector or control named in a screen's copy or CTA resolves in
+  `index.html`. This is the test that would have caught the dead
+  `#mode-switch` click, and it is the one that keeps the tour honest the next
+  time a surface moves.
+- No screen body contains the string "Ride Mode" as a destination.
+- `ONBOARDING_AUTOSHOW` is `true`, and the once-per-browser latch still holds
+  across a simulated second visit.
+
+---
+
 ## Telemetry
 
 Added to `TELEMETRY_EVENTS` here and `ALLOWED_EVENTS` in the API, same PR,
@@ -615,11 +832,19 @@ map bridge gets used, and whether anybody takes the money.
 | `ride-spec-panel.ts` | `sql/080` + `/profile/ride-specs` | yes, against localStorage only |
 | `along-the-way.ts` | — | yes |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.1 |
-| `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/081` lands |
-| `my-scooters.ts` | `sql/082` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
+| `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/083` lands |
+| `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
+| Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
+| Phase 7 (the walkthrough) | **nothing at all** | yes, but *after* Phase 6 — see below |
 
 Phases 1, 2 and 5a have no hard API dependency and can land first. Phase 3
 wants the atomic swap. **Phase 4 is the one phase that cannot start on this
 side** — which is the correct shape, because both of its load-bearing rules
 have to live where a client cannot route around them.
+
+Phases 6 and 7 invert that shape: they need nothing from the API lane and
+could be built at any time. They are last anyway, and in that order, because
+Phase 6 changes the UI and Phase 7 describes it. Building 7 first means
+building it twice, and shipping a walkthrough that is wrong on the day it
+lands is worse than shipping none — it is the first thing a new rider sees.
