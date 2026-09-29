@@ -131,21 +131,32 @@ function renderOfficialSection(
   section.append(renderRow("SLA Window %", slaPct, slaPass));
 
   // An SLA row exists but carries no equity figure. That is a real, nameable
-  // state, not an error: the day predates the official map and the server's
-  // reprocessing job has not reached it yet. Saying so beats two "—" rows
-  // that read as a broken card, and beats a 0% that reads as a failure.
+  // state, not an error. Saying so beats two "—" rows that read as a broken
+  // card, and beats a 0% that reads as a failure.
   if (sla && slaPct === null) {
-    section.append(
-      el(
-        "div",
-        "compliance__foot",
-        "This day predates the city's official Equity Area map — it's being " +
-          "reprocessed against it. Check the calendar for days already done.",
-      ),
-    );
+    section.append(el("div", "compliance__foot", missingFigureNote(sla)));
   }
 
   return section;
+}
+
+/** Why an SLA row has no equity figure, in words. Two different reasons:
+ *  the server's reprocessing job hasn't reached the day yet (it predates the
+ *  official map), or it has and concluded the day can't be measured. The
+ *  second must not promise a number that is never coming — and neither is
+ *  a failure. */
+export function missingFigureNote(sla: ComplianceResponse): string {
+  if (sla.equity_unmeasurable_reason) {
+    return (
+      "Unmeasurable — this day's data couldn't be reconstructed reliably " +
+      "enough to judge against the city's official Equity Area map. Not a " +
+      "failure."
+    );
+  }
+  return (
+    "This day predates the city's official Equity Area map — it's being " +
+    "reprocessed against it. Check the calendar for days already done."
+  );
 }
 
 /** A label + value + bar triplet. Renders a pending-style row when value

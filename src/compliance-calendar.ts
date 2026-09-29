@@ -7,40 +7,79 @@
 // contract not being honored, and only a calendar makes the difference
 // visible at a glance.
 //
-// WHY FOUR COLORS AND NOT TWO ---------------------------------------------
+// WHY FIVE STYLES AND NOT TWO ---------------------------------------------
 // The obvious build is red/green. It would be wrong, because "not green"
-// covers three unrelated things:
+// covers four unrelated things:
 //
-//   pass    — the 6-9 AM window average met the 30% target
-//   fail    — it did not
-//   no data — the nightly job never computed that day (an outage, a gap)
-//   pending — the day predates the city's official Equity Area map, and the
-//             server's reprocessing job hasn't rebuilt it yet
+//   pass         — the 6-9 AM window average met the 30% target
+//   fail         — it did not
+//   no data      — the nightly job never computed that day (an outage, a gap)
+//   pending      — the day predates the city's official Equity Area map, and
+//                  the server's reprocessing job hasn't rebuilt it yet
+//   unmeasurable — the job DID get to it, and the day's data couldn't be
+//                  reconstructed reliably enough to judge (every snapshot
+//                  failed the server's fidelity check). Over, not pending;
+//                  unknown, not failed.
 //
-// Painting the last two red would accuse Veo of missing a target on days
-// nobody has measured. This app's whole standing rests on its numbers being
-// defensible, so a day we cannot speak to is drawn as a day we cannot speak
-// to. The server already distinguishes all four (see the API's
-// /api/v1/compliance/calendar); this renders what it says rather than
+// Painting any of the last three red would accuse Veo of missing a target
+// on days nobody has measured. This app's whole standing rests on its
+// numbers being defensible, so a day we cannot speak to is drawn as a day
+// we cannot speak to. The server already distinguishes all five (see the
+// API's /api/v1/compliance/calendar); this renders what it says rather than
 // collapsing it.
+//
+// And a SIXTH, for a status this build has never heard of: the API documents
+// `status` as a set that can grow. An unrecognised value renders as a plain
+// neutral cell with "no verdict" — never red, never green. A newer server
+// must not be able to make an older client accuse Veo of anything.
 
 import {
   fetchComplianceCalendar,
-  type ComplianceCalendarDay,
   type ComplianceCalendarMonth,
   type ComplianceCalendarResponse,
+  type ComplianceDayStatus,
 } from "./api.ts";
 import { openFloatingModal } from "./devices.ts";
 
 /** Sunday-first, matching the US calendar convention riders expect. */
 const WEEKDAY_INITIALS = ["S", "M", "T", "W", "T", "F", "S"];
 
-const STATUS_LABEL: Record<ComplianceCalendarDay["status"], string> = {
+/** What a cell is drawn as: one of the statuses this build knows, or
+ *  `unknown` for anything else the server sends. */
+export type RenderedStatus = ComplianceDayStatus | "unknown";
+
+const STATUS_LABEL: Record<RenderedStatus, string> = {
   pass: "met the 30% target",
   fail: "missed the 30% target",
   no_data: "no data",
   pending: "not yet reprocessed",
+  unmeasurable:
+    "unmeasurable — the day's data couldn't be reconstructed reliably " +
+    "enough to judge. Not a failure",
+  unknown: "no verdict",
 };
+
+const KNOWN_STATUSES: ReadonlySet<string> = new Set<ComplianceDayStatus>([
+  "pass",
+  "fail",
+  "no_data",
+  "pending",
+  "unmeasurable",
+]);
+
+/** Map a wire status onto one this build can draw. Anything unrecognised
+ *  becomes `unknown` — rendered neutral, never as a failure — and, as a
+ *  side effect, a server string never reaches a class attribute raw. */
+export function renderedStatus(status: string): RenderedStatus {
+  return KNOWN_STATUSES.has(status)
+    ? (status as ComplianceDayStatus)
+    : "unknown";
+}
+
+/** `no_data` -> `is-no-data`. Every underscore, not just the first. */
+function statusClass(status: RenderedStatus): string {
+  return `is-${status.replace(/_/g, "-")}`;
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -73,8 +112,9 @@ export function weekdayIndex(isoDate: string): number {
   return new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
 }
 
-/** One month's grid. Pure — the interesting logic (leading blanks, the four
- *  statuses, future days) is all here and testable without a DOM. */
+/** One month's grid. Pure — the interesting logic (leading blanks, the five
+ *  statuses and the unknown fallback, future days) is all here and testable
+ *  without a DOM. */
 export function monthGridHtml(month: ComplianceCalendarMonth): string {
   const heads = WEEKDAY_INITIALS.map(
     (w, i) =>
@@ -93,15 +133,17 @@ export function monthGridHtml(month: ComplianceCalendarMonth): string {
   const cells = month.days
     .map((d) => {
       const dayNum = Number(d.date.slice(8, 10));
+      const status = renderedStatus(d.status);
       // A day that hasn't happened is drawn as an empty slot, not as
       // missing data — nobody is owed a compliance number for tomorrow.
       const cls = d.in_future
         ? "cal__cell cal__cell--future"
-        : `cal__cell is-${d.status.replace("_", "-")}`;
-      const pct = d.percent === null ? "" : ` — ${d.percent.toFixed(1)}%`;
+        : `cal__cell ${statusClass(status)}`;
+      const pct =
+        typeof d.percent === "number" ? ` — ${d.percent.toFixed(1)}%` : "";
       const title = d.in_future
         ? `${d.date} — hasn't happened yet`
-        : `${d.date} — ${STATUS_LABEL[d.status]}${pct}`;
+        : `${d.date} — ${STATUS_LABEL[status]}${pct}`;
       return (
         `<div class="${cls}" role="listitem" title="${escapeHtml(title)}" ` +
         `aria-label="${escapeHtml(title)}"><span class="cal__num">${dayNum}</span></div>`
@@ -131,18 +173,36 @@ export function monthGridHtml(month: ComplianceCalendarMonth): string {
 /** The full modal body for a loaded calendar. */
 export function calendarHtml(data: ComplianceCalendarResponse): string {
   const months = data.months.map(monthGridHtml).join("");
-  const anyPending = data.months.some((m) =>
-    m.days.some((d) => d.status === "pending"),
+  // Only explain a color when there is one on screen. A legend entry for a
+  // state the reader cannot see is just more to read. Future days are drawn
+  // as empty slots whatever their status, so they don't count.
+  const onScreen = new Set<RenderedStatus>(
+    data.months.flatMap((m) =>
+      m.days.filter((d) => !d.in_future).map((d) => renderedStatus(d.status)),
+    ),
   );
-  // Only explain the pending color when there is one on screen. A legend
-  // entry for a state the reader cannot see is just more to read.
+  const anyPending = onScreen.has("pending");
+  const anyUnmeasurable = onScreen.has("unmeasurable");
+  const anyUnknown = onScreen.has("unknown");
+
   const pendingKey = anyPending
     ? `<span class="cal__key"><i class="cal__swatch is-pending"></i>Reprocessing</span>`
+    : "";
+  const unmeasurableKey = anyUnmeasurable
+    ? `<span class="cal__key"><i class="cal__swatch is-unmeasurable"></i>Unmeasurable</span>`
+    : "";
+  const unknownKey = anyUnknown
+    ? `<span class="cal__key"><i class="cal__swatch is-unknown"></i>No verdict</span>`
     : "";
   const pendingNote = anyPending
     ? `<p class="cal__note">Grey-striped days predate the city's official
        Equity Area map. They're being recomputed against it — that's a gap in
        our records, not a day Veo missed.</p>`
+    : "";
+  const unmeasurableNote = anyUnmeasurable
+    ? `<p class="cal__note">Dotted days are unmeasurable: the day's data
+       couldn't be reconstructed reliably enough to judge against the map, so
+       we don't. That's a limit of our records, not a day Veo missed.</p>`
     : "";
 
   return `
@@ -157,9 +217,12 @@ export function calendarHtml(data: ComplianceCalendarResponse): string {
         <span class="cal__key"><i class="cal__swatch is-fail"></i>Missed</span>
         <span class="cal__key"><i class="cal__swatch is-no-data"></i>No data</span>
         ${pendingKey}
+        ${unmeasurableKey}
+        ${unknownKey}
       </div>
       ${months}
       ${pendingNote}
+      ${unmeasurableNote}
       <p class="cal__note cal__note--source">
         Measured against the City of Denver's official Equity Area map.
         Source: data.scooter.fyi.

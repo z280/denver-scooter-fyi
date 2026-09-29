@@ -2504,6 +2504,20 @@ body.is-map-picking .home-bar {
     var(--fg-muted) 5px
   );
 }
+/* Unmeasurable: the no-data cell (same muted edge) with a fine grain over it.
+   Dots, not stripes — stripes already mean "work in progress", and this day
+   is finished; it just has no verdict. Built from no-data on purpose: the
+   meaning is "we can't say", which sits next to "no data", nowhere near the
+   two solid verdict fills. */
+.cal__swatch.is-unmeasurable {
+  background:
+    radial-gradient(circle, var(--fg-muted) 0.8px, transparent 1px) 0 0 / 3px 3px,
+    var(--bg-elev);
+  border-color: var(--fg-muted);
+}
+/* A status this build doesn't know keeps the base neutral swatch/cell:
+   no fill, no pattern — never a verdict color. (.is-unknown needs no rule;
+   it is named here so a future edit doesn't hand it one by accident.) */
 .cal__month + .cal__month {
   margin-top: 20px;
 }
@@ -2571,6 +2585,21 @@ body.is-map-picking .home-bar {
     var(--border) 4px,
     var(--border) 7px
   );
+}
+/* Sparse enough that the day number stays legible; --fg-muted rather than
+   --border so the grain survives dark mode, where --border on --bg-elev
+   nearly vanishes (see .cal__swatch.is-no-data). */
+.cal__cell.is-unmeasurable {
+  border-color: var(--fg-muted);
+  background:
+    radial-gradient(circle, var(--fg-muted) 0.7px, transparent 1px) 0 0 / 5px 5px,
+    var(--bg-elev);
+}
+/* A plate behind the day number so the grain never runs through it. */
+.cal__cell.is-unmeasurable .cal__num {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--bg-elev);
 }
 .cal__summary {
   margin: 8px 0 0;
