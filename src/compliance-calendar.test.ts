@@ -6,7 +6,8 @@
 // target" and "we have no number for this day". A red/green calendar that
 // paints unmeasured days red is an accusation this app cannot back, and
 // this app's standing rests entirely on its numbers being defensible. So
-// the four statuses each get their own coverage, and the summary line's
+// the five statuses each get their own coverage — plus the fallback for a
+// status this build has never heard of — and the summary line's
 // denominator gets its own test.
 //
 // The date helpers get their own too, for a duller but nastier reason:
@@ -26,6 +27,7 @@ import {
   monthGridHtml,
   monthTitle,
   openComplianceCalendar,
+  renderedStatus,
   weekdayIndex,
 } from "./compliance-calendar.ts";
 
@@ -224,5 +226,116 @@ describe("opening it", () => {
 
     resolve(response([month("2026-08", [day("2026-08-01", "pass", 41)])]));
     await expect(pending).resolves.toBeTruthy();
+  });
+});
+
+describe("unmeasurable days", () => {
+  // 2026-08-09 and 08-10: the server reprocessed them and every snapshot
+  // failed its reconstruction check. The day is over, the data exists, and
+  // it cannot be judged. That is neither a miss nor a pending promise.
+
+  it("gets its own style — not red, not green, not the pending stripes", () => {
+    const html = monthGridHtml(
+      month("2026-08", [day("2026-08-09", "unmeasurable"), day("2026-08-10", "unmeasurable")]),
+    );
+    expect(html.match(/cal__cell is-unmeasurable/g)).toHaveLength(2);
+    expect(html).not.toContain("is-fail");
+    expect(html).not.toContain("is-pass");
+    expect(html).not.toContain("is-pending");
+  });
+
+  it("says why in the tooltip, and that it isn't a failure", () => {
+    const html = monthGridHtml(month("2026-08", [day("2026-08-09", "unmeasurable")]));
+    expect(html).toContain(
+      `aria-label="2026-08-09 — unmeasurable — the day's data couldn't be ` +
+        `reconstructed reliably enough to judge. Not a failure"`,
+    );
+  });
+
+  it("is not counted as a measured day in the summary", () => {
+    const html = monthGridHtml(
+      month("2026-08", [
+        day("2026-08-08", "fail", 16.8),
+        day("2026-08-09", "unmeasurable"),
+        day("2026-08-10", "unmeasurable"),
+        day("2026-08-11", "fail", 16.1),
+      ]),
+    );
+    expect(html).toContain("0 of 2 measured days met the target");
+  });
+
+  it("gets a legend entry and a note only when one is on screen", () => {
+    const withIt = calendarHtml(
+      response([month("2026-08", [day("2026-08-09", "unmeasurable")])]),
+    );
+    expect(withIt).toContain('<i class="cal__swatch is-unmeasurable"></i>Unmeasurable');
+    expect(withIt).toContain("not a day Veo missed");
+    // It is not "reprocessing" — that promise is exactly what it replaces.
+    expect(withIt).not.toContain("Reprocessing");
+
+    const without = calendarHtml(
+      response([month("2026-08", [day("2026-08-01", "pending")])]),
+    );
+    expect(without).not.toContain("Unmeasurable");
+    expect(without).not.toContain("is-unmeasurable");
+  });
+
+  it("explains both when pending and unmeasurable days share a month", () => {
+    const html = calendarHtml(
+      response([
+        month("2026-08", [day("2026-08-01", "pending"), day("2026-08-09", "unmeasurable")]),
+      ]),
+    );
+    expect(html).toContain("Reprocessing");
+    expect(html).toContain("Unmeasurable");
+    expect(html).toContain("Grey-striped days");
+    expect(html).toContain("Dotted days are unmeasurable");
+  });
+});
+
+describe("a status this build doesn't know", () => {
+  // The API documents `status` as an open set. A newer server must not be
+  // able to make an older client accuse Veo of anything.
+
+  it("maps every known status to itself and anything else to unknown", () => {
+    for (const s of ["pass", "fail", "no_data", "pending", "unmeasurable"]) {
+      expect(renderedStatus(s)).toBe(s);
+    }
+    expect(renderedStatus("provisional")).toBe("unknown");
+    expect(renderedStatus("")).toBe("unknown");
+    expect(renderedStatus("constructor")).toBe("unknown");   // no prototype leaks
+    expect(renderedStatus("FAIL")).toBe("unknown");
+  });
+
+  it("renders neutral, never as a failure, and says so in words", () => {
+    const html = monthGridHtml(month("2026-08", [day("2026-08-12", "provisional", 12.3)]));
+    expect(html).toContain("cal__cell is-unknown");
+    expect(html).not.toContain("is-fail");
+    expect(html).not.toContain("is-pass");
+    expect(html).toContain(`aria-label="2026-08-12 — no verdict — 12.3%"`);
+    expect(html).not.toContain("undefined");
+  });
+
+  it("never puts the raw server string into the markup", () => {
+    const html = monthGridHtml(
+      month("2026-08", [day("2026-08-12", 'x" onmouseover="alert(1)')]),
+    );
+    expect(html).not.toContain("onmouseover");
+    expect(html).toContain("cal__cell is-unknown");
+  });
+
+  it("gets a neutral legend entry only when one is on screen", () => {
+    const withIt = calendarHtml(response([month("2026-08", [day("2026-08-12", "provisional")])]));
+    expect(withIt).toContain('<i class="cal__swatch is-unknown"></i>No verdict');
+    const without = calendarHtml(response([month("2026-08", [day("2026-08-12", "pass", 41)])]));
+    expect(without).not.toContain("No verdict");
+  });
+
+  it("doesn't explain a state that is only on days yet to come", () => {
+    // Future days are drawn as empty slots whatever their status.
+    const html = calendarHtml(
+      response([month("2026-08", [day("2026-08-30", "unmeasurable", null, true)])]),
+    );
+    expect(html).not.toContain("Unmeasurable");
   });
 });

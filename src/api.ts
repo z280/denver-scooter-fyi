@@ -176,6 +176,12 @@ export interface ComplianceResponse {
    *  (see compliance.ts). */
   avg_percent_all_devices_equity?: number | null;
   compliance_equity_pass?: boolean | null;
+  /** Set when the server's reprocessing job concluded this day CANNOT be
+   *  measured against the official map (every 6-9 AM snapshot failed its
+   *  reconstruction check) — `"low_fidelity"` or `"no_history"` today. The
+   *  two fields above are then null for good: unmeasured, not failed.
+   *  Optional because an API older than the field omits it. */
+  equity_unmeasurable_reason?: string | null;
   /** Retired maps, still returned by the API and still the record for the
    *  period before the city named the official one. Not rendered. */
   avg_percent_all_devices_v1: number;
@@ -206,17 +212,28 @@ export interface SnapshotMetadataResponse {
 
 // ---------- Compliance calendar ----------
 
-/** How a single day reads on the compliance calendar. `no_data` and
- *  `pending` are deliberately distinct from `fail`: one means the daily job
- *  never computed the day, the other that the day predates the official map
- *  and the server's reprocessing job has not reached it. Neither is Veo
- *  missing the target, and colouring either red would say it did. */
-export type ComplianceDayStatus = "pass" | "fail" | "no_data" | "pending";
+/** How a single day reads on the compliance calendar. `no_data`,
+ *  `pending` and `unmeasurable` are deliberately distinct from `fail`:
+ *  the daily job never computed the day; the day predates the official map
+ *  and the server's reprocessing job has not reached it; or the job reached
+ *  it and found its data could not be reconstructed reliably enough to judge.
+ *  None of them is Veo missing the target, and colouring any red would say
+ *  it did. */
+export type ComplianceDayStatus =
+  | "pass"
+  | "fail"
+  | "no_data"
+  | "pending"
+  | "unmeasurable";
 
 export interface ComplianceCalendarDay {
   /** YYYY-MM-DD, Denver-local. */
   date: string;
-  status: ComplianceDayStatus;
+  /** Typed OPEN on purpose: the server documents `status` as a set that can
+   *  grow (API.md → Stability commitments), and a value this build has never
+   *  heard of must still render — neutrally, never as a failure. See
+   *  compliance-calendar.ts's `renderedStatus`. */
+  status: ComplianceDayStatus | (string & {});
   /** Window average for the day, or null when there isn't one. */
   percent: number | null;
   snapshot_count: number;
