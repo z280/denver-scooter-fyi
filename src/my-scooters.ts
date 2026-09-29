@@ -105,6 +105,12 @@ export function favoriteTitle(f: FavoriteDevice): string {
   return "Favorite scooter";
 }
 
+/** What a signed-out rider is told, wherever they tried to keep one from:
+ *  the popup's blocked ⭐, the panel's button, or a session that expired
+ *  between the tap and the server's answer. One sentence, so the three
+ *  cannot drift apart. */
+export const KEEP_SIGNIN_HINT = "Sign in (Account tab) to keep a scooter.";
+
 /** The sentence for a refusal, in the rider's terms.
  *
  *  Every one of these is a thing they can act on, so none of them is rendered
@@ -136,8 +142,15 @@ export function keepErrorMessage(err: unknown): string {
       return `You already keep ${max} scooters — let one go before keeping another.`;
     }
     default:
-      return err.status === 401
-        ? "Sign in to keep a scooter."
+      // The bearer client never puts a 401 on the error: it throws NO_AUTH
+      // when there is no session and TOKEN_REJECTED when the server refused
+      // the one we had (api.ts `authedFetch`), neither with a status. Match
+      // on the code, the way api.ts's own fallbacks do; the 401 stays for any
+      // caller that builds the error by hand.
+      return err.code === "NO_AUTH" ||
+        err.code === "TOKEN_REJECTED" ||
+        err.status === 401
+        ? KEEP_SIGNIN_HINT
         : "Couldn't keep that one — try again in a moment.";
   }
 }

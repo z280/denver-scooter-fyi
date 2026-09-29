@@ -7,6 +7,7 @@
 // that would defeat it — caching the last known dot across a transition.
 import { describe, it, expect } from "vitest";
 import {
+  KEEP_SIGNIN_HINT,
   STATE_LABEL,
   WITHHELD_SENTENCE,
   favoriteTitle,
@@ -156,8 +157,21 @@ describe("keepErrorMessage", () => {
     ).toContain("3 scooters");
   });
 
-  it("sends a signed-out rider to sign in", () => {
-    expect(keepErrorMessage(apiError(401, undefined))).toContain("Sign in");
+  it("sends a signed-out rider to sign in, for the errors the client really throws", () => {
+    // authedFetch throws these with NO status — a check on `status === 401`
+    // alone never matched, and an expired session read "try again" forever.
+    for (const err of [
+      new ApiError("not authenticated", "NO_AUTH"),
+      new ApiError("token rejected", "TOKEN_REJECTED"),
+      apiError(401, undefined),
+    ]) {
+      expect(keepErrorMessage(err)).toBe(KEEP_SIGNIN_HINT);
+    }
+  });
+
+  it("does not tell a signed-in rider to sign in over a server fault", () => {
+    expect(keepErrorMessage(apiError(500, undefined))).toContain("try again");
+    expect(keepErrorMessage(apiError(500, undefined))).not.toContain("Sign in");
   });
 
   it("degrades a non-API failure to something a rider can act on", () => {

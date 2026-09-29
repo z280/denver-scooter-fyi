@@ -1041,8 +1041,10 @@ map.on("load", async () => {
   // The popup's star names the vehicle it was opened on, but the SCAN still
   // decides which scooter is kept — the server refuses a payload that names a
   // different one rather than quietly keeping the neighbour.
-  devices.setKeepHandler(({ vehicleIdentifier }) => {
-    void myScooters?.keep({ vehicleIdentifier });
+  // The outcome is reported in the popup too: the panel's status line is in
+  // the Tools drawer, which is shut (and invisible) when the star was tapped.
+  devices.setKeepHandler(({ vehicleIdentifier, report }) => {
+    void myScooters?.keep({ vehicleIdentifier }, { report });
   });
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
@@ -3453,6 +3455,10 @@ function wireDrawers(): void {
     // is hidden again.
     if (id === "leaderboard") leaderboardPanel?.open();
     else leaderboardPanel?.close();
+    // Same for Favorite Scooters in Tools: a kept scooter's state and place
+    // change while the drawer is shut, so re-read on every open. refresh()
+    // joins a read already in flight, so tab-flicking costs one request.
+    if (id === "tools") void myScooters?.refresh();
   };
 
   for (const tab of tabs) {

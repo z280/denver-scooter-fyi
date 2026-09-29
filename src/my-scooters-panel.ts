@@ -36,6 +36,7 @@ import { distanceMeters, formatWalk, type LngLat } from "./locate.ts";
 import { openQrScanner } from "./qr-scan.ts";
 import { track } from "./telemetry.ts";
 import {
+  KEEP_SIGNIN_HINT,
   STATE_LABEL,
   favoriteTitle,
   keepErrorMessage,
@@ -67,11 +68,21 @@ export interface MyScootersDeps {
 
 export interface MyScootersHandle {
   /** Re-read the list. Called after a keep from elsewhere (the device popup)
-   *  and when the Tools drawer opens. */
+   *  and when the Tools drawer opens. Calls that land while a read is already
+   *  in flight share it rather than starting a second. */
   refresh(): Promise<void>;
   /** Open the camera and keep whatever it reads. Shared with the popup's ⭐,
-   *  so both entry points run the same flow and report the same failures. */
-  keep(prefill?: { vehicleIdentifier?: string; nickname?: string }): Promise<void>;
+   *  so both entry points run the same flow and report the same failures.
+   *
+   *  `report` is where the rider is LOOKING. The panel's status line lives
+   *  in the Tools drawer, which is off-screen when the tap came from a map
+   *  popup — so the popup passes its own hint line, and every sentence this
+   *  flow says goes there too. Same sentences, second surface; nothing about
+   *  the flow forks. */
+  keep(
+    prefill?: { vehicleIdentifier?: string; nickname?: string },
+    opts?: { report?(text: string): void },
+  ): Promise<void>;
   destroy(): void;
 }
 
@@ -179,7 +190,7 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
         .forget(f.vehicle_identifier)
         .then(async () => {
           track("favorite_removed", { reason: "rider" });
-          await refresh();
+          await reload();
           say(`Let go of ${favoriteTitle(f)}.`);
         })
         .catch(() => {
@@ -192,26 +203,53 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
     return li;
   };
 
-  const refresh = async (): Promise<void> => {
-    if (!signedIn()) {
-      favorites = [];
+  // One read at a time. The drawer re-reads every time it opens, and a rider
+  // flicking Tools open/shut/open must not stack requests whose answers land
+  // out of order. `refresh()` joins a read already in flight; `reload()` is
+  // for after a keep or a let-go, where a read that STARTED before the write
+  // could come back without it — so it always starts fresh, and the
+  // generation check drops whatever the older read brings back.
+  let inflight: Promise<void> | null = null;
+  let generation = 0;
+
+  const reload = (): Promise<void> => {
+    const gen = ++generation;
+    const p = (async () => {
+      if (!signedIn()) {
+        favorites = [];
+        render();
+        return;
+      }
+      try {
+        const res = await api.list();
+        if (gen !== generation) return;
+        favorites = res.favorite_devices;
+      } catch {
+        if (gen !== generation) return;
+        // Leave whatever was on screen rather than blanking the list on a
+        // dropped request: a rider's kept scooters are not news, and an empty
+        // list reads as "they're gone".
+        say("Couldn't refresh — showing what we last had.");
+      }
       render();
-      return;
-    }
-    try {
-      const res = await api.list();
-      favorites = res.favorite_devices;
-    } catch {
-      // Leave whatever was on screen rather than blanking the list on a
-      // dropped request: a rider's kept scooters are not news, and an empty
-      // list reads as "they're gone".
-      say("Couldn't refresh — showing what we last had.");
-    }
-    render();
+    })().finally(() => {
+      if (inflight === p) inflight = null;
+    });
+    inflight = p;
+    return p;
   };
 
-  const keep: MyScootersHandle["keep"] = (prefill) =>
+  const refresh = (): Promise<void> => inflight ?? reload();
+
+  const keep: MyScootersHandle["keep"] = (prefill, opts) =>
     new Promise<void>((resolve) => {
+      // Every sentence this flow says goes to the Tools status line (where
+      // the panel's own button looks) AND to the caller's surface when it
+      // has one (the popup's hint line, which is where a ⭐ tap looks).
+      const tell = (text: string): void => {
+        say(text);
+        if (text) opts?.report?.(text);
+      };
       let keepStarted = false;
       let settled = false;
       const finish = (): void => {
@@ -221,7 +259,7 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
       };
       if (busy) return resolve();
       if (!signedIn()) {
-        say("Sign in to keep a scooter.");
+        tell(KEEP_SIGNIN_HINT);
         return resolve();
       }
       const scan = deps.scan ?? openQrScanner;
@@ -233,11 +271,11 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
           if (!here) {
             // The server would refuse this anyway, for the same reason. Said
             // here so the rider is not sent to the camera twice.
-            say("Turn location on — we have to know you're standing at it.");
+            tell("Turn location on — we have to know you're standing at it.");
             return finish();
           }
           busy = true;
-          say("Keeping…");
+          tell("Keeping…");
           void api
             .keep({
               qr_raw_value: raw,
@@ -253,9 +291,9 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
                 entry: prefill?.vehicleIdentifier ? "popup" : "panel",
                 already: res.already_favorited,
               });
-              await refresh();
+              await reload();
               const name = res.favorite ? favoriteTitle(res.favorite) : "that one";
-              say(
+              tell(
                 res.already_favorited
                   ? `${name} is already yours.`
                   : res.points_awarded > 0
@@ -263,7 +301,7 @@ export function wireMyScooters(deps: MyScootersDeps): MyScootersHandle {
                     : `Kept ${name}.`,
               );
             })
-            .catch((err) => say(keepErrorMessage(err)))
+            .catch((err) => tell(keepErrorMessage(err)))
             .finally(() => {
               busy = false;
               finish();

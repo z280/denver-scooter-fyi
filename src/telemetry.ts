@@ -36,9 +36,6 @@ export const TELEMETRY_EVENTS = [
   // open-in-veo. The split between "started nav" and "opened Veo" is the
   // measurable version of "did the handoff work".
   "arrival_panel",
-  // The strip under the map: how often riders go back to what they are on,
-  // and how often they end from there rather than from inside the HUD.
-  "active_vehicle",
   // Dibs: claimed, dropped, certificate shown. The certificate count is the
   // interesting one — it is the only event that means the thing got shown to
   // another human.
