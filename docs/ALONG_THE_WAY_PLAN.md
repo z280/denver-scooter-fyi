@@ -11,6 +11,12 @@ Planned 2026-08-29 against `main` (13e2215). Branch:
 to the map in one tap (§1.3, a **reversal** of revision 1's decision), and
 **Favorite Scooters** — favouriting individual vehicles behind a QR scan — joins as
 Phase 4 (§4).
+**Revision 3a — Phases 2 and 3 were built on a misreading, and are rewritten.**
+Revisions 1–2 had the rider *walking* to the scooter matching their spec; the
+ask was always that they **ride** to it, handing off to it en route (§2, §3;
+master plan §6.0). Three product rules arrive with it: likely-rideable always,
+cost **and** time on every plan, and the Access Program's free-minute budget.
+Optional Phase 3b is folded into the one re-solve path.
 **Revision 3** — two cleanup phases at the end, both frontend-only: **Phase 6,
 one app, one mode** (§6) closes the seams left by the mode teardown, and
 **Phase 7, the walkthrough** (§7) rewrites the intro tour against the UI that
@@ -42,8 +48,8 @@ touches:
 - **The pure logic is a separate module from the DOM that renders it.** Every
   new decision rule below lives in a module with no DOM imports and its own
   `.test.ts`. This is not a style preference here: the swap rules decide, on
-  the rider's behalf, that they should walk somewhere else, and every one of
-  them has to be testable without a map.
+  the rider's behalf, that they should end one rental and start another, and
+  every one of them has to be testable without a map.
 
 ---
 
@@ -56,23 +62,25 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `ride-spec.ts` | 1 | The Spec type, its must/prefer split, the relaxation ladder, `matches(device, spec)`, and **the projection to and from a `FilterSnapshot`**. **Pure — no DOM, no network, no map.** The one place that answers "does this vehicle qualify?". |
 | `ride-spec-store.ts` | 1 | Where specs live (account when signed in, one localStorage slot when not, server wins) and — the part the presets have no equivalent of — **the attachment**: which spec is driving the map, and whether it still is. No DOM. Split out of the panel while building it, because attach/detach is a rule and rules belong somewhere a test can reach without one. |
 | `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, the per-field must/prefer switch, and the relaxation ladder rendered live so a rider can see what they are agreeing to give up. Owns both ends of the map bridge's UI and holds no rule of its own. |
-| `along-the-way.ts` | 2 | The **client-cheap corridor scorer**. `rankCorridor(features, {from, to, spec})` → `CorridorCandidate[]`, straight-line, no network, using `reach.ts`'s `DETOUR_FACTOR` and `straightLineMeters`. Pure. |
-| `trip-plan.ts` | 3 | The state machine (`SEARCHING → CLAIMED → LOST → RECLAIMING → …`), the swap budget, the permanent `exclude` list, the auto-accept envelope. Pure reducer plus an injected effects interface. **The owner of "what am I walking to and why".** |
-| `swap-card.ts` | 3 | Only the *offer* face — the decision the rider has to make when a swap falls outside the auto-accept envelope. An accepted swap has no card; it re-renders the arrival panel. |
+| `along-the-way.ts` | 2 | The **client-cheap plan search**. `rankPlans(features, ctx)` → `TripPlan[]` + backups: multi-leg (`walk → ride → [hand-off → ride]* → walk`), ranked by generalised cost (seconds **plus money** plus penalties), straight-line, no network. Pure. |
+| `free-minutes.ts` | 2 | The Access tier's free-minute budget: estimate today's used minutes from tracked rides, state which way the error runs, and hold the rider's own correction. Pure; the control that renders it lives with the plan list. |
+| `ride-cost.ts` *(existing)* | 2 | **Untouched in behaviour**, newly load-bearing: its `RATE_PLANS` and `unlockCents` are what let the plan search price a hand-off per tier, and its `billableMinutes` is what the free-minute estimate sums. |
+| `trip-plan.ts` | 3 | The state machine, the remaining legs, the current claim, the backups, the permanent `exclude` list. Pure reducer plus an injected effects interface. **The owner of "what am I riding, what am I heading for, and why".** |
+| `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied, announced and reversible (§3.1). |
 | `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** Split from the panel so the withholding rule is testable without a DOM, including the cached-dot regression that would defeat it. |
 | `my-scooters-panel.ts` | 4 | The Tools-drawer list and the one button that keeps a scooter. Renders; decides nothing. Every judgement it shows comes from `my-scooters.ts` or from the server — it does not check the 75 m, parse the payload, or work out which scooter was scanned. |
 | `equity-savings.ts` | 5 | Cost optimizer: start-in-area bonus, stopover finder, break-even math. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
-| `arrival-panel.ts` *(existing)* | 3 | Gains a **swapped** face and a `reportSwap()` beside its `reportGone()`. |
-| `dibs-notify.ts` *(existing)* | 3 | Gains `swapped` and `swap_offer` alerts, and the rule that they **replace** `taken`. |
+| `arrival-panel.ts` *(existing)* | 3 | Gains a **re-solved** face and a `reportResolve()` beside its `reportGone()`. |
+| `dibs-notify.ts` *(existing)* | 3 | Gains a `resolved` alert that **replaces** `taken`, and the rule that a re-solve changing nothing actionable is not announced at all. |
 | `device-watch.ts` *(existing)* | 3 | Unchanged in behaviour. Its `onGone` callback stops being a dead end. |
 | `filter-presets.ts` *(existing)* | 1 | **Untouched.** Saved filter presets and saved specs coexist; §1.3 says why. |
 | `favorites.ts` *(existing)* | 4 | **Untouched.** Saved *places*, not vehicles; §4.1 says why they must not be merged. |
 | `qr-scan.ts` *(existing)* | 4 | **Untouched.** Reused as-is — it already opens the camera, decodes, and hands back the raw payload with no opinion about what it means. |
-| `api.ts` *(existing)* | 1–5 | `fetchTripCandidates`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`. |
+| `api.ts` *(existing)* | 1–5 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`. |
 | `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
 | `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
 | `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
-| `main.ts` *(existing)* | 1–5 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, and the spec bridge hooked to the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`). Nothing else. |
+| `main.ts` *(existing)* | 1–5 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, the spec bridge on the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`), and `devices.allFeatures()` fed to the plan search. Nothing else. |
 
 ---
 
@@ -233,227 +241,195 @@ went on.
 
 ---
 
-## Phase 2 — Along the way
+## Phase 2 — The hand-off plan
+
+**Revision 3 rewrites this phase and Phase 3.** See master plan §6.0 for the
+correction; the short version is that revisions 1–2 had the rider *walking* to
+the scooter that matched their spec, and the ask was always that they **ride**
+to it:
+
+```
+      90 s walk         6 min ride            9 min ride      1 min walk
+ you ───────────▶ ASTRO ─────────▶ COSMO (your spec) ─────────▶ door
+                (nearest OK one)  (picked up EN ROUTE)
+```
+
+Walking appears twice and is short both times. The spec-matching vehicle is a
+**waypoint**, not a walk target.
 
 ### 2.1 `along-the-way.ts` — the client tier
 
 ```ts
-export function rankCorridor(
+export function rankPlans(
   feats: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>[],
   ctx: { from: LngLat; to: { lat: number; lon: number }; spec: RideSpec;
-         favorites?: Set<string> },
-): { candidates: CorridorCandidate[]; relaxed: SpecField[] };
+         rate: RatePlan; freeMinutesLeft: number | null;
+         favorites?: ReadonlySet<string>; exclude?: ReadonlySet<string> },
+): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[] };
 ```
 
-The ranking scalar is **seconds of whole trip** — `walkSeconds(from → vehicle)
-+ rideSeconds(vehicle → dest)` — and nothing else is on a different scale.
-Straight lines through `reach.ts`'s `DETOUR_FACTOR = 1.35` (the ratio measured
-against donated tracks, already the number this codebase lives with), walking
-pace from `locate.ts`'s `walkMinutes`, riding pace the fleet figure `reach.ts`
-already assumes.
+A `TripPlan` is a sequence of legs — `walk → ride → [hand-off → ride]* →
+walk` — carrying `totalSeconds`, `estimatedCents` and `handOffs`. A
+single-vehicle trip is a plan with one ride leg and competes in the same list;
+there is no separate "direct" concept to keep in sync.
 
-This is what makes "along the way" fall out rather than be bolted on: a
-scooter 500 m further away but in the direction of travel has a shorter trip
-total than one 300 m behind the rider, with no special case and no bearing
-arithmetic.
+**Pure.** No DOM, no network, no map. It runs on every device refresh, so it
+has to be cheap, and it has to be testable without booting MapLibre.
 
-It runs on every device refresh and every filter change, over the **unfiltered**
-fleet — `devices.visibleFeatures()` is the filtered view, and a rider's
-leftover map filters must not silently remove candidates the spec accepts.
-(`ride-screen-select.ts` has this same requirement and the same note; if it has
-already added the read-only all-features accessor to `devices.ts`, reuse it.)
+**The scalar is generalised cost**, not seconds: every leg's seconds, plus
+money converted to seconds, plus preference penalties. Money is genuinely in
+it — an unlock fee is the reason a hand-off might not be worth taking, and
+three of the five tiers pay nothing for one (master plan §6.3).
 
-`favorites` is a bonus, never a filter (master plan §8.6, 90 s). A favourite
-that fails a `must` is still disqualified.
+**Geometry.** Straight lines through `reach.ts`'s `DETOUR_FACTOR = 1.35` — the
+ratio measured against donated tracks. Walking pace from `locate.ts`'s
+exported `WALK_METERS_PER_MIN`, in **seconds and unrounded**: `walkMinutes`
+rounds to whole minutes with a floor of 1, which is right for a label and
+fatal for a ranking. Riding pace is **Valhalla's Hybrid default (18 km/h)**,
+because every rider-facing profile in the API's `config.json` routes with
+`bicycle_type: "Hybrid"` and none sets `cycling_speed` — the cheap tier should
+agree with the expensive one rather than be independently right about how fast
+a Veo goes.
 
-If the ladder had to be climbed to fill the list, `relaxed` says which rungs,
-and the list header says it in words.
+> **Known divergence, deliberately not fixed here.** `locate.ts` carries its
+> own `DETOUR = 1.3`, used for the "~N min walk" labels. Two detour constants
+> disagree. Unifying them changes every walk time shown in the app, which is a
+> user-visible change and not Phase 2's business — but it should be somebody's.
 
-### 2.2 The server tier
+**Feed it the unfiltered fleet.** `devices.allFeatures()`, never
+`visibleFeatures()`. A rider's leftover map filters are a view, not a statement
+of what they will ride, and `main.ts:1458` already carries a note about this
+exact trap.
 
-`api.ts` gains `fetchTripCandidates(body, signal)` → `POST /api/v1/trip/candidates`
-(shape in the master plan §6.1). It is called **at the moment a decision is
-made** — the rider opens the trip list, or a swap fires — never on a refresh
-tick. The client tier owns the interactive list; the server tier corrects it
-with real routed legs before anyone walks anywhere.
+**Rule 1 is a filter, not a penalty.** `risk`-tier vehicles are excluded from
+every leg of every plan. Only if no non-`risk` vehicle is within a 5-minute
+walk may one appear, and then the result says so (`riskTierOffered`) and the
+UI must too. This is the platform's selling point; it does not get traded for
+four minutes.
 
-Rules for reconciling the two:
+**`favorites` is a bonus, never a filter.** A favourite that fails a `must` is
+disqualified like anything else.
+
+### 2.2 The free-minutes control
+
+The one new piece of UI this phase owes, and it exists because of an honest
+admission already in `config.ts`: the cost ticker *"can't know how much of
+today's free hour is left, so it prices minutes beyond 60"*. Pessimism is
+right for a live ticker and wrong for planning — it prices a free trip as a
+paid one and argues the rider out of the hand-off they should take.
+
+- **Estimate** today's used minutes from the rider's own tracked rides.
+  `billableMinutes(elapsedMs)` already exists.
+- **Say which way the error runs.** Rides taken outside this app are invisible
+  to it, so the figure is a *floor* on minutes used and a *ceiling* on minutes
+  left. Never authoritative.
+- **Let the rider correct it** — *"I've got about N free minutes left"* — on
+  the planning screen, overriding the estimate for this trip.
+
+Shown only for the `equity` tier, because it is the only one with a free-minute
+budget. Signed-out riders get the pessimistic figure and a note saying why.
+
+### 2.3 The server tier
+
+`api.ts` gains `fetchTripPlans(body, signal)` → `POST /api/v1/trip/candidates`
+(shape in master plan §6.4). Called **at the moment a decision is made** — the
+rider opens the plan list, or a re-solve fires — never on a refresh tick. The
+reconciliation rules are unchanged from revision 2, because they were never
+about walking:
 
 1. They may disagree on **order**. That is what the correction is for.
-2. They may not disagree on **disqualification**. A vehicle the client struck
-   out never reappears from the server; if it does, that is a bug in
-   `ride-spec.ts`'s mirror of the server's predicates, and the test suite
-   should be the thing that catches it.
-3. Where they disagree on a **duration**, the routed number is shown. Never
-   average them, never show the cheap one next to the expensive one.
-4. A failed or rate-limited call degrades to the client tier with a visible
-   "estimated" label. It must never block the list.
+2. They may not disagree on **disqualification**.
+3. Where they disagree on a **duration or a price**, the routed figure is
+   shown. Never an average; never the cheap one beside the expensive one.
+4. A failure degrades to the client tier with a visible "estimated" label, and
+   never blocks the list.
 
-### 2.3 Where it appears
+### 2.4 Where it appears
 
 The home bar already asks the two questions this needs — *where are you going*
-and *need wheels or got your own* — and hands the answer to
-`pending-trip.ts`. The corridor list is what `wheels: "need"` should open, in
-place of today's hand-off. `pending-trip.ts` keeps its exact current contract
-(ephemeral, one-shot, `takePendingTrip` consumes); what it hands over becomes
-the seed of a `trip-plan.ts` document.
+and *need wheels or got your own* — and hands the answer to `pending-trip.ts`,
+whose contract is unchanged. `wheels: "need"` opens the **plan list**: two to
+four plans, each showing its legs, its total time and **its cost including
+every unlock**, with the hand-off drawn on the map.
 
-`recommend.ts` is **not** replaced in this phase. It answers "which of these is
-best from here", a different question, and it is reachable from the Find-wheels
-wizard which this program does not touch. Master plan risk #13 covers the case
-for eventually folding it in; that is a later argument with data.
+### 2.5 Tests
 
-### 2.4 Tests
-
-`along-the-way.test.ts`: a vehicle beyond the destination ranks below one at
-half the walk in the right direction; a vehicle behind the rider ranks below a
-further one ahead; a vehicle that cannot reach the destination is absent under
-`mustReach` and merely penalized without it; a favourite outranks an identical
-non-favourite and does **not** outrank one that is 3 minutes better; `relaxed`
-is empty when the unrelaxed spec fills the list; changing only the destination
-reorders the list (the regression that would prove the scorer had quietly
-reverted to distance).
+- A spec-matching vehicle 14 minutes' walk away but on the route produces a
+  hand-off plan that beats the direct walk — the headline case, and the one
+  revision 2 could not express at all.
+- No plan contains a `risk`-tier vehicle while a non-`risk` one is within a
+  5-minute walk; when none is, exactly one appears and `riskTierOffered` is set.
+- A `resident` rider (1 unlock = $1) and an `equity` rider get **different
+  plan orders over the same fleet** — the money term is real, not decorative.
+- An `equity` rider with 5 free minutes left and one with 55 get different
+  orders: the cliff is priced, not smoothed.
+- Plans are ranked by generalised cost, and `estimatedCents` on every plan
+  includes every unlock in it.
+- Monotonic relaxation still holds over plans, not just vehicles.
 
 ---
 
-## Phase 3 — Claim and swap
+## Phase 3 — The living plan
 
-### 3.1 `trip-plan.ts`
+### 3.1 One rule, replacing the auto-accept envelope
 
-```
-      ┌──────────┐  candidate chosen   ┌──────────┐   arrived
-      │ SEARCHING├────────────────────►│ CLAIMED  ├──────────────► HANDED OFF
-      └────▲─────┘   + dibs registered └────┬─────┘               (ride mode)
-           │                                │ device-watch: gone
-           │  replacement found             ▼
-      ┌────┴─────┐                     ┌──────────┐
-      │RECLAIMING│◄────────────────────┤   LOST   │
-      └────┬─────┘                     └──────────┘
-           │ nothing meets the spec, even relaxed
-           ▼
-       EXHAUSTED
-```
+Revision 2 claimed automatically inside a defined envelope and asked outside
+it. **Withdrawn.** The rider is on a moving scooter; a question they cannot
+safely read is never the safer default, so there is no bound at which asking
+becomes right. Instead, on every disruption:
 
-A pure reducer over an event union (`chosen`, `claimed`, `gone`, `candidates`,
-`accepted`, `declined`, `arrived`, `abandoned`) plus an injected effects
-interface — `registerDibs`, `releaseDibs`, `fetchTripCandidates`, `notify` —
-so the whole thing is testable with four stubs and no map.
+1. **Resolve it automatically** — re-solve the remaining legs from where the
+   rider is now, claim what the new plan needs, release what it does not.
+2. **Say so, once.**
+3. **Let them overrule it**, from the `backups` the search already returned.
+   One tap to see them, one to take one.
 
-**Not persisted**, for the reason `pending-trip.ts` records for itself: an
-intent is worth seconds, not days, and a trip plan resurrected tomorrow is the
-bug nobody reports and everybody feels. A page reload ends the plan; the claim
-survives in `dibs.ts`'s own localStorage, which is what `my-dibs.ts` reads.
+No envelope, no branch, no "was this change big enough to ask about". The undo
+is what makes it trustworthy, not the gate.
 
-### 3.2 The swap, in order
+### 3.2 `trip-plan.ts`
 
-On `onGone(reason)` — the callback wired at `main.ts:3257`, which today clears
-the walk line and prints a sentence:
+The state machine and the owner of *"what am I riding, what am I heading for,
+and why"*. Pure reducer plus an injected effects interface, as before. It now
+holds the **remaining legs**, the **current claim**, and the **backups**.
 
-1. `exclude.add(lost)` — **permanently for this trip**, even if it reappears.
-2. `releaseDibs(claimId)` **before** claiming anything. Order is load-bearing:
-   `canCallDibs` counts the rider's other claims, and `DIBS_MAX_CONCURRENT = 3`
-   can refuse a swap on behalf of the very claim it is replacing.
-3. `fetchTripCandidates` from the rider's **current** fix, not the origin.
-4. Auto-accept, or offer (§3.3).
-5. `registerDibs(..., { replaces: claimId })` — one server transaction that
-   expires the old claim and writes the new one.
-6. **One** notification (§3.4).
+Disruptions it re-solves on (master plan §7.2) — note that "somebody took it"
+is one entry, not the headline:
 
-`maxWalkMinutes` is clamped to `DIBS_MAX_WALK_MINUTES` (15) for every search
-made while auto-dibs is on. A candidate further than that cannot legally be
-claimed, and offering one is offering a plan the next step refuses.
+- the next vehicle is taken, disabled, or gone from the feed;
+- a materially better plan appears (revision 2's Phase 3b, no longer separate);
+- the battery will not reach the next hand-off;
+- the rider is far enough behind that the claim will expire;
+- the rider has gone somewhere the remaining legs no longer fit.
 
-### 3.3 The auto-accept envelope
+Each re-solves the **remaining route**, never just the next vehicle — that is
+what leaves somebody on a route that stopped making sense.
 
-Auto-claim only when **all** hold:
+### 3.3 Dibs, while riding
 
-- every `must` met, nothing relaxed;
-- `tripSeconds` no more than **5 minutes** worse than the plan it replaces;
-- routed walk within `DIBS_MAX_WALK_MINUTES`;
-- **at most the second swap** on this trip.
+Dibs goes on the **next** vehicle, claimed while riding toward it. That is what
+makes a hand-off trustworthy.
 
-Otherwise `swap-card.ts` opens with the best candidate pre-selected, one tap to
-take it, one to see the list. A third loss is not a fourth swap: the app says
-the corridor is not cooperating and hands back the map with the search it
-tried, rather than marching the rider to a fourth kerb.
+- **`DIBS_MAX_WALK_MINUTES = 15` is the wrong bound for a ridden approach.** It
+  exists so nobody claims what they cannot reach in time; riding reaches much
+  further inside the same 25-minute window. It must become a
+  **time-to-arrival** check computed from the actual leg.
+- **One claim at a time, always.** Release precedes claim, however many hops
+  the plan intends. A chained plan does not hold three scooters hostage.
 
-Every auto-swap is undoable while it is on screen, and every swap names the
-difference in plain words:
+### 3.4 Tests
 
-> **Cosmo → Astro.** No basket (you preferred one). 3 min further.
-
-Two ceilings the tests must keep apart: `DIBS_MAX_TOTAL_MS` (25 min) is **per
-claim**, and a swap makes a fresh claim with a fresh window. The **trip** has
-no such ceiling — the two-swap budget is what bounds it, and it is a product
-rule living here, not a consequence of the dibs rules.
-
-### 3.4 Notifications — one message, never two
-
-`dibs-notify.ts` fires four alerts, once each, and its own header records why
-there are not five: *"a phone that buzzes five times in twenty-five minutes
-about a scooter is a phone that gets its notifications turned off — which
-costs the rider the one message that actually matters."*
-
-The swap therefore **replaces** `taken` rather than following it:
-
-| Outcome | Alert |
-|---|---|
-| Replacement found, auto-accepted | `swapped` — and `taken` never fires |
-| Replacement found, needs a decision | `swap_offer` — and `taken` never fires |
-| Nothing found | `taken`, exactly as today, then EXHAUSTED |
-
-The loss and the replacement resolve on **different ticks** (the search is a
-network call), so `taken` is held for **one tick** whenever a search is in
-flight. One tick is invisible; two buzzes are not.
-
-Draft copy, in the voice of the existing four:
-
-- `swapped` — `🔁 Someone took Lunar 🐸 928. You're on Cosmic 🦊 214 now — 3 min from you, still gets you there.`
-- `swap_offer` — `🔁 Lunar 🐸 928 is gone. Nearest match that fits: Cosmic 🦊 214, 6 min. Tap to take it.`
-
-Vibration follows the existing urgency mapping: `swapped` a single buzz (it is
-information), `swap_offer` a double (it is a question).
-
-### 3.5 `arrival-panel.ts`
-
-Gains `reportSwap(summary)` beside the existing `reportGone(message)`, and a
-third face between WALKING and ARRIVED: the same panel, new vehicle name, new
-ETA, one line saying what changed, and **Undo**. Not a new floating panel — a
-second panel over the map during a walk is exactly the wrong answer, and this
-one is already where the rider is looking.
-
-### 3.6 What this must never claim
-
-Dibs is not a reservation. Nothing in this program holds a vehicle, and no
-copy anywhere in it may imply otherwise — not the spec panel, not the swap
-card, not the notifications, and **not Favorite Scooters**. `sql/076`'s header and
-`dibs.ts`'s both spend their opening paragraphs on this point, and an
-auto-claiming feature is exactly the one that would erode it. "We called it
-for you" is true. "We're holding it" is not.
-
-### 3.7 Tests
-
-`trip-plan.test.ts`: release precedes claim (assert call order on the stubs);
-a lost vehicle never returns as a candidate; the third loss offers rather than
-auto-accepts; a replacement 6 minutes worse offers rather than auto-accepts; a
-replacement that relaxes a `must` is never auto-accepted; `taken` does not fire
-when a swap lands on the next tick; `taken` does fire when the search comes
-back empty; EXHAUSTED reports what was tried.
-
-`dibs-notify.test.ts` additions: `swapped` and `taken` are mutually exclusive
-for one claim; the four-per-claim ceiling still holds with the new alerts.
-
-### 3.8 Phase 3b — the "upgrade", off by default
-
-The same corridor search on a slow cadence while walking, offering a swap
-before anything is lost. Gated hard, or it is nagging: only when the current
-target **fails a must** it previously met (battery dropped below the floor, a
-negative report landed) **or** the alternative saves ≥ 5 minutes; at most once
-per trip; never after arrival; never within 90 s of another card.
-
-Ships last, off, behind telemetry that can answer whether anybody accepts it.
+- Release precedes claim (assert call order on the stubs), at every hop.
+- A re-solve recomputes **all** remaining legs, not only the next vehicle.
+- A lost vehicle never returns as a candidate.
+- Every re-solve produces exactly one notification, and a re-solve that changes
+  nothing the rider would act on produces none.
+- The backups offered after a re-solve exclude the vehicle just lost.
+- Overruling a re-solve applies the chosen backup and re-claims correctly.
+- A plan never holds two claims, at any point in any chain.
 
 ---
+
 
 ## Phase 4 — Favorite Scooters
 
@@ -805,10 +781,11 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | Event | Props |
 |---|---|
 | `trip_plan_start` | `wheels`, `has_spec` |
-| `trip_candidates` | `tier` (`client` \| `server`), `relaxed` (count) |
-| `trip_swap` | `reason` (the `DeviceGoneReason`), `auto` (bool), `swap_index` |
-| `trip_swap_offer` | `accepted` (bool) |
-| `trip_exhausted` | `swaps`, `relaxed` (count) |
+| `trip_candidates` | `tier` (`client` \| `server`), `relaxed` (count), `hand_offs` (count on the plan shown first), `risk_offered` (bool) |
+| `trip_plan_chosen` | `hand_offs`, `rank` (which of the offered plans), `rate_tier` |
+| `trip_resolve` | `reason` (`taken` \| `better` \| `battery` \| `behind` \| `off_route`), `leg_index`, `overruled` (bool) |
+| `trip_exhausted` | `resolves`, `relaxed` (count) |
+| `free_minutes_corrected` | `direction` (`up` \| `down`) — whether riders find our estimate high or low, which is the only way to learn if it is any good |
 | `spec_applied_to_map` | `source` (`drawer` \| `sheet`) |
 | `spec_saved_from_map` | — |
 | `favorite_added` | `entry` (`popup` \| `after_scan` \| `after_features`) |
@@ -817,9 +794,15 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | `equity_savings_shown` | `kind` (`start` \| `stopover`) |
 | `equity_savings_taken` | `kind` |
 
-These are the only way to answer whether the feature works: how often a claim
-is taken, how often a replacement is found, how much worse it was, whether the
-map bridge gets used, and whether anybody takes the money.
+These are the only way to answer whether the feature works: whether riders
+actually choose hand-off plans over direct ones, how often a pickup is lost
+and whether the automatic resolution is overruled, whether our free-minute
+estimate runs high or low, whether the map bridge gets used, and whether
+anybody takes the money.
+
+`trip_resolve.overruled` is the one that decides whether §3.1 was right. If
+riders routinely overrule the automatic choice, "act and let them undo" was
+the wrong call and the envelope should come back.
 
 ---
 
@@ -830,8 +813,9 @@ map bridge gets used, and whether anybody takes the money.
 | `ride-spec.ts` | — | yes |
 | the map bridge | — | yes — it is entirely local |
 | `ride-spec-panel.ts` | `sql/080` + `/profile/ride-specs` | yes, against localStorage only |
-| `along-the-way.ts` | — | yes |
-| server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.1 |
+| `along-the-way.ts` (plan search) | — | yes — it is pure and local |
+| `free-minutes.ts` | — (reads `/tracked-rides`, which exists) | yes |
+| server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
 | `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/083` lands |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
