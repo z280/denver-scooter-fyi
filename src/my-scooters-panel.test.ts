@@ -101,6 +101,7 @@ function harness(opts: HarnessOpts = {}) {
            update: updateFn as never, forget: forgetFn as never },
   });
 
+  lastHandle = handle;
   return {
     handle,
     listFn,
@@ -335,6 +336,123 @@ describe("keeping a scooter", () => {
     await flush();
     expect(h.scan).not.toHaveBeenCalled();
     expect(status().textContent).toContain("Sign in");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keeping from the popup: the outcome goes where the rider is looking
+// ---------------------------------------------------------------------------
+describe("keeping from the popup's star", () => {
+  it("reports the server's refusal to the caller's surface, not only the drawer", async () => {
+    // The Tools drawer is shut when the star is tapped. The 403 that names
+    // the distance is the one sentence a rider most needs to see.
+    const keep = vi.fn().mockRejectedValue(
+      new ApiError("x", "HTTP_ERROR", {
+        status: 403,
+        detail: { error: "too_far_from_device", meters_away: 212 },
+        errorKey: "too_far_from_device",
+      }),
+    );
+    harness({ keep });
+    const report = vi.fn();
+    await h_keep(report);
+    const last = report.mock.calls.at(-1)?.[0] as string;
+    expect(last).toContain("standing at this one");
+    expect(last).toContain("212");
+    // Same sentence in the panel: one flow, not two.
+    expect(status().textContent).toBe(last);
+  });
+
+  it("reports the confirmation, and the in-progress line before it", async () => {
+    harness();
+    const report = vi.fn();
+    await h_keep(report);
+    const said = report.mock.calls.map((c) => c[0] as string);
+    expect(said[0]).toBe("Keeping…");
+    expect(said.at(-1)).toContain("100 points");
+  });
+
+  it("reports the missing-fix refusal", async () => {
+    harness({ fix: null });
+    const report = vi.fn();
+    await h_keep(report);
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("location on"));
+  });
+
+  it("reports sign-in when the session is gone by the time of the tap", async () => {
+    harness({ signedIn: false });
+    const report = vi.fn();
+    await h_keep(report);
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("Sign in"));
+  });
+
+  it("reports sign-in when the server rejects the token mid-keep", async () => {
+    const keep = vi
+      .fn()
+      .mockRejectedValue(new ApiError("token rejected", "TOKEN_REJECTED"));
+    harness({ keep });
+    const report = vi.fn();
+    await h_keep(report);
+    expect(report.mock.calls.at(-1)?.[0]).toContain("Sign in");
+  });
+
+  it("says nothing to the popup when the camera is dismissed", async () => {
+    harness({ scanPayload: null });
+    const report = vi.fn();
+    await h_keep(report);
+    expect(report).not.toHaveBeenCalled();
+  });
+});
+
+// Run the most recently wired handle's keep() as the popup does.
+let lastHandle: MyScootersHandle | null = null;
+async function h_keep(report: (t: string) => void): Promise<void> {
+  await lastHandle!.keep({ vehicleIdentifier: "8c4a1f0d2e9b7a35" }, { report });
+}
+
+// ---------------------------------------------------------------------------
+// Re-reading
+// ---------------------------------------------------------------------------
+describe("re-reading the list", () => {
+  it("joins a read already in flight instead of starting a second", async () => {
+    const h = harness({ favorites: [fav()] });
+    await flush();
+    h.listFn.mockClear();
+    const a = h.handle.refresh();
+    const b = h.handle.refresh();
+    await Promise.all([a, b]);
+    expect(h.listFn).toHaveBeenCalledTimes(1);
+    // …and a later open reads again: "fresh on open" means it.
+    await h.handle.refresh();
+    expect(h.listFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a read that started before a keep overwrite its result", async () => {
+    // Drawer opens (slow read in flight) → rider keeps one from the popup →
+    // the keep's own re-read lands first. The older answer, which predates
+    // the keep, must not win.
+    const kept = fav({ nickname: "Just Kept" });
+    const h = harness({ favorites: [] });
+    await flush();
+    let releaseStale: ((v: unknown) => void) | undefined;
+    h.listFn.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          releaseStale = r;
+        }) as never,
+    );
+    const stale = h.handle.refresh();
+    h.setFavorites([kept]);
+    h.keepFn.mockResolvedValueOnce({
+      favorite: kept,
+      already_favorited: false,
+      points_awarded: 0,
+    });
+    await h.handle.keep();
+    expect(list().textContent).toContain("Just Kept");
+    releaseStale?.({ favorite_devices: [], max_favorites: 10 });
+    await stale;
+    expect(list().textContent).toContain("Just Kept");
   });
 });
 

@@ -773,3 +773,53 @@ describe("device popup — reporting bad parking from a distance", () => {
     expect(html).toContain("Turn on your location");
   });
 });
+
+describe("device popup — the ⭐ keep star", () => {
+  function openWithKeep(): { devices: Devices; handler: ReturnType<typeof vi.fn> } {
+    const devices = new Devices(
+      fakeMap() as unknown as MLMap,
+      fakeLocate(NEAR),
+    );
+    const handler = vi.fn();
+    devices.setKeepHandler(handler);
+    devices.setData(response([feature({ vehicle_identifier: PHOTO_VID })]));
+    devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
+    return { devices, handler };
+  }
+  const hint = () =>
+    lastPopupEl?.querySelector<HTMLElement>(".device-popup__actionhint");
+
+  it("forwards a signed-in tap with a way to answer in this popup", () => {
+    const { handler } = openWithKeep();
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
+      ?.click();
+    expect(handler).toHaveBeenCalledOnce();
+    const info = handler.mock.calls[0][0] as {
+      vehicleIdentifier: string;
+      report(t: string): void;
+    };
+    expect(info.vehicleIdentifier).toBe(PHOTO_VID);
+    // Whatever the keep flow says lands in the hint line under the row.
+    info.report("You'll need to be standing at this one. It was last seen about 212 m away.");
+    expect(hint()?.hidden).toBe(false);
+    expect(hint()?.textContent).toContain("212 m");
+  });
+
+  it("renders blocked when signed out, and a tap says to sign in", () => {
+    signedIn = false;
+    const { handler } = openWithKeep();
+    expect(lastPopupHtml).not.toContain('data-action="keep-scooter"');
+    const btn = lastPopupEl?.querySelector<HTMLButtonElement>(
+      '[data-action="keep-blocked"]',
+    );
+    // Visible, not removed — "sign in and you get this" is the message.
+    expect(btn).not.toBeNull();
+    expect(btn?.getAttribute("aria-disabled")).toBe("true");
+    expect(hint()?.hidden).toBe(true);
+    btn?.click();
+    expect(handler).not.toHaveBeenCalled();
+    expect(hint()?.hidden).toBe(false);
+    expect(hint()?.textContent).toContain("Sign in");
+  });
+});

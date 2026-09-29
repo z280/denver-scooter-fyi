@@ -69,7 +69,12 @@ const CORROBORATION_HOURS = 24;
 /** Peer-relative dwell outlier (see `dwell_percentile_hood` in the
  *  backend's API.md): dwell
  *  percentile ≥90 among the H3-neighborhood peers AND ≥3× the peer median
- *  AND past the 24h floor. Combined with ≥48h dwell it demotes to risk. */
+ *  AND past the 24h floor. Combined with ≥48h dwell it demotes to risk.
+ *
+ *  The `>=` relies on the API FLOORING `dwell_percentile_hood` onto the wire
+ *  (0.895 → 89, never 90), so `>= 90` here matches the server's unrounded
+ *  `>= 0.90` exactly. A rounded wire value would flag scooters in the
+ *  89.5–90 band that the server itself does not. */
 const OUTLIER_PERCENTILE = 90;
 const OUTLIER_MEDIAN_RATIO = 3;
 const OUTLIER_RISK_HOURS = 48;

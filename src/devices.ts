@@ -82,6 +82,7 @@ import {
 } from "./device-photos.ts";
 import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
+import { KEEP_SIGNIN_HINT } from "./my-scooters.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 /** Ride posture, the primary "what am I sitting on" split. Derived from the
@@ -542,9 +543,14 @@ export class Devices {
    *  interceptor is, so this file stays free of the favourites API, the QR
    *  scanner and the rules around both: it renders a button and forwards a
    *  tap. Absent means no star, which is what a page without the Tools
-   *  drawer gets. */
+   *  drawer gets. `report` writes to this popup's hint line: the handler's
+   *  outcome belongs where the rider tapped, not in a closed drawer. */
   private keepHandler:
-    | ((info: { vehicleIdentifier: string; name: string }) => void)
+    | ((info: {
+        vehicleIdentifier: string;
+        name: string;
+        report(text: string): void;
+      }) => void)
     | null = null;
 
   setKeepHandler(fn: typeof Devices.prototype.keepHandler): void {
@@ -1725,10 +1731,17 @@ export class Devices {
       // here even though keeping needs it — the server owns that rule, and a
       // second copy of the 75 m check in the client is one deploy away from
       // disagreeing with it. A rider who taps this too far away gets the
-      // server's own sentence back, which names the distance.
+      // server's own sentence back, which names the distance — in this
+      // popup's hint line, since that is where they are looking.
+      //
+      // Session IS checked here, the way the photo row does it: signed out,
+      // the star renders blocked and a tap says to sign in, rather than
+      // opening a flow whose only possible answer is the same sentence.
       const keepBtn =
         vid.length >= 16 && this.keepHandler
-          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep" data-action="keep-scooter" aria-haspopup="dialog">⭐ Keep this one</button>`
+          ? signedIn
+            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep" data-action="keep-scooter" aria-haspopup="dialog">⭐ Keep this one</button>`
+            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep is-blocked" data-action="keep-blocked" aria-disabled="true" title="${escapeHtml(KEEP_SIGNIN_HINT)}">⭐ Keep this one</button>`
           : "";
       const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
       const startFeatureRow = pairCount
@@ -2115,8 +2128,15 @@ export class Devices {
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
         ?.addEventListener("click", () => {
-          this.keepHandler?.({ vehicleIdentifier: vid, name: headerName });
+          this.keepHandler?.({
+            vehicleIdentifier: vid,
+            name: headerName,
+            report: showHint,
+          });
         });
+      popupEl
+        ?.querySelector<HTMLButtonElement>('[data-action="keep-blocked"]')
+        ?.addEventListener("click", () => showHint(KEEP_SIGNIN_HINT));
 
       // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
       popupEl
