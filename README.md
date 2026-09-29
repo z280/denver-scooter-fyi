@@ -328,7 +328,10 @@ src/
   leaderboard-panel.ts  the Leaderboard menu drawer: the Show Territory
                    Control switch, the live regional tally, and the points
                    ledger read from the API so the copy cannot promise a
-                   number the server does not pay
+                   number the server does not pay. Deliberately a drawer
+                   (#drawer-leaderboard), not the modal the original brief
+                   named: the owner chose to keep it, and the map stays
+                   usable while the board is open
   triple-click.ts  the "three clicks means tell me exactly what this is" map
                    gesture, on its own so the timing is testable
   compliance.ts    daily SLA gauge
