@@ -1,6 +1,7 @@
 # Atlanta — the frontend half
 
-Status: **assessment**, nothing here is built. Companion to
+Status: **assessment**, nothing here is built. Probed 2026-08-29; rebased
+and re-verified against `main` on 2026-09-29. Companion to
 `scooter-fyi-api/ATLANTA_PLAN.md`, which carries the live feed probes, the
 identity measurements, and the API-side work. Read that first — this doc
 only covers what changes in this repo, and it assumes that doc's measured
@@ -17,20 +18,21 @@ it: this is Atlanta-specific and narrower.
 
 ## 1. The size of it
 
-101 non-test modules in `src/`. **37 of them** are in the family that a
+103 non-test modules in `src/`. **38 of them** are in the family that a
 false `stable_vehicle_id` capability turns off:
 
 ```
 ride-* (22)  dibs* (4)  qr-* (2)  device-* (3)  track-* (3)
-reports  recommend  arrival-panel
+reports  recommend  arrival-panel  my-scooters
 ```
 
 That is the honest headline. It is not "add a city dropdown" — it is a
-per-surface decision, 37 times, about whether a screen hides, degrades, or
-explains itself. Some of those 37 survive: `ride-cost` never touches `vehicle_identifier`
-at all, and most of the `ride-*` family lives on through the off-feed path
-(§3). So the true kill list is well short of 37 — but every one of the 37
-needs looking at, and only 12 of them name `vehicle_identifier` directly,
+per-surface decision, 38 times, about whether a screen hides, degrades, or
+explains itself. Some of those 38 survive: `ride-cost` never touches
+`vehicle_identifier` at all, and most of the `ride-*` family lives on
+through the off-feed path
+(§3). So the true kill list is well short of 38 — but every one of the 38
+needs looking at, and only 14 of them name `vehicle_identifier` directly,
 which means the dependency is mostly implicit and will not fall out of a
 grep.
 
@@ -146,6 +148,11 @@ capability as an argument rather than reading it once at boot.
   at, which also removes the reassurance step from every report flow.
 - **Cost** — no prices exist in either feed (`ATLANTA_PLAN.md` §3d), so the
   cost HUD and ride-cost estimate render nothing.
+- **My Scooters** (`my-scooters.ts`, added to `main` since this was first
+  written) — its whole premise is that you stood at a vehicle and scanned
+  its sticker, proven server-side by hashing the plate out of the QR
+  payload. No plate, no gate, no feature. It is the sharpest case of the
+  problem, not an edge of it.
 
 Each is a capability flag in the parent plan's §7a table. The point of
 declaring them is that the UI can say *why* something is missing instead of
