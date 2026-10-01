@@ -11,6 +11,13 @@ Planned 2026-08-29 against `main` (13e2215). Branch:
 to the map in one tap (§1.3, a **reversal** of revision 1's decision), and
 **Favorite Scooters** — favouriting individual vehicles behind a QR scan — joins as
 Phase 4 (§4).
+**Revision 3c** — **Phase 9, reaching the rider** (§9): an opt-in for trip
+alert SMS, a resume link that carries a plan reference and never a session, and
+a rapid check that is **narrow rather than fast** — the global 90-second poll
+is already faster than the 2-minute ingest behind it, so only the 1–5
+plan-critical vehicles are checked at 20s. **Phase 10, advocacy** (§10) is one
+control in this repo (the CC tick); its pipeline already exists in
+`zNeill/keepdenverfair`.
 **Revision 3b** — **Phase 8, the receipt** (§8): check whether a trip was
 charged per Exhibit C, copy a complaint, and — consented — contribute to an
 evidence pile that can say whether the Equity Area discount is applied at all.
@@ -70,6 +77,8 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `ride-spec-store.ts` | 1 | Where specs live (account when signed in, one localStorage slot when not, server wins) and — the part the presets have no equivalent of — **the attachment**: which spec is driving the map, and whether it still is. No DOM. Split out of the panel while building it, because attach/detach is a rule and rules belong somewhere a test can reach without one. |
 | `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, the per-field must/prefer switch, and the relaxation ladder rendered live so a rider can see what they are agreeing to give up. Owns both ends of the map bridge's UI and holds no rule of its own. |
 | `along-the-way.ts` | 2 | The **client-cheap plan search**. `rankPlans(features, ctx)` → `TripPlan[]` + backups: multi-leg (`walk → ride → [hand-off → ride]* → walk`), ranked by generalised cost (seconds **plus money** plus penalties), straight-line, no network. Pure. |
+| `trip-alerts.ts` | 9 | The trip-alert opt-in's state and the rules about what earns a text. **Pure** — the decision is testable without a network. |
+| `plan-resume.ts` | 9 | Reads a resume link, carries the plan reference across a sign-in, re-enters the plan. **Pure** given a URL and a store. Holds no credential, ever. |
 | `free-minutes.ts` | 2 | The Access tier's free-minute budget: estimate today's used minutes from tracked rides, state which way the error runs, and hold the rider's own correction. Pure; the control that renders it lives with the plan list. |
 | `ride-cost.ts` *(existing)* | 2 | **Untouched in behaviour**, newly load-bearing: its `RATE_PLANS` and `unlockCents` are what let the plan search price a hand-off per tier, and its `billableMinutes` is what the free-minute estimate sums. |
 | `trip-plan.ts` | 3 | The state machine, the remaining legs, the current claim, the backups, the permanent `exclude` list. Pure reducer plus an injected effects interface. **The owner of "what am I riding, what am I heading for, and why".** |
@@ -884,6 +893,133 @@ delete — a consent you cannot withdraw is not one.
 
 ---
 
+## Phase 9 — Reaching the rider
+
+Master plan §13. Formerly "Pocket-proof"; the name described the problem and
+dodged the mechanism, and the mechanism is SMS.
+
+### 9.1 What this lane owes, which is less than it looks
+
+The API side already has outbound SMS with consent, quota and fallback
+(`comms.py`), and verified phone numbers on the profile. So this lane is: an
+opt-in control, a resume entry point, and bounding the rapid check.
+
+| Module | Responsibility |
+|---|---|
+| `trip-alerts.ts` | The opt-in's state and the rules about *what* earns a text (§9.3). **Pure** — the decision is testable without a network. |
+| `plan-resume.ts` | Reading a resume link, holding the plan reference across a sign-in, and re-entering the plan. **Pure** given a URL and a store. |
+| `trip-plan.ts` *(Phase 3)* | Gains the targeted-check loop and its bounds (§9.4). |
+| `locate.ts`, `api.ts` *(existing)* | Untouched. |
+
+### 9.2 The opt-in, and the distinction that justifies it
+
+A rider who typed their number to get a **sign-in code** has not agreed to be
+texted about **scooters**. `comms.py` honours STOP across every app on the
+shared number, which is the floor, not the duty.
+
+So: a separate, revocable opt-in, asked **when a rider starts a hand-off
+plan** — the moment it is obviously useful — and never as a wall in front of
+the feature. The copy states what is sent, roughly how often, that message and
+data rates apply, and how to stop.
+
+**A plan never requires SMS.** Everything works with it off. If the opt-in ever
+becomes load-bearing, that is a bug in this phase.
+
+If the profile has no phone number, offer to add one *there*, through the
+existing `POST /api/v1/profile/phone/{code,verify}` flow. Do not invent a
+second place to put a phone number.
+
+### 9.3 What earns a text
+
+| Event | In-app | SMS |
+|---|---|---|
+| Your pickup is gone; you have been moved | yes | **yes** |
+| The plan changed where you are going | yes | **yes** |
+| A better option appeared and we took it | yes | no |
+| Re-solved, nothing actionable changed | no | no |
+| Plan complete | yes | no |
+
+`dibs-notify.ts` caps itself at four alerts per claim *on purpose*. A hard
+per-trip SMS ceiling sits on top of that. "We checked and it is fine" is never
+sent — that is not reassurance, it is attrition.
+
+### 9.4 The rapid check: narrow, not fast
+
+**Do not raise the global poll.** `REFRESH_MS = 90_000` already polls faster
+than the data behind it moves: the API's ingest runs every 2 minutes, so a
+20-second global poll re-reads the same cycle six times — six times the load,
+zero extra freshness.
+
+What delivers 20-second news is checking the **1–5 vehicles the live plan
+depends on**, through the endpoint master plan §13.4 describes, which goes
+straight at the always-current upstream rather than the cycle.
+
+Bounds, all of them testable:
+
+- only while a plan is live;
+- only while the document is **foregrounded** (`visibilitychange` stops it) —
+  a backgrounded tab is throttled anyway, and that is what the SMS is for;
+- stopping on completion and abandonment;
+- never touching `REFRESH_MS` or the fleet refresh.
+
+### 9.5 The resume link
+
+**The link carries a plan reference. It does not carry a session.** An SMS
+renders on a lock screen, persists in carrier logs, gets screenshotted and
+lands on shared handsets.
+
+- session alive → the plan resumes;
+- session gone → the normal sign-in, **then** the plan resumes.
+
+The `?ml=` magic-link flow is the precedent, including the question
+`main.ts:636` already asks about whether a deep link belongs to whoever holds
+it. The plan reference must survive the sign-in round trip, which is the one
+fiddly part — and it is `plan-resume.ts`'s whole job.
+
+### 9.6 Tests
+
+- `phone_verified` without the trip-alert opt-in sends nothing.
+- The per-trip ceiling holds across a plan that re-solves many times.
+- A re-solve with nothing actionable sends nothing on either channel.
+- The targeted check stops on `visibilitychange`, completion and abandonment,
+  and never changes the fleet refresh interval.
+- A resume link with a dead session lands on sign-in and *then* the plan.
+- **The resume link grants no access on its own** — asserted, because this is
+  precisely what a later refactor "simplifies" into a token.
+
+---
+
+## Phase 10 — Advocacy
+
+Master plan §14. **Almost none of this is in this repo**, and that is worth
+stating plainly so nobody builds it here: the inbound mail, the inbox, the
+reply endpoint and the admin UI all already exist in
+`zNeill/keepdenverfair`.
+
+This lane owns exactly one thing: **the CC tick on the Phase 8 complaint.**
+
+- Defaulted **off**, its own control, per complaint.
+- It states what the CC sees — the rider's own words, their account
+  identifier, their trip times, their email address — because this is a
+  **disclosure to a third party**, and a different one from contributing to
+  the evidence pile (§8.6), which takes de-identified figures. Consenting to
+  one is not consenting to the other and the UI must not imply it is.
+- A rider who wanted backup last week has not volunteered for it forever.
+
+Everything else — routing (`advocacy@weseeyouveo.com` already arrives, because
+routing keys off the domain), the portal, mention detection, the reply guard,
+the operator alert — is the other repo's. The receipt checker works
+identically with the CC off, and if it ever stops doing so, that is a bug.
+
+### 10.1 Tests
+
+- The CC is off unless ticked, and the ticked state does not persist to the
+  next complaint.
+- The copied body contains the CC address only when ticked.
+- Phase 8's verdict and copy paths behave identically with the CC off.
+
+---
+
 ## Telemetry
 
 Added to `TELEMETRY_EVENTS` here and `ALLOWED_EVENTS` in the API, same PR,
@@ -909,6 +1045,10 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | `receipt_verdict` | `verdict` (`overcharged` \| `correct` \| `cannot_tell`), `reason` — **no amounts, ever** |
 | `receipt_complaint_copied` | — |
 | `receipt_contributed` | `withdrawn` (bool) |
+| `trip_alert_opt_in` | `enabled` (bool), `had_phone` (bool) |
+| `trip_alert_sent` | `event` (`moved` \| `destination_changed`) |
+| `resume_link_used` | `reauthed` (bool) |
+| `advocacy_cc_added` | — |
 
 These are the only way to answer whether the feature works: whether riders
 actually choose hand-off plans over direct ones, how often a pickup is lost
@@ -931,6 +1071,9 @@ the wrong call and the envelope should come back.
 | `ride-spec-panel.ts` | `sql/080` + `/profile/ride-specs` | yes, against localStorage only |
 | `along-the-way.ts` (plan search) | — | yes — it is pure and local |
 | `free-minutes.ts` | — (reads `/tracked-rides`, which exists) | yes |
+| `trip-alerts.ts` | trip-alert consent storage + the send path | the opt-in UI, yes; the sending, no |
+| `plan-resume.ts` | the server-side plan (master plan §13.6) | no — there is nothing to resume until the plan outlives the tab |
+| Phase 10's CC tick | Phase 8's complaint body | yes — it is one address in a string |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
 | `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/083` lands |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
