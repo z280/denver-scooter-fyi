@@ -7818,6 +7818,94 @@ input[data-ride-keypad="on"] {
   font-weight: 600;
   color: var(--fg);
 }
+/* One line that opens something longer — the sixteen-item issue checklist for a
+   rider who liked the ride, and the free-text box. Looks like a link rather
+   than a button, because pressing it commits to nothing. */
+.ride-post-s9__disclosure {
+  appearance: none;
+  align-self: flex-start;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--accent-fg, var(--accent));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ride-post-s9__disclosure:hover,
+.ride-post-s9__disclosure:focus-visible {
+  text-decoration: underline;
+}
+
+/* ---------- The five-face scale (emoji-scale.ts) ----------
+   Replaces the ten-button segmented rows. Ten targets across a phone's width
+   is about 30 px each, under every touch-target guideline there is and well
+   under what a thumb manages on a pavement; five are roughly double that and
+   each carries its own word, because an emoji's meaning is not stable across
+   platforms and a face alone is not an accessible control. */
+.emoji-scale-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.emoji-scale {
+  display: flex;
+  gap: 6px;
+}
+.emoji-scale__btn {
+  appearance: none;
+  flex: 1 1 0;
+  /* The floor this control exists for. */
+  min-width: 52px;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  /* Unchosen faces sit back rather than all shouting at once; the chosen one
+     comes fully forward below. */
+  opacity: 0.6;
+}
+.emoji-scale__btn:hover,
+.emoji-scale__btn:focus-visible {
+  opacity: 1;
+}
+.emoji-scale__btn.is-active {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.emoji-scale__glyph {
+  font-size: 24px;
+  line-height: 1.1;
+}
+.emoji-scale__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg-muted);
+}
+.emoji-scale__btn.is-active .emoji-scale__label {
+  color: var(--fg);
+}
+/* Narrow phones: the words are what makes the faces unambiguous, so they stay —
+   the glyph gives up size before the label does. */
+@media (max-width: 360px) {
+  .emoji-scale { gap: 4px; }
+  .emoji-scale__btn { min-width: 44px; padding: 6px 0; }
+  .emoji-scale__glyph { font-size: 20px; }
+  .emoji-scale__label { font-size: 9.5px; }
+}
 /* Overrides .ride-options' vertical full-width stack (built for the device
    picker's larger rows) with a wrapped tag-chip layout, more legible for a
    16-item "choose any" checklist. */

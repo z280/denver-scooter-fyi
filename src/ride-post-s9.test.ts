@@ -37,6 +37,7 @@ import {
   modelBonusQuestionFor,
   normalizeModelKey,
   routeProfileLabel,
+  scooterRatingToFlags,
   shouldShowRidePostS9,
   type RidePostS9Deps,
   type SessionLike,
@@ -163,8 +164,13 @@ function clickYesNo(root: HTMLElement, question: string, label: "Yes" | "No"): v
   segBtn(fieldByQuestion(root, question), label).click();
 }
 
-function clickScale(root: HTMLElement, question: string, value: number): void {
-  segBtn(fieldByQuestion(root, question), String(value)).click();
+/** Press one of the five faces (step 1-5, low to high) on an emoji scale. */
+function clickEmoji(root: HTMLElement, question: string, step: number): void {
+  const btn = fieldByQuestion(root, question).querySelector<HTMLButtonElement>(
+    `.emoji-scale__btn[data-step="${step}"]`,
+  );
+  if (!btn) throw new Error(`emoji step ${step} not found in field: "${question}"`);
+  btn.click();
 }
 
 function clickIssue(root: HTMLElement, label: string): void {
@@ -185,6 +191,15 @@ function setNumberInput(root: HTMLElement, question: string, value: string): voi
 }
 
 function setQualitative(root: HTMLElement, text: string): void {
+  // The box is collapsed behind one line until asked for — a four-row textarea
+  // standing open reads as a field that must be filled in, and on a phone it
+  // pushes Submit off the screen.
+  if (!root.querySelector(".ride-post-s9__qualitative")) {
+    const open = Array.from(
+      root.querySelectorAll<HTMLButtonElement>(".ride-post-s9__disclosure"),
+    ).find((b) => b.textContent?.includes("note about the route"));
+    open?.click();
+  }
   const textarea = root.querySelector<HTMLTextAreaElement>(".ride-post-s9__qualitative");
   if (!textarea) throw new Error("qualitative textarea not found");
   textarea.value = text;
@@ -195,6 +210,12 @@ function baseDeps(session: SessionLike, extra: Partial<RidePostS9Deps> = {}): Ri
   return {
     session,
     getGateFacts: () => ({ hasWaypoints: false }),
+    // The recommendation question is on a cadence (`survey-cadence.ts`): first
+    // survey, then every tenth. Pinned ON here and counted nowhere, so these
+    // cases exercise the full pane without reading or writing `localStorage`;
+    // the cadence itself has its own tests below.
+    askNps: true,
+    recordSubmitted: () => {},
     ...extra,
   };
 }
@@ -464,14 +485,18 @@ describe("qualitative character-count hint", () => {
     const screen = buildRidePostS9Screen(baseDeps(stubSession(doc)));
     const root = screen.primary;
     const submitBtn = root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!;
-    const hint = root.querySelector(".ride-post-s9__char-hint")!;
+    // Re-queried after each edit rather than captured: the box lives behind a
+    // disclosure now, so the hint does not exist until the rider opens it.
+    const hint = () => root.querySelector(".ride-post-s9__char-hint");
 
     setQualitative(root, "a".repeat(NAV_QUALITATIVE_MIN_CHARS - 1));
-    expect(hint.textContent).toContain(`${NAV_QUALITATIVE_MIN_CHARS - 1}/${NAV_QUALITATIVE_MIN_CHARS}`);
+    expect(hint()?.textContent).toContain(
+      `${NAV_QUALITATIVE_MIN_CHARS - 1}/${NAV_QUALITATIVE_MIN_CHARS}`,
+    );
     expect(submitBtn.disabled).toBe(false);
 
     setQualitative(root, "a".repeat(NAV_QUALITATIVE_MIN_CHARS));
-    expect(hint.textContent).not.toContain(`/${NAV_QUALITATIVE_MIN_CHARS}`);
+    expect(hint()?.textContent).not.toContain(`/${NAV_QUALITATIVE_MIN_CHARS}`);
     expect(submitBtn.disabled).toBe(false);
   });
 });
@@ -583,20 +608,27 @@ describe("the postSurvey payload for a full submission", () => {
     const screen = buildRidePostS9Screen(baseDeps(store, { postSurvey: fakePost }));
     const root = screen.primary;
 
-    clickYesNo(root, "Would you ride this device again?", "Yes");
-    clickYesNo(root, "Was it absolutely perfect?", "No");
+    // One face replaces the old two yes/no questions — "Good" means they
+    // would ride it again and that it was not absolutely perfect, which is
+    // exactly the pair the API stores (`scooterRatingToFlags`).
+    clickEmoji(root, "How was this scooter?", 4);
+    // "Good" does not open the sixteen-item checklist by itself; the rider
+    // asks for it.
+    root
+      .querySelector<HTMLButtonElement>(".ride-post-s9__disclosure")!
+      .click();
     clickIssue(root, "Basket");
     clickIssue(root, "Battery");
     setNumberInput(root, "What was your top speed?", "23");
 
     const routeQuestion = `How was the ${routeProfileLabel(ROUTE.profile)}?`;
-    clickScale(root, routeQuestion, 8);
+    clickEmoji(root, routeQuestion, 4); // 🙂 -> the API's 8
     clickYesNo(root, "Did you deviate from the proposed routing?", "Yes");
     clickYesNo(root, "Was that because the routing needs improvement?", "Yes");
-    clickScale(
+    clickEmoji(
       root,
-      `How likely are you to recommend navigating via Scooter.fyi to other ${RIDE_PROVIDER_NAME} users?`,
-      9,
+      `Would you recommend navigating via Scooter.fyi to other ${RIDE_PROVIDER_NAME} riders?`,
+      5, // 😍 -> the API's 10, the only face inside NPS's promoter band
     );
     const qualitativeText = "The bike lane on Colfax was excellent and well protected.";
     setQualitative(root, qualitativeText);
@@ -615,7 +647,7 @@ describe("the postSurvey payload for a full submission", () => {
       nav_route_rating: 8,
       nav_deviated: true,
       nav_deviated_needs_improvement: true,
-      nav_nps: 9,
+      nav_nps: 10,
       nav_qualitative: qualitativeText,
       ride_route_id: "rr-1",
     });
@@ -715,8 +747,14 @@ describe("route feedback from a private ride", () => {
     const title = screen.primary.querySelector(".ride-post-s9__pane-title")!;
     expect(title.textContent).toBe("Navigation Feedback");
     expect(title.textContent).not.toContain("pts");
-    // The qualitative coaching hint exists to chase a bonus that will not
-    // be paid here, so it stays empty.
+    // The qualitative coaching hint exists to chase a bonus that will not be
+    // paid here, so it stays empty — and the collapsed line that offers the box
+    // must not promise the points either.
+    const noteLine = Array.from(
+      screen.primary.querySelectorAll<HTMLButtonElement>(".ride-post-s9__disclosure"),
+    ).find((b) => b.textContent?.includes("note about the route"))!;
+    expect(noteLine.textContent).not.toContain("pts");
+    noteLine.click();
     expect(
       screen.primary.querySelector(".ride-post-s9__char-hint")?.textContent,
     ).toBe("");
@@ -733,7 +771,7 @@ describe("route feedback from a private ride", () => {
     const screen = buildRidePostS9Screen(
       baseDeps(session, { postRouteFeedback, postSurvey, onSubmitted }),
     );
-    clickScale(screen.primary, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 8);
+    clickEmoji(screen.primary, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 4);
     clickYesNo(screen.primary, "Did you deviate from the proposed routing?", "No");
     screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
     await flush();
@@ -803,5 +841,284 @@ describe("routeProfileLabel", () => {
 
   it("renders an unrecognized future profile key verbatim rather than throwing", () => {
     expect(routeProfileLabel("mystery")).toBe("mystery");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The trim. What the survey used to ask after every single ride:
+//
+//   "Would you ride this device again?"  (yes/no)
+//   "Was it absolutely perfect?"         (yes/no)
+//   sixteen issue chips                  (whenever the answer was no)
+//   a per-model bonus question
+//   "How was the <route>?"               (ten buttons)
+//   "Did you deviate?"                   (yes/no)
+//   "...because the routing needs improvement?" (yes/no)
+//   "How likely are you to recommend..." (ELEVEN buttons)
+//   a four-row textarea, standing open
+//
+// Every one of those on screen at once, at the end of a ride, having already
+// typed a battery percentage and a cost on the screen before. The first two
+// questions are one opinion, the two long rows are untappable, the checklist is
+// homework for a rider who liked the ride, and the recommendation question is
+// about the product rather than the trip.
+// ---------------------------------------------------------------------------
+
+describe("the scooter rating replaces two yes/no questions", () => {
+  it("derives both stored booleans from one face", () => {
+    expect(scooterRatingToFlags(1)).toEqual({ wouldRideAgain: false, wasPerfect: false });
+    expect(scooterRatingToFlags(2)).toEqual({ wouldRideAgain: false, wasPerfect: false });
+    // "Okay" is a scooter you would get on again. "Poor" is not.
+    expect(scooterRatingToFlags(3)).toEqual({ wouldRideAgain: true, wasPerfect: false });
+    expect(scooterRatingToFlags(4)).toEqual({ wouldRideAgain: true, wasPerfect: false });
+    // Only the top face is "absolutely perfect" — the issues checklist exists
+    // for everything below it.
+    expect(scooterRatingToFlags(5)).toEqual({ wouldRideAgain: true, wasPerfect: true });
+  });
+
+  it("answers nothing until the rider answers", () => {
+    expect(scooterRatingToFlags(null)).toEqual({
+      wouldRideAgain: null,
+      wasPerfect: null,
+    });
+  });
+
+  it("asks one question where there were two", () => {
+    const doc = makeDoc({ endSurvey: true, route: null });
+    const root = buildRidePostS9Screen(baseDeps(stubSession(doc))).primary;
+    expect(findFieldOrNull(root, "How was this scooter?")).toBeTruthy();
+    expect(findFieldOrNull(root, "Would you ride this device again?")).toBeNull();
+    expect(findFieldOrNull(root, "Was it absolutely perfect?")).toBeNull();
+  });
+
+  it("submits the pair the API has always stored", async () => {
+    const doc = makeDoc({ endSurvey: true, route: null });
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const root = buildRidePostS9Screen(
+      baseDeps(stubSession(doc), { postSurvey }),
+    ).primary;
+    clickEmoji(root, "How was this scooter?", 5);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(postSurvey.mock.calls[0]![1]).toMatchObject({
+      would_ride_again: true,
+      was_perfect: true,
+    });
+  });
+});
+
+describe("the issues checklist is a follow-up, not homework", () => {
+  function leftPane(extra: Partial<RidePostS9Deps> = {}) {
+    const doc = makeDoc({ endSurvey: true, route: null });
+    return buildRidePostS9Screen(baseDeps(stubSession(doc), extra)).primary;
+  }
+  const issueChips = (root: HTMLElement) =>
+    root.querySelectorAll(".ride-post-s9__issues .ride-option").length;
+  const disclosure = (root: HTMLElement) =>
+    Array.from(
+      root.querySelectorAll<HTMLButtonElement>(".ride-post-s9__disclosure"),
+    ).find((b) => b.textContent?.includes("Something was off"));
+
+  it("shows nothing before the rider has rated the scooter", () => {
+    const root = leftPane();
+    expect(issueChips(root)).toBe(0);
+    expect(disclosure(root)).toBeFalsy();
+  });
+
+  it("opens itself for a rider who said something went wrong", () => {
+    for (const step of [1, 2, 3]) {
+      const root = leftPane();
+      clickEmoji(root, "How was this scooter?", step);
+      expect(issueChips(root)).toBe(SURVEY_ISSUE_OPTIONS.length);
+    }
+  });
+
+  it("offers one line instead, to a rider who liked the ride", () => {
+    const root = leftPane();
+    clickEmoji(root, "How was this scooter?", 4);
+    expect(issueChips(root)).toBe(0);
+    expect(disclosure(root)).toBeTruthy();
+    disclosure(root)!.click();
+    expect(issueChips(root)).toBe(SURVEY_ISSUE_OPTIONS.length);
+  });
+
+  it("is not offered at all on the top face — nothing was wrong", () => {
+    const root = leftPane();
+    clickEmoji(root, "How was this scooter?", 5);
+    expect(issueChips(root)).toBe(0);
+    expect(disclosure(root)).toBeFalsy();
+  });
+
+  it("drops ticked issues when the rider moves up to the top face", async () => {
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const root = leftPane({ postSurvey });
+    clickEmoji(root, "How was this scooter?", 2);
+    clickIssue(root, "Brakes");
+    // Changing their mind to "nothing was wrong" must not submit a contradiction.
+    clickEmoji(root, "How was this scooter?", 5);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(postSurvey.mock.calls[0]![1].issues).toBeUndefined();
+  });
+
+  it("keeps a rider's ticked issues when they move between non-perfect faces", () => {
+    const root = leftPane();
+    clickEmoji(root, "How was this scooter?", 2);
+    clickIssue(root, "Brakes");
+    clickEmoji(root, "How was this scooter?", 4);
+    // Still open, because they have something in it — moving UP must not throw
+    // away an answer, and must not force the list open on a rider who never
+    // opened it.
+    expect(issueChips(root)).toBe(SURVEY_ISSUE_OPTIONS.length);
+    expect(
+      Array.from(root.querySelectorAll(".ride-post-s9__issues .is-selected")).map(
+        (b) => b.textContent,
+      ),
+    ).toEqual(["Brakes"]);
+  });
+});
+
+describe("the recommendation question is on a cadence", () => {
+  const NPS_Q = `Would you recommend navigating via Scooter.fyi to other ${RIDE_PROVIDER_NAME} riders?`;
+
+  function navPane(extra: Partial<RidePostS9Deps> = {}) {
+    const doc = makeDoc({ endSurvey: false, route: ROUTE });
+    return buildRidePostS9Screen(baseDeps(stubSession(doc), extra)).primary;
+  }
+
+  it("asks it when the cadence says to", () => {
+    expect(findFieldOrNull(navPane({ askNps: true }), NPS_Q)).toBeTruthy();
+  });
+
+  it("leaves it out otherwise, and the rest of the pane is unaffected", () => {
+    const root = navPane({ askNps: false });
+    expect(findFieldOrNull(root, NPS_Q)).toBeNull();
+    expect(
+      findFieldOrNull(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`),
+    ).toBeTruthy();
+    expect(
+      findFieldOrNull(root, "Did you deviate from the proposed routing?"),
+    ).toBeTruthy();
+  });
+
+  it("sends no nav_nps on a ride that never asked", async () => {
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const root = navPane({ askNps: false, postSurvey });
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 4);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    // Null, not a fabricated score. The column has always been nullable and the
+    // API awards nothing for it.
+    expect(postSurvey.mock.calls[0]![1].nav_nps).toBeNull();
+  });
+
+  it("counts a submission", async () => {
+    const recordSubmitted = vi.fn();
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const root = navPane({ recordSubmitted, postSurvey });
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 3);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(recordSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("never counts a skip", async () => {
+    const recordSubmitted = vi.fn();
+    const root = navPane({ recordSubmitted });
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__skip")!.click();
+    await flush();
+    // A skipped survey asked its questions and got nothing, so counting it
+    // would spend the rider's turn in the cadence on an answer we never
+    // received — and they would meet the long question ten rides later having
+    // never answered one.
+    expect(recordSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("never counts a submission the server refused", async () => {
+    const recordSubmitted = vi.fn();
+    const postSurvey = vi.fn().mockRejectedValue(new Error("offline"));
+    const root = navPane({ recordSubmitted, postSurvey });
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 3);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(recordSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("does not let a storage failure lose a survey that succeeded", async () => {
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const onSubmitted = vi.fn();
+    const root = navPane({
+      postSurvey,
+      onSubmitted,
+      recordSubmitted: () => {
+        throw new Error("quota");
+      },
+    });
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 3);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("neither scale is a row of ten buttons any more", () => {
+  it("renders five faces, each carrying its own word", () => {
+    const doc = makeDoc({ endSurvey: true, route: ROUTE });
+    const root = buildRidePostS9Screen(baseDeps(stubSession(doc))).primary;
+    const scales = root.querySelectorAll(".emoji-scale");
+    // Scooter, route, and the recommendation question (pinned on in baseDeps).
+    expect(scales).toHaveLength(3);
+    for (const scale of scales) {
+      const faces = scale.querySelectorAll(".emoji-scale__btn");
+      expect(faces).toHaveLength(5);
+      for (const f of faces) {
+        expect(f.getAttribute("aria-label")).toBeTruthy();
+      }
+    }
+    // And no ten-button segmented scale survives anywhere on the screen.
+    expect(root.querySelector(".ride-post-s9__scale")).toBeNull();
+  });
+});
+
+describe("the free-text box stays out of the way until wanted", () => {
+  function navPane() {
+    const doc = makeDoc({ endSurvey: false, route: ROUTE });
+    return buildRidePostS9Screen(baseDeps(stubSession(doc))).primary;
+  }
+  const noteLine = (root: HTMLElement) =>
+    Array.from(
+      root.querySelectorAll<HTMLButtonElement>(".ride-post-s9__disclosure"),
+    ).find((b) => b.textContent?.includes("note about the route"));
+
+  it("starts collapsed, as one line", () => {
+    const root = navPane();
+    expect(root.querySelector(".ride-post-s9__qualitative")).toBeNull();
+    expect(noteLine(root)).toBeTruthy();
+  });
+
+  it("still advertises the bonus from that line", () => {
+    expect(noteLine(navPane())!.textContent).toMatch(/\+\d+ pts/);
+  });
+
+  it("opens on a tap and stays open", () => {
+    const root = navPane();
+    noteLine(root)!.click();
+    expect(root.querySelector(".ride-post-s9__qualitative")).toBeTruthy();
+    // A later re-render (another answer changing) must not re-collapse it under
+    // text the rider is in the middle of typing.
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 2);
+    expect(root.querySelector(".ride-post-s9__qualitative")).toBeTruthy();
+  });
+
+  it("submits nothing extra when it was never opened", async () => {
+    const postSurvey = vi.fn().mockResolvedValue({ points: [] });
+    const doc = makeDoc({ endSurvey: false, route: ROUTE });
+    const root = buildRidePostS9Screen(
+      baseDeps(stubSession(doc), { postSurvey }),
+    ).primary;
+    clickEmoji(root, `How was the ${routeProfileLabel(ROUTE.profile)}?`, 3);
+    root.querySelector<HTMLButtonElement>(".ride-post-s9__submit")!.click();
+    await flush();
+    expect(postSurvey.mock.calls[0]![1].nav_qualitative).toBeNull();
   });
 });
