@@ -5,6 +5,12 @@ plan — read it first; the vision, decisions, equity arithmetic and risks live
 there). This document is the actionable frontend lane: which modules exist,
 what each owns, what it may not do, and what the tests have to prove.
 
+**Phase numbers and names are the master's.** Two titles read shorter here
+than there — Phase 1 ("My ideal scooter" vs "The ideal scooter", the
+rider-facing wording) and Phase 5 ("Equity Area savings" vs "Cost-aware
+routing through Equity Areas") — and that is deliberate rather than drift. Any
+*other* divergence is a bug in one of the two documents.
+
 Planned 2026-08-29 against `main` (13e2215). Branch:
 `claude/along-way-upgrades-feature-piml2p`.
 **Revision 2** — the spec is now rider-facing ("my ideal scooter") and applies
@@ -77,6 +83,10 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `ride-spec-store.ts` | 1 | Where specs live (account when signed in, one localStorage slot when not, server wins) and — the part the presets have no equivalent of — **the attachment**: which spec is driving the map, and whether it still is. No DOM. Split out of the panel while building it, because attach/detach is a rule and rules belong somewhere a test can reach without one. |
 | `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, the per-field must/prefer switch, and the relaxation ladder rendered live so a rider can see what they are agreeing to give up. Owns both ends of the map bridge's UI and holds no rule of its own. |
 | `along-the-way.ts` | 2 | The **client-cheap plan search**. `rankPlans(features, ctx)` → `TripPlan[]` + backups: multi-leg (`walk → ride → [hand-off → ride]* → walk`), ranked by generalised cost (seconds **plus money** plus penalties), straight-line, no network. Pure. |
+| `receipt-read.ts` | 8 | On-device extraction: screenshot → the receipt's fields. **Pure given a bitmap.** Owns the format quirks and nothing else. |
+| `receipt-verdict.ts` | 8 | The three-part bar → `overcharged` \| `correct` \| `cannot_tell`, plus the reason. **Pure**, no DOM, and it never phrases an accusation. |
+| `receipt-panel.ts` | 8 | Drop zone, the confirm-what-we-read step, the verdict, the complaint action, the contribute toggle. Renders; decides nothing. |
+| `account-confirm.ts` | 8 | Profile screenshot **or** typing, yielding the account identifier and **nothing else** — there is no field for a card fragment to land in. |
 | `trip-alerts.ts` | 9 | The trip-alert opt-in's state and the rules about what earns a text. **Pure** — the decision is testable without a network. |
 | `plan-resume.ts` | 9 | Reads a resume link, carries the plan reference across a sign-in, re-enters the plan. **Pure** given a URL and a store. Holds no credential, ever. |
 | `free-minutes.ts` | 2 | The Access tier's free-minute budget: estimate today's used minutes from tracked rides, state which way the error runs, and hold the rider's own correction. Pure; the control that renders it lives with the plan list. |
@@ -488,7 +498,7 @@ makes a hand-off trustworthy.
 ---
 
 
-## Phase 4 — Favorite Scooters
+## Phase 4 — My Scooters
 
 Independent of Phases 1–3 and cheap: the scanner, the decoder, the validation
 endpoint and the points bonus all exist. This is a list, a gate, and one rule
