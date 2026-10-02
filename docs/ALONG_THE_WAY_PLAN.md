@@ -305,7 +305,19 @@ export function rankPlans(
            unlockPaid: true;           // so continuing costs no unlock
            /** Minutes of today's free hour spent BEFORE this rental began —
             *  a BASELINE, not a running total, so it cannot go stale. Usage now
-            *  is `freeMinutesUsedBeforeRide + (now − rideStartedAt)`.
+            *  is
+            *
+            *    freeMinutesUsedBeforeRide
+            *      + billableMinutes(ctx.now − Date.parse(rideStartedAt))
+            *
+            *  — through `billableMinutes`, never raw subtraction. Two reasons:
+            *  `ctx.now` is epoch MILLISECONDS and the baseline is MINUTES, so
+            *  the bare difference is a unit error; and Veo bills the STARTED
+            *  minute (`ride-cost.ts`: `max(1, ceil(ms/60_000))`), so a rider
+            *  61 seconds in has spent 2 free minutes, not 1. Rounding down
+            *  would rank them with free minutes they do not have and price a
+            *  paid minute as free — the one direction §2.2 forbids, since its
+            *  whole promise is a FLOOR on minutes used.
             *
             *  This replaces `freeMinutesUsedThisRide`, which was a snapshot of
             *  minutes used DURING the ride: ageing that by the elapsed time
@@ -585,9 +597,14 @@ every unlock**, with the hand-off drawn on the map.
   every other test in this list, which is why this one is a count larger than
   any plausible cap rather than "more than one".
 - **A re-solve with a NONZERO `freeMinutesUsedBeforeRide`** prices today's
-  usage as `baseline + elapsed`, not `baseline + baseline + elapsed`. The zero
-  case passes under either arithmetic, which is exactly why this one is written
-  with a nonzero baseline.
+  usage as `baseline + billableMinutes(elapsed)`, not
+  `baseline + baseline + elapsed`. The zero case passes under either
+  arithmetic, which is exactly why this one is written with a nonzero baseline.
+- **61 seconds into a ride counts as 2 free minutes used, not 1** — the
+  started-minute rounding, asserted at the boundary. A raw
+  `(now − rideStartedAt)` passes the nonzero test above and still fails this
+  one, which is why both exist: one catches the double-count, the other catches
+  the unit error and the rounding.
 - The cheap tier's plan time is a **lower bound**: for a fleet where the routed
   answer is known, every client figure is less than or equal to it, never
   greater. The direction is the assertion — a client that over-estimated would
