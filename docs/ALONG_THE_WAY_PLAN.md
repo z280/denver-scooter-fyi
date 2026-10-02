@@ -385,12 +385,22 @@ interface TripLeg {
   vehicle?: DeviceProperties;   // ride legs only
   unlockCents: number;          // 0 on a walk leg, and on a free-unlock tier
   minuteCents: number;          // the leg's minutes at its own rate (§5.1)
+  taxCents: number;             // `ctx.taxRate` on this leg's unlock + minutes
   freeMinutesUsed: number;      // Access only; 0 otherwise
 }
 ```
 
 Plan totals (`totalSeconds`, `estimatedCents`, `handOffs`) are **derived from
 the legs**, never stored alongside them, so they cannot drift.
+
+**`taxCents` is its own component for the same reason the unlock is.** Ranking
+and the rider-facing price both include tax (§2.1's `ctx.taxRate`), and totals
+are derived **solely** from the legs — so with nowhere to put it an
+implementation must either drop tax or fold it into `unlockCents` /
+`minuteCents`. Folding it in defeats both things the breakdown exists for: the
+rider can no longer see *which* leg costs the extra unlock, and the server
+tier's figures can no longer be reconciled against ours component by component.
+Master plan §6.4's response carries the same component per leg.
 
 Per-leg figures are not a nicety: master plan rule 2 is *cost and time on
 every plan, including startup costs*, and a plan showing only a total hides
@@ -435,11 +445,24 @@ the shortcut that does not work.
 Master plan §6.2 ends the last ride leg at a **drop-off node `X`** near `D`,
 with a short walk after it — but that needs legal-parking geometry, which this
 repo does not have. So the cheap tier ends the last ride leg **at `to`** and
-evaluates `mustReach` for that leg against `to` as well. It therefore **omits
-the final walk**, which makes its figures a **lower bound** on time and never an
-upper one — said on the surface, and corrected by §2.3's rule 3 the moment the
-routed answer arrives. §2.5 asserts the direction, because a client that
-*over*-estimated here would be the dangerous way round.
+evaluates `mustReach` for that leg against `to` as well. It therefore **omits the final walk**.
+
+**That does not make the client's figure a lower bound, and an earlier draft of
+this section claimed it did.** The omitted walk pushes the estimate *down*, but
+two other approximations push it *up*, and nothing makes them cancel in a known
+direction:
+
+| Approximation | Direction |
+|---|---|
+| the omitted final walk | **under** |
+| `DETOUR_FACTOR = 1.35`, **rounded up** rather than averaged (`reach.ts` records 1.33 and 1.18 observed) | **over** |
+| a fixed 18 km/h riding pace | either |
+
+So a routed leg can legitimately come back **shorter** than the client's, and
+any `client ≤ routed` assertion would be a flaky test of a false claim. The
+honest statement is `reach.ts`'s own: *it is an estimate and must be labelled
+one*. §2.3's rule 3 replaces it with the routed figure at the moment a decision
+is made, and §2.5 asserts **the label and the replacement**, never a direction.
 
 **Geometry.** Straight lines through `reach.ts`'s `DETOUR_FACTOR = 1.35` — the
 ratio measured against donated tracks. Walking pace from `locate.ts`'s
@@ -491,10 +514,19 @@ entire search that admits a `risk` vehicle at all, which is what makes the
 asymmetry enforceable instead of a convention. The bbox and
 the walk cap bound the *first* hop only; they say nothing about downstream
 nodes, so without this step a multi-hop search over the whole fleet does
-fleet-scale work **on every 90-second refresh**, on a phone. `W` and `H` are
-the server lane's constants, imported and not re-picked, for the same reason as
-the exchange rate: two tiers disagreeing on which vehicles were *considered*
-disagree on disqualification, which §2.3 rule 2 forbids outright.
+fleet-scale work **on every 90-second refresh**, on a phone. **`W` and `H` reach this tier as `ctx` inputs — they cannot be "imported".**
+The two repos share no runtime module, and master §6.2 deliberately does not
+fix their values until the deployed matrix's own limits have been measured, so
+there is nothing to import yet and no import path if there were. They arrive
+**with the candidates response** and are cached for the session, with a
+**documented offline default** for a cold start or a failed call — and the
+default must be written down here when it is chosen, because an undocumented
+one is each implementation picking its own bound.
+
+The reason they have to match the server's at all is §2.3's rule 2: two tiers
+disagreeing about which vehicles were *considered* disagree about
+**disqualification**, which that rule forbids outright. Rule 1 (they may
+disagree on order) does not cover it.
 
 **`mustReach` is evaluated per leg, against that leg's own endpoint.**
 `matches()` checks whichever `dest` it is handed (`src/ride-spec.ts:214`), so
@@ -552,9 +584,15 @@ about walking:
 
 The home bar already asks the two questions this needs — *where are you going*
 and *need wheels or got your own* — and hands the answer to `pending-trip.ts`,
-whose contract is unchanged. `wheels: "need"` opens the **plan list**: two to
-four plans, each showing its legs, its total time and **its cost including
-every unlock**, with the hand-off drawn on the map.
+whose contract is unchanged. `wheels: "need"` opens the **plan list**: **one to four**
+plans, each showing its legs, its total time and **its cost including every
+unlock**, with the hand-off drawn on the map.
+
+**One, not two, is the floor.** Master §6.4's `limit: 4` is a cap, never a
+quota, and a valid result can hold **only** the walk-only plan — an empty
+fleet, or a fleet whose every vehicle fails a `must`. A UI promising two
+options either fabricates the second or implies one exists, which is the same
+dishonesty as a risky vehicle shown without its warning.
 
 ### 2.5 Tests
 
@@ -605,11 +643,11 @@ every unlock**, with the hand-off drawn on the map.
   `(now − rideStartedAt)` passes the nonzero test above and still fails this
   one, which is why both exist: one catches the double-count, the other catches
   the unit error and the rounding.
-- The cheap tier's plan time is a **lower bound**: for a fleet where the routed
-  answer is known, every client figure is less than or equal to it, never
-  greater. The direction is the assertion — a client that over-estimated would
-  be the dangerous way round, since it would talk a rider out of a trip that
-  is fine.
+- Every client-tier plan is **labelled an estimate**, and the routed figure
+  **replaces** it (never averages with it) when the server tier answers — which
+  is §2.3 rule 3, asserted. **Not** a `client ≤ routed` inequality: §2.1 explains
+  why no direction is guaranteed, and a test enforcing one would be flaky in
+  service of a false claim.
 - A **120-second** improvement triggers a re-solve and a **119-second** one
   does not; two qualifying improvements inside 3 minutes produce **one**
   re-solve. Boundaries, because a threshold with no boundary test is a number
@@ -1247,11 +1285,20 @@ delete — a consent you cannot withdraw is not one.
   `correct`: that is the expected figure computed properly rather than a near
   miss, and `correct` has to stay reachable or the evidence pile can never
   record the discount **being applied** — the question it exists to answer.
-- A charge **exceeding** the expectation by less than the margin returns
-  `cannot_tell` — never `correct`, never `overcharged` (master plan §12.5: below
-  the bar the verdict is "we cannot tell", and the UI says why). The two cases
-  read alike and are not: one is arithmetic we can account for, the other is a
-  gap we cannot explain and will not accuse anybody over.
+- A charge **exceeding** the expectation returns `cannot_tell` until it exceeds
+  it by **more than** the 10¢ margin — never `correct`, never `overcharged`
+  below that (master plan §12.5). **The comparison is strict, and the three
+  verdicts are pinned so a test cannot pick its own operator:**
+
+  | Excess over the expected charge | Verdict |
+  |---|---|
+  | 9¢ | `cannot_tell` |
+  | **10¢ — the margin itself** | `cannot_tell` |
+  | 11¢ | `overcharged` |
+
+  The two sub-threshold cases read like the `correct` case above and are not:
+  one is arithmetic we can account for, the other is a gap we cannot explain
+  and will not accuse anybody over.
 - A receipt differing from the expected charge only by the $1 unlock, for a
   VeoPlus rider, returns `cannot_tell`.
 - A trip starting inside a polygon and charged at the base rate returns
@@ -1396,7 +1443,12 @@ fiddly part — and it is `plan-resume.ts`'s whole job.
 ### 9.6 Tests
 
 - `phone_verified` without the trip-alert opt-in sends nothing.
-- The per-trip ceiling holds across a plan that re-solves many times.
+- **The third eligible SMS sends and the fourth is suppressed**, across a plan
+  that re-solves many times — and the suppressed event is **still visible
+  in-app**, so the rider loses the text and not the information. Pinned at the
+  boundary rather than "the ceiling holds", because a generic assertion picks
+  its own ceiling and passes, which §9.3 names as the exact way this safeguard
+  defeats itself.
 - A re-solve with nothing actionable sends nothing on either channel.
 - The targeted check stops on `visibilitychange`, completion and abandonment,
   and never changes the fleet refresh interval.
