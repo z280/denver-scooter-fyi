@@ -455,12 +455,28 @@ makes a hand-off trustworthy.
   exists so nobody claims what they cannot reach in time; riding reaches much
   further inside the same 25-minute window. It must become a
   **time-to-arrival** check computed from the actual leg.
-- **One claim at a time, always.** Release precedes claim, however many hops
-  the plan intends. A chained plan does not hold three scooters hostage.
+- **One claim at a time, always — and the server keeps that invariant, not
+  the client.** A chained plan does not hold three scooters hostage.
+
+  **It does NOT release and then claim.** Revision 2's rule was "release
+  precedes claim", which this document's own sequencing table calls the
+  *non-atomic* fallback: two calls, with a window holding no claim at all,
+  and a failed second call losing the first one permanently — for nothing,
+  since the rider is still riding toward a pickup they no longer have.
+
+  So a re-solve moves the claim in **one** `registerDibs(…, { replaces })`
+  call. The server expires the old row and writes the new one in a single
+  transaction, which is what makes "at most one" an invariant rather than a
+  convention the client is trusted to follow. Until `replaces` ships, a
+  re-solve may fall back to two calls — and must then treat a failed claim as
+  a re-solve that did not happen, rather than as a lost claim.
 
 ### 3.4 Tests
 
-- Release precedes claim (assert call order on the stubs), at every hop.
+- A re-solve moves the claim in a **single** `registerDibs` call carrying
+  `replaces` — asserted on the call shape, not on an ordering of two calls.
+- A failed claim leaves the **old** claim intact (the two-call fallback's only
+  acceptable behaviour), and never leaves the plan holding none.
 - A re-solve recomputes **all** remaining legs, not only the next vehicle.
 - A lost vehicle never returns as a candidate.
 - Every re-solve produces exactly one notification, and a re-solve that changes
@@ -942,9 +958,15 @@ delete — a consent you cannot withdraw is not one.
 - A receipt differing from the expected charge only by the $1 unlock, for a
   VeoPlus rider, returns `cannot_tell`.
 - A trip starting inside a polygon and charged at the base rate returns
-  `overcharged`, and the copied body contains the trip, both figures and the
-  citation.
-- The copy button is unreachable until the rider has confirmed the figures.
+  `overcharged`, and the **`mailto:`'s parsed `body` parameter** contains the
+  account identifier, the trip, both figures and the citation. The clipboard
+  fallback is asserted separately, on the same content — testing only the
+  fallback would let the normal mail draft omit all of it (§8.5 made
+  `mailto:` the primary path, and this assertion was left behind).
+- **Neither complaint path is reachable until the rider has confirmed the
+  figures** — not the `mailto:` and not the fallback copy. Gating only one of
+  them means an unconfirmed complaint can still be opened and sent, which is
+  the failure §8.3 exists to prevent.
 - `account-confirm.ts` yields the identifier and no other field, from a
   fixture containing a name, phone and card fragment.
 - The contribute payload contains no coordinates, no account identifier and
@@ -1011,9 +1033,23 @@ than the data behind it moves: the API's ingest runs every 2 minutes, so a
 20-second global poll re-reads the same cycle six times — six times the load,
 zero extra freshness.
 
-What delivers 20-second news is checking the **1–5 vehicles the live plan
-depends on**, through the endpoint master plan §13.4 describes, which goes
-straight at the always-current upstream rather than the cycle.
+What delivers 20-second news is reading the **1–5 vehicles the live plan
+depends on** out of a snapshot the **API** refreshes — and the ownership
+matters, because the master plan retracted the premise this paragraph used to
+rest on.
+
+**GBFS has no per-vehicle query.** `free_bike_status` is a whole-fleet feed,
+so a *client-triggered* upstream check every 20 seconds would multiply
+full-feed fetches by the number of riding riders. So:
+
+| | Who | What |
+|---|---|---|
+| **One coalesced 20-second full-feed fetch** | the **API** | shared by every live plan — O(1) in riders |
+| **Reading 1–5 IDs out of that snapshot** | this client | cheap, and never touches upstream itself |
+
+This client therefore never reaches upstream and never triggers a fetch of its
+own; it asks the API for the plan-critical subset of the snapshot the API is
+already maintaining. Master plan §13.4 carries the arithmetic.
 
 Bounds, all of them testable:
 
@@ -1112,7 +1148,7 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | `equity_savings_taken` | `kind` |
 | `receipt_checked` | `source` (`screenshot` \| `manual`), `had_tracked_ride` (bool) |
 | `receipt_verdict` | `verdict` (`overcharged` \| `correct` \| `cannot_tell`), `reason` — **no amounts, ever** |
-| `receipt_complaint_copied` | — |
+| `receipt_complaint_prepared` | `mechanism` (`mailto` \| `clipboard`), `cc` (bool) — **not** `…_copied`: after §8.5 the primary path opens a draft and copies nothing, so the old name would either miss every normal complaint or report a thing that did not happen |
 | `receipt_contributed` | `withdrawn` (bool) |
 | `trip_alert_opt_in` | `enabled` (bool), `had_phone` (bool) |
 | `trip_alert_sent` | `event` (`moved` \| `destination_changed`) |
