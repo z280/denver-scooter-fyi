@@ -49,15 +49,31 @@ export const MAX_WATCHED_DEVICES = 6;
 /** How far a scooter has to be from where we started watching before we call it
  *  moved.
  *
- *  The API's ingest draws the same line at `stationary_threshold_meters`
- *  (config.json: 16 m) and we deliberately sit further out at 25 m. The two
- *  jobs are different: the server is reconstructing trip history from a feed it
- *  trusts, and a false MOVED there is a data error it can live with. Here a
- *  false positive buzzes a rider's phone about a scooter that never left, and
- *  the second time that happens they stop believing the alert. GPS on a parked
- *  scooter wanders several metres between polls; 25 m is outside that and still
- *  well inside "somebody rode it away". */
-export const MOVED_METERS = 25;
+ *  FIFTY, AND IT IS MEASURED RATHER THAN CHOSEN. The API's own
+ *  `ride_watch.py` recorded this against the live fleet on 2026-08-10:
+ *  consecutive samples of a vehicle somebody was riding moved 320 m on
+ *  average, with 68% of steps over 50 m — against 1.2 m for the rest of the
+ *  fleet, with 0.2% of steps over 50 m. So 50 m is a line with a known error
+ *  rate on both sides: a parked scooter's GPS crosses it about one sample in
+ *  five hundred, and a ridden one crosses it two times in three.
+ *
+ *  That matters because the two mistakes cost different amounts. A missed move
+ *  is noticed a minute later on the next poll; a false one buzzes a rider's
+ *  phone about a scooter that never left, and the second time that happens they
+ *  stop believing the alert. So the line sits where the jitter does not reach.
+ *
+ *  Deliberately wider than the ingest's own `stationary_threshold_meters`
+ *  (config.json: 16 m), which answers a different question — it is tuned for
+ *  reconstructing trip history from a feed the server trusts, where a false
+ *  MOVED is a data error it can live with.
+ *
+ *  ONE NUMBER, NOT TWO. The texted tier of this feature (ALONG_THE_WAY_PLAN
+ *  §9.7, master §13.8) composes its message server-side around this same 50 m,
+ *  and says so in words the rider reads: "no longer within 50m of where you
+ *  scanned". A rider who gets the text and then opens the app is the COMMON
+ *  case — the text is for when the app is shut — so a second threshold here is
+ *  how the two end up disagreeing in front of the one person who sees both. */
+export const MOVED_METERS = 50;
 
 /** A vehicle missing from ONE device response is not a vehicle that is gone —
  *  the same rule, for the same reason, as `device-watch.ts`'s own

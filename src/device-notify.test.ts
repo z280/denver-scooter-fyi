@@ -65,12 +65,21 @@ describe("the verdict", () => {
   });
 
   it("tolerates the drift a parked scooter's GPS produces", () => {
-    // The API's ingest draws this line at 16 m; we sit further out at 25,
-    // because a false positive here buzzes a phone about a scooter that never
-    // left, and the second time that happens the alert stops being believed.
-    for (const m of [0, 5, 12, MOVED_METERS - 2]) {
+    // 50 m is measured, not chosen: the API's own ride_watch.py recorded 0.2%
+    // of parked-fleet steps crossing it, against 68% of ridden ones. A false
+    // positive here buzzes a phone about a scooter that never left, and the
+    // second time that happens the alert stops being believed.
+    for (const m of [0, 5, 12, 30, MOVED_METERS - 2]) {
       expect(movedVerdict(watch(), eastOf(m), 0).kind).toBe("still");
     }
+  });
+
+  it("draws the line at the number the texted tier puts in front of riders", () => {
+    // The SMS says "no longer within 50m of where you scanned" in so many
+    // words (ALONG_THE_WAY_PLAN §9.7). A rider who gets the text and then opens
+    // the app is the common case, so this constant and that sentence cannot be
+    // allowed to drift apart.
+    expect(MOVED_METERS).toBe(50);
   });
 
   it("calls it moved past the threshold, and says how far", () => {
