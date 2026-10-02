@@ -137,3 +137,27 @@ describe("non-dwell paths are untouched", () => {
     expect(out.reasons).toEqual([]);
   });
 });
+
+describe("recent no-go rentals (API sql/087)", () => {
+  // Mirror of the API's rule: ≥2 failed starts among the last 3 rentals is
+  // high risk even when a good ride in between cleared number_failed_starts.
+  it("is risk at 2 of the last 3, whatever the failed-start count", () => {
+    expect(tierOf(scooter(1, 5, { recent_rentals_no_go: 2 }))).toBe("risk");
+    expect(tierOf(scooter(1, 5, { number_failed_starts: 1, recent_rentals_no_go: 3 }))).toBe("risk");
+  });
+
+  it("explains itself, so the reasons never contradict a server high_risk", () => {
+    const info = assessReliability(scooter(1, 5, { recent_rentals_no_go: 2 }), NOW);
+    expect(info.reasons).toEqual(["2 of its last 3 rentals went nowhere"]);
+  });
+
+  it("does not demote on one, or on a missing field", () => {
+    expect(tierOf(scooter(1, 5, { recent_rentals_no_go: 1 }))).toBe("ok");
+    expect(tierOf(scooter(1, 5, { recent_rentals_no_go: null }))).toBe("ok");
+    expect(tierOf(scooter(1, 5))).toBe("ok");
+  });
+
+  it("reads the string-flattened value MapLibre hands back", () => {
+    expect(tierOf(scooter(1, 5, { recent_rentals_no_go: "2" }))).toBe("risk");
+  });
+});
