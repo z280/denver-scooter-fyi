@@ -290,9 +290,27 @@ export function rankPlans(
   feats: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>[],
   ctx: { from: LngLat; to: { lat: number; lon: number }; spec: RideSpec;
          rate: RatePlan; freeMinutesLeft: number | null;
-         favorites?: ReadonlySet<string>; exclude?: ReadonlySet<string> },
+         favorites?: ReadonlySet<string>; exclude?: ReadonlySet<string>;
+         /** Null on an initial search; set on every re-solve (§3.2).
+          *  Mirrors master plan §6.4's `in_ride`. */
+         inRide?: {
+           vehicleIdentifier: string;
+           rangeMeters: number;        // what the CURRENT vehicle can still do
+           unlockPaid: true;           // so continuing costs no unlock
+           freeMinutesUsedThisRide: number;
+         } | null },
 ): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[] };
 ```
+
+**`inRide` changes the graph, not just the pricing**, exactly as master plan
+§6.4 requires: on an initial search the only edges leaving the origin are
+walks, but on a re-solve the rider is *on* a vehicle, so the origin also gets a
+**continuation edge** — keep riding what you have — priced with **no unlock**
+because it is already paid, and bounded by that vehicle's remaining range.
+
+Without it the client fallback cannot offer "keep riding" at all, so it would
+systematically prefer handing off, and could charge a second unlock after a
+server-tier failure. The continuation edge needs its own test.
 
 A `TripPlan` is a sequence of legs — `walk → ride → [hand-off → ride]* →
 walk`. A single-vehicle trip is a plan with one ride leg and competes in the
@@ -458,8 +476,16 @@ nobody should still be following.
 
 ### 3.3 Dibs, while riding
 
-Dibs goes on the **next** vehicle, claimed while riding toward it. That is what
-makes a hand-off trustworthy.
+Dibs goes on the **next** vehicle, claimed while riding toward it.
+
+**It does not hold the vehicle, and no surface here may imply it does.**
+`src/dibs.ts` says so in its first lines, and master plan §7.3 and §7.4 bind
+this lane to it: Veo has no reservation system and this app cannot stop a
+vehicle unlocking. What a claim buys a hand-off is **recorded intent** (our own
+buttons grey out for anyone else in this app) and **a watched vehicle** (the
+plan re-solves the moment it goes). So the honest phrasing — in the UI as much
+as here — is *the pickup is monitored, and if somebody takes it you will be
+moved before you get there*, never *it will be waiting*.
 
 - **`DIBS_MAX_WALK_MINUTES = 15` is the wrong bound for a ridden approach.** It
   exists so nobody claims what they cannot reach in time; riding reaches much
@@ -489,8 +515,10 @@ makes a hand-off trustworthy.
   acceptable behaviour), and never leaves the plan holding none.
 - A re-solve recomputes **all** remaining legs, not only the next vehicle.
 - A lost vehicle never returns as a candidate.
-- Every re-solve produces exactly one notification, and a re-solve that changes
-  nothing the rider would act on produces none.
+- A re-solve that changes something the rider would act on produces **exactly
+  one** notification; a re-solve that changes nothing actionable produces
+  **none**. (Stated as two cases on purpose: "every re-solve produces exactly
+  one" would include the no-change case and contradict the second half.)
 - The backups offered after a re-solve exclude the vehicle just lost.
 - Overruling a re-solve applies the chosen backup and re-claims correctly.
 - A plan never holds two claims, at any point in any chain.
@@ -887,7 +915,7 @@ If on-device OCR cannot be made accurate enough to ship, the fallback is
 |---|---|
 | `receipt-read.ts` | On-device extraction: screenshot → `{ start, end, minutes, unlockCents, perMinCents, totalCents, from?, to? }`. **Pure given a bitmap.** Owns the format quirks and nothing else. |
 | `receipt-verdict.ts` | The three-part bar (§8.4) → `"overcharged" \| "correct" \| "cannot_tell"` plus the reason. **Pure.** Never touches the DOM and never phrases an accusation. |
-| `receipt-panel.ts` | Drop zone, the confirm-what-we-read step, the verdict, the copy button, the contribute toggle. Renders; decides nothing. |
+| `receipt-panel.ts` | Drop zone, the confirm-what-we-read step, the verdict, the **complaint action** (§8.5's `mailto:`, with the clipboard only as the overflow fallback), the contribute toggle. Renders; decides nothing. |
 | `account-confirm.ts` | Profile screenshot **or** typing, yielding the account identifier and **nothing else**. |
 | `equity-areas.ts` *(existing)* | **Untouched.** `isInEquityArea` already answers the geographic half. |
 | `ride-cost.ts` *(existing)* | **Untouched.** `RATE_PLANS` and `EQUITY_AREA_RATE` are what "expected charge" means. |
@@ -1064,10 +1092,25 @@ already maintaining. Master plan §13.4 carries the arithmetic.
 Bounds, all of them testable:
 
 - only while a plan is live;
-- only while the document is **foregrounded** (`visibilitychange` stops it) —
-  a backgrounded tab is throttled anyway, and that is what the SMS is for;
+- only while the document is **foregrounded** (`visibilitychange` stops it);
 - stopping on completion and abandonment;
 - never touching `REFRESH_MS` or the fleet refresh.
+
+**And that is only half the mechanism — the other half is not in this repo.**
+Stopping on `visibilitychange` means this client detects nothing once the tab
+is backgrounded, so on its own it could never trigger the SMS §9.3 promises.
+Master plan §13.4.1 therefore requires a **bounded API-side watcher** over the
+stored live plan, running regardless of the tab:
+
+| | Runs where | While |
+|---|---|---|
+| This client's check | the browser | a plan is live **and foregrounded** |
+| **The server watcher** | **the API** (not this lane) | the plan is live, **tab or no tab** — bounded by the plan's lifetime and a hard ceiling |
+
+So this lane must **not** be built as though foreground checking were the whole
+story, and the acceptance test that matters is the one it cannot satisfy
+alone: **pickup loss detected while the app is backgrounded or closed.** It is
+listed as a dependency in §Sequencing for that reason.
 
 ### 9.5 The resume link
 
@@ -1188,6 +1231,8 @@ the wrong call and the envelope should come back.
 | `free-minutes.ts` | — (reads `/tracked-rides`, which exists) | yes |
 | `trip-alerts.ts` | trip-alert consent storage + the send path | the opt-in UI, yes; the sending, no |
 | `plan-resume.ts` | the server-side plan (master plan §13.6) | no — there is nothing to resume until the plan outlives the tab |
+| the foreground check in `trip-plan.ts` | the API's **coalesced snapshot** (master plan §13.4) | yes, against a stub — it is a read |
+| **background loss detection** | the API's **server-side watcher** (master plan §13.4.1), over the stored plan | **no, and it cannot be faked here**: a backgrounded tab detects nothing, so the "phone in a pocket" criterion is satisfied by that watcher or not at all |
 | Phase 8: `receipt-read.ts`, `receipt-verdict.ts`, the complaint | nothing — OCR, the verdict and the `mailto:` are all local | **yes**, and this is most of the phase |
 | Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
 | Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
