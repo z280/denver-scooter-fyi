@@ -290,6 +290,12 @@ export function rankPlans(
   feats: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>[],
   ctx: { from: LngLat; to: { lat: number; lon: number }; spec: RideSpec;
          rate: RatePlan; freeMinutesLeft: number | null;
+         /** `ride-cost.ts` holds the tax rate as MUTABLE module state. A pure
+          *  search that reads it ranks against whatever the module happens to
+          *  say, and a client pricing pre-tax against a server pricing with
+          *  tax breaks §2.3's rule 3 with neither side being wrong. Injected,
+          *  and the same figure the server uses. */
+         taxRate: number;
          favorites?: ReadonlySet<string>; exclude?: ReadonlySet<string>;
          /** Null on an initial search; set on every re-solve (§3.2).
           *  Mirrors master plan §6.4's `in_ride`. */
@@ -297,11 +303,17 @@ export function rankPlans(
            vehicleIdentifier: string;
            rangeMeters: number;        // what the CURRENT vehicle can still do
            unlockPaid: true;           // so continuing costs no unlock
-           freeMinutesUsedThisRide: number;
-           /** Master §6.4's `started_at`. The count above is a SNAPSHOT, and
-            *  the rental is still running: without the start time a re-solve
-            *  ten minutes in prices continuation from a ten-minute-stale
-            *  balance, which on the Access cliff is the whole question. */
+           /** Minutes of today's free hour spent BEFORE this rental began —
+            *  a BASELINE, not a running total, so it cannot go stale. Usage now
+            *  is `freeMinutesUsedBeforeRide + (now − rideStartedAt)`.
+            *
+            *  This replaces `freeMinutesUsedThisRide`, which was a snapshot of
+            *  minutes used DURING the ride: ageing that by the elapsed time
+            *  DOUBLE-COUNTS everything already in it — 6 minutes measured six
+            *  minutes in becomes 12. The zero case passes either way, which is
+            *  how it survived; §2.5 has the nonzero regression. */
+           freeMinutesUsedBeforeRide: number;
+           /** Master §6.4's `started_at`, the other half of that sum. */
            rideStartedAt: string;      // ISO 8601
          } | null },
          /** The evaluation instant. Required, and never defaulted to
@@ -406,6 +418,16 @@ small node set, and it **collapses to a single layer** for every rider without
 a free balance — which is four of the five tiers, and Access riders who have
 spent the hour. The cheap tier can afford the exact answer; it does not need
 the shortcut that does not work.
+
+**`X` collapses to `to` in this tier, and the consequence is one-directional.**
+Master plan §6.2 ends the last ride leg at a **drop-off node `X`** near `D`,
+with a short walk after it — but that needs legal-parking geometry, which this
+repo does not have. So the cheap tier ends the last ride leg **at `to`** and
+evaluates `mustReach` for that leg against `to` as well. It therefore **omits
+the final walk**, which makes its figures a **lower bound** on time and never an
+upper one — said on the surface, and corrected by §2.3's rule 3 the moment the
+routed answer arrives. §2.5 asserts the direction, because a client that
+*over*-estimated here would be the dangerous way round.
 
 **Geometry.** Straight lines through `reach.ts`'s `DETOUR_FACTOR = 1.35` — the
 ratio measured against donated tracks. Walking pace from `locate.ts`'s
@@ -562,6 +584,19 @@ every unlock**, with the hand-off drawn on the map.
   returns it, with no hop limit anywhere in the search. A cap-shaped bug passes
   every other test in this list, which is why this one is a count larger than
   any plausible cap rather than "more than one".
+- **A re-solve with a NONZERO `freeMinutesUsedBeforeRide`** prices today's
+  usage as `baseline + elapsed`, not `baseline + baseline + elapsed`. The zero
+  case passes under either arithmetic, which is exactly why this one is written
+  with a nonzero baseline.
+- The cheap tier's plan time is a **lower bound**: for a fleet where the routed
+  answer is known, every client figure is less than or equal to it, never
+  greater. The direction is the assertion — a client that over-estimated would
+  be the dangerous way round, since it would talk a rider out of a trip that
+  is fine.
+- A **120-second** improvement triggers a re-solve and a **119-second** one
+  does not; two qualifying improvements inside 3 minutes produce **one**
+  re-solve. Boundaries, because a threshold with no boundary test is a number
+  in prose.
 - Monotonic relaxation still holds over plans, not just vehicles.
 
 ---
@@ -596,7 +631,15 @@ Disruptions it re-solves on (master plan §7.2) — note that "somebody took it"
 is one entry, not the headline:
 
 - the next vehicle is taken, disabled, or gone from the feed;
-- a materially better plan appears (revision 2's Phase 3b, no longer separate);
+- a materially better plan appears (revision 2's Phase 3b, no longer separate).
+  **120 seconds of generalised cost, at most once every 3 minutes** (master
+  plan §7.2). Unqualified, this trigger fires on estimate noise, because the
+  search reruns on every refresh and a one-second gain is a "better plan" by
+  this list's own wording. 120 s sits **above `bonus_favorite`'s 90 s
+  deliberately** — a favourite coming into range must not rearrange a trip in
+  progress by itself. Ties and sub-threshold gains change nothing: no re-solve,
+  no claim movement, no notification. **The other four triggers have no
+  threshold and no interval**;
 - the battery will not reach the next hand-off;
 - the rider is far enough behind that the claim will expire;
 - the rider has gone somewhere the remaining legs no longer fit.
@@ -1114,8 +1157,15 @@ that writes to support about those is worse than useless to the people it is
 for. So the comparison is one-sided, and it has to absorb the ways a correct
 charge legitimately fails to equal the arithmetic — `billableMinutes` is `ceil`
 with a floor of 1 (`ride-cost.ts`), `estimateWithTax` adds tax on top of
-`unlock + perMin`, and a small tolerance covers the remainder. Below the bar,
-inside the tolerance, or unresolved: `cannot_tell`, never `overcharged`.
+`unlock + perMin`, and a **10¢ margin** covers the remainder. Below the bar,
+inside the margin, or unresolved: `cannot_tell`, never `overcharged`.
+
+**10¢ has a real ceiling rather than being a matter of taste** (master plan
+§12.5): one minute of the Equity Area discount is **12¢** — 25¢ base against 13¢
+— so a margin at or above that makes the **shortest trips unprovable**, which is
+the opposite of this phase's purpose. Below it, the only thing to clear is tax
+rounding, a cent or two. If the figure is ever revisited, that upper bound is
+the part to keep.
 
 **Many receipts show time and money but no geography**, and the question is
 geographic. So: match by time to the rider's own tracked ride when one exists
@@ -1223,7 +1273,7 @@ opt-in control, a resume entry point, and bounding the rapid check.
 | `trip-plan.ts` *(Phase 3)* | Gains the targeted-check loop and its bounds (§9.4). It owns *when* to check and *when to stop*; it does not own the request. |
 | `api.ts` *(existing)* | Gains `fetchPlanCriticalState(ids, signal)`, the typed client for the targeted check (§9.4), the trip-alert opt-in's read/write, and the **live-plan lifecycle** — `createPlan`, `updatePlan`, `finishPlan` (master plan §13.6). **The house rule at the top of this document is that API calls go through `api.ts`** — so the state machine must not reach the network itself, however small the call looks. |
 | `trip-plan.ts` *(lifecycle)* | Calls `createPlan` **on the plan the rider chose**, `updatePlan` on each re-solve, `finishPlan` on arrival or abandonment. Not optional plumbing: without `create` the server watcher has nothing to watch and the resume link nothing to resume — `fetchPlanCriticalState` reads **vehicles**, and the server cannot infer which of the offered backups was taken. Without `finish` the watcher runs to its ceiling and texts about a trip that already ended. |
-| `locate.ts` *(existing)* | Untouched. |
+| `locate.ts` *(existing)* | **Not untouched** — it exports `WALK_METERS_PER_MIN` for Phase 2 (§2.1), the one code change in this PR. Nothing else about it moves. |
 
 ### 9.2 The opt-in, and the distinction that justifies it
 
@@ -1253,9 +1303,16 @@ second place to put a phone number.
 | Re-solved, nothing actionable changed | no | no |
 | Plan complete | yes | no |
 
-`dibs-notify.ts` caps itself at four alerts per claim *on purpose*. A hard
-per-trip SMS ceiling sits on top of that. "We checked and it is fine" is never
-sent — that is not reassurance, it is attrition.
+`dibs-notify.ts` caps itself at four alerts per claim *on purpose*, and **three
+texts per trip** is the hard ceiling on top of that (master plan §13.3). Three,
+because both SMS-worthy events above are "where you are going has changed", and
+a trip producing a fourth is going wrong in a way a fourth text does not fix —
+by then the app is the place to look, and a phone that has buzzed four times is
+one whose next alert gets ignored. An unstated ceiling lets the "ceiling holds"
+test pick its own number and pass, which is the safeguard defeating itself.
+
+"We checked and it is fine" is never sent — that is not reassurance, it is
+attrition.
 
 ### 9.4 The rapid check: narrow, not fast
 
@@ -1430,7 +1487,7 @@ the wrong call and the envelope should come back.
 | Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
 | Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
-| `trip-plan.ts` | `replaces` on `POST /dibs` | **no, for a claim-moving re-solve — hard dependency** (§3.3). Two calls cannot do it: release-then-claim can lose the claim with nothing to restore, and claim-then-release is refused by the server's one-claim invariant. What ships first is a re-solve that changes the route and leaves the new pickup **unclaimed**, said plainly. The migration is **the next free one** adding `replaces_dibs_id` — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted |
+| `trip-plan.ts` | `replaces` on `POST /dibs` | **no, for a claim-moving re-solve — hard dependency** (§3.3). Two calls cannot do it: release-then-claim can lose the claim with nothing to restore, and claim-then-release is refused by the server's one-claim invariant. What ships first is a re-solve that changes the route and leaves the new pickup **unclaimed**, said plainly. The migration is **the next free one** adding `replaces_dibs_id` — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted. **Also on this row: the server-enforced time-to-arrival claim bound.** `registerDibs` sends no ETA today and the old gate is a walk-minute rule, so a *ridden* pickup — the thing this phase exists for — fails a gate written for walking. Without the bound, Phase 3 can look ready while every hand-off is refused |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
