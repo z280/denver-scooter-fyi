@@ -25,7 +25,7 @@ plan-critical vehicles are checked at 20s. **Phase 10, advocacy** (§10) is one
 control in this repo (the CC tick); its pipeline already exists in
 `zNeill/keepdenverfair`.
 **Revision 3b** — **Phase 8, the receipt** (§8): check whether a trip was
-charged per Exhibit C, copy a complaint, and — consented — contribute to an
+charged per Exhibit C, **prepare a ready-to-send complaint**, and — consented — contribute to an
 evidence pile that can say whether the Equity Area discount is applied at all.
 The image never leaves the device. Phase 5b's separate "stopover" search is
 **deleted**: an Equity Area stopover is just a hand-off whose pickup was
@@ -92,7 +92,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `free-minutes.ts` | 2 | The Access tier's free-minute budget: estimate today's used minutes from tracked rides, state which way the error runs, and hold the rider's own correction. Pure; the control that renders it lives with the plan list. |
 | `ride-cost.ts` *(existing)* | 2 | **Untouched in behaviour**, newly load-bearing: its `RATE_PLANS` and `unlockCents` are what let the plan search price a hand-off per tier, and its `billableMinutes` is what the free-minute estimate sums. |
 | `trip-plan.ts` | 3 | The state machine, the remaining legs, the current claim, the backups, the permanent `exclude` list. Pure reducer plus an injected effects interface. **The owner of "what am I riding, what am I heading for, and why".** |
-| `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied, announced and reversible (§3.1). |
+| `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied and reversible (§3.1), and **announced only when it changes something actionable** — §3.4's two cases, which this row used to flatten into "announced". |
 | `my-scooters.ts` | 4 | Favourite vehicles: the presentation rules — `locationOf` (which keys off the `position_withheld` FLAG, never the absence), the title, and the sentence for every refusal. **Pure.** Split from the panel so the withholding rule is testable without a DOM, including the cached-dot regression that would defeat it. |
 | `my-scooters-panel.ts` | 4 | The Tools-drawer list and the one button that keeps a scooter. Renders; decides nothing. Every judgement it shows comes from `my-scooters.ts` or from the server — it does not check the 75 m, parse the payload, or work out which scooter was scanned. |
 | `equity-savings.ts` | 5 | Cost terms, not a second optimizer: the start-in-area bonus and `equityLegRate` for the Phase 2 planner's money term. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
@@ -106,7 +106,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
 | `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
 | `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
-| `main.ts` *(existing)* | 1–5 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, the spec bridge on the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`), and `devices.allFeatures()` fed to the plan search. Nothing else. |
+| `main.ts` *(existing)* | 1–5, 8, 9 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, the spec bridge on the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`), and `devices.allFeatures()` fed to the plan search. **Phase 8** adds `wireReceipts()` — the panel's host and its entry point; **Phase 9** adds `wireTripAlerts()` and the **resume entry point**, which must run on load before anything else reads the URL, because a resume link arrives as a cold start. **This row grows with every phase that adds a surface**: the house rule above is that a surface is wired from here through one `wireX()`, so a phase with a surface and no row here is a phase whose UI has no host. |
 
 ---
 
@@ -304,6 +304,13 @@ export function rankPlans(
             *  balance, which on the Access cliff is the whole question. */
            rideStartedAt: string;      // ISO 8601
          } | null },
+         /** The evaluation instant. Required, and never defaulted to
+          *  `Date.now()` inside: `inRide.rideStartedAt` is only useful against
+          *  a "now", so reading the clock internally would make identical
+          *  inputs rank differently run to run — breaking the purity claimed
+          *  two paragraphs below. Injected, so the cliff-crossing and
+          *  continuation tests can pin it. */
+         now: number },
 ): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[];
      /** Rule 1's fallback fired: some offered plan has a `risk`-tier FIRST
       *  HOP because nothing non-risky was within a 5-minute walk. The UI's
@@ -325,6 +332,14 @@ server-tier failure. The continuation edge needs its own test.
 A `TripPlan` is a sequence of legs — `walk → ride → [hand-off → ride]* →
 walk`. A single-vehicle trip is a plan with one ride leg and competes in the
 same list; there is no separate "direct" concept to keep in sync.
+
+**The `*` is a binding rule, not notation: chaining is unbounded, and must
+never be limited by a hop counter** (master plan rule 3). The money term bounds
+it correctly and per tier — a `resident` pays $1 a hop and will rarely see two,
+while three of the five tiers pay nothing and should not be stopped at an
+arbitrary number. A hop cap would constrain **exactly the riders it shouldn't**,
+and it would pass every other test in §2.5, which is why §2.5 carries a case
+whose optimum needs more hand-offs than any cap anyone would pick.
 
 **Walking the whole way is a plan too** — one walk leg, no ride legs, nothing
 to unlock. That is master plan §6.2's `P → D` edge, and it is ranked in this
@@ -417,8 +432,22 @@ what enters the graph is master plan §6.2's explicit selection — the best `W`
 non-`risk` vehicles by walk seconds inside the walk cap as **first hops**, the
 best `H` non-`risk` vehicles as **pickups**, and `N = |W ∪ H|`.
 
-**`W` refills from `risk`-tier vehicles inside the walk cap when — and only
-when — that set comes back empty**, setting `riskTierOffered`. Without the
+**`W` refills from `risk`-tier vehicles when — and only when — there is no
+non-`risk` vehicle within a FIXED five-minute walk**, setting
+`riskTierOffered`. The test is five minutes, **not the rider's
+`maxWalkMinutes`**, which ranges 1–15: with a 3-minute cap and a non-risky
+vehicle 4 minutes away, testing against the cap would admit a risky vehicle
+where rule 1 says it must not. Rule 1 is a **platform** rule and the walk cap is
+a **rider preference**; they cannot share a radius.
+
+**What happens in that gap is the interesting part, and §5.2 already answers
+it**: when the only non-risky vehicles sit beyond the rider's cap but inside
+five minutes, **relax the cap** — it is on the relaxation ladder and is
+disclosed like any other relaxation — and offer the 4-minute non-risky vehicle.
+Never relax rule 1 to stay inside a walking preference. *"You will walk a minute
+longer than you asked"* is a better answer than *"here is a scooter that
+probably will not start"*, and far better than an empty list. Any offered first
+hop is shown with its **real** walk time, cap or no cap. Without the
 refill this step is where rule 1's exception quietly dies: the fallback is
 documented four paragraphs below, and a vehicle that never enters the graph can
 never be offered, so a rider with nothing but risky vehicles nearby would get
@@ -529,6 +558,10 @@ every unlock**, with the hand-off drawn on the map.
   never a filter.
 - Plans are ranked by generalised cost, and `estimatedCents` on every plan
   includes every unlock in it.
+- A fleet whose optimum is a **three-hand-off** plan for a zero-unlock tier
+  returns it, with no hop limit anywhere in the search. A cap-shaped bug passes
+  every other test in this list, which is why this one is a count larger than
+  any plausible cap rather than "more than one".
 - Monotonic relaxation still holds over plans, not just vehicles.
 
 ---
@@ -543,8 +576,10 @@ safely read is never the safer default, so there is no bound at which asking
 becomes right. Instead, on every disruption:
 
 1. **Resolve it automatically** — re-solve the remaining legs from where the
-   rider is now, claim what the new plan needs, release what it does not.
-2. **Say so, once.**
+   rider is now, and **move the claim in one atomic call** (§3.3; "claim the
+   new, release the old" is the non-atomic path that section forbids).
+2. **Say so, once — when something actionable changed.** A re-solve the rider
+   would not act on says nothing (§3.4).
 3. **Let them overrule it**, from the `backups` the search already returned.
    One tap to see them, one to take one.
 
@@ -600,16 +635,32 @@ moved before you get there*, never *it will be waiting*.
   So a re-solve moves the claim in **one** `registerDibs(…, { replaces })`
   call. The server expires the old row and writes the new one in a single
   transaction, which is what makes "at most one" an invariant rather than a
-  convention the client is trusted to follow. Until `replaces` ships, a
-  re-solve may fall back to two calls — and must then treat a failed claim as
-  a re-solve that did not happen, rather than as a lost claim.
+  convention the client is trusted to follow.
+
+  **There is no two-call fallback, and the one revision 3 wrote here could not
+  have worked.** It said to treat a failed second call as "a re-solve that did
+  not happen, keeping the old claim" — but the first call already released that
+  claim, so there is nothing left to keep, and claim-before-release is refused
+  by the very server-side invariant above. A claim-moving re-solve is therefore
+  a **hard dependency on `replaces`**, not something to ship around.
+
+  **What ships before `replaces` lands**, since Phase 3 is not blocked
+  wholesale: a re-solve still re-solves — the route changes, the plan updates,
+  the rider is told — but **the claim does not follow it**. The old claim is
+  released and the new pickup is **unclaimed**, said plainly on the surface.
+  That costs only the recorded intent (our own buttons greying out for other
+  riders of this app); **monitoring survives**, because the watcher reads the
+  stored plan, not the claim (§9.4). What must never happen is a surface
+  implying the claim moved when it did not.
 
 ### 3.4 Tests
 
 - A re-solve moves the claim in a **single** `registerDibs` call carrying
   `replaces` — asserted on the call shape, not on an ordering of two calls.
-- A failed claim leaves the **old** claim intact (the two-call fallback's only
-  acceptable behaviour), and never leaves the plan holding none.
+- A failed `replaces` call leaves the **old** claim intact and never leaves the
+  plan holding none — the atomic call either moves the claim or changes nothing.
+- Before `replaces` exists, a claim-moving re-solve leaves the new pickup
+  **unclaimed and says so**, and no surface reports a claim it does not hold.
 - A re-solve recomputes **all** remaining legs, not only the next vehicle.
 - A lost vehicle never returns as a candidate.
 - A re-solve that changes something the rider would act on produces **exactly
@@ -1039,7 +1090,9 @@ If on-device OCR cannot be made accurate enough to ship, the fallback is
 ### 8.3 Confirm what we read — the step that must not be skippable
 
 The extracted figures are shown **over the rider's own screenshot**, field by
-field, editable, before anything is copied or submitted. Not a toast, not a
+field, editable, **before either complaint path is reachable** and before
+anything is submitted — wording chosen after §8.5 made the `mailto:` primary,
+since "before anything is copied" gated only the fallback. Not a toast, not a
 summary line: the actual numbers, where they came from, waiting for a tap.
 
 This is the whole defence against risk 15. Receipt layouts change without
@@ -1123,9 +1176,15 @@ delete — a consent you cannot withdraw is not one.
   a free Access trip — returns `correct` or `cannot_tell` and **never**
   `overcharged`. The one-sided comparison has a test because "differs" is the
   natural way to write the condition and the way it was written first.
-- A charge exceeding the expectation by less than the tolerance, or only by
-  billable-minute rounding or tax, returns `correct` — the three legitimate
-  reasons a right charge is not equal to the raw arithmetic.
+- A charge explained **entirely** by billable-minute rounding and tax returns
+  `correct`: that is the expected figure computed properly rather than a near
+  miss, and `correct` has to stay reachable or the evidence pile can never
+  record the discount **being applied** — the question it exists to answer.
+- A charge **exceeding** the expectation by less than the margin returns
+  `cannot_tell` — never `correct`, never `overcharged` (master plan §12.5: below
+  the bar the verdict is "we cannot tell", and the UI says why). The two cases
+  read alike and are not: one is arithmetic we can account for, the other is a
+  gap we cannot explain and will not accuse anybody over.
 - A receipt differing from the expected charge only by the $1 unlock, for a
   VeoPlus rider, returns `cannot_tell`.
 - A trip starting inside a polygon and charged at the base rate returns
@@ -1371,7 +1430,7 @@ the wrong call and the envelope should come back.
 | Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
 | Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
-| `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when **the next free migration** adding `replaces_dibs_id` lands — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted |
+| `trip-plan.ts` | `replaces` on `POST /dibs` | **no, for a claim-moving re-solve — hard dependency** (§3.3). Two calls cannot do it: release-then-claim can lose the claim with nothing to restore, and claim-then-release is refused by the server's one-claim invariant. What ships first is a re-solve that changes the route and leaves the new pickup **unclaimed**, said plainly. The migration is **the next free one** adding `replaces_dibs_id` — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
