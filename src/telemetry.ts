@@ -89,9 +89,23 @@ export const TELEMETRY_EVENTS = [
   "popup_action",
   // ride wizard funnel
   "ride_open",
+  // An entry that was turned away because a ride was already live — the
+  // BRB-then-tap-a-scooter path. Counted rather than silent: if this ever
+  // climbs, riders are reaching for the wizard when they wanted the HUD,
+  // and the answer is a clearer way back, not a quieter deflection.
+  "ride_open_deflected",
   "ride_screen",
   "ride_complete",
   "ride_abandon",
+  // A rider told us, at the moment it happened, that the scooter would not
+  // ride. The one signal the fleet's reliability scoring cannot infer.
+  "ride_failed_start",
+  // In-ride HUD: the follow-cam was re-engaged after a pan.
+  "hud_recenter",
+  // The main menu's QR dial, by the mode it was turned to.
+  "qr_utility",
+  // "Notify me if moved" was switched on or off for a device.
+  "device_notify_moved",
   // auth funnel
   "auth_start",
   "auth_success",

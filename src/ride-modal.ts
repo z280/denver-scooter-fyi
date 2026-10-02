@@ -119,6 +119,14 @@ export interface RideModalEntry {
    *  legal seat for `rideStarted`; this is what keeps it from re-asking a
    *  question the rider already answered on the device card. */
   autoStart?: boolean;
+  /** "Take me back to what I was doing", not "start something".
+   *
+   *  A session doc outlives the wizard that made it — a rider picks a
+   *  scooter, chooses a destination, closes the sheet to look at the map.
+   *  Re-entering must then reopen THAT wizard, and a fresh `open` dispatch
+   *  would reset the doc and throw their answers away. The integrator reads
+   *  this flag and skips the reset; nothing in this module reads it. */
+  resume?: boolean;
 }
 
 export type RideModalCloseReason =
@@ -141,6 +149,23 @@ export interface RideModalHooks {
    *  `ride-session.ts` recovery (frontend plan: "Recovery on load (in
    *  `wireRideModal()`, before first render)"). */
   onWired?(): void;
+  /** Asked BEFORE the wizard is built, and the only hook that can stop it
+   *  being built at all. Returning `false` deflects the entry: no modal is
+   *  constructed, no `onOpen` fires, and any wizard already on screen is
+   *  left exactly as it was.
+   *
+   *  It exists because of a specific, reproducible failure. `onOpen` runs
+   *  AFTER the shell is in the document, and the integrator's `onOpen`
+   *  dispatches `{type: "open"}` — which `reduceRideSession` REJECTS over a
+   *  live or post ride. The rejection was dropped on the floor, so the
+   *  wizard mounted anyway, read the live doc, and every screen it rendered
+   *  tried to start a ride that was already running. A rider who stepped out
+   *  of the HUD with BRB and then tapped a scooter got a wizard that would
+   *  not stop trying to start a second ride, and no way out but closing the
+   *  app. A guard at any of the five call sites would have fixed one of
+   *  them; this one is in the doorway they all come through, deep links
+   *  included. */
+  beforeOpen?(entry: RideModalEntry): boolean;
   onOpen?(entry: RideModalEntry): void;
   onClose?(reason: RideModalCloseReason): void;
   /** Every screen change, including the first — `ride-session.ts` persists the
@@ -293,6 +318,13 @@ function emitTrack(n: string, p?: Record<string, string | number | boolean>): vo
  *  "Ride this") closes the live instance with reason `reopen` and starts
  *  clean — the new entry wins. */
 export function openRideModal(entry: RideModalEntry = {}): void {
+  // Before anything is torn down or built. A deflected entry must leave a
+  // wizard that is already open untouched, so this runs ahead of the
+  // `reopen` close, not after it — see `beforeOpen`'s own doc comment.
+  if (modalHooks.beforeOpen?.(entry) === false) {
+    emitTrack("ride_open_deflected");
+    return;
+  }
   if (current) closeRideModal("reopen");
   emitTrack("ride_open", {
     entry: entry.vehicleIdentifier ? "device" : "direct",

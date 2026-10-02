@@ -82,6 +82,8 @@ import {
   type RideRecoveryOutcome,
   type RideSessionStore,
   isRideLive,
+  isPostRide,
+  isWizardScreen,
   type RideSessionDoc,} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
@@ -1194,12 +1196,63 @@ map.on("load", async () => {
       const [lng, lat] = feat.geometry.coordinates;
       devices.jumpToDevice(feat.properties.device_id, lng, lat);
     },
+    // THE DOOR. Nothing builds a wizard over a ride that is already running.
+    //
+    // The reducer has always rejected `open` from a live or post-ride doc,
+    // but the rejection arrived too late to matter: `onOpen` runs with the
+    // shell already in the document, and the returned transition was
+    // discarded. So the wizard mounted, read a doc that said `riding`, and
+    // kept trying to start a ride that was already live — the rider who
+    // stepped out with BRB and then tapped a scooter had no way out but
+    // closing the app.
+    //
+    // A ride that is live is not an entry to serve, it is an entry to
+    // ANSWER: the rider is reaching for the ride they are already on, so
+    // hand them the HUD. A post-ride doc is the same shape of mistake with a
+    // different destination — Screens 8/9/10 are still waiting on them, and
+    // `ride-post.ts` owns that surface, so leave the doc alone and say so
+    // rather than opening a wizard that would be rejected anyway.
+    beforeOpen: () => {
+      const doc = rideSession.current();
+      if (!doc) return true;
+      if (isRideLive(doc)) {
+        // The HUD's own `open()` resumes a BRB'd ride where it paused (and
+        // re-attaches a reloaded one), which is exactly what the rider was
+        // asking for. `hudReturnMode` is captured by the mode bar, so going
+        // through the ribbon button keeps the "where do I land on exit"
+        // bookkeeping in the one place that owns it.
+        resumeLiveRide();
+        return false;
+      }
+      if (isPostRide(doc)) {
+        // Nothing to resume and nothing to start. Screens 8/9/10 mount off
+        // `phaseOf(doc)` through their own subscription (`ride-post.ts`), so
+        // the screen the rider still owes an answer to is already on top of
+        // everything — there is no "re-show" to do, only a wizard not to
+        // build underneath it.
+        return false;
+      }
+      return true;
+    },
     // Every open (a deep link, or a later re-entry) starts one fresh session
     // doc — `reduceRideSession`'s own guard rejects this over a live/post
     // ride, so a re-entry mid-ride can never clobber it. Guest-vs-private is
     // NOT decided here: it defaults to `false` and Screen 2's device pick
     // (own device vs. a real Veo scooter) is what actually derives it.
     onOpen: (entry) => {
+      // A RESUME IS NOT AN OPEN. `open` seeds a blank doc, so dispatching it
+      // for a rider coming back to a wizard they left mid-answer silently
+      // drops their scooter, destination and route. The free-ride button's
+      // own comment already promised this would never happen — but the
+      // promise was only kept as far as choosing to call `openRideModal`,
+      // and `open` fired anyway one layer down. With a doc that still holds
+      // answers, keep it and let `resolveStartScreen` put them back on the
+      // screen they left.
+      const live = rideSession.current();
+      if (entry.resume && live && live.state === "wizard" && hasAnswers(live)) {
+        homeBar?.collapse();
+        return;
+      }
       const context = { private: false, authenticated: isAuthenticated() };
       const base = defaultRideOptionsFor(context);
       // The device card's "Use in Ride Mode" survey (`ride-preflight.ts`)
@@ -2725,6 +2778,13 @@ function wireAreaFilter(): AreaFilter {
 // the analysis setup. The bar always shows the current mode: tweaking
 // filters or iconography does NOT drop it to a "custom" state (per Zeke,
 // PR #37 — the old capture-phase toCustom listener is gone).
+
+/** Hand the rider back the ride they are already on, instead of a wizard
+ *  built over it. Assigned by `wireModes`, which owns the mode bar's
+ *  "where do I land when the HUD closes" bookkeeping; a no-op before the bar
+ *  is wired, which is only reachable if an entry fires during boot. */
+let resumeLiveRide: () => void = () => {};
+
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
@@ -2914,6 +2974,21 @@ function wireModes(): void {
   let hudReturnMode: string | null = "analysis";
   rideHud.setOnHidden(() => setActive(hudReturnMode));
 
+  // Back into the live ride, from anywhere. The ribbon's 🧭 tap was the only
+  // way in, which made every OTHER route to a live ride — a scooter popup, a
+  // deep link, the top bar's ride button — a route to a wizard built over it.
+  // Published so `beforeOpen` can answer those entries with the ride the
+  // rider is actually on. See that hook for the failure this closes.
+  resumeLiveRide = () => {
+    closeAllPopups();
+    hudReturnMode =
+      btns.find(
+        (b) => b.classList.contains("is-active") && b.dataset.mode !== "riding",
+      )?.dataset.mode ?? null;
+    setActive("riding");
+    rideHud.open();
+  };
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
       track("mode_switch", { mode: btn.dataset.mode ?? "?" });
@@ -2932,13 +3007,7 @@ function wireModes(): void {
           // tracking-integration lane's resume flow has re-attached the HUD).
           closeAllPopups();
           if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
-            hudReturnMode =
-              btns.find(
-                (b) =>
-                  b.classList.contains("is-active") && b.dataset.mode !== "riding",
-              )?.dataset.mode ?? null;
-            setActive("riding");
-            rideHud.open();
+            resumeLiveRide();
           } else {
             openRideModal();
           }
@@ -3419,7 +3488,17 @@ function wireFreeRide(): void {
     // is how a rider ends a ride they meant to keep.
     const doc = rideSession.current();
     if (doc && (isRideLive(doc) || hasAnswers(doc))) {
-      openRideModal({});
+      // `resume` is what makes the "never destroys an answer" promise above
+      // actually hold (see `onOpen`), and a live ride is deflected to the HUD
+      // by `beforeOpen` before this entry is ever built.
+      // `doc.screen` is a `RideScreenId` — it also spans the post-ride
+      // screens ("8"/"9"/"10"), which the wizard has no page for. A
+      // post-ride doc never reaches here (`beforeOpen` deflects it), but the
+      // narrowing is what says so rather than leaving it to be true by luck.
+      openRideModal({
+        resume: true,
+        fastForwardTo: isWizardScreen(doc.screen) ? doc.screen : undefined,
+      });
       return;
     }
     track("ride_mode_free", {});
