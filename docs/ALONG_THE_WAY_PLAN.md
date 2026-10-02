@@ -82,7 +82,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `ride-spec.ts` | 1 | The Spec type, its must/prefer split, the relaxation ladder, `matches(device, spec)`, and **the projection to and from a `FilterSnapshot`**. **Pure — no DOM, no network, no map.** The one place that answers "does this vehicle qualify?". |
 | `ride-spec-store.ts` | 1 | Where specs live (account when signed in, one localStorage slot when not, server wins) and — the part the presets have no equivalent of — **the attachment**: which spec is driving the map, and whether it still is. No DOM. Split out of the panel while building it, because attach/detach is a rule and rules belong somewhere a test can reach without one. |
 | `ride-spec-panel.ts` | 1 | The "my ideal scooter" sheet: model chips, required features, min battery, min quality, "must get me there", max walk, the per-field must/prefer switch, and the relaxation ladder rendered live so a rider can see what they are agreeing to give up. Owns both ends of the map bridge's UI and holds no rule of its own. |
-| `along-the-way.ts` | 2 | The **client-cheap plan search**. `rankPlans(features, ctx)` → `TripPlan[]` + backups: multi-leg (`walk → ride → [hand-off → ride]* → walk`), ranked by generalised cost (seconds **plus money** plus penalties), straight-line, no network. Pure. |
+| `along-the-way.ts` | 2 | The **client-cheap plan search**. `rankPlans(features, ctx)` → `TripPlan[]` + backups: multi-leg (`walk → [ride → [hand-off → ride]*]? → walk`, the walk-only plan being the degenerate case), ranked by generalised cost (seconds **plus money** plus penalties), straight-line, no network. Pure. |
 | `receipt-read.ts` | 8 | On-device extraction: screenshot → the receipt's fields. **Pure given a bitmap.** Owns the format quirks and nothing else. |
 | `receipt-verdict.ts` | 8 | The three-part bar → `overcharged` \| `correct` \| `cannot_tell`, plus the reason. **Pure**, no DOM, and it never phrases an accusation. |
 | `receipt-panel.ts` | 8 | Drop zone, the confirm-what-we-read step, the verdict, the complaint action, the contribute toggle. Renders; decides nothing. |
@@ -299,7 +299,12 @@ export function rankPlans(
            unlockPaid: true;           // so continuing costs no unlock
            freeMinutesUsedThisRide: number;
          } | null },
-): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[] };
+): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[];
+     /** Rule 1's fallback fired: some offered plan has a `risk`-tier FIRST
+      *  HOP because nothing non-risky was within a 5-minute walk. The UI's
+      *  warning and §2.5's test both condition on it, so it has to be
+      *  readable from the result rather than inferred by re-scanning legs. */
+     riskTierOffered: boolean };
 ```
 
 **`inRide` changes the graph, not just the pricing**, exactly as master plan
@@ -315,6 +320,15 @@ server-tier failure. The continuation edge needs its own test.
 A `TripPlan` is a sequence of legs — `walk → ride → [hand-off → ride]* →
 walk`. A single-vehicle trip is a plan with one ride leg and competes in the
 same list; there is no separate "direct" concept to keep in sync.
+
+**Walking the whole way is a plan too** — one walk leg, no ride legs, nothing
+to unlock. That is master plan §6.2's `P → D` edge, and it is ranked in this
+same list by this same scalar. A planner that cannot *represent* walking cannot
+choose it when it is genuinely best, and §2.5's headline test compares a
+hand-off plan *against the direct walk*, which needs both of them in one list
+to compare at all. So the general shape is `walk → [ride → [hand-off →
+ride]*]? → walk`, the two walks collapsing into one when no ride sits between
+them.
 
 **Every leg carries its own seconds AND its own money**, not just the plan
 total:
@@ -367,6 +381,15 @@ a Veo goes.
 `visibleFeatures()`. A rider's leftover map filters are a view, not a statement
 of what they will ride, and `main.ts:1458` already carries a note about this
 exact trap.
+
+**`mustReach` is evaluated per leg, against that leg's own endpoint.**
+`matches()` checks whichever `dest` it is handed (`src/ride-spec.ts:214`), so
+handing it the final destination for every candidate disqualifies precisely the
+vehicles this revision exists to use: a scruffy Astro with 1.5 km of range is a
+fine *starter* when its hand-off is 1.2 km away, and useless only as a vehicle
+for the whole trip. Master plan §5.2 calls this correction load-bearing; this
+tier's share of it is passing the right `dest` — the hand-off point for a first
+hop, the drop-off node for the last ride leg — never `to` for all of them.
 
 **Rule 1 is a filter, not a penalty.** `risk`-tier vehicles are excluded from
 every leg of every plan. Only if no non-`risk` vehicle is within a 5-minute
@@ -425,7 +448,16 @@ every unlock**, with the hand-off drawn on the map.
   hand-off plan that beats the direct walk — the headline case, and the one
   revision 2 could not express at all.
 - No plan contains a `risk`-tier vehicle while a non-`risk` one is within a
-  5-minute walk; when none is, exactly one appears and `riskTierOffered` is set.
+  5-minute walk. When none is, a `risk`-tier vehicle may appear **only as a
+  first hop** — never as a pickup, on any plan, ever — and `riskTierOffered` is
+  set. Asserted on the **leg's role and the fallback condition**, not on a
+  count: the bounded first-hop set may legitimately contain several, so
+  "exactly one appears" over-constrains the planner *and* passes while a risky
+  **pickup** slips through, which is the half of the rule that has no
+  exception.
+- A starter vehicle that can reach the hand-off but **not** the final
+  destination is offered as a first hop — the per-leg `mustReach` regression,
+  and the one a single-vehicle reading silently fails.
 - A `resident` rider (1 unlock = $1) and an `equity` rider get **different
   plan orders over the same fleet** — the money term is real, not decorative.
 - An `equity` rider with 5 free minutes left and one with 55 get different
@@ -935,8 +967,19 @@ notice, and a misread total is a rider sent to lose an argument in public.
 All three, or no claim is made:
 
 1. the trip **demonstrably** starts or ends inside an Equity Area polygon;
-2. the charged rate **demonstrably** is not $1 + 13¢/min;
+2. the confirmed charge **demonstrably EXCEEDS** the applicable expected
+   charge — not merely differs from it;
 3. the rider has **confirmed** the figures.
+
+**"Differs" is the wrong test**, and master plan §12.5 corrected it for a
+reason worth repeating here: a promotional rate, a credit or a free Access trip
+all differ from $1 + 13¢/min while leaving the rider **better off**, and a tool
+that writes to support about those is worse than useless to the people it is
+for. So the comparison is one-sided, and it has to absorb the ways a correct
+charge legitimately fails to equal the arithmetic — `billableMinutes` is `ceil`
+with a floor of 1 (`ride-cost.ts`), `estimateWithTax` adds tax on top of
+`unlock + perMin`, and a small tolerance covers the remainder. Below the bar,
+inside the tolerance, or unresolved: `cannot_tell`, never `overcharged`.
 
 **Many receipts show time and money but no geography**, and the question is
 geographic. So: match by time to the rider's own tracked ride when one exists
@@ -993,6 +1036,13 @@ delete — a consent you cannot withdraw is not one.
 - A receipt with no locations and no matching tracked ride returns
   `cannot_tell`, never `overcharged` — the single most important assertion in
   this phase.
+- A receipt charged **less** than the expected charge — a promotion, a credit,
+  a free Access trip — returns `correct` or `cannot_tell` and **never**
+  `overcharged`. The one-sided comparison has a test because "differs" is the
+  natural way to write the condition and the way it was written first.
+- A charge exceeding the expectation by less than the tolerance, or only by
+  billable-minute rounding or tax, returns `correct` — the three legitimate
+  reasons a right charge is not equal to the raw arithmetic.
 - A receipt differing from the expected charge only by the $1 unlock, for a
   VeoPlus rider, returns `cannot_tell`.
 - A trip starting inside a polygon and charged at the base rate returns
@@ -1237,7 +1287,7 @@ the wrong call and the envelope should come back.
 | Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
 | Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
-| `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/083` lands |
+| `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when **the next free migration** adding `replaces_dibs_id` lands — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
