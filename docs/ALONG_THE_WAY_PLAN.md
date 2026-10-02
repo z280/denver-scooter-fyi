@@ -289,7 +289,18 @@ Walking appears twice and is short both times. The spec-matching vehicle is a
 export function rankPlans(
   feats: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>[],
   ctx: { from: LngLat; to: { lat: number; lon: number }; spec: RideSpec;
-         rate: RatePlan; freeMinutesLeft: number | null;
+         rate: RatePlan;
+         /** RESOLVED BY THE CALLER, never `null`. This function has no
+          *  tracked-ride input, so it could not estimate a `null` even in
+          *  principle — §2.2's control owns the estimate (or the pessimistic
+          *  0 for a signed-out rider) and hands down a number, so the
+          *  free-minute state has exactly one meaning inside the search. */
+         freeMinutesLeft: number;
+         /** §6.2's bounded selection: the best `W` first hops and `H`
+          *  pickups. Inputs, not constants — see §2.1's note; they arrive on
+          *  the candidates response and fall back to the documented
+          *  cold-start default. */
+         bounds: { firstHops: number; pickups: number };
          /** `ride-cost.ts` holds the tax rate as MUTABLE module state. A pure
           *  search that reads it ranks against whatever the module happens to
           *  say, and a client pricing pre-tax against a server pricing with
@@ -517,11 +528,19 @@ nodes, so without this step a multi-hop search over the whole fleet does
 fleet-scale work **on every 90-second refresh**, on a phone. **`W` and `H` reach this tier as `ctx` inputs — they cannot be "imported".**
 The two repos share no runtime module, and master §6.2 deliberately does not
 fix their values until the deployed matrix's own limits have been measured, so
-there is nothing to import yet and no import path if there were. They arrive
-**with the candidates response** and are cached for the session, with a
-**documented offline default** for a cold start or a failed call — and the
-default must be written down here when it is chosen, because an undocumented
-one is each implementation picking its own bound.
+there is nothing to import yet and no import path if there were. They arrive on the candidates
+response as `bounds: { first_hops, pickups }`, are cached for the session, and
+reach this tier as **`ctx.bounds`** (§2.1) — a typed input in both contracts,
+because prose saying they "arrive" is not a route.
+
+**The cold-start default is `firstHops: 8, pickups: 12`** — `N ≤ 20` — used
+when the client has never had a response or the call failed. It is
+**provisional and labelled so in both plans**: master §6.2 fixes the real
+values against the deployed matrix's own limits, and at `N = 20` the server's
+second call is `20 × 21 = 420` pairs, which is the figure to measure against.
+When the measured values land they replace this default **in both documents at
+once**, because a default that drifts apart is two tiers disagreeing about what
+was *considered*.
 
 The reason they have to match the server's at all is §2.3's rule 2: two tiers
 disagreeing about which vehicles were *considered* disagree about
@@ -906,8 +925,17 @@ geometry — and owns neither. Three answers:
   13¢ scales with the leg's minutes, the $1 is a one-off charged when the leg
   starts. Returning them as one number is how a planner either double-counts
   the dollar or loses it. The unlock belongs to the leg's own
-  `unlockCents` (§2.1), priced per tier like every other unlock, and
-  `EQUITY_AREA_RATE.unlockCents` is where its value lives.
+  `unlockCents` (§2.1) — and for an Equity Area leg it comes from
+  **`EQUITY_AREA_RATE.unlockCents`, not from the rider's tier.**
+
+  **"Priced per tier" was wrong here, and it broke a rule two sections
+  down.** The Equity Area rate is `$1 + 13¢/min` **as a rate**, so a tier whose
+  ordinary unlock is $0 does not get an equity leg for free — whether the Pass
+  waives *this* dollar is exactly what Exhibit C does not say. §5.2 already
+  requires the **worse VeoPlus reading (charged)** for the second unlock and
+  §5.3 tests for it, so pricing the same dollar per tier here would have made
+  the planner and the disclosure disagree about the same leg, with the planner
+  taking the optimistic side — the direction this phase never takes.
 
   **Eligibility is the leg's own endpoints, not route geometry.** With a leg,
   two endpoints and a rate plan this function has exactly what the question
@@ -1244,10 +1272,28 @@ with `to`, `cc`, `subject` and `body` already populated — the rider still
 reviews and sends, and the CC is a real header rather than a line of prose.
 
 **The fallback, because `mailto:` has a length limit** that varies by client
-and platform: when the body would overflow it, fall back to copy-to-clipboard
-— and then show the `To:` and any `Cc:` **as their own copyable fields**. A
-fallback that drops the CC into prose is the bug this section exists to
-prevent, so the CC must never degrade into body text.
+and platform — and **"when the body would overflow" is not implementable**, so
+it is not the condition:
+
+- no client exposes a "this would overflow" signal, and a `mailto:` that is
+  too long **opens a silently truncated draft** rather than failing, which is
+  the worst available outcome: a complaint that looks sent and is missing its
+  figures;
+- the limit applies to the **fully percent-encoded URI**, not to the body — and
+  encoding can more than double a body's length, so measuring the body
+  measures the wrong string.
+
+So: build the complete `mailto:` URI, **measure its encoded length**, and take
+the clipboard route when it exceeds **1,800 characters** — a conservative
+threshold chosen below the smallest limit in common circulation rather than
+tuned to any one client. **And the clipboard route is always available anyway**,
+as its own control, so the rider is never dependent on our estimate of a limit
+we cannot query.
+
+The clipboard route shows `To:` and any `Cc:` **as their own copyable fields**.
+A fallback that drops the CC into prose is the bug this section exists to
+prevent, so the CC must never degrade into body text. §8.7 covers the boundary
+either side of 1,800.
 
 The body carries: the **account identifier** (§8.3's only purpose — without it
 the complaint cannot credibly say whose trip this was), the trip, the charge,
@@ -1307,6 +1353,10 @@ delete — a consent you cannot withdraw is not one.
   fallback is asserted separately, on the same content — testing only the
   fallback would let the normal mail draft omit all of it (§8.5 made
   `mailto:` the primary path, and this assertion was left behind).
+- A complaint whose encoded `mailto:` URI is **1,800 characters** opens the
+  draft; **1,801** takes the clipboard route, with `To:` and `Cc:` as their own
+  fields. Both sides of the boundary, because the failure being prevented is a
+  silently truncated draft rather than an error.
 - **Neither complaint path is reachable until the rider has confirmed the
   figures** — not the `mailto:` and not the fallback copy. Gating only one of
   them means an unconfirmed complaint can still be opened and sent, which is
@@ -1519,7 +1569,7 @@ enumerated props only — no coordinates, no destination, no spec contents, and
 | `equity_savings_shown` | `kind` (`start` \| `hand_off`) |
 | `equity_savings_taken` | `kind` |
 | `receipt_checked` | `source` (`screenshot` \| `manual`), `had_tracked_ride` (bool) |
-| `receipt_verdict` | `verdict` (`overcharged` \| `correct` \| `cannot_tell`), `reason` — **no amounts, ever** |
+| `receipt_verdict` | `verdict` (`overcharged` \| `correct` \| `cannot_tell`), `reason` (`exceeds_bar` \| `matches_expected` \| `no_geography` \| `inside_margin` \| `veoplus_unmodelled` \| `tier_unresolved`) — **enumerated, because this section's own rule is enumerated props only** and an unconstrained `reason` becomes free text from the verdict UI, which is how an amount or an address reaches telemetry. **No amounts, ever** |
 | `receipt_complaint_prepared` | `mechanism` (`mailto` \| `clipboard`), `cc` (bool) — **not** `…_copied`: after §8.5 the primary path opens a draft and copies nothing, so the old name would either miss every normal complaint or report a thing that did not happen |
 | `receipt_contributed` | `withdrawn` (bool) |
 | `trip_alert_opt_in` | `enabled` (bool), `had_phone` (bool) |
