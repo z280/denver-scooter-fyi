@@ -592,28 +592,43 @@ function searchOnce(
       ? Math.max(0, Math.min(FREE_MINUTE_BUDGET, ctx.freeMinutesLeft) - alreadyUsed)
       : 0;
 
-  // WHICH LEGS THE SPEC BINDS ON — an inference, because neither plan says.
+  // WHICH LEGS THE SPEC BINDS ON. Neither plan stated it; the rule is:
   //
-  // The original ask was "plan to RIDE to a device that meets their
-  // specifications", so the spec describes the vehicle the rider ENDS ON. A
-  // starter is something ordinary you ride to get there.
+  //     THE SECOND SCOOTER IS THE ONE THAT MUST MATCH THE SPEC
+  //     IF THE FIRST CANNOT.
   //
-  // Reading it the other way — every vehicle in the plan must satisfy every
-  // `must` — deletes the feature: if the Astro you walk to needs the basket
-  // too, there is nothing to hand off FROM, and the plan collapses back to
-  // "walk to the matching scooter", which is the misreading revision 3 exists
-  // to correct. So:
+  // So ONLY THE FIRST RIDE LEG'S VEHICLE MAY FAIL THE SPEC, and it may do so
+  // only because it is a starter — something ordinary you ride to get to what
+  // you asked for. Everything downstream of it is the vehicle the rider
+  // wanted, which also means a plan can never hand off FROM a matching
+  // scooter TO a non-matching one.
   //
-  //   * the LAST ride leg's vehicle must satisfy the rider's musts — it is
-  //     the one they keep, and §5.2 says musts are never relaxed;
-  //   * EVERY leg's vehicle must pass `mustReach` for ITS OWN endpoint, which
-  //     is the per-leg rule master §5.2 calls load-bearing;
-  //   * a starter needs only that, plus availability and rule 1.
+  // Reading it the other way — every vehicle must satisfy every requirement —
+  // deletes the feature: if the Astro you walk to needs the basket too, there
+  // is nothing to hand off FROM, and the plan collapses back to "walk to the
+  // matching scooter", which is the misreading revision 3 exists to correct.
+  //
+  // Three checks enforce it, and they are listed together because no single
+  // one of them is sufficient and a change to any one breaks the rule
+  // silently:
+  //
+  //   1. hand-off TARGETS come only from the pickup pool, which is screened on
+  //      `ideal` (`couldEndOn` below) — so any vehicle reached by a hand-off
+  //      matches;
+  //   2. the FINAL ride leg must be `ideal` (`qualifiesFor(..., true)`) — so a
+  //      single-vehicle plan cannot quietly offer a non-matching scooter, and
+  //      the last vehicle is always the one they keep;
+  //   3. the CONTINUATION edge obeys both of the above, because a re-solve
+  //      must not answer "keep riding the basket-less starter to the door"
+  //      just because the pickup vanished. §2.5 has the regression.
+  //
+  // Across all of it, EVERY leg's vehicle must pass `mustReach` for ITS OWN
+  // endpoint — the per-leg rule master §5.2 calls load-bearing.
   //
   // The one line of the plan that pulls the other way — "a favourite that
   // fails a `must` is disqualified like anything else" — is about favourites
   // not buying their way past a requirement, and still holds: a favourite
-  // cannot become the vehicle you end on without satisfying the musts.
+  // cannot become the vehicle you end on without satisfying the spec.
   const starterSpec: RideSpec = {
     ...spec,
     models: null,
@@ -737,6 +752,18 @@ function searchOnce(
     );
     const props = current?.properties;
     if (props) {
+      // The vehicle under the rider, as a candidate, so the SAME spec checks
+      // apply to carrying on as to any other ride leg. It is not in
+      // `candidates` — `toCandidates` drops it, because the vehicle you are
+      // already on is not a vehicle to walk to.
+      const currentAsCandidate: Candidate = {
+        props,
+        at: ctx.from,
+        key: vehicleKey(props),
+        risky: isRisky(props),
+        walkSeconds: 0,
+        toDestSeconds: rideSeconds(roadMeters(ctx.from, dest)),
+      };
       const continueTo: number[] = [DEST, ...sel.pickups];
       for (const target of continueTo) {
         const end = positionOf(target);
@@ -745,6 +772,13 @@ function searchOnce(
         if (target !== DEST && candidates[target].toDestSeconds >= rideSeconds(roadMeters(ctx.from, dest))) {
           continue;
         }
+        // CARRYING ON IS A RIDE LEG LIKE ANY OTHER. Continuing to the DOOR is
+        // a final leg, so the vehicle must match the spec; continuing to a
+        // pickup is a starter leg, so it needs only availability and reach to
+        // that pickup. Without this a re-solve could answer "keep riding the
+        // basket-less scooter you are on all the way there" — the rider's
+        // requirement does not evaporate because their pickup was taken.
+        if (!qualifiesFor(currentAsCandidate, end, target === DEST)) continue;
         const edge: RideEdge = { vehicle: -1, to: target, meters, seconds: rideSeconds(meters) };
         const priced = priceRide(
           edge,

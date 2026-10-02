@@ -547,6 +547,36 @@ disagreeing about which vehicles were *considered* disagree about
 **disqualification**, which that rule forbids outright. Rule 1 (they may
 disagree on order) does not cover it.
 
+**WHICH SCOOTER MUST MATCH THE SPEC — the second one, if the first cannot.**
+Only the **first ride leg's vehicle** may fail the spec, and only because it is
+a *starter*: something ordinary you ride to get to what you asked for.
+Everything downstream of it is the vehicle the rider wanted, so **a plan can
+never hand off FROM a matching scooter TO a non-matching one**, and the vehicle
+they arrive on always matches.
+
+Revision 3 left this unstated and it is load-bearing in both directions. Read
+the other way — every vehicle must satisfy every requirement — the feature
+deletes itself: if the Astro you walk to needs the basket too, there is nothing
+to hand off *from*, and the plan collapses back to "walk to the matching
+scooter", which is the misreading this whole revision exists to correct.
+
+**Three checks enforce it and none is sufficient alone**, so a change to any
+one breaks the rule silently — which is why they are listed together, and why
+§2.5 tests the invariant rather than the checks:
+
+| | Enforces |
+|---|---|
+| the **pickup pool** is screened on `ideal` | any vehicle reached by a hand-off matches |
+| the **final ride leg** must be `ideal` | a single-vehicle plan cannot quietly offer a non-matching scooter |
+| the **continuation edge** obeys both | a re-solve cannot answer *"keep riding the basket-less starter to the door"* — the rider's requirement does not evaporate because their pickup was taken |
+
+`ideal` and not `qualifies`, and the difference is the whole mechanism:
+`qualifies` enforces only the rider's `must` fields, so with no musts set it is
+true of every available vehicle — nothing is ever "not found", nothing is ever
+given up, and the relaxation ladder below could never run. The ladder exists to
+trade **preferences** away one rung at a time, so the pool has to begin by
+demanding them.
+
 **`mustReach` is evaluated per leg, against that leg's own endpoint.**
 `matches()` checks whichever `dest` it is handed (`src/ride-spec.ts:214`), so
 handing it the final destination for every candidate disqualifies precisely the

@@ -94,6 +94,8 @@ function spec(over: Partial<RideSpec> = {}): RideSpec {
 }
 
 const rideLegs = (p: TripPlan) => p.legs.filter((l) => l.mode === "ride");
+const readFeatures = (leg: { vehicle?: DeviceProperties } | undefined) =>
+  leg?.vehicle?.device_features as { basket?: boolean } | undefined;
 const vehicleSeq = (p: TripPlan) =>
   rideLegs(p).map((l) => l.vehicle?.vehicle_identifier ?? "?");
 
@@ -194,6 +196,102 @@ describe("rankPlans — the hand-off", () => {
     );
     expect(vehicleSeq(res.plans[0])).toEqual(["a", "b", "c", "d"]);
     expect(res.plans[0].handOffs).toBe(3);
+  });
+});
+
+describe("rankPlans — which scooter must match the spec", () => {
+  // THE RULE: the second scooter is the one that must match the spec if the
+  // first cannot. So only the FIRST ride leg's vehicle may fail it, and a plan
+  // can never hand off FROM a matching scooter TO a non-matching one.
+  //
+  // Three separate checks enforce this and none is sufficient alone (the
+  // pickup pool, the final-leg check, and the continuation edge), so it is
+  // tested as the invariant rather than per check.
+  const hasBasket = (p: TripPlan, i: number): boolean => {
+    const f = readFeatures(rideLegs(p)[i]);
+    return f?.basket === true;
+  };
+
+  // The basket is a PREFERENCE here, not a `must`, and that is the whole
+  // point of the fixture. An earlier draft made it a `must` — and then the
+  // musts alone excluded the non-matching vehicle, so the test passed with the
+  // pickup pool screened on `qualifies` instead of `ideal`. It was asserting
+  // the invariant and proving the musts. A preference separates them: it
+  // leaves `qualifies` true for a basket-less scooter and `ideal` false.
+  const basketPreferred = () => spec({ features: ["basket"] });
+
+  it("lets only the FIRST vehicle fail the spec, never a later one", () => {
+    const feats = [
+      // Nearest, no basket: a legitimate starter.
+      feature(at(120), { device_id: "astro", vehicle_identifier: "astro" }),
+      // Further along the route, no basket — the tempting wrong answer. As a
+      // MIDDLE vehicle it would shorten nothing and give the rider a leg on a
+      // scooter they did not ask for.
+      feature(at(1000), { device_id: "tempting", vehicle_identifier: "tempting" }),
+      // The one the rider asked for, too far to walk to, and nearest the door.
+      feature(at(2000), withBasket({ device_id: "cosmo", vehicle_identifier: "cosmo" })),
+    ];
+    const res = rankPlans(feats, ctx({ spec: basketPreferred() }));
+
+    const ridden = res.plans.concat(res.backups).filter((p) => rideLegs(p).length > 0);
+    expect(ridden.length).toBeGreaterThan(0);
+    for (const plan of ridden) {
+      const rides = rideLegs(plan);
+      // Every vehicle except possibly the first matches.
+      for (let i = 1; i < rides.length; i += 1) {
+        expect(hasBasket(plan, i)).toBe(true);
+      }
+      // And the last one always does — it is the one they keep.
+      expect(hasBasket(plan, rides.length - 1)).toBe(true);
+    }
+    // The starter is still used, so this is not passing by refusing to plan.
+    expect(ridden.some((p) => vehicleSeq(p)[0] === "astro")).toBe(true);
+  });
+
+  it("will not answer a re-solve with 'keep riding the starter to the door'", () => {
+    // The continuation edge is a ride leg like any other. A rider mid-trip on
+    // a basket-less starter whose pickup vanished does not stop wanting a
+    // basket, so carrying on to the DOOR has to satisfy the spec — while
+    // carrying on to a PICKUP is still fine, because that is a starter leg.
+    const starterUnderRider = feature(at(0), {
+      device_id: "starter",
+      vehicle_identifier: "starter",
+      current_range_meters: 20_000,
+    });
+    const feats = [
+      starterUnderRider,
+      feature(at(900), withBasket({ device_id: "cosmo", vehicle_identifier: "cosmo" })),
+    ];
+    const res = rankPlans(
+      feats,
+      ctx({
+        spec: basketPreferred(),
+        inRide: {
+          vehicleIdentifier: "starter",
+          rangeMeters: 20_000,
+          unlockPaid: true,
+          freeMinutesUsedBeforeRide: 0,
+          rideStartedAt: "2026-10-02T11:55:00Z",
+        },
+      }),
+    );
+
+    const plansEndingOnStarter = res.plans
+      .concat(res.backups)
+      .filter((p) => {
+        const rides = rideLegs(p);
+        return rides.length > 0 && rides[rides.length - 1].vehicle?.vehicle_identifier === "starter";
+      });
+    expect(plansEndingOnStarter).toHaveLength(0);
+
+    // Carrying on TO THE PICKUP is still offered, and still costs no second
+    // unlock on that leg.
+    const continuing = res.plans
+      .concat(res.backups)
+      .find((p) => vehicleSeq(p)[0] === "starter");
+    expect(continuing).toBeDefined();
+    expect(vehicleSeq(continuing!)).toEqual(["starter", "cosmo"]);
+    expect(continuing!.legs[0].unlockCents).toBe(0);
   });
 });
 
