@@ -102,7 +102,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `filter-presets.ts` *(existing)* | 1 | **Untouched.** Saved filter presets and saved specs coexist; §1.3 says why. |
 | `favorites.ts` *(existing)* | 4 | **Untouched.** Saved *places*, not vehicles; §4.1 says why they must not be merged. |
 | `qr-scan.ts` *(existing)* | 4 | **Untouched.** Reused as-is — it already opens the camera, decodes, and hands back the raw payload with no opinion about what it means. |
-| `api.ts` *(existing)* | 1–5, 8, 9 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`; **Phase 8's** receipt submit / list / withdraw (§8.6 — withdrawal has to really delete); **Phase 9's** `fetchPlanCriticalState(ids, signal)` and the trip-alert opt-in's read/write (§9.2). Phase 10 adds nothing here — its CC is a `mailto:` parameter, not a request. **This row grows with every phase that touches the network**, because the house rule above is that the calls live here; a client that ends up in its feature module instead is the same defect each time, and it has already been caught once (§9.2). |
+| `api.ts` *(existing)* | 1–5, 8, 9 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`; **Phase 8's** receipt submit / list / withdraw (§8.6 — withdrawal has to really delete); **Phase 9's** `fetchPlanCriticalState(ids, signal)`, the trip-alert opt-in's read/write, and the live-plan lifecycle `createPlan` / `updatePlan` / `finishPlan` (§9.1, master §13.6 — a stored plan with no finish call is a watcher texting about a finished trip). Phase 10 adds nothing here — its CC is a `mailto:` parameter, not a request. **This row grows with every phase that touches the network**, because the house rule above is that the calls live here; a client that ends up in its feature module instead is the same defect each time, and it has already been caught once (§9.2). |
 | `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
 | `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
 | `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
@@ -298,6 +298,11 @@ export function rankPlans(
            rangeMeters: number;        // what the CURRENT vehicle can still do
            unlockPaid: true;           // so continuing costs no unlock
            freeMinutesUsedThisRide: number;
+           /** Master §6.4's `started_at`. The count above is a SNAPSHOT, and
+            *  the rental is still running: without the start time a re-solve
+            *  ten minutes in prices continuation from a ten-minute-stale
+            *  balance, which on the Access cliff is the whole question. */
+           rideStartedAt: string;      // ISO 8601
          } | null },
 ): { plans: TripPlan[]; backups: TripPlan[]; relaxed: SpecField[];
      /** Rule 1's fallback fired: some offered plan has a `risk`-tier FIRST
@@ -362,6 +367,31 @@ money converted to seconds, plus preference penalties. Money is genuinely in
 it — an unlock fee is the reason a hand-off might not be worth taking, and
 three of the five tiers pay nothing for one (master plan §6.3).
 
+**`SECONDS_PER_CENT = 8`, and it is the same constant the server uses** (master
+plan §6.3.0). "Money converted to seconds" is not implementable until the
+conversion is a number, and a client that degrades to a *different* rate
+degrades to a different **answer**, not a rougher one — which would break
+§2.3's rule 3 silently, since the two tiers would disagree about price without
+either being wrong. So it is imported, never re-chosen here, and the two
+rider-facing consequences travel with it: a $1 unlock is worth **13 min 20 s**,
+and one preserved free Access minute is worth **2 minutes** of extra travel.
+
+**The free-minute balance is part of the search STATE, not just an input.**
+`freeMinutesLeft` arrives as a number, and the cheap thing to do with it is
+price the whole plan under one regime. Master plan §6.3 shows why that is
+unsound with a counterexample: pricing every minute free and pricing every
+minute paid each pick a plan, and the optimum can be neither, because uniform
+pricing destroys the exact trade-off the cliff creates — spend more total
+minutes to stay inside the free hour. So a node is `(location, free minutes
+consumed)`, or equivalently nondominated `(time, free-minutes-consumed)` labels
+per node, and an edge's money term is computed from the balance **on arrival**.
+
+The budget is 60 whole minutes, so that is at most 61 layers over the same
+small node set, and it **collapses to a single layer** for every rider without
+a free balance — which is four of the five tiers, and Access riders who have
+spent the hour. The cheap tier can afford the exact answer; it does not need
+the shortcut that does not work.
+
 **Geometry.** Straight lines through `reach.ts`'s `DETOUR_FACTOR = 1.35` — the
 ratio measured against donated tracks. Walking pace from `locate.ts`'s
 exported `WALK_METERS_PER_MIN`, in **seconds and unrounded**: `walkMinutes`
@@ -377,10 +407,21 @@ a Veo goes.
 > disagree. Unifying them changes every walk time shown in the app, which is a
 > user-visible change and not Phase 2's business — but it should be somebody's.
 
-**Feed it the unfiltered fleet.** `devices.allFeatures()`, never
-`visibleFeatures()`. A rider's leftover map filters are a view, not a statement
-of what they will ride, and `main.ts:1458` already carries a note about this
-exact trap.
+**Feed it the unfiltered fleet, then bound it.** `devices.allFeatures()`,
+never `visibleFeatures()` — a rider's leftover map filters are a view, not a
+statement of what they will ride, and `main.ts:1458` already carries a note
+about this exact trap.
+
+**Unfiltered is not unbounded, and the two get conflated.** The fleet goes in;
+what enters the graph is master plan §6.2's explicit selection — the best `W`
+non-`risk` vehicles by walk seconds inside the walk cap as **first hops**, the
+best `H` non-`risk` vehicles as **pickups**, and `N = |W ∪ H|`. The bbox and
+the walk cap bound the *first* hop only; they say nothing about downstream
+nodes, so without this step a multi-hop search over the whole fleet does
+fleet-scale work **on every 90-second refresh**, on a phone. `W` and `H` are
+the server lane's constants, imported and not re-picked, for the same reason as
+the exchange rate: two tiers disagreeing on which vehicles were *considered*
+disagree on disqualification, which §2.3 rule 2 forbids outright.
 
 **`mustReach` is evaluated per leg, against that leg's own endpoint.**
 `matches()` checks whichever `dest` it is handed (`src/ride-spec.ts:214`), so
@@ -462,6 +503,20 @@ every unlock**, with the hand-off drawn on the map.
   plan orders over the same fleet** — the money term is real, not decorative.
 - An `equity` rider with 5 free minutes left and one with 55 get different
   orders: the cliff is priced, not smoothed.
+- **Master plan §6.3's crossing-trip case**, with its three plans: the plan
+  whose total is longest but which stays inside the free balance wins, and
+  neither single-regime pricing finds it. This is the regression that fails if
+  anyone replaces the state augmentation with a cheaper shortcut — and it is
+  the one test that cannot be written without the state in the search.
+- **The exchange rate's crossover**: a plan one unlock cheaper and 13 minutes
+  slower wins; the same plan 14 minutes slower loses. A scalar with no pinned
+  rate passes whatever test you write for it, so the rate is asserted at its
+  boundary rather than implied.
+- **The favourite bonus is 90 seconds** (master plan §8.6): an otherwise
+  identical favourite wins, and a favourite loses to a plan more than 90
+  seconds better. Both halves, because a bonus with only the first half tested
+  can drift upwards into a filter — and §2.1 says a favourite is a bonus and
+  never a filter.
 - Plans are ranked by generalised cost, and `estimatedCents` on every plan
   includes every unlock in it.
 - Monotonic relaxation still holds over plans, not just vehicles.
@@ -674,7 +729,13 @@ geometry — and owns neither. Three answers:
 - `startInAreaSaving(candidate, spec, plan)` — the Phase 5a win: this vehicle
   is inside the polygon, so the whole trip is discounted for one unlock. In
   dollars, next to the extra walking minutes it costs.
-- `equityLegRate(leg)` — Phase 5b, **and it is no longer a search**. Revision
+- `equityLegRate(leg, { from, to, rate })` — Phase 5b, **and it is no longer
+  a search**. The leg alone cannot answer this: `TripLeg` (§2.1) carries
+  seconds, metres and money, and **neither endpoint coordinates nor the
+  rider's rate plan** — so without both it can neither test the polygon nor
+  return `null` for an Access rider, which are its only two jobs. Pass the
+  ride leg's own endpoints (per-leg, like `mustReach`: a hand-off's pickup
+  point, not the trip's destination) and the `RatePlan`. Revision
   3b deleted `stopoverSaving`: an Equity Area stopover is just a hand-off
   (§2) whose pickup happens to sit inside a polygon, so this feeds the Phase 2
   planner's money term instead of ranking anything itself. Equity hand-offs
@@ -1080,7 +1141,8 @@ opt-in control, a resume entry point, and bounding the rapid check.
 | `trip-alerts.ts` | The opt-in's state and the rules about *what* earns a text (§9.3). **Pure** — the decision is testable without a network. |
 | `plan-resume.ts` | Reading a resume link, holding the plan reference across a sign-in, and re-entering the plan. **Pure** given a URL and a store. |
 | `trip-plan.ts` *(Phase 3)* | Gains the targeted-check loop and its bounds (§9.4). It owns *when* to check and *when to stop*; it does not own the request. |
-| `api.ts` *(existing)* | Gains `fetchPlanCriticalState(ids, signal)`, the typed client for the targeted check (§9.4), and the trip-alert opt-in's read/write. **The house rule at the top of this document is that API calls go through `api.ts`** — so the state machine must not reach the network itself, however small the call looks. |
+| `api.ts` *(existing)* | Gains `fetchPlanCriticalState(ids, signal)`, the typed client for the targeted check (§9.4), the trip-alert opt-in's read/write, and the **live-plan lifecycle** — `createPlan`, `updatePlan`, `finishPlan` (master plan §13.6). **The house rule at the top of this document is that API calls go through `api.ts`** — so the state machine must not reach the network itself, however small the call looks. |
+| `trip-plan.ts` *(lifecycle)* | Calls `createPlan` **on the plan the rider chose**, `updatePlan` on each re-solve, `finishPlan` on arrival or abandonment. Not optional plumbing: without `create` the server watcher has nothing to watch and the resume link nothing to resume — `fetchPlanCriticalState` reads **vehicles**, and the server cannot infer which of the offered backups was taken. Without `finish` the watcher runs to its ceiling and texts about a trip that already ended. |
 | `locate.ts` *(existing)* | Untouched. |
 
 ### 9.2 The opt-in, and the distinction that justifies it
