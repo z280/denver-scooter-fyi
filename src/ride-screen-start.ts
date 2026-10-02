@@ -96,6 +96,12 @@ import {
   type StartedTrackedRide,
   type StartTrackedRideIn,
 } from "./api.ts";
+import {
+  failedStartCounted,
+  reportFailedStart,
+  type FailedStartResult,
+} from "./ride-failed-start.ts";
+import { submitDeviceReport as defaultSubmitDeviceReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -175,6 +181,11 @@ export interface RideScreenStartDeps {
    *  `crypto.getRandomValues`. Only used for a private/guest ride's local
    *  `trackKeyId` — a real server ride's id comes from the API response. */
   randomBytes?(n: number): Uint8Array;
+  /** Injected for tests; defaults to `submitDeviceReport` from reports.ts.
+   *  Carries this screen's "It won't start" report — see
+   *  `ride-failed-start.ts` for why this screen is where that button belongs
+   *  and what the fleet does without it. */
+  submitDeviceReport?: typeof defaultSubmitDeviceReport;
 }
 
 /** Register Screen 6. Call once at startup; returns an unregister function
@@ -234,6 +245,23 @@ function randomPrivateTrackId(randomBytes: (n: number) => Uint8Array): string {
   return `private-${hex}`;
 }
 
+/** Funnel telemetry over the window CustomEvent channel, the same way
+ *  `ride-modal.ts` does it — so this screen keeps importing no app state and
+ *  `telemetry.ts` keeps its allowlist and its opt-out as the only gate. The
+ *  outcome rides along because "reported" and "deduped" mean different things
+ *  about how much of the fleet is already known to be broken. */
+function emitFailedStartTrack(outcome: string): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("scooter:track", {
+        detail: { n: "ride_failed_start", p: { outcome } },
+      }),
+    );
+  } catch {
+    /* telemetry must never break the flow */
+  }
+}
+
 function defaultRandomBytes(n: number): Uint8Array {
   const bytes = new Uint8Array(n);
   if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
@@ -282,6 +310,12 @@ function buildStartScreen(
   let fix: LngLat | null = deps.locate.current();
   let countdownTimer: number | undefined;
   let abortController: AbortController | null = null;
+  /** The "It won't start" report, once it has come back. Non-null switches
+   *  the screen to its own face: the rider has stopped trying to start THIS
+   *  scooter, so re-rendering the Veo buttons under the answer would invite
+   *  them to try again on a scooter they just told us is dead. */
+  let failedStart: FailedStartResult | null = null;
+  let reportingFailedStart = false;
 
   // ---- Auto-start (the device-card "Use in Ride Mode" survey path).
   //
@@ -330,6 +364,14 @@ function buildStartScreen(
 
   function render(): void {
     root.replaceChildren();
+    if (reportingFailedStart) {
+      root.append(el("p", "ride-wizard__lede", "Telling the fleet…"));
+      return;
+    }
+    if (failedStart) {
+      renderFailedStart();
+      return;
+    }
     if (busy) {
       root.append(el("p", "ride-wizard__lede", "Starting your ride…"));
       return;
@@ -352,6 +394,62 @@ function buildStartScreen(
   function renderAutoStart(): void {
     root.append(el("p", "ride-wizard__lede", "Starting ride mode…"));
     appendWaitingAndError();
+    // An auto-start waiting on a location fix is the longest this screen ever
+    // shows nothing to press, and a rider whose scooter will not turn on is
+    // exactly who is sitting through it. Without this the face is a dead end:
+    // the survey already answered every question, so there is no other button
+    // here to reach for. Own-device rides get it too — reporting needs a Veo
+    // vehicle and there is none, so it answers honestly and still hands them
+    // the picker rather than leaving them stuck.
+    const actions = el("div", "ride-wizard__actions");
+    actions.append(failedStartButton());
+    root.append(actions);
+  }
+
+  /** After the report. One sentence about where the information went, and one
+   *  button — back to the picker, because a rider who has just told us their
+   *  scooter is dead wants a different scooter and nothing else. */
+  function renderFailedStart(): void {
+    const result = failedStart;
+    if (!result) return;
+    root.append(el("p", "ride-wizard__lede", "This one isn't rideable"));
+    const note = el("p", "ride-wizard__hint", result.message);
+    note.setAttribute("role", "status");
+    note.setAttribute("aria-live", "polite");
+    root.append(note);
+
+    const actions = el("div", "ride-wizard__actions");
+    const pickBtn = el("button", "login-btn", "Pick another scooter");
+    pickBtn.type = "button";
+    pickBtn.addEventListener("click", () => {
+      failedStart = null;
+      // Screen 2 is the picker. Dispatch the `goto` as well as navigating the
+      // shell: the shell's own `onScreenChange` persists it, but `go()` is
+      // the router's call and the doc has to agree with where the rider is.
+      deps.session.dispatch({ type: "goto", screen: "2" });
+      ctx.go("2");
+    });
+    actions.append(pickBtn);
+    root.append(actions);
+    // No "try it anyway". The report we just sent says this scooter does not
+    // ride; offering a second attempt on the same screen would be the app
+    // disagreeing with the rider about something they can see and we cannot.
+  }
+
+  /** The exit this screen was missing. A rider standing over a scooter that
+   *  will not turn on is at the most certain moment anyone is ever going to be
+   *  about a device's rideability, and until now the only button that could
+   *  record it lived in the map popup they were no longer looking at. See
+   *  `ride-failed-start.ts` for what the fleet infers without it. */
+  function failedStartButton(): HTMLButtonElement {
+    const btn = el(
+      "button",
+      "login-btn login-btn--ghost ride-screen-start__not-rideable",
+      "🚫 It won't start",
+    );
+    btn.type = "button";
+    btn.addEventListener("click", () => void onFailedStart());
+    return btn;
   }
 
   /** Shared by both the real-device and own-device idle renders. */
@@ -474,7 +572,7 @@ function buildStartScreen(
     alreadyBtn.disabled = !canStart();
     alreadyBtn.addEventListener("click", () => onAlreadyStarted());
 
-    actions.append(androidBtn, appleBtn, alreadyBtn);
+    actions.append(androidBtn, appleBtn, alreadyBtn, failedStartButton());
     root.append(actions);
     if (!plate) {
       root.append(
@@ -509,6 +607,11 @@ function buildStartScreen(
     cancelBtn.type = "button";
     cancelBtn.addEventListener("click", () => onCancelCountdown());
     card.append(cancelBtn);
+    // THE MOMENT THIS IS FOR. The rider is watching a countdown having just
+    // been told to "scan the QR and start the scooter"; if it beeps and
+    // refuses, this is the second they know, and Cancel alone threw that away.
+    // An own-device ride never counts down, so there is no non-Veo case here.
+    card.append(failedStartButton());
     root.append(card);
   }
 
@@ -541,6 +644,50 @@ function buildStartScreen(
     // ever dispatching `startCountdown` — `rideStarted` is legal directly
     // from `wizard:6` (ride-session.ts), so no phase change is needed first.
     void finishStart();
+  }
+
+  /** Record the failure, then put the rider in front of the picker.
+   *
+   *  Order matters. The countdown stops FIRST — a timer left running would
+   *  fire `finishStart` under the report and begin a ride on the scooter the
+   *  rider just said does not move. The session goes back to `wizard:6` by the
+   *  same sanctioned route Cancel uses, because an un-started countdown is the
+   *  only thing that can legally be walked back. */
+  async function onFailedStart(): Promise<void> {
+    if (reportingFailedStart || busy) return;
+    if (countdownTimer !== undefined) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = undefined;
+    }
+    if (mode === "counting") {
+      mode = "idle";
+      deps.session.dispatch({ type: "goto", screen: "6" });
+    }
+    errorMessage = null;
+    // An auto-start path must not re-fire behind the report: the rider has
+    // answered the only question this screen had.
+    autoStartSettled = true;
+    reportingFailedStart = true;
+    render();
+
+    const doc = deps.session.current();
+    const device = doc ? selectedDevice(doc.device) : null;
+    const pos = deps.locate.current();
+    const result = await reportFailedStart(
+      {
+        vehicleIdentifier: device?.vehicleIdentifier ?? null,
+        lat: pos?.lat,
+        lng: pos?.lng,
+      },
+      deps.submitDeviceReport ?? defaultSubmitDeviceReport,
+    );
+    if (destroyed) return;
+    reportingFailedStart = false;
+    failedStart = result;
+    if (failedStartCounted(result.outcome)) {
+      emitFailedStartTrack(result.outcome);
+    }
+    render();
   }
 
   function onCancelCountdown(): void {

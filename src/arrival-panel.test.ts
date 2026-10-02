@@ -227,3 +227,99 @@ describe("the dibs clock on the chip", () => {
     expect(root.querySelector(".arrival__dibs")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// "It won't start" — the walk's worst outcome, recorded.
+//
+// This is the most certain anyone is ever going to be about a scooter: they
+// walked to it. See `ride-failed-start.ts` for what the fleet infers when
+// nobody tells it (short version: a guess from GBFS id rotations, needing two
+// of them to downgrade a device).
+// ---------------------------------------------------------------------------
+
+describe("not rideable", () => {
+  function arrived(
+    onNotRideable?: () => Promise<string>,
+  ): ArrivalPanelHandle {
+    const p = mount(onNotRideable ? { onNotRideable } : {});
+    p.update({ ...BASE, arrived: true });
+    return p;
+  }
+
+  it("offers nothing when the caller did not wire it", () => {
+    arrived();
+    expect(named("It won't start")).toBeFalsy();
+  });
+
+  it("is on the arrived face, below the route button", () => {
+    arrived(async () => "ok");
+    const labels = buttons().map((b) => b.textContent ?? "");
+    const route = labels.findIndex((l) => l.includes("Choose your route"));
+    const broken = labels.findIndex((l) => l.includes("It won't start"));
+    expect(route).toBeGreaterThanOrEqual(0);
+    expect(broken).toBeGreaterThan(route);
+  });
+
+  it("is not offered while still walking — they haven't tried it yet", () => {
+    mount({ onNotRideable: async () => "ok" }).update(BASE);
+    expect(named("It won't start")).toBeFalsy();
+  });
+
+  it("reports, shows what came of it, and offers only the way back", async () => {
+    let called = 0;
+    arrived(async () => {
+      called += 1;
+      return "Thanks — we've marked this one as not rideable.";
+    });
+    named("It won't start")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(called).toBe(1);
+    expect(root.querySelector(".arrival__sub")?.textContent).toContain(
+      "not rideable",
+    );
+    expect(buttons().map((b) => b.textContent)).toEqual([
+      "🗺️Find another scooter",
+    ]);
+    named("Find another scooter")!.click();
+    expect(calls).toContain("cancel");
+  });
+
+  it("sends one report however many times the button is pressed", async () => {
+    let called = 0;
+    arrived(async () => {
+      called += 1;
+      await new Promise((r) => setTimeout(r, 5));
+      return "ok";
+    });
+    const btn = named("It won't start")!;
+    btn.click();
+    btn.click();
+    btn.click();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(called).toBe(1);
+  });
+
+  it("still hands them back the map when the report rejects", async () => {
+    arrived(() => Promise.reject(new Error("offline")));
+    named("It won't start")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.querySelector(".arrival__sub")?.textContent).toContain(
+      "still isn't rideable",
+    );
+    expect(named("Find another scooter")).toBeTruthy();
+  });
+
+  it("a scooter that went while the report was in flight keeps the gone face", async () => {
+    const p = arrived(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return "reported";
+    });
+    named("It won't start")!.click();
+    p.reportGone("Someone just took Lunar 🐸 928.");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(root.querySelector(".arrival__title")?.textContent).toContain(
+      "Someone just took",
+    );
+  });
+});

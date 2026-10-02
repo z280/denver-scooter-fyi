@@ -111,6 +111,8 @@ import { createTripPins } from "./trip-pins.ts";
 import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
+import { reportFailedStart } from "./ride-failed-start.ts";
+import { submitDeviceReport } from "./reports.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
   wireMyScooters,
@@ -3311,6 +3313,26 @@ function beginWalkToVehicle(info: {
       // is free.
       if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
       endWalkFlow();
+    },
+    // THE WALK'S WORST OUTCOME, RECORDED. They went out of their way to get
+    // here and it will not ride. Telling us costs them one tap, and it is the
+    // only signal strong enough to stop the next rider making the same walk —
+    // see `ride-failed-start.ts` for what the fleet infers without it.
+    //
+    // The claim goes too, for the same reason `onCancel` drops it: they have
+    // stopped walking towards this scooter, and holding a dead one is worse
+    // than holding a live one.
+    onNotRideable: async () => {
+      const { message } = await reportFailedStart(
+        {
+          vehicleIdentifier: info.vehicleIdentifier,
+          lat: locate.current()?.lat,
+          lng: locate.current()?.lng,
+        },
+        submitDeviceReport,
+      );
+      if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
+      return message;
     },
     // Re-read each update rather than closing over a copy: the claim gains
     // its "started walking" stamp as the rider moves, and a stale copy would

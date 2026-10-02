@@ -1690,6 +1690,23 @@ body.ride-active .dibs-toast {
   color: var(--accent-ink);
   box-shadow: 0 0 0 2px var(--metal-active-border);
 }
+/* "It won't start". A real exit, and never a rival to the route button above
+   it: borderless, muted, and smaller, so it reads as the thing you press when
+   the main thing turned out to be impossible. */
+.arrival__action--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 38px;
+}
+.arrival__action--quiet:hover,
+.arrival__action--quiet:focus-visible {
+  background: var(--hover-neutral);
+  color: var(--fg);
+  box-shadow: none;
+}
 .arrival__action-glyph {
   font-size: 18px;
   line-height: 1;
@@ -2883,6 +2900,20 @@ body.is-map-picking .home-bar {
 }
 .login-btn--secondary:hover:not([disabled]) {
   background: var(--hover-neutral);
+}
+/* Quieter than --secondary: a borderless row for the action that is neither
+   what the screen is for nor a mistake to prevent. Screen 6's "It won't
+   start" is the case — a real, needed exit that must not compete with the
+   buttons that begin a ride. */
+.login-btn--ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  border-color: transparent;
+  font-weight: 500;
+}
+.login-btn--ghost:hover:not([disabled]) {
+  background: var(--hover-neutral);
+  color: var(--fg);
 }
 
 .account-intro {
