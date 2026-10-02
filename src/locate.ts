@@ -14,7 +14,12 @@ const LINE_LAYER = "walk-line-dash";
  *  street grid rarely costs more than ~30% over the crow-flies path, and
  *  3 mph is a typical urban walking pace. */
 const DETOUR = 1.3;
-const WALK_METERS_PER_MIN = 80.5; // 3 mph
+/** Exported because `along-the-way.ts` ranks in SECONDS and cannot use
+ *  `walkMinutes` — that one rounds to whole minutes with a floor of 1, which
+ *  is right for a label and fatal for a ranking (it would flatten every
+ *  candidate inside the same minute into a tie). The pace is the shared
+ *  thing; the rounding is not. */
+export const WALK_METERS_PER_MIN = 80.5; // 3 mph
 
 export interface LngLat {
   lng: number;
