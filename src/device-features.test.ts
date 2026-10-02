@@ -677,6 +677,27 @@ describe("the QR flows", () => {
     expect(sendBtn().disabled).toBe(false);
   });
 
+  it("prefillQr counts as the scan — the rider is not asked for it twice", async () => {
+    // The ribbon's QR tool is one scanner behind a mode dial, so by the time it
+    // hands off here the scan has already happened; reopening the camera would
+    // be the app forgetting what the rider just did.
+    const scan = instantScan("should-not-be-used");
+    const { submit } = open({
+      requireQr: true,
+      vehicleIdentifier: undefined,
+      deviceId: undefined,
+      prefillQr: "already-scanned",
+      scan,
+    });
+    answerToggles();
+    // Send is live without touching the scan button at all.
+    expect(sendBtn().disabled).toBe(false);
+    sendBtn().click();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    expect(submit.mock.calls[0][0].qr_raw_value).toBe("already-scanned");
+    expect(scan).not.toHaveBeenCalled();
+  });
+
   it("requireQr sends no vehicle at all — the scan is the identity", async () => {
     const scan = instantScan("raw-payload");
     const { submit } = open({

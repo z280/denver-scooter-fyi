@@ -323,6 +323,13 @@ export interface ConfirmFeaturesOptions {
    *  a QR code has been scanned — the scan is both the proof-of-presence
    *  and the only statement of which scooter the answers describe. */
   requireQr?: boolean;
+  /** A QR payload the caller has ALREADY scanned, so the rider is not asked to
+   *  scan the same sticker twice. The ribbon's QR tool (`qr-utility.ts`) is one
+   *  scanner in front of a mode dial — by the time it hands off to this modal
+   *  the scan has happened, and reopening the camera here would be the app
+   *  forgetting what the rider just did. Still only ever the RAW payload: this
+   *  module parses it no more than `openScanner` does. */
+  prefillQr?: string;
   lat?: number;
   lng?: number;
   /** Injected for tests; defaults to the real POST. */
@@ -367,6 +374,9 @@ export function openConfirmFeatures(
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
 
   const answers = emptyAnswers();
+  // A scan handed in by the caller counts exactly as one taken here would: it
+  // satisfies `requireQr` and it is what gets submitted.
+  if (options.prefillQr) answers.qrRawValue = options.prefillQr;
   const cleanupFns: (() => void)[] = [];
   let closed = false;
   let sending = false;

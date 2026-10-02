@@ -72,7 +72,14 @@ import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
-import { wireRideDeepLink } from "./ride-deeplink.ts";
+import {
+  VEHICLE_IDENTIFIER_RE,
+  normalizePlate,
+  primeDeepLinkPlates,
+  resolvePlateAgainstGbfs,
+  wireRideDeepLink,
+} from "./ride-deeplink.ts";
+import { vehicleDisplayName } from "./vehicle-name.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
@@ -112,6 +119,12 @@ import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { reportFailedStart } from "./ride-failed-start.ts";
+import { openQrUtility, plateFromQr } from "./qr-utility.ts";
+import {
+  qrRideAction,
+  qrRideMessage,
+  type ScannedVehicle,
+} from "./qr-ride-scan.ts";
 import { submitDeviceReport } from "./reports.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
@@ -381,6 +394,26 @@ need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
   openConfirmFeatures({
     requireQr: true,
     status: "needs_features_confirmed",
+  });
+});
+// The ribbon's QR tool: one scan, a dial in front of it deciding what the scan
+// does. See `qr-utility.ts` for why it is a dial and not two buttons, and
+// `qr-ride-scan.ts` for the four things a scan can mean to a ride.
+need<HTMLButtonElement>("ribbon-qr").addEventListener("click", () => {
+  openQrUtility({
+    // Mode `features` hands the payload straight on and parses nothing: the
+    // server resolves which scooter the scan names (`qr_raw_value` on the
+    // feature report), which is why this mode works for a scooter that is not
+    // in the live feed at all and the ride mode below does not.
+    onConfirmFeatures: (rawValue) => {
+      track("qr_utility", { mode: "features" });
+      openConfirmFeatures({
+        requireQr: true,
+        status: "needs_features_confirmed",
+        prefillQr: rawValue,
+      });
+    },
+    onRideScan: (rawValue) => handleQrRideScan(rawValue),
   });
 });
 // Equity Compliance moved off the ribbon into Tools: the (hidden) ribbon
@@ -3259,6 +3292,154 @@ function wireDibsAlerts(): void {
  *  Cheap enough to justify: `/api/v1/dibs/live` returns the live claims for
  *  the whole city, which is a handful of rows, not thousands. */
 const DIBS_REFRESH_MS = 25_000;
+
+// ---------- The ribbon QR tool's "Ride mode" dial position ----------
+
+/** Resolve a scanned sticker to a vehicle in the live feed.
+ *
+ *  WHY THE PLATE IS THE BRIDGE. The sticker carries a plate; the session doc
+ *  wants a `vehicle_identifier`, which is a salted hash the browser cannot
+ *  compute. The feed gives us both sides: the identifier on every feature, and
+ *  the plate either directly (`vehicle_plate`, served to signed-in riders) or
+ *  out of Veo's own public GBFS deep links (`gbfs.ts`), which works signed out.
+ *
+ *  The feed's own plate is tried FIRST and the public index only primed when
+ *  that misses, so a signed-in rider's scan costs no extra network at all. */
+async function resolveScannedVehicle(
+  plate: string,
+): Promise<ScannedVehicle | null> {
+  const features = devices.allFeatures();
+  const wanted = normalizePlate(plate);
+  if (wanted === "") return null;
+
+  const asVehicle = (
+    f: (typeof features)[number],
+    resolvedPlate: string,
+  ): ScannedVehicle | null => {
+    const vid = String(f.properties.vehicle_identifier ?? "").toLowerCase();
+    if (!VEHICLE_IDENTIFIER_RE.test(vid)) return null;
+    return {
+      vehicleIdentifier: vid,
+      deviceId: f.properties.device_id,
+      plate: resolvedPlate,
+      name: vehicleDisplayName(
+        f.properties.public_name,
+        resolvedPlate,
+        f.properties.vehicle_model_name,
+        f.properties.plate_suffix,
+      ),
+    };
+  };
+
+  for (const f of features) {
+    const fed = f.properties.vehicle_plate;
+    if (fed && normalizePlate(String(fed)) === wanted) {
+      const v = asVehicle(f, String(fed));
+      if (v) return v;
+    }
+  }
+
+  // Signed out, or a feed without plates: fall back to Veo's public feed
+  // through the index `ride-deeplink.ts` already keeps for `?ride=plate:`
+  // links. Never rejects — a blocked feed just means no match.
+  await primeDeepLinkPlates();
+  const deviceId = resolvePlateAgainstGbfs(
+    plate,
+    features.map((f) => f.properties.device_id),
+  );
+  if (!deviceId) return null;
+  const f = features.find((x) => x.properties.device_id === deviceId);
+  return f ? asVehicle(f, plate) : null;
+}
+
+/** Perform whatever the scan means, and return the sentence to show.
+ *
+ *  The DECISION is `qr-ride-scan.ts`'s, which is pure; this is only the doing.
+ *  Every branch ends with the rider somewhere useful — a wizard, the HUD, or a
+ *  sentence saying why not — because a camera they just pointed at a sticker is
+ *  the least informative place in the app to be left standing. */
+async function handleQrRideScan(rawValue: string): Promise<string> {
+  const plate = plateFromQr(rawValue);
+  const vehicle = plate ? await resolveScannedVehicle(plate) : null;
+  const action = qrRideAction(rideSession.current(), vehicle, plate);
+  track("qr_utility", { mode: "ride", action: action.kind });
+  const message = qrRideMessage(action);
+
+  switch (action.kind) {
+    case "start":
+      // The scan IS the proof of presence — a rider holding a phone at a
+      // sticker has answered "which one?" more conclusively than any picker
+      // could — so Screen 2 is skipped and the flow lands on the route choice.
+      openRideModal({
+        vehicleIdentifier: action.vehicle.vehicleIdentifier,
+        plate: action.vehicle.plate,
+        deviceConfirmed: true,
+        fastForwardTo: "4",
+      });
+      break;
+
+    case "resume": {
+      // Put the scooter in the doc BEFORE reopening, so the screen the rider
+      // lands on already knows about it. `resume` on the entry is what stops
+      // `onOpen` dispatching a fresh `open` and resetting their answers.
+      rideSession.dispatch({
+        type: "associateDevice",
+        device: {
+          vehicleIdentifier: action.vehicle.vehicleIdentifier,
+          plate: action.vehicle.plate,
+          model: null,
+          batteryConfirmed: null,
+        },
+      });
+      openRideModal({
+        resume: true,
+        vehicleIdentifier: action.vehicle.vehicleIdentifier,
+        plate: action.vehicle.plate,
+        deviceConfirmed: true,
+        fastForwardTo: isWizardScreen(action.screen) ? action.screen : undefined,
+      });
+      break;
+    }
+
+    case "associate": {
+      // The gap this whole mode exists for: a ride recording with no vehicle on
+      // it (the free-ride path — started the track, then got on a scooter).
+      // Naming the scooter is what gives the post-ride survey and its
+      // model-bonus question something to be about.
+      //
+      // It does NOT retro-price the ride. The cost readout is a picture of
+      // Veo's billing clock running from an unlock we never saw, and inventing
+      // a start time for it would be worse than leaving it off.
+      const t = rideSession.dispatch({
+        type: "associateDevice",
+        device: {
+          vehicleIdentifier: action.vehicle.vehicleIdentifier,
+          plate: action.vehicle.plate,
+          model: null,
+          batteryConfirmed: null,
+        },
+      });
+      if (t?.accepted !== true) {
+        return "Couldn't attach that scooter to your ride — it may have just finished.";
+      }
+      resumeLiveRide();
+      break;
+    }
+
+    case "already":
+      // Nothing to change, but the rider is mid-ride and reached for the app,
+      // so hand them the HUD rather than leaving them on a closed camera.
+      resumeLiveRide();
+      break;
+
+    case "post_ride":
+    case "unreadable":
+    case "unknown_vehicle":
+      // Nothing to do. The sentence is the whole response.
+      break;
+  }
+  return message;
+}
 
 function refreshLiveDibs(): void {
   void liveDibs()

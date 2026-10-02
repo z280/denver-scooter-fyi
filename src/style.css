@@ -384,7 +384,13 @@ body:not(.ribbon-open) .drawer-tabs {
   transform: translateX(calc(-100% - 48px - env(safe-area-inset-left)));
   visibility: hidden;
 }
-.drawer-tab {
+/* The ribbon's one non-drawer control (the QR tool). Visually a tab, and
+   deliberately NOT `.drawer-tab` — see the markup's own note: wireDrawers()
+   queries that class document-wide, so wearing it would make this a tab for a
+   drawer that does not exist. Every rule below is shared with the tabs rather
+   than redeclared, so the strip cannot drift into two looks. */
+.drawer-tab,
+.ribbon-action {
   width: 40px;
   height: 40px;
   border: 0;
@@ -397,6 +403,22 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
   transition: background 0.12s ease, color 0.12s ease;
 }
+.ribbon-action:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+@media (min-width: 900px) {
+  .drawer-tabs .ribbon-action {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 0 9px;
+  }
+  .drawer-tabs .ribbon-action svg {
+    flex: none;
+  }
+}
+
 /* `hidden` has to actually hide. `.drawer-tab` sets display: inline-flex,
    which outranks the attribute's UA `display: none` — so the Compliance tab
    carried `hidden` in the markup and showed anyway. It was only ever
@@ -9129,4 +9151,154 @@ input[data-ride-keypad="on"] {
 .device-popup__actbtn--notify.is-on {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* ---------- qr-utility.ts: the ribbon's QR tool ----------
+   Same shell as the Confirm Features modal (and the same z-index band), because
+   this is the surface that HANDS OFF to it: two different-looking dialogs one
+   tap apart would read as two different features. */
+.qr-utility {
+  position: fixed;
+  inset: 0;
+  /* Above .device-features (72), because the dial opens that one and whichever
+     the rider opened last has to be on top. */
+  z-index: 73;
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.qr-utility__card {
+  width: min(380px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.qr-utility__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.qr-utility__head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.qr-utility__close {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.qr-utility__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The dial. A ring with one notch per mode, and a pointer that turns to the
+   chosen one — so the pointer's direction IS the readout, which is the only
+   reason a dial beats a list.
+
+   The notches are positioned by rotating out from the centre and then
+   counter-rotating the glyph, so the emoji stays upright whatever angle its
+   seat is at. `--notch-angle` is set per button in TS from `modeAngle()`, so the
+   geometry has exactly one source. */
+.qr-utility__dial-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.qr-utility__dial {
+  position: relative;
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-panel);
+}
+.qr-utility__pointer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 46px;
+  margin-left: -1.5px;
+  /* Pivot at the centre, body pointing up, so `rotate(Ndeg)` reads as
+     "N degrees clockwise from straight up". */
+  transform-origin: 50% 100%;
+  margin-top: -46px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .qr-utility__pointer {
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+}
+.qr-utility__notch {
+  appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Out to the rim along --notch-angle, then straight back up so the glyph is
+     not lying on its side. */
+  transform: rotate(var(--notch-angle, 0deg)) translateY(-52px)
+    rotate(calc(-1 * var(--notch-angle, 0deg)));
+}
+.qr-utility__notch.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.qr-utility__notch-glyph {
+  font-size: 20px;
+  line-height: 1;
+}
+.qr-utility__mode-label {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.qr-utility__mode-detail {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.qr-utility__status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.qr-utility__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
 }

@@ -236,6 +236,29 @@
         </svg>
         <span class="drawer-tab__label">Leaderboard</span>
       </button>
+      <!-- The QR tool. A ribbon BUTTON, not a drawer tab — deliberately
+           without the .drawer-tab class, because wireDrawers() queries that
+           class document-wide and would treat this as a tab for a drawer that
+           does not exist. It shares the tab styling through .ribbon-action
+           instead, so the ribbon still reads as one strip. Opens a modal:
+           pointing a camera at a sticker is a thing you finish and leave, not a
+           panel you work in beside the map. -->
+      <button
+        id="ribbon-qr"
+        class="ribbon-action"
+        type="button"
+        title="Scan a scooter"
+      >
+        <!-- QR frame: four corner brackets and a dot -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+          <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+          <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+          <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+          <rect x="10" y="10" width="4" height="4" rx="1" />
+        </svg>
+        <span class="drawer-tab__label">Scan</span>
+      </button>
       <button
         class="drawer-tab"
         type="button"
