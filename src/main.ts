@@ -115,9 +115,20 @@ import { reportFailedStart } from "./ride-failed-start.ts";
 import { submitDeviceReport } from "./reports.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
-  wireMyScooters,
-  type MyScootersHandle,
-} from "./my-scooters-panel.ts";
+  showMovedToast,
+  wireDeviceNotifyPanel,
+  type DeviceNotifyPanelHandle,
+} from "./device-notify-panel.ts";
+import {
+  MAX_WATCHED_DEVICES,
+  createDeviceNotifier,
+  isWatched,
+  loadWatches,
+  requestMovedNotifications,
+  unwatchMoved,
+  watchMoved,
+  type DeviceNow,
+} from "./device-notify.ts";
 import {
   wireRideSpecPanel,
   type RideSpecPanelHandle,
@@ -433,8 +444,45 @@ let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
-/** Favorite Scooters, in the Tools drawer. Null until boot wires it. */
-let myScooters: MyScootersHandle | null = null;
+/** "Notify me if moved", in the Tools drawer. Null until boot wires it. */
+let notifyPanel: DeviceNotifyPanelHandle | null = null;
+
+/** The thing that actually tells the rider. Created eagerly rather than at
+ *  boot, because the bell's handler and the panel's Stop both need to clear its
+ *  per-vehicle bookkeeping and neither should have to care whether a watch list
+ *  has been painted yet. Holds only counters — nothing it does costs anything
+ *  until a watch exists. */
+const deviceNotifier = createDeviceNotifier({
+  inApp: (message, watch) => showMovedToast(message, () => showMovedDevice(watch)),
+  // Tapping the notification lands on the scooter it is about rather than a
+  // cold map. Wherever it is NOW: the message deliberately carries no
+  // coordinates, so this is the rider's way of finding out where it went.
+  onOpen: (watch) => showMovedDevice(watch),
+  // THE WATCH ENDS WITH THE ANSWER. The rider asked one question — has it gone
+  // — and it has been answered; a watch left running would re-ask it about a
+  // scooter that is now somewhere else entirely, and the comparison point it
+  // was armed with is stale the moment the thing moves.
+  onFired: (watch) => {
+    unwatchMoved(watch.vehicleIdentifier);
+    notifyPanel?.refresh();
+    devices.refreshOpenPopup();
+  },
+});
+
+/** Take the rider to a watched scooter — wherever it is NOW, falling back to
+ *  where it was when the watch was armed. The alert carries no coordinates
+ *  (`device-notify.ts`'s rule, and `ALONG_THE_WAY_PLAN` §4.4's), so this is how
+ *  they find out where it went; a scooter that has left the feed entirely still
+ *  gets them to the spot it left from, which is more use than nothing. */
+function showMovedDevice(watch: { vehicleIdentifier: string; lat: number; lon: number }): void {
+  const f = devices
+    .allFeatures()
+    .find((x) => x.properties.vehicle_identifier === watch.vehicleIdentifier);
+  const at = f
+    ? (f.geometry.coordinates as [number, number])
+    : ([watch.lon, watch.lat] as [number, number]);
+  map.easeTo({ center: at, zoom: 17 });
+}
 let clearModelFilter: () => void = () => {};
 let clearFeatureFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
@@ -1041,28 +1089,60 @@ map.on("load", async () => {
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
-  // Favorite Scooters, in Tools beside My dibs. The popup's ⭐ and the panel's own
-  // button both run `keep()`, so there is one flow and one set of failure
-  // sentences rather than two that drift apart.
-  myScooters = wireMyScooters({
-    section: need("tools-my-scooters"),
-    list: need("my-scooters-list"),
-    keepButton: need<HTMLButtonElement>("my-scooters-keep"),
-    status: need("my-scooters-status"),
+  // "Notify me if moved", in Tools where Favorite Scooters used to be. The
+  // popup's 🔔 and this panel's Stop buttons write to the same local store, so
+  // there is one list and one set of sentences rather than two that drift.
+  notifyPanel = wireDeviceNotifyPanel({
+    section: need("tools-notify-moved"),
+    list: need("notify-moved-list"),
+    status: need("notify-moved-status"),
     locate,
-    onShowOnMap: (f) => {
-      if (typeof f.lat === "number" && typeof f.lon === "number") {
-        map.easeTo({ center: [f.lon, f.lat], zoom: 17 });
-      }
+    onShowOnMap: (w) => map.easeTo({ center: [w.lon, w.lat], zoom: 17 }),
+    // Dropping a watch from the panel has to un-press the bell on an open
+    // popup and clear the notifier's bookkeeping for that vehicle, or a
+    // re-armed watch inherits a miss count from the one before it.
+    // The panel's Stop goes through here rather than straight to the store, so
+    // the notifier's per-vehicle bookkeeping is cleared in the same breath — a
+    // watch re-armed later must not inherit the old one's miss count or its
+    // already-fired flag.
+    remove: (vehicleIdentifier) => {
+      const next = unwatchMoved(vehicleIdentifier);
+      deviceNotifier.forget(vehicleIdentifier);
+      return next;
     },
+    // ...and the bell on an open popup has to un-press.
+    onChanged: () => devices.refreshOpenPopup(),
   });
-  // The popup's star names the vehicle it was opened on, but the SCAN still
-  // decides which scooter is kept — the server refuses a payload that names a
-  // different one rather than quietly keeping the neighbour.
-  // The outcome is reported in the popup too: the panel's status line is in
-  // the Tools drawer, which is shut (and invisible) when the star was tapped.
-  devices.setKeepHandler(({ vehicleIdentifier, report }) => {
-    void myScooters?.keep({ vehicleIdentifier }, { report });
+  devices.setIsWatchedMoved((vid) => isWatched(loadWatches(), vid));
+  // The bell toggles. Both directions are local and instant — no account, no
+  // scan, no network — which is the whole difference from the ⭐ it replaced.
+  devices.setNotifyMovedHandler(({ vehicleIdentifier, name, lat, lon, report }) => {
+    const watches = loadWatches();
+    if (isWatched(watches, vehicleIdentifier)) {
+      track("device_notify_moved", { action: "off" });
+      unwatchMoved(vehicleIdentifier);
+      deviceNotifier.forget(vehicleIdentifier);
+      report(`We'll stop watching ${name}.`);
+    } else {
+      if (watches.length >= MAX_WATCHED_DEVICES) {
+        report(
+          `You're already watching ${MAX_WATCHED_DEVICES} scooters — stop one in Tools to add this.`,
+        );
+        return;
+      }
+      track("device_notify_moved", { action: "on" });
+      watchMoved({ vehicleIdentifier, name, lat, lon, since: Date.now() });
+      // A re-armed watch must not inherit the previous one's miss count or its
+      // already-fired flag, or it alerts on the first absent tick.
+      deviceNotifier.forget(vehicleIdentifier);
+      // ASK NOW, NOT AT LOAD — the same reasoning dibs uses, in its own words
+      // at the dibs call site. Somebody who has just asked to be told when a
+      // scooter moves knows what they are agreeing to be interrupted about.
+      void requestMovedNotifications();
+      report(`We'll tell you if ${name} moves, while the app is open.`);
+    }
+    notifyPanel?.refresh();
+    devices.refreshOpenPopup();
   });
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
@@ -3137,6 +3217,33 @@ function wireDibsAlerts(): void {
       if (gone) dibsNotifier?.taken(d);
     }
   });
+
+  // "Notify me if moved" is the same kind of question — about the world, not a
+  // clock — so it is answered in the same place, on the same refresh. Nothing
+  // here polls: the feed this reads is the one the map was going to fetch
+  // anyway, which is also why a closed tab hears nothing and why the copy
+  // promises only "while the app is open".
+  window.addEventListener("scooter:devices-refreshed", () => {
+    const watches = loadWatches();
+    if (watches.length === 0) return;
+    const byId = new Map<string, DeviceNow>();
+    for (const f of devices.allFeatures()) {
+      const p = f.properties as unknown as Record<string, unknown>;
+      const id = typeof p.vehicle_identifier === "string" ? p.vehicle_identifier : "";
+      if (!id) continue;
+      const [lon, lat] = f.geometry.coordinates;
+      const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+      byId.set(id, {
+        lat,
+        lon,
+        // `is_reserved` means IN USE on this operator, not a held booking;
+        // `is_disabled` is the operator having pulled it, which from the
+        // rider's side is the same answer.
+        inUse: truthy(p.is_reserved) || truthy(p.is_disabled),
+      });
+    }
+    deviceNotifier.check(watches, (id) => byId.get(id));
+  });
 }
 
 /** How often live claims are re-fetched.
@@ -3575,10 +3682,10 @@ function wireDrawers(): void {
     // is hidden again.
     if (id === "leaderboard") leaderboardPanel?.open();
     else leaderboardPanel?.close();
-    // Same for Favorite Scooters in Tools: a kept scooter's state and place
-    // change while the drawer is shut, so re-read on every open. refresh()
-    // joins a read already in flight, so tab-flicking costs one request.
-    if (id === "tools") void myScooters?.refresh();
+    // Same for the watch list in Tools: a watch can be armed from a map popup
+    // or fire and remove itself while the drawer is shut, so re-read on every
+    // open. It reads `localStorage`, so this costs nothing.
+    if (id === "tools") notifyPanel?.refresh();
   };
 
   for (const tab of tabs) {

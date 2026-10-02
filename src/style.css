@@ -9053,66 +9053,80 @@ input[data-ride-keypad="on"] {
   color: var(--fg-muted);
 }
 
-/* ---------- my-scooters-panel.ts: the Tools drawer list ----------
-   Deliberately the .my-dibs treatment with a different accent: the two
-   sit one above the other and are the same kind of object (a short list
-   of specific vehicles), so a rider should not have to learn two
-   layouts to read them. */
-.my-scooters {
+/* ---------- device-notify-panel.ts: the Tools drawer list ----------
+   Replaced the Favorite Scooters list, and keeps its treatment — the .my-dibs
+   shape with a different accent: the two sit one above the other and are the
+   same kind of object (a short list of specific vehicles), so a rider should not
+   have to learn two layouts to read them.
+
+   One row rather than that list's three-part card, because there is far less to
+   say: a watch has a name, roughly how far away it is, and two buttons. The
+   state line is gone with the feature that needed it — a watched scooter is
+   simply on the map like every other, and its one interesting state change is
+   the thing that fires the alert and ends the watch. */
+.notify-moved {
   list-style: none;
   margin: 0 0 8px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.my-scooters__item {
+.notify-moved__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: 7px 10px;
   background: var(--bg-elev);
 }
-.my-scooters__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.my-scooters__name {
+.notify-moved__name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
+  /* A long nickname must push the buttons off the row rather than wrap into
+     three lines in a drawer this narrow. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.my-scooters__state {
+.notify-moved__where {
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--fg-muted);
   white-space: nowrap;
 }
-.my-scooters__state.is-available {
-  color: var(--ok, #2e7d32);
+.notify-moved__show,
+.notify-moved__stop {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
 }
-.my-scooters__state.is-in_use,
-.my-scooters__state.is-gone {
-  font-style: italic;
+.notify-moved__show:hover,
+.notify-moved__stop:hover {
+  background: var(--hover-neutral);
 }
-.my-scooters__where,
-.my-scooters__withheld {
-  margin: 4px 0 0;
+/* The empty state is where the feature explains itself, so it reads as a
+   sentence rather than as a missing list. */
+.notify-moved__empty {
   font-size: 13px;
   color: var(--fg-muted);
+  line-height: 1.4;
 }
-/* The withheld sentence is the feature explaining itself, not an error —
-   it must not read as a failure state, so it gets the same weight as a
-   position would. */
-.my-scooters__withheld {
-  font-style: italic;
-}
-.my-scooters__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
-}
-.my-scooters__actions .switch {
-  margin: 0;
-  font-size: 13px;
+
+/* The bell on the device popup, pressed. Same affordance as the other action
+   buttons; the "on" state has to be visible at a glance because the label is
+   what tells the rider which way the next tap goes. */
+.device-popup__actbtn--notify.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
