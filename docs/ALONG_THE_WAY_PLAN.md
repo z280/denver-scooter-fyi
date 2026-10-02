@@ -1635,7 +1635,7 @@ nothing. This is the other half.
 **One text, and its exact words:**
 
 ```
-Astral Osprey 123 is no longer within 50m of where you scanned. This move was first observed at 14:32.
+Astral Osprey 123 is no longer within 50m of where you scanned. This move was first observed at 2:32pm.
 ```
 
 #### 9.7.1 Two tiers, and the scan is the line between them
