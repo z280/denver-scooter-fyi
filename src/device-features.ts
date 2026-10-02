@@ -59,6 +59,7 @@ import {
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
@@ -555,6 +556,11 @@ export function openConfirmFeatures(
       const plateInput = el("input", `${ROOT_CLASS}__plate-input`);
       plateInput.id = "device-features-plate";
       plateInput.type = "text";
+      // A plate needs no undo history on any platform, and this modal is
+      // reachable mid-ride from the device popup's long press — which is how
+      // "Undo Typing" came back (see `ios-shake-undo.ts`'s regression note).
+      // Same reasoning, same call, as Screen 2's own plate field.
+      markUndoFree(plateInput);
       // `inputMode` rather than `type="number"`: plates are digit strings, and
       // a number input would strip a leading zero and offer spinners for a
       // value that is not a quantity.

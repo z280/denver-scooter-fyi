@@ -45,7 +45,7 @@ import {
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
-import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
+import { dropNativeUndoHistory, setRideLive } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
 // `handOffTrackedRideEnd` below). `EndRideIn` stays imported for
@@ -626,6 +626,15 @@ export class RideHud {
     // ios-shake-undo.ts — the wizard's fields avoid filling it in the first
     // place; this catches anything typed before that guard applied).
     if (riding && !wasRiding) dropNativeUndoHistory();
+    // ...and keep that module informed, because the clear above is no longer
+    // the only one. A rider can long-press a scooter mid-ride and reach the
+    // popup's report textarea or its plate field, both of which refill the
+    // queue behind this one shot — see `ios-shake-undo.ts`'s regression note.
+    //
+    // Set on BOTH edges off `riding`, not just on the way in: BRB hands the map
+    // and all its chrome back with the ride still running, and a rider typing in
+    // a drawer then should keep their undo history like anyone else.
+    setRideLive(riding);
     if (state === "hidden" && !wasHidden) this.onHidden?.();
   }
 
