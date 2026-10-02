@@ -102,7 +102,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `filter-presets.ts` *(existing)* | 1 | **Untouched.** Saved filter presets and saved specs coexist; §1.3 says why. |
 | `favorites.ts` *(existing)* | 4 | **Untouched.** Saved *places*, not vehicles; §4.1 says why they must not be merged. |
 | `qr-scan.ts` *(existing)* | 4 | **Untouched.** Reused as-is — it already opens the camera, decodes, and hands back the raw payload with no opinion about what it means. |
-| `api.ts` *(existing)* | 1–5 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`. |
+| `api.ts` *(existing)* | 1–5, 8, 9 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`; **Phase 8's** receipt submit / list / withdraw (§8.6 — withdrawal has to really delete); **Phase 9's** `fetchPlanCriticalState(ids, signal)` and the trip-alert opt-in's read/write (§9.2). Phase 10 adds nothing here — its CC is a `mailto:` parameter, not a request. **This row grows with every phase that touches the network**, because the house rule above is that the calls live here; a client that ends up in its feature module instead is the same defect each time, and it has already been caught once (§9.2). |
 | `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
 | `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
 | `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
@@ -952,6 +952,7 @@ If on-device OCR cannot be made accurate enough to ship, the fallback is
 | `equity-areas.ts` *(existing)* | **Untouched.** `isInEquityArea` already answers the geographic half. |
 | `ride-cost.ts` *(existing)* | **Untouched.** `RATE_PLANS` and `EQUITY_AREA_RATE` are what "expected charge" means. |
 | `config.ts` *(existing)* | Gains the support address, in one place beside the rate plans. |
+| `api.ts` *(existing)* | Gains the receipt **submit / list / withdraw** clients (§8.6). Only those three touch the network — reading the screenshot, the verdict and the `mailto:` are entirely local — and they belong here rather than in `receipt-panel.ts`, per the house rule at the top of this document. |
 
 ### 8.3 Confirm what we read — the step that must not be skippable
 
