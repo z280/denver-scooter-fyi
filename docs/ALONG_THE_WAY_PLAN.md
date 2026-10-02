@@ -415,7 +415,17 @@ about this exact trap.
 **Unfiltered is not unbounded, and the two get conflated.** The fleet goes in;
 what enters the graph is master plan §6.2's explicit selection — the best `W`
 non-`risk` vehicles by walk seconds inside the walk cap as **first hops**, the
-best `H` non-`risk` vehicles as **pickups**, and `N = |W ∪ H|`. The bbox and
+best `H` non-`risk` vehicles as **pickups**, and `N = |W ∪ H|`.
+
+**`W` refills from `risk`-tier vehicles inside the walk cap when — and only
+when — that set comes back empty**, setting `riskTierOffered`. Without the
+refill this step is where rule 1's exception quietly dies: the fallback is
+documented four paragraphs below, and a vehicle that never enters the graph can
+never be offered, so a rider with nothing but risky vehicles nearby would get
+an **empty list** rather than one honest option with a warning on it. Pickups
+never refill (master plan §6.2 step 3) — so this step is the only place in the
+entire search that admits a `risk` vehicle at all, which is what makes the
+asymmetry enforceable instead of a convention. The bbox and
 the walk cap bound the *first* hop only; they say nothing about downstream
 nodes, so without this step a multi-hop search over the whole fleet does
 fleet-scale work **on every 90-second refresh**, on a phone. `W` and `H` are
@@ -750,9 +760,20 @@ geometry — and owns neither. Three answers:
   `unlockCents` (§2.1), priced per tier like every other unlock, and
   `EQUITY_AREA_RATE.unlockCents` is where its value lives.
 
-  The cheap tier still applies: sample the route the app **already has**
-  against the bundled polygons (the same `isInEquityArea` the on-screen
-  indicator uses). A route already crossing one costs nothing extra to detect.
+  **Eligibility is the leg's own endpoints, not route geometry.** With a leg,
+  two endpoints and a rate plan this function has exactly what the question
+  needs: `isInEquityArea(from) || isInEquityArea(to)`. That is also the
+  **correct** rule and not merely the implementable one — Exhibit A §5.2
+  discounts a trip that *starts or ends* inside a polygon, so a leg which
+  merely **passes through** one earns nothing, and sampling the route would
+  price a discount the rider will never receive. Master plan §12.5 draws the
+  same line for receipts.
+
+  **Route crossing is still useful — as a hint about where to look, never as a
+  rate.** If the direct route already passes through a polygon there are
+  probably pickups inside it worth including in §2.1's bounded selection. That
+  is candidate selection; answering it here would rebuild the second search
+  revision 3b deleted.
 
 `RatePlanKey === "equity"` returns `null` from every one of them. The Access
 tier is 60 free min/day then 15¢/min with no unlock; the Equity Area rate is
