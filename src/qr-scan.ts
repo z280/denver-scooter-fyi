@@ -65,6 +65,20 @@ export interface QrScannerOptions {
  *  `device-features.ts`'s modal. */
 let activeClose: (() => void) | null = null;
 
+/** Is the camera up right now?
+ *
+ *  Exists because this scanner is always opened FROM something — the features
+ *  modal, the ribbon's QR tool — and every one of those hosts also listens for
+ *  Escape on `document`. Both listeners are on the same node, so
+ *  `stopPropagation` cannot separate them, and one Escape press closed the
+ *  scanner AND the host behind it: a rider backing out of the camera lost every
+ *  answer they had given the modal that opened it. The scanner is the topmost
+ *  layer, so it owns Escape while it is up, and the hosts ask this before
+ *  acting. */
+export function isQrScannerOpen(): boolean {
+  return document.querySelector(`.${ROOT_CLASS}`) !== null;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,

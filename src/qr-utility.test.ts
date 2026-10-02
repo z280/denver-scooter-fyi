@@ -265,6 +265,22 @@ describe("the modal", () => {
     expect(prompt).toMatch(/riding/i);
   });
 
+  it("leaves Escape to the scanner while the camera is up", () => {
+    // Both listeners are on `document`, so stopPropagation cannot separate
+    // them — a rider backing out of the camera must not lose the tool behind it,
+    // and the mode they dialled in.
+    const scanner = document.createElement("div");
+    scanner.className = "qr-scan";
+    open();
+    document.body.append(scanner);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".qr-utility")).not.toBeNull();
+
+    scanner.remove();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".qr-utility")).toBeNull();
+  });
+
   it("closes on Escape and on the ✕", () => {
     open();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));

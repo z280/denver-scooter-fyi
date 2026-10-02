@@ -58,7 +58,7 @@ import {
   type PointsScheduleResponse,
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
-import { openQrScanner } from "./qr-scan.ts";
+import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
@@ -733,7 +733,10 @@ export function openConfirmFeatures(
     if (e.target === backdrop) close();
   });
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") close();
+    // The scanner owns Escape while it is up — see `isQrScannerOpen`. Without
+    // this, backing out of the camera also closed this modal and threw away
+    // every answer the rider had given it.
+    if (e.key === "Escape" && !isQrScannerOpen()) close();
   };
   document.addEventListener("keydown", onKey);
   cleanupFns.push(() => document.removeEventListener("keydown", onKey));

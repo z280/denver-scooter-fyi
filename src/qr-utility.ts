@@ -20,7 +20,7 @@
 // itself (`qr_raw_value` on the feature report), which is why that mode works
 // for a scooter missing from the feed and this one does not.
 
-import { openQrScanner } from "./qr-scan.ts";
+import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 
 // ---------------------------------------------------------------------------
@@ -344,10 +344,10 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
   cleanupFns.push(untrap);
 
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      close();
-    }
+    // The scanner owns Escape while it is up (`isQrScannerOpen`): both
+    // listeners are on `document`, so backing out of the camera would otherwise
+    // close this tool as well and lose the mode the rider had dialled in.
+    if (e.key === "Escape" && !isQrScannerOpen()) close();
   };
   document.addEventListener("keydown", onKey);
   cleanupFns.push(() => document.removeEventListener("keydown", onKey));

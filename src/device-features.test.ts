@@ -663,6 +663,23 @@ describe("the QR flows", () => {
     expect(body.vehicle_identifier).toBe("8c4a1f0d2e9b7a35");
   });
 
+  it("leaves Escape to the scanner, instead of losing the rider's answers", () => {
+    // Both listeners are on `document`, so stopPropagation cannot separate them.
+    // Before this, pressing Escape to back out of the camera also closed this
+    // modal and threw away every toggle the rider had answered.
+    open();
+    answerToggles();
+    const scanner = document.createElement("div");
+    scanner.className = "qr-scan";
+    document.body.append(scanner);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".device-features")).not.toBeNull();
+
+    scanner.remove();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".device-features")).toBeNull();
+  });
+
   it("requireQr hides the plate field and gates Send on the scan", () => {
     const scan = instantScan("raw-payload");
     open({ requireQr: true, vehicleIdentifier: undefined, deviceId: undefined, scan });
