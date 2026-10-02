@@ -285,9 +285,32 @@ export function rankPlans(
 ```
 
 A `TripPlan` is a sequence of legs — `walk → ride → [hand-off → ride]* →
-walk` — carrying `totalSeconds`, `estimatedCents` and `handOffs`. A
-single-vehicle trip is a plan with one ride leg and competes in the same list;
-there is no separate "direct" concept to keep in sync.
+walk`. A single-vehicle trip is a plan with one ride leg and competes in the
+same list; there is no separate "direct" concept to keep in sync.
+
+**Every leg carries its own seconds AND its own money**, not just the plan
+total:
+
+```ts
+interface TripLeg {
+  mode: "walk" | "ride";
+  seconds: number;
+  meters: number;
+  vehicle?: DeviceProperties;   // ride legs only
+  unlockCents: number;          // 0 on a walk leg, and on a free-unlock tier
+  minuteCents: number;          // the leg's minutes at its own rate (§5.1)
+  freeMinutesUsed: number;      // Access only; 0 otherwise
+}
+```
+
+Plan totals (`totalSeconds`, `estimatedCents`, `handOffs`) are **derived from
+the legs**, never stored alongside them, so they cannot drift.
+
+Per-leg figures are not a nicety: master plan rule 2 is *cost and time on
+every plan, including startup costs*, and a plan showing only a total hides
+**which** leg costs the extra unlock — which is the one number a rider needs
+to judge whether the hand-off is worth it. A card that renders only totals
+cannot make that case.
 
 **Pure.** No DOM, no network, no map. It runs on every device refresh, so it
 has to be cheap, and it has to be testable without booting MapLibre.
@@ -418,8 +441,10 @@ is one entry, not the headline:
 - the rider is far enough behind that the claim will expire;
 - the rider has gone somewhere the remaining legs no longer fit.
 
-Each re-solves the **remaining route**, never just the next vehicle — that is
-what leaves somebody on a route that stopped making sense.
+Each re-solves the **remaining route**, never just the next vehicle.
+Re-solving only the next vehicle is what leaves a rider on a route that
+stopped making sense: a replacement pickup can be the best vehicle for a plan
+nobody should still be following.
 
 ### 3.3 Dibs, while riding
 
@@ -565,11 +590,18 @@ geometry — and owns neither. Three answers:
   dollars, next to the extra walking minutes it costs.
 - `equityLegRate(leg)` — Phase 5b, **and it is no longer a search**. Revision
   3b deleted `stopoverSaving`: an Equity Area stopover is just a hand-off
-  (§2) whose pickup happens to sit inside a polygon, so this returns the
-  per-minute rate a leg is billed at — $1 + 13¢/min when it starts or ends
-  inside one — and the Phase 2 planner's money term does the rest. Equity
-  hand-offs then appear in the ordinary plan list, ranked against everything
-  else, instead of on a card of their own.
+  (§2) whose pickup happens to sit inside a polygon, so this feeds the Phase 2
+  planner's money term instead of ranking anything itself. Equity hand-offs
+  then appear in the ordinary plan list, ranked against everything else,
+  rather than on a card of their own.
+
+  **It returns the PER-MINUTE rate only — 13¢ — and never the unlock.** The
+  Equity Area rate is `$1 + 13¢/min`, and those are two different terms: the
+  13¢ scales with the leg's minutes, the $1 is a one-off charged when the leg
+  starts. Returning them as one number is how a planner either double-counts
+  the dollar or loses it. The unlock belongs to the leg's own
+  `unlockCents` (§2.1), priced per tier like every other unlock, and
+  `EQUITY_AREA_RATE.unlockCents` is where its value lives.
 
   The cheap tier still applies: sample the route the app **already has**
   against the bundled polygons (the same `isInEquityArea` the on-screen
@@ -583,12 +615,16 @@ advice we do not give.
 
 ### 5.2 Where it surfaces
 
-Phase 5b has **no surface of its own** — an equity hand-off is a plan in the
-plan list like any other, with a chip naming why it is cheap. Phase 5a is a
-**chip on a candidate row** — *"starts in an Equity Area · saves
+Phase 5a is a **chip on a candidate row** — *"starts in an Equity Area · saves
 $1.80 · 2 min more walking"* — because that is where the rider is choosing.
-Phase 5b is a **card on the route screen**, after a route exists, carrying all
-four of these on the same card as the saving:
+
+**Phase 5b has no surface of its own, and that is the whole point of revision
+3b.** An equity hand-off is a plan in the ordinary plan list, with a chip
+naming why it is cheap. There is no route-screen stopover card; rebuilding one
+recreates the second mechanism this revision deleted.
+
+So the four disclosures that card used to carry go into **the plan's own
+details**, where a rider opens any plan they are considering:
 
 - the saving, with the tier it is computed for;
 - the second unlock, priced at the **worse** VeoPlus reading (charged);
@@ -597,7 +633,10 @@ four of these on the same card as the saving:
 - the screenshot caveat, in spirit with `EQUITY_DISCOUNT_NOTICE` — *this
   should cost $X; if Veo bills you the base rate, screenshot it.*
 
-Never advise a split whose saving is under **$0.50**.
+They are **not** optional extras to be shown on a special card when the saving
+is large: they are what makes an equity plan honest, so they travel with it.
+And a plan whose only advantage is a saving under **$0.50** is not offered at
+all.
 
 ### 5.3 Tests
 
@@ -798,9 +837,10 @@ such audit, and it leaves the audit behind as a test:
 
 ## Phase 8 — The receipt
 
-Master plan §12. **The only phase in this program that adds a new stored data
-category**, and the most sensitive one — so the house rules below are not
-boilerplate.
+Master plan §12. Phases 8, 9 and 10 **each** add a stored data category
+(receipt submissions here, a live trip plan in §9, an advocacy mailbox in §10)
+— three more than the rest of the program combined. This one is the most
+sensitive of the three, so the house rules below are not boilerplate.
 
 ### 8.1 The architecture decision, first, because everything follows from it
 
@@ -853,16 +893,29 @@ overcharge.
 
 ### 8.5 The complaint
 
-One tap copies a prefilled body. **The rider sends it**, from their own
-address, to the support address in `config.ts`. The app never sends it, and
-this is not a limitation to route around: sending it would mean this project
-asserting a contract claim on somebody's behalf, from an address they do not
-control.
+**The rider sends it**, from their own address, to the support address in
+`config.ts`. The app never sends it, and this is not a limitation to route
+around: sending it would mean this project asserting a contract claim on
+somebody's behalf, from an address they do not control.
 
-Trip, charge, expected charge, then the Exhibit A §5.2 citation underneath.
-Facts and a reference, no adjectives — at the single-receipt level an
-overcharge is indistinguishable from a bug, and the body should read like the
-billing query it is.
+**A `mailto:` link is the mechanism, not a clipboard copy**, and the reason is
+§10's CC: **text in a body cannot set a recipient.** A copied body leaves the
+rider to type the addresses themselves, which is exactly where an opted-in CC
+silently fails to happen. So the primary action opens their own mail client
+with `to`, `cc`, `subject` and `body` already populated — the rider still
+reviews and sends, and the CC is a real header rather than a line of prose.
+
+**The fallback, because `mailto:` has a length limit** that varies by client
+and platform: when the body would overflow it, fall back to copy-to-clipboard
+— and then show the `To:` and any `Cc:` **as their own copyable fields**. A
+fallback that drops the CC into prose is the bug this section exists to
+prevent, so the CC must never degrade into body text.
+
+The body carries: the **account identifier** (§8.3's only purpose — without it
+the complaint cannot credibly say whose trip this was), the trip, the charge,
+the expected charge, then the Exhibit A §5.2 citation underneath. Facts and a
+reference, no adjectives — at the single-receipt level an overcharge is
+indistinguishable from a bug, and it should read like the billing query it is.
 
 ### 8.6 Contributing, and withdrawing
 
@@ -870,6 +923,13 @@ Checking your own receipt contributes **nothing** by default. Contributing is a
 separate deliberate tap, and the panel must show what leaves the device: the
 date, the area, the charged rate and the expected rate. Not coordinates, not
 the account identifier, not the image.
+
+**The complaint body carries the account identifier and this payload does
+not**, which looks inconsistent and is the point. The complaint is *about one
+rider's trip* and goes to the operator who billed them, so it has to say whose
+trip it was. The pile answers *"how often is the discount applied"*, which
+needs no one's identity at all — and the cheapest way to keep a statistical
+record from becoming a movement record is for it never to carry one.
 
 Withdrawal is offered wherever the submissions are listed and must actually
 delete — a consent you cannot withdraw is not one.
@@ -908,8 +968,9 @@ opt-in control, a resume entry point, and bounding the rapid check.
 |---|---|
 | `trip-alerts.ts` | The opt-in's state and the rules about *what* earns a text (§9.3). **Pure** — the decision is testable without a network. |
 | `plan-resume.ts` | Reading a resume link, holding the plan reference across a sign-in, and re-entering the plan. **Pure** given a URL and a store. |
-| `trip-plan.ts` *(Phase 3)* | Gains the targeted-check loop and its bounds (§9.4). |
-| `locate.ts`, `api.ts` *(existing)* | Untouched. |
+| `trip-plan.ts` *(Phase 3)* | Gains the targeted-check loop and its bounds (§9.4). It owns *when* to check and *when to stop*; it does not own the request. |
+| `api.ts` *(existing)* | Gains `fetchPlanCriticalState(ids, signal)`, the typed client for the targeted check (§9.4), and the trip-alert opt-in's read/write. **The house rule at the top of this document is that API calls go through `api.ts`** — so the state machine must not reach the network itself, however small the call looks. |
+| `locate.ts` *(existing)* | Untouched. |
 
 ### 9.2 The opt-in, and the distinction that justifies it
 
@@ -999,6 +1060,10 @@ reply endpoint and the admin UI all already exist in
 This lane owns exactly one thing: **the CC tick on the Phase 8 complaint.**
 
 - Defaulted **off**, its own control, per complaint.
+- **It sets a real `cc` recipient**, via §8.5's `mailto:`. An address written
+  into body text is not a CC and would simply never reach the mailbox — so
+  the test asserts the `cc` field, never a substring of the body. On the
+  clipboard fallback the CC is its own copyable field, never prose.
 - It states what the CC sees — the rider's own words, their account
   identifier, their trip times, their email address — because this is a
   **disclosure to a third party**, and a different one from contributing to
@@ -1015,8 +1080,12 @@ identically with the CC off, and if it ever stops doing so, that is a bug.
 
 - The CC is off unless ticked, and the ticked state does not persist to the
   next complaint.
-- The copied body contains the CC address only when ticked.
-- Phase 8's verdict and copy paths behave identically with the CC off.
+- Ticked, the `mailto:`'s **`cc` parameter** carries the advocacy address —
+  asserted on the parsed recipient field, **not** on body text, because body
+  text is exactly the mistake this replaced.
+- On the clipboard fallback the CC is exposed as its own field, and never
+  appended to the body.
+- Phase 8's verdict and complaint paths behave identically with the CC off.
 
 ---
 
@@ -1073,7 +1142,9 @@ the wrong call and the envelope should come back.
 | `free-minutes.ts` | — (reads `/tracked-rides`, which exists) | yes |
 | `trip-alerts.ts` | trip-alert consent storage + the send path | the opt-in UI, yes; the sending, no |
 | `plan-resume.ts` | the server-side plan (master plan §13.6) | no — there is nothing to resume until the plan outlives the tab |
-| Phase 10's CC tick | Phase 8's complaint body | yes — it is one address in a string |
+| Phase 8: `receipt-read.ts`, `receipt-verdict.ts`, the complaint | nothing — OCR, the verdict and the `mailto:` are all local | **yes**, and this is most of the phase |
+| Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
+| Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |
 | `trip-plan.ts` | `replaces` on `POST /dibs` | yes — without it a swap is a release then a claim, two calls, non-atomic; ship the atomic form when `sql/083` lands |
 | `my-scooters.ts` | `sql/081` + `/profile/favorite-devices` | **no** — the gate and the withheld position are both server-side, and there is nothing honest to build against a stub |
