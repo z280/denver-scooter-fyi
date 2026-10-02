@@ -120,6 +120,7 @@ import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { reportFailedStart } from "./ride-failed-start.ts";
 import { openQrUtility, plateFromQr } from "./qr-utility.ts";
+import { openQrScanner } from "./qr-scan.ts";
 import {
   qrRideAction,
   qrRideMessage,
@@ -154,7 +155,11 @@ import {
   type Dibs,
   loadDibs,
 } from "./dibs.ts";
-import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
+import {
+  setPendingTrip,
+  takePendingTrip,
+  type TripPlace,
+} from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -1383,6 +1388,13 @@ map.on("load", async () => {
       // destination is what `navigation` means. Folded in here, through
       // `applyCascades` like every other seed, so the wizard can never be
       // handed an options blob it would call illegal.
+      //
+      // "started" is NOT `own_device`, which is the whole reason it is a third
+      // answer rather than a second label on that one — there is a rental
+      // running, so the ride is tracked against a real vehicle and the cost
+      // readout keeps the default that `own_device` would have forced off.
+      // `=== "own"` already says so; it is spelled out because the obvious
+      // reading of "they already have wheels" is the wrong one here.
       const trip = takePendingTrip();
       const fromHomeBar = trip
         ? { own_device: trip.wheels === "own", navigation: true }
@@ -3479,12 +3491,21 @@ function wireHomeBar(): HomeBarHandle {
     // The same one-shot picker the profile's home/work and Screen 3 use.
     pickOnMap: (hint) => mapPick.pick({ hint }),
     onPlanTrip: ({ dest, wheels, start }) => {
-      setPendingTrip({ dest, wheels, start });
       closeAllPopups();
       const click = (mode: string): void =>
         document
           .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
           ?.click();
+      // "I've already started one" is the only answer that needs something
+      // from the rider before it can be acted on, so it is the only one that
+      // can come back refused. Handled first, and it is the ONLY branch that
+      // defers `setPendingTrip` — a cancelled scan must not leave an intent
+      // lying around to steer some later ride (`pending-trip.ts`'s whole
+      // reason for being one-shot).
+      if (wheels === "started") {
+        return planStartedTrip({ dest, start });
+      }
+      setPendingTrip({ dest, wheels, start });
       // "Need wheels" is a question about which vehicle, which is exactly what
       // the find-a-ride ranker answers: the rider picks one on the map, and
       // 🧭 Use in Ride Mode hands them to the walk flow rather than the
@@ -3502,6 +3523,104 @@ function wireHomeBar(): HomeBarHandle {
     },
   });
   return bar;
+}
+
+/** "I've already started one" — the home bar's third answer.
+ *
+ *  WHAT MAKES IT ITS OWN ANSWER rather than a flavour of "got my own": there is
+ *  a rental running. Veo is billing by the minute right now, which makes this
+ *  the ride where the cost readout matters MOST, and it makes the trip a
+ *  tracked one against a specific vehicle rather than a private recording of
+ *  nothing in particular. Both answers skip the picker and that is all they
+ *  share; sending this rider down the own-device path priced their ride at zero
+ *  and recorded it as having been on no scooter at all.
+ *
+ *  WHY THE SCAN IS NOT NEGOTIABLE. The whole answer is "this one, the one I am
+ *  sitting on", and the thing that names it server-side is a salted hash no
+ *  browser can compute. The sticker on the stem is the only thing in reach that
+ *  carries it. A plate typed from memory would also be a claim about a vehicle
+ *  the rider might not be on, which is the distinction `qr-ride-scan.ts` and
+ *  master §13.8.1 both turn on — so it is the scan or nothing.
+ *
+ *  Returns false when the trip was NOT taken, which hands the rider back to the
+ *  home bar with their destination intact: backing out of a camera is not
+ *  changing your mind about where you are going. */
+async function planStartedTrip(trip: {
+  dest: TripPlace;
+  start: TripPlace | null;
+}): Promise<boolean> {
+  const scanned = await scanForStartedVehicle();
+  if (!scanned) return false;
+
+  setPendingTrip({ dest: trip.dest, wheels: "started", start: trip.start });
+  // Everything the wizard would otherwise ask is already answered: which
+  // scooter (the scan), where to (the home bar), and whether it is unlocked
+  // (that is what this answer MEANS). So Screen 2 skips on `deviceConfirmed`,
+  // Screen 3 skips on the destination the trip carries, and Screen 6 takes its
+  // `autoStart` branch — the same branch the device card's "I started the Veo
+  // already" takes, because it is the same claim arriving through a different
+  // door and must not produce a different session.
+  //
+  // Screen 4 still shows. The rider named a destination, and route choice is
+  // what they named it FOR; the meter running is a reason to make that screen
+  // quick, not a reason to skip the thing they asked for.
+  //
+  // One honest imprecision, worth knowing rather than hiding: the ride clock
+  // starts when `POST /tracked-rides` does, and the unlock happened a minute or
+  // two earlier. The HUD's ±15s/±1m nudges and its reset exist for exactly this
+  // and are the right place to fix it — inventing an earlier start time here
+  // would be guessing at the number the rider is actually being billed on.
+  openRideModal({
+    vehicleIdentifier: scanned.vehicleIdentifier,
+    plate: scanned.plate,
+    deviceConfirmed: true,
+    autoStart: true,
+    fastForwardTo: "4",
+  });
+  return true;
+}
+
+/** Open the camera and resolve what it reads to a vehicle in the live feed.
+ *
+ *  Resolves to null for every way this can come to nothing — cancelled,
+ *  unreadable, or a plate no live vehicle carries — having already told the
+ *  rider which. The caller only needs to know it did not work. */
+function scanForStartedVehicle(): Promise<ScannedVehicle | null> {
+  return new Promise((resolve) => {
+    let handed = false;
+    openQrScanner({
+      prompt: "Scan the QR code on the scooter you're riding",
+      onScan: (rawValue) => {
+        handed = true;
+        const plate = plateFromQr(rawValue);
+        void (plate ? resolveScannedVehicle(plate) : Promise.resolve(null)).then(
+          (vehicle) => {
+            if (vehicle) {
+              resolve(vehicle);
+              return;
+            }
+            // The same two failures `qr-ride-scan.ts` separates, in the same
+            // words, because they are different problems with different next
+            // steps: aim the camera again, versus this scooter is not in the
+            // fleet right now.
+            showMovedToast(
+              qrRideMessage(
+                plate === null
+                  ? { kind: "unreadable" }
+                  : { kind: "unknown_vehicle", plate },
+              ),
+            );
+            resolve(null);
+          },
+        );
+      },
+      // Fires on cancel AND on a successful scan (the scanner closes before it
+      // delivers), so `handed` is what tells them apart.
+      onClose: () => {
+        if (!handed) resolve(null);
+      },
+    });
+  });
 }
 
 // ---------- Walk to the scooter, then ride ----------

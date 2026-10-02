@@ -12,7 +12,7 @@
 // bug nobody reports and everybody feels — favorites are how a place gets
 // remembered on purpose (`favorites.ts`), and this is not that.
 
-export type TripWheels = "need" | "own";
+export type TripWheels = "need" | "own" | "started";
 
 export interface TripPlace {
   label: string;
@@ -22,11 +22,31 @@ export interface TripPlace {
 
 export interface PendingTrip {
   dest: TripPlace;
-  /** "need" = find me a vehicle; "own" = I have my own wheels. There is no
-   *  third value and no default — the home bar will not hand over a trip
-   *  until the rider has said which, because guessing wrong sends an NIU
-   *  owner shopping for a scooter, or a scooter-less rider straight to
-   *  turn-by-turn from nowhere. */
+  /** How they are getting there. Still NO DEFAULT — the home bar will not hand
+   *  over a trip until the rider has said which, because guessing wrong sends
+   *  an NIU owner shopping for a scooter, or a scooter-less rider straight to
+   *  turn-by-turn from nowhere.
+   *
+   *  "need"     find me a vehicle. The ranked list and the walk flow.
+   *  "own"      I have my own wheels. A private ride: no Veo meter, nothing to
+   *             identify, nothing to unlock.
+   *  "started"  I am ON a Veo scooter and it is already unlocked.
+   *
+   *  THE THIRD ONE IS NOT A FLAVOUR OF THE SECOND, which is the mistake the
+   *  two-value version forced. Both skip the picker, and that is the only
+   *  thing they share. "own" means there is no rental: no meter running, no
+   *  vehicle in the fleet to name, and the ride is private and unpriced.
+   *  "started" means there IS a rental — Veo is billing by the minute right
+   *  now — so the ride is a tracked one against a specific vehicle, the cost
+   *  readout is the thing the rider most wants on screen, and we have to know
+   *  WHICH scooter. Collapsing the two sent a rider who had just paid to
+   *  unlock a Veo into an own-device flow that priced nothing and recorded the
+   *  trip as having been on no vehicle at all.
+   *
+   *  Which is why "started" is the one answer that cannot be taken on trust:
+   *  the vehicle comes from a QR scan, because the identifier is a salted hash
+   *  no client can compute and the sticker is the only thing in reach that
+   *  carries it. */
   wheels: TripWheels;
   /** Where the ride starts, when the rider named it rather than letting GPS
    *  answer. Null means "wherever I am", which is the normal case. */

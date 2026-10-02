@@ -108,7 +108,7 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `qr-scan.ts` *(existing)* | 4 | **Almost untouched.** Still opens the camera, decodes, and hands back the raw payload with no opinion about what it means. Gained one export, `isQrScannerOpen()`: it is always opened FROM something, every host listens for Escape on `document`, and one press was closing both — losing whatever the host had collected. The topmost layer owns Escape. |
 | `api.ts` *(existing)* | 1–5, 8, 9 | `fetchTripPlans`, the ride-spec CRUD, the favourite-device CRUD, `replaces` on `registerDibs`; **Phase 8's** receipt submit / list / withdraw (§8.6 — withdrawal has to really delete); **Phase 9's** `fetchPlanCriticalState(ids, signal)`, the trip-alert opt-in's read/write, and the live-plan lifecycle `createPlan` / `updatePlan` / `finishPlan` (§9.1, master §13.6 — a stored plan with no finish call is a watcher texting about a finished trip). Phase 10 adds nothing here — its CC is a `mailto:` parameter, not a request. **This row grows with every phase that touches the network**, because the house rule above is that the calls live here; a client that ends up in its feature module instead is the same defect each time, and it has already been caught once (§9.2). |
 | `onboarding.ts` *(existing)* | 7 | The seven-screen tour. Rewritten against the UI Phase 6 leaves behind, and switched back on. `ONBOARDING_SCREENS` stays exported — it is what the audit test reads. |
-| `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels toggle is untouchable. |
+| `home-bar.ts` *(existing)* | 6 | Gains the two named entry functions that replace clicking `#mode-switch`. Its no-default rule on the wheels question is untouchable — and survived that question growing a **third** answer, "I've already started one" (§6.7). `onPlanTrip` may now be **refused**: the bar stays put, with the destination intact, when the host declines to take the trip. |
 | `ride-hud.ts` *(existing)* | 6 | `rideModelFilterFor()` learns about the attached spec, and the pills stop being a second filter vocabulary. |
 | `main.ts` *(existing)* | 1–5, 8, 9 | Two `wireX()` calls (`wireTripPlan`, `wireMyScooters`), the `onGone` handler at `main.ts:3257` re-pointed at `trip-plan.ts`, the spec bridge on the existing `snapshotFilters` / `applyFilterSnapshot` pair (`main.ts:1011`), and `devices.allFeatures()` fed to the plan search. **Phase 8** adds `wireReceipts()` — the panel's host and its entry point; **Phase 9** adds `wireTripAlerts()` and the **resume entry point**, which must run on load before anything else reads the URL, because a resume link arrives as a cold start. **This row grows with every phase that adds a surface**: the house rule above is that a surface is wired from here through one `wireX()`, so a phase with a surface and no row here is a phase whose UI has no host. |
 
@@ -1110,7 +1110,115 @@ explaining the absence. A field that needs a paragraph is misnamed.
   `toFilterSnapshot(spec).models`; changing a pill detaches, once.
 - No `RideOptions` field is written by two surfaces meaning two things.
 
-### 6.7 Out of bounds
+### 6.7 The third answer — "I've already started one"
+
+The home bar asks two questions, and the second one had two answers: *Need
+wheels* and *Got my own*. There is a third kind of rider, and the two-answer
+version had nowhere to put them: **somebody sitting on a Veo scooter they have
+already unlocked.**
+
+They used to pick "Got my own", because it is the one that skips the picker, and
+every consequence of that was wrong. An own-device ride is `own_device: true` —
+which means a private ride, no `tracked_rides` row, the cost readout forced OFF
+(there is no Veo billing clock to picture), and no vehicle on the doc. So a
+rider who had *just paid to unlock a scooter* got a trip priced at zero, no
+meter on the screen at the exact moment a meter is worth most, and a record
+saying they rode nothing in particular — no model-bonus question, nothing to
+correlate against the fleet, nothing the post-ride survey could be about.
+
+**Both answers skip the picker. That is the only thing they have in common**,
+and reading it as "they already have wheels, same thing" is what made one answer
+do two jobs badly.
+
+| | Need wheels | **Already started one** | Got my own |
+|---|---|---|---|
+| Picker | the ranked list + walk flow | **skipped** | skipped |
+| Vehicle on the doc | chosen on Screen 2 | **the scanned one** | `{ own: true }` |
+| Veo rental running | not yet | **yes, billing now** | no |
+| `own_device` | false | **false** | true |
+| Cost readout | on | **on — the point** | off, forced |
+| Ride record | tracked | **tracked** | private |
+
+#### 6.7.1 It requires a scan, and that is not friction to be optimised away
+
+The whole answer is "this one, the one I am sitting on", and the thing that
+names a vehicle server-side is a salted hash no browser can compute. The sticker
+on the handlebar stem is the only thing within the rider's reach that carries
+it. So the scan is not a confirmation step bolted onto the answer — it *is* the
+answer, and there is no cheaper version:
+
+- A typed plate would be a claim about a vehicle the rider might not be on,
+  which is the exact distinction master §13.8.1 turns on when it decides which
+  watches may text.
+- The nearest device to a GPS fix is a guess, and two scooters racked side by
+  side is the common case this app already refuses to guess at
+  (`gbfs.ts`'s `cachedPlateFor`: "missing beats wrong").
+
+The blurb on the button says so — *"I've unlocked a Veo — scan it"* — because a
+rider who taps this expecting to just go would rather have known about the
+camera one tap earlier.
+
+#### 6.7.2 `onPlanTrip` can be refused
+
+This is the first answer whose host needs something from the rider before it can
+act, and therefore the first that can fail *after* the question is answered. A
+rider who backs out of the camera has not changed their mind about where they are
+going, and losing the destination they just typed would be the app punishing them
+for looking.
+
+So `onPlanTrip` may return `false` (or a promise of it): the bar stays exactly
+where it is, destination and start point intact, and they can answer again —
+including differently. Anything else, including the `void` every existing caller
+returns, still means taken.
+
+Two details that are rules rather than taste:
+
+- **The bar does not know a scan is what happened.** It knows the host declined.
+  Teaching it about cameras and vehicle resolution would put the flow's
+  knowledge in the renderer, which is the thing this module's header is about.
+- **A synchronous host still collapses in the same tick.** Routing every answer
+  through a microtask would leave the bar sitting over a wizard that has already
+  opened — a flicker nobody would be able to place six months later.
+
+Every choice is held while one is pending, not just this one: two scanners
+racing because a thumb bounced is a worse bug than a slow button.
+
+#### 6.7.3 What it hands the wizard
+
+Everything the wizard would otherwise ask is already answered — which scooter
+(the scan), where to (the home bar), and whether it is unlocked (that is what
+this answer *means*). So: `deviceConfirmed` skips Screen 2, the destination
+skips Screen 3, and `autoStart` puts Screen 6 straight onto its "I already
+started" branch — **the same branch the device card's own "I started the Veo
+already" takes**, because it is the same claim arriving through a different door
+and must not produce a different session.
+
+Screen 4 still shows. The rider named a destination and route choice is what
+they named it *for*; a running meter is a reason to make that screen quick, not
+a reason to skip the thing they asked for.
+
+**One honest imprecision**, recorded rather than hidden: the ride clock starts
+when `POST /tracked-rides` does, and the unlock happened a minute or two
+earlier, so the cost readout under-counts by that much. The HUD's ±15s/±1m
+nudges and its reset exist for exactly this and are the right place to fix it.
+Inventing an earlier start time on the rider's behalf would be guessing at the
+number Veo is actually billing them on.
+
+#### 6.7.4 Tests
+
+- The three answers are offered in order, none preselected — the no-default rule
+  re-asserted across all three, because a third option is when a rule like that
+  quietly acquires a "sensible" default.
+- `wheels: "started"` is handed over, and is **not** `"own"`.
+- A refused trip keeps the destination, re-enables the buttons, and dispatches
+  nothing.
+- A refusal that arrives asynchronously does the same, and the pressed button is
+  visibly held until it does.
+- Three rapid taps start **one** hand-off.
+- A host that throws is a host that did not take the trip.
+- A synchronous host collapses the bar in the same tick.
+
+### 6.8 Out of bounds
 
 - No new stored field, no new endpoint. Nothing here is a retention question.
 - No preset comes back. Every seam closes by **deleting** mode machinery.

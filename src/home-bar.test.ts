@@ -220,19 +220,24 @@ describe("the wheels question", () => {
     expect(q(".home-bar__to")?.textContent).toContain("1500 Champa St, Denver");
   });
 
-  it("HAS NO DEFAULT — neither option is preselected or marked primary", () => {
+  it("HAS NO DEFAULT — no option is preselected or marked primary", () => {
     // Product decision, pinned here on purpose. A preselected "find me a
     // scooter" tells an NIU owner they are the wrong kind of user; a
     // preselected "got my own" hides the fleet from someone who needed it.
+    // Survived a third option being added, which is when a rule like this is
+    // most likely to quietly acquire a "sensible" default.
     toWheels();
-    const need = wheelNamed("Need wheels")!;
-    const own = wheelNamed("Got my own")!;
-    for (const btn of [need, own]) {
+    const all = [
+      wheelNamed("Need wheels")!,
+      wheelNamed("Already started one")!,
+      wheelNamed("Got my own")!,
+    ];
+    for (const btn of all) {
+      expect(btn).toBeTruthy();
       expect(btn.getAttribute("aria-pressed")).toBeNull();
-      expect(btn.className).toBe(own.className);
+      expect(btn.className).toBe(all[0].className);
       expect(btn.hasAttribute("disabled")).toBe(false);
     }
-    expect(need.className).toBe(own.className);
   });
 
   it("hands over the trip once both questions are answered", () => {
@@ -558,5 +563,130 @@ describe("pinned Home and Work", () => {
     await new Promise((r) => setTimeout(r, 0));
     // A late repaint here would wipe what they typed.
     expect(input.value).toBe("villa park");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "I've already started one" — the third answer, and the one that can be
+// refused.
+//
+// It is NOT a flavour of "got my own": there is a rental running, so the ride
+// is tracked against a specific vehicle and priced, where an own-device ride is
+// private and unpriced. Both skip the picker and that is all they share. The
+// vehicle comes from a QR scan, which means this is the only answer whose host
+// can come back and say "not yet" — and a rider who backs out of a camera has
+// not changed their mind about where they are going.
+// ---------------------------------------------------------------------------
+
+describe("already started one", () => {
+  function toWheels(over: Partial<HomeBarDeps> = {}) {
+    const search = fakeSearch();
+    const out = mount({ createSearch: search.createSearch, ...over });
+    pill().click();
+    typeInto("champa");
+    search.emitResults([result("1500 Champa St, Denver")], "champa");
+    rowNamed("1500 Champa")!.click();
+    return out;
+  }
+  const started = () => wheelNamed("Already started one")!;
+  const wheels = () => [
+    ...root.querySelectorAll<HTMLButtonElement>(".home-bar__wheel"),
+  ];
+
+  it("is offered between the other two", () => {
+    toWheels();
+    const names = wheels().map((b) => b.textContent ?? "");
+    expect(names[0]).toContain("Need wheels");
+    expect(names[1]).toContain("Already started one");
+    expect(names[2]).toContain("Got my own");
+  });
+
+  it("says the scan is coming, rather than springing a camera", () => {
+    toWheels();
+    expect(started().textContent).toMatch(/scan/i);
+  });
+
+  it("hands over its own wheels value, not own's", () => {
+    const { planned } = toWheels();
+    started().click();
+    expect(planned[0].wheels).toBe("started");
+    // The distinction the whole option exists for: an own-device ride prices
+    // nothing and names no vehicle.
+    expect(planned[0].wheels).not.toBe("own");
+    expect(planned[0].dest.label).toBe("1500 Champa St, Denver");
+  });
+
+  it("keeps the rider's destination when the host refuses", async () => {
+    // A cancelled scan. Backing out of a camera is not changing your mind.
+    const { planned } = toWheels({ onPlanTrip: () => false });
+    started().click();
+    expect(planned).toHaveLength(0);
+    expect(bar!.isOpen()).toBe(true);
+    expect(q(".home-bar__to")?.textContent).toContain("1500 Champa St, Denver");
+    // ...and they can answer again, including differently.
+    expect(started().hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps it when the host refuses asynchronously", async () => {
+    let settle: (v: boolean) => void = () => {};
+    toWheels({
+      onPlanTrip: () => new Promise<boolean>((r) => { settle = r; }),
+    });
+    started().click();
+    // Held while the camera is up: an unmarked button over a slow viewfinder
+    // reads as a dead one.
+    expect(started().hasAttribute("disabled")).toBe(true);
+    expect(started().classList.contains("is-working")).toBe(true);
+
+    settle(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bar!.isOpen()).toBe(true);
+    expect(started().hasAttribute("disabled")).toBe(false);
+    expect(started().classList.contains("is-working")).toBe(false);
+  });
+
+  it("holds EVERY choice while one is pending, so a bounced thumb starts one scan", async () => {
+    let calls = 0;
+    toWheels({
+      onPlanTrip: () => {
+        calls += 1;
+        return new Promise<boolean>(() => {});
+      },
+    });
+    started().click();
+    started().click();
+    wheelNamed("Need wheels")!.click();
+    expect(calls).toBe(1);
+    for (const b of wheels()) expect(b.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("folds away when the host takes it", async () => {
+    toWheels({ onPlanTrip: () => Promise.resolve(true) });
+    started().click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bar!.isOpen()).toBe(false);
+  });
+
+  it("stays put when the host throws", () => {
+    toWheels({
+      onPlanTrip: () => {
+        throw new Error("boom");
+      },
+    });
+    started().click();
+    // A host that threw has certainly not taken the trip.
+    expect(bar!.isOpen()).toBe(true);
+    expect(started().hasAttribute("disabled")).toBe(false);
+  });
+
+  it("still collapses in the SAME TICK for a synchronous host", () => {
+    // Every existing caller returns void. Deferring those by a microtask would
+    // leave the bar sitting over a wizard that has already opened — a flicker
+    // nobody would be able to place later.
+    toWheels();
+    wheelNamed("Got my own")!.click();
+    expect(bar!.isOpen()).toBe(false);
   });
 });

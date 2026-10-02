@@ -2138,6 +2138,26 @@ body.ride-active .arrival {
   display: flex;
   gap: 8px;
 }
+/* Three choices, not two. At phone width three side by side leaves each one
+   about a third of a narrow sheet, which is not enough for a two-line blurb —
+   so they stack, which also puts them in the reading order of the question. */
+@media (max-width: 560px) {
+  .home-bar__wheels {
+    flex-direction: column;
+  }
+}
+/* Held while the host decides whether to take the trip. "Already started one"
+   opens a camera, and the gap between the tap and the viewfinder is long enough
+   that an unmarked button reads as a dead one. */
+.home-bar__wheel[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.home-bar__wheel.is-working {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .home-bar__wheel {
   appearance: none;
   flex: 1 1 0;
