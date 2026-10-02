@@ -4927,6 +4927,24 @@ body.is-map-picking .ride-modal {
   color: #fff;
 }
 .hud-round-btn--stop svg { fill: currentColor; }
+/* Re-center. Quiet while the map is still following, because then it is only
+   a tidy-up; marked while following is suspended, because then it is the
+   answer to a question the rider is actively asking ("why has the map stopped
+   moving?"). The ring is drawn OUTSIDE the button so it reads at a glance on
+   a moving map without changing the button's footprint. */
+.hud-round-btn--recenter.is-off-center {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 0 3px var(--accent-soft);
+}
+:root[data-theme="dark"] .ride-hud .hud-round-btn--recenter.is-off-center {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+/* Nothing flashes on a HUD at 15 mph. The state change is colour, not motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .hud-round-btn--recenter { transition: background 160ms ease, color 160ms ease; }
+}
 
 /* ride-hud.ts — F3 corner re-layout: the ride clock moves BL -> TL with the
    cost readout stacked just below it, plus the wrench panel's live clock. */
@@ -5247,6 +5265,33 @@ body.is-map-picking .ride-modal {
   border-radius: 14px;
   box-shadow: var(--shadow);
   color: var(--fg);
+}
+/* "On screen" — which readouts the rider wants, in its own sheet rather than
+   buried in the wrench panel's time-and-rate controls. Same geometry as that
+   panel (only one of the two is ever open), so the rider's thumb lands in the
+   same place whichever they opened. */
+.hud-display-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  width: min(420px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  color: var(--fg);
+}
+.hud-display-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.75;
 }
 .hud-adjust-row { display: flex; gap: 6px; }
 .hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }

@@ -174,6 +174,11 @@ function fakeMap() {
     getPitch: () => 0,
     getBearing: () => 0,
     easeTo: () => {},
+    // The follow-cam's pan detection registers map gesture listeners
+    // (`watchMapGestures`); nothing in this file fires one, it just must not
+    // be an undefined method.
+    on: () => {},
+    off: () => {},
     getStyle: () => ({ layers: [] }),
     getContainer: () => container,
   };
