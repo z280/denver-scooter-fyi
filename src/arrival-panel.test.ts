@@ -310,6 +310,19 @@ describe("not rideable", () => {
     expect(named("Find another scooter")).toBeTruthy();
   });
 
+  it("moves focus to the outcome, because the button it was on is gone", async () => {
+    // The report is async and the button that started it is deleted when the
+    // result lands, so without this the rider is on <body> and a screen reader
+    // has been told neither that the report went through nor that only one
+    // action is left. The outcome text is the announcement; the button after
+    // it is next in reading order.
+    arrived(async () => "Thanks — we've marked this one as not rideable.");
+    named("It won't start")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.activeElement).toBe(root.querySelector(".arrival__head"));
+    expect(document.activeElement?.textContent).toContain("Not rideable");
+  });
+
   it("a scooter that went while the report was in flight keeps the gone face", async () => {
     const p = arrived(async () => {
       await new Promise((r) => setTimeout(r, 5));

@@ -311,6 +311,26 @@ export function createArrivalPanel(
       deps.onCancel();
     });
     body.append(back);
+
+    // The report button the rider just pressed was in `body`, and the line
+    // above deleted it — so focus is sitting on <body> and a screen reader has
+    // been told nothing at all: not that the report went through, and not that
+    // the only action left is a different scooter.
+    //
+    // Focus the OUTCOME rather than the button after it. The announcement is
+    // "🚫 Not rideable" plus the sentence under it; landing on [Find another
+    // scooter] alone reads as a bare command with no account of why it is the
+    // only one on offer, and the button is next in reading order anyway.
+    //
+    // `head` is deliberately NOT a live region: the walking face rewrites
+    // `title` and `sub` on every countdown tick, and a polite region there
+    // would narrate the clock for the whole walk.
+    head.tabIndex = -1;
+    try {
+      head.focus();
+    } catch {
+      /* detached — the panel went away while the report was in flight */
+    }
   }
 
   function setArrived(): void {

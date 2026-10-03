@@ -119,7 +119,7 @@ import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { reportFailedStart } from "./ride-failed-start.ts";
-import { openQrUtility, plateFromQr } from "./qr-utility.ts";
+import { plateFromQr, wireQrUtility } from "./qr-utility.ts";
 import { openQrScanner } from "./qr-scan.ts";
 import {
   qrRideAction,
@@ -403,23 +403,24 @@ need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
 });
 // The ribbon's QR tool: one scan, a dial in front of it deciding what the scan
 // does. See `qr-utility.ts` for why it is a dial and not two buttons, and
-// `qr-ride-scan.ts` for the four things a scan can mean to a ride.
-need<HTMLButtonElement>("ribbon-qr").addEventListener("click", () => {
-  openQrUtility({
-    // Mode `features` hands the payload straight on and parses nothing: the
-    // server resolves which scooter the scan names (`qr_raw_value` on the
-    // feature report), which is why this mode works for a scooter that is not
-    // in the live feed at all and the ride mode below does not.
-    onConfirmFeatures: (rawValue) => {
-      track("qr_utility", { mode: "features" });
-      openConfirmFeatures({
-        requireQr: true,
-        status: "needs_features_confirmed",
-        prefillQr: rawValue,
-      });
-    },
-    onRideScan: (rawValue) => handleQrRideScan(rawValue),
-  });
+// `qr-ride-scan.ts` for the four things a scan can mean to a ride. The listener
+// itself lives over there behind `wireQrUtility` — the house rule is one
+// `wireX()` call per surface and no new top-level wiring in this module.
+wireQrUtility({
+  button: need<HTMLButtonElement>("ribbon-qr"),
+  // Mode `features` hands the payload straight on and parses nothing: the
+  // server resolves which scooter the scan names (`qr_raw_value` on the
+  // feature report), which is why this mode works for a scooter that is not
+  // in the live feed at all and the ride mode below does not.
+  onConfirmFeatures: (rawValue) => {
+    track("qr_utility", { mode: "features" });
+    openConfirmFeatures({
+      requireQr: true,
+      status: "needs_features_confirmed",
+      prefillQr: rawValue,
+    });
+  },
+  onRideScan: (rawValue) => handleQrRideScan(rawValue),
 });
 // Equity Compliance moved off the ribbon into Tools: the (hidden) ribbon
 // tab still owns the drawer via wireDrawers, so opening it is one

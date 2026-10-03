@@ -10,6 +10,7 @@ import {
   SATISFACTION_STEPS,
   buildEmojiScale,
   npsToStep,
+  resetEmojiScaleFocus,
   stepLabel,
   stepToNps,
   stepToTenScale,
@@ -203,5 +204,133 @@ describe("stepLabel", () => {
     ]);
     expect(stepLabel(0)).toBe("Awful");
     expect(stepLabel(9)).toBe("Great");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The ARIA radiogroup pattern is a package deal.
+//
+// Declaring `role="radio"` and then leaving five Tab stops with no arrow keys
+// is worse than a plain button row: assistive tech announces a radiogroup and
+// then behaves like nothing of the sort. `ride-settings.ts`'s segmented
+// controls and `qr-utility.ts`'s dial both implement this; so does the scale.
+// ---------------------------------------------------------------------------
+
+describe("the control's keyboard behaviour", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    document.body.replaceChildren();
+    resetEmojiScaleFocus();
+    host = document.createElement("div");
+    document.body.append(host);
+  });
+
+  const faces = () =>
+    [...host.querySelectorAll<HTMLButtonElement>(".emoji-scale__btn")];
+
+  function build(value: number | null, onSelect = vi.fn()) {
+    host.replaceChildren(
+      buildEmojiScale({ question: "How was it?", value, onSelect }),
+    );
+    return onSelect;
+  }
+
+  function arrow(btn: HTMLButtonElement, key: string) {
+    btn.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
+  }
+
+  it("is one Tab stop, not five", () => {
+    build(null);
+    // Unanswered: the first face is the way in.
+    expect(faces().map((b) => b.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    build(4);
+    // Answered: the way back in is the answer they gave.
+    expect(faces().map((b) => b.tabIndex)).toEqual([-1, -1, -1, 0, -1]);
+  });
+
+  it("selects as it moves, in both directions", () => {
+    const onSelect = build(3);
+    arrow(faces()[2], "ArrowRight");
+    expect(onSelect).toHaveBeenCalledWith(4);
+    arrow(faces()[2], "ArrowLeft");
+    expect(onSelect).toHaveBeenLastCalledWith(2);
+    arrow(faces()[2], "ArrowDown");
+    expect(onSelect).toHaveBeenLastCalledWith(4);
+    arrow(faces()[2], "ArrowUp");
+    expect(onSelect).toHaveBeenLastCalledWith(2);
+  });
+
+  it("jumps to the ends on Home and End", () => {
+    const onSelect = build(3);
+    arrow(faces()[2], "Home");
+    expect(onSelect).toHaveBeenLastCalledWith(1);
+    arrow(faces()[2], "End");
+    expect(onSelect).toHaveBeenLastCalledWith(5);
+  });
+
+  it("clamps at the ends rather than wrapping", () => {
+    // A scale, not a carousel: arrowing right off 😍 must not land on 😠 and
+    // turn the best answer into the worst one.
+    const top = build(5);
+    arrow(faces()[4], "ArrowRight");
+    expect(top).not.toHaveBeenCalled();
+    const bottom = build(1);
+    arrow(faces()[0], "ArrowLeft");
+    expect(bottom).not.toHaveBeenCalled();
+  });
+
+  it("leaves keys it does not own to the page", () => {
+    const onSelect = build(3);
+    const e = new KeyboardEvent("keydown", {
+      key: "Tab", bubbles: true, cancelable: true,
+    });
+    faces()[2].dispatchEvent(e);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("keeps focus on the scale when the host rebuilds it mid-keystroke", async () => {
+    // `ride-post-s9.ts`'s `onSelect` calls `renderLeft()`, which throws away
+    // the pane the focused button lives in. Without the restore, one arrow key
+    // drops a keyboard rider onto <body> — which is how an added arrow key
+    // makes things worse rather than better.
+    let value: number | null = 3;
+    const rebuild = (): void => {
+      host.replaceChildren(
+        buildEmojiScale({
+          question: "How was it?",
+          value,
+          onSelect: (step) => {
+            value = step;
+            rebuild();
+          },
+        }),
+      );
+    };
+    rebuild();
+    faces()[2].focus();
+    arrow(faces()[2], "ArrowRight");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(value).toBe(4);
+    expect(document.activeElement).toBe(faces()[3]);
+    expect(faces()[3].getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("does not hijack focus on a rebuild the rider never asked for", async () => {
+    // A mouse click rebuilds the pane too. Stealing focus there would move it
+    // away from wherever the rider actually is.
+    build(3);
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    faces()[4].click();
+    build(5);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(outside);
   });
 });

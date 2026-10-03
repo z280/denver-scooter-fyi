@@ -114,7 +114,25 @@ export interface EmojiScaleOptions {
    *  finds every question on the screen — the scale is a field like any other
    *  and should not need a second lookup. */
   questionClass?: string;
+  /** Stable identity for this scale across rebuilds, used only to put keyboard
+   *  focus back where the rider left it (see `pendingKeyboardFocus`). Defaults
+   *  to the question, which is already unique per screen — pass one explicitly
+   *  if two scales on a screen ever ask the same question. */
+  name?: string;
 }
+
+/** The scale whose keyboard focus is owed a restore, by `name`.
+ *
+ *  Arrow keys on a radiogroup SELECT as they move, and selecting here calls the
+ *  host's `onSelect` — which, for the survey, is `renderLeft()`: the pane is
+ *  rebuilt and the focused button is thrown away mid-keystroke. A keyboard
+ *  rider would arrow once and land back on `<body>`, which is worse than the
+ *  no-arrow-keys state this replaced. So the move records which scale it was
+ *  in, and the next build of a scale with that name takes focus back.
+ *
+ *  Module-level rather than per-instance precisely because the instance does
+ *  not survive. Cleared on use, so a mouse rebuild never steals focus. */
+let pendingKeyboardFocus: string | null = null;
 
 /** Build the row.
  *
@@ -141,7 +159,10 @@ export function buildEmojiScale(options: EmojiScaleOptions): HTMLElement {
   group.setAttribute("role", "radiogroup");
   group.setAttribute("aria-label", options.question);
 
-  for (const s of SATISFACTION_STEPS) {
+  const name = options.name ?? options.question;
+  const buttons: HTMLButtonElement[] = [];
+
+  SATISFACTION_STEPS.forEach((s, i) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "emoji-scale__btn";
@@ -150,6 +171,11 @@ export function buildEmojiScale(options: EmojiScaleOptions): HTMLElement {
     const active = options.value === s.step;
     btn.setAttribute("aria-checked", String(active));
     btn.classList.toggle("is-active", active);
+    // Roving tabindex: the radiogroup is ONE Tab stop, not five. Five stops is
+    // the thing a screen-reader rider notices first — Tab walks faces instead
+    // of walking the form — and the ARIA radiogroup pattern is a package deal
+    // with the arrow keys below. Unanswered, the entry point is the first face.
+    btn.tabIndex = active || (options.value === null && i === 0) ? 0 : -1;
     // The label is what assistive tech reads; the glyph is marked decorative
     // so it is not announced as "angry face" before it.
     btn.setAttribute("aria-label", s.label);
@@ -165,9 +191,73 @@ export function buildEmojiScale(options: EmojiScaleOptions): HTMLElement {
     btn.append(glyph, caption);
 
     btn.addEventListener("click", () => options.onSelect(s.step));
+    // Arrow keys select as they move, which is the pattern's own rule: on a
+    // radiogroup, moving IS choosing. Enter and Space need nothing — a real
+    // <button> already fires `click` on both.
+    btn.addEventListener("keydown", (e) => {
+      const target = keyboardTarget(e.key, i);
+      if (target === null) return;
+      e.preventDefault();
+      // Clamped, not wrapped, unlike `ride-settings.ts`'s segmented controls:
+      // those are unordered choices where wrapping is a convenience, and this
+      // is a scale. Arrowing right off 😍 and landing on 😠 would turn the
+      // best answer into the worst one with one keystroke too many.
+      if (target === i) return;
+      // Claim the restore BEFORE `onSelect`, because `onSelect` may rebuild
+      // this scale synchronously and the new build is what reads the flag.
+      pendingKeyboardFocus = name;
+      buttons[target].focus();
+      options.onSelect(SATISFACTION_STEPS[target].step);
+      // The host left the DOM alone, so there is nothing to restore and the
+      // claim must not sit there waiting to hijack an unrelated rebuild.
+      if (buttons[target].isConnected) pendingKeyboardFocus = null;
+    });
     group.append(btn);
-  }
+    buttons.push(btn);
+  });
 
   wrap.append(group);
+
+  if (pendingKeyboardFocus === name) {
+    pendingKeyboardFocus = null;
+    const landing =
+      buttons.find((b) => b.getAttribute("aria-checked") === "true") ??
+      buttons[0];
+    // Deferred because the host has not appended `wrap` yet — focusing a
+    // detached node is a silent no-op that leaves focus on <body>.
+    queueMicrotask(() => {
+      try {
+        if (landing.isConnected) landing.focus();
+      } catch {
+        /* a survey must never die of a focus call */
+      }
+    });
+  }
+
   return wrap;
+}
+
+/** Which index a key means, or null if the key is not ours. Home/End because a
+ *  five-point scale's ends are the two answers worth reaching in one key. */
+function keyboardTarget(key: string, from: number): number | null {
+  const last = SATISFACTION_STEPS.length - 1;
+  switch (key) {
+    case "ArrowRight":
+    case "ArrowDown":
+      return Math.min(from + 1, last);
+    case "ArrowLeft":
+    case "ArrowUp":
+      return Math.max(from - 1, 0);
+    case "Home":
+      return 0;
+    case "End":
+      return last;
+    default:
+      return null;
+  }
+}
+
+/** Test seam: forget any owed focus restore between cases. */
+export function resetEmojiScaleFocus(): void {
+  pendingKeyboardFocus = null;
 }

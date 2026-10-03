@@ -12,6 +12,7 @@ import {
   openQrUtility,
   plateFromQr,
   rotateMode,
+  wireQrUtility,
   type QrUtilityDeps,
 } from "./qr-utility.ts";
 
@@ -338,5 +339,49 @@ describe("the modal", () => {
     close();
     close();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The wiring boundary. House rule, `docs/ALONG_THE_WAY_PLAN.md`: a new surface
+// is a new module wired by one `wireX()` call, and `main.ts` does not grow —
+// so which element opens this tool is this module's business, not the
+// integrator's.
+// ---------------------------------------------------------------------------
+
+describe("wireQrUtility", () => {
+  it("opens the tool on the button it was given, with both modes wired", () => {
+    const button = document.createElement("button");
+    document.body.append(button);
+    const open = vi.fn((_deps: QrUtilityDeps) => () => {});
+    const onConfirmFeatures = vi.fn();
+    const onRideScan = vi.fn(async () => "ok");
+
+    wireQrUtility({ button, onConfirmFeatures, onRideScan, open });
+    button.click();
+
+    expect(open).toHaveBeenCalledTimes(1);
+    const deps = open.mock.calls[0][0];
+    // Passed through, not re-wrapped: the dial's two positions are the app's
+    // to answer and this boundary must not become a second place that decides.
+    deps.onConfirmFeatures("raw");
+    void deps.onRideScan("raw");
+    expect(onConfirmFeatures).toHaveBeenCalledWith("raw");
+    expect(onRideScan).toHaveBeenCalledWith("raw");
+  });
+
+  it("hands back a teardown that really detaches", () => {
+    const button = document.createElement("button");
+    document.body.append(button);
+    const open = vi.fn((_deps: QrUtilityDeps) => () => {});
+    const off = wireQrUtility({
+      button,
+      onConfirmFeatures: vi.fn(),
+      onRideScan: vi.fn(async () => "ok"),
+      open,
+    });
+    off();
+    button.click();
+    expect(open).not.toHaveBeenCalled();
   });
 });

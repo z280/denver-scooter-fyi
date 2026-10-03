@@ -12,10 +12,10 @@
 //
 // It has to parse one thing. Mode `ride` needs to know WHICH vehicle before it
 // can touch the ride session, and the server-side identifier is a salted hash a
-// browser cannot compute. So the plate comes out of the payload here (the same
-// `&number=` parameter the API's own `extract_plate` reads, with the same
-// treat-the-whole-payload fallback) and is reverse-resolved against the live
-// device feed — `ride-deeplink.ts`'s `reversePlateLookup`, the index this app
+// browser cannot compute. So the plate comes out of the payload here — the same
+// `&number=` parameter the API's own `extract_plate` reads, but with a STRICTER
+// bare-payload fallback than the server's, for the reason `plateFromQr` gives —
+// and is reverse-resolved against the live device feed — `ride-deeplink.ts`'s `reversePlateLookup`, the index this app
 // already builds. Mode `features` parses nothing: the server resolves the scan
 // itself (`qr_raw_value` on the feature report), which is why that mode works
 // for a scooter missing from the feed and this one does not.
@@ -385,4 +385,39 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
   }
 
   return close;
+}
+
+// ---------------------------------------------------------------------------
+// The wiring boundary.
+//
+// House rule, `docs/ALONG_THE_WAY_PLAN.md`: "New surfaces are new modules,
+// wired from `main.ts` by a single `wireX()` call. `main.ts` (~3.8k lines) and
+// `devices.ts` (~3.8k lines) do not grow." The ribbon button is this surface's
+// own business — which element opens it, and what the dial's two positions
+// hand back to the app — so it belongs here beside the modal it opens, not as
+// a top-level listener in the integrator.
+// ---------------------------------------------------------------------------
+
+export interface QrUtilityWiring {
+  /** The ribbon button that opens the tool. */
+  button: HTMLElement;
+  /** Mode `features`: the raw payload, verbatim, for the server to resolve. */
+  onConfirmFeatures: QrUtilityDeps["onConfirmFeatures"];
+  /** Mode `ride`: the raw payload, for `handleQrRideScan` to act on. */
+  onRideScan: QrUtilityDeps["onRideScan"];
+  /** Injected in tests; defaults to this module's own `openQrUtility`. */
+  open?: (deps: QrUtilityDeps) => () => void;
+}
+
+/** Wire the ribbon's QR tool. Returns a teardown for the listener. */
+export function wireQrUtility(wiring: QrUtilityWiring): () => void {
+  const open = wiring.open ?? openQrUtility;
+  const onClick = (): void => {
+    open({
+      onConfirmFeatures: wiring.onConfirmFeatures,
+      onRideScan: wiring.onRideScan,
+    });
+  };
+  wiring.button.addEventListener("click", onClick);
+  return () => wiring.button.removeEventListener("click", onClick);
 }
