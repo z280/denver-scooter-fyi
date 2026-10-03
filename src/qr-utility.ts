@@ -90,23 +90,45 @@ export function modeAngle(mode: QrUtilityMode): number {
 // Plate extraction — mirrors the server, on purpose
 // ---------------------------------------------------------------------------
 
-/** The same parameter the API's `qr.py` `extract_plate` reads, and the same
- *  fallback: a payload with no `number=` is treated as a bare plate, which
- *  covers a plain-text sticker.
+/** The same parameter the API's `qr.py` `extract_plate` reads, with a
+ *  deliberately STRICTER bare-payload fallback.
  *
  *  THIS IS A COPY OF A SERVER RULE, which the repo normally refuses to make.
  *  It is allowed here for one reason: nothing is DECIDED by it. The plate is
  *  used to look a vehicle up in a feed the client already has, and a wrong
  *  guess resolves to nothing and says so. Mode `features` — the one where a
  *  scan is evidence rather than a lookup key — still sends the raw payload and
- *  lets the server extract it, so the rule that matters still has one owner. */
+ *  lets the server extract it, so the rule that matters still has one owner.
+ *
+ *  WHERE IT DIVERGES, AND WHY IT HAS TO. `qr.py`'s fallback is "no `number=`?
+ *  treat the whole trimmed payload as the plate", and that is right there: the
+ *  server hashes the result and compares, so a payload that is not a plate
+ *  simply fails to match. Here the result is a SENTENCE. Returning the whole
+ *  payload made `qr-ride-scan.ts`'s `unreadable` branch unreachable — every
+ *  wifi credential, URL and contact card came back as a plate nobody could
+ *  place, and the rider was told "Plate WIFI:S:MyNetwork;… isn't in the live
+ *  fleet right now" when the truthful answer is that they scanned the wrong
+ *  sticker.
+ *
+ *  So the bare fallback accepts only what could be a plate: digits, and a
+ *  plausible number of them. Every observed Veo plate is all-digit — the same
+ *  observation `ride-keypad.ts` is built on, and the reason the plate field
+ *  carries `inputmode="numeric"`. If Veo ever ships an alphanumeric plate this
+ *  loosens here, in one place, with the keypad. */
 const NUMBER_RE = /[?&]number=([^&]+)/;
+/** A bare payload is only a plate if it looks like one. Loose on length
+ *  because plate length is Veo's to change and 7 digits is merely what we see
+ *  today; strict on shape because that is what separates a sticker from a URL. */
+const BARE_PLATE_RE = /^[0-9]{3,12}$/;
 
 export function plateFromQr(rawValue: string): string | null {
   const m = NUMBER_RE.exec(rawValue);
   if (m) {
     try {
       const decoded = decodeURIComponent(m[1]).trim();
+      // A `number=` parameter is an explicit claim about which vehicle this
+      // is, so whatever it holds is taken as the plate — shape and all. Only
+      // the GUESS below has to be careful.
       return decoded === "" ? null : decoded;
     } catch {
       // One malformed %-sequence: fall through to the bare-payload reading
@@ -114,7 +136,7 @@ export function plateFromQr(rawValue: string): string | null {
     }
   }
   const stripped = rawValue.trim();
-  return stripped === "" ? null : stripped;
+  return BARE_PLATE_RE.test(stripped) ? stripped : null;
 }
 
 // ---------------------------------------------------------------------------

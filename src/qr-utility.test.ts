@@ -71,17 +71,13 @@ describe("plateFromQr", () => {
     expect(plateFromQr("x?number=12%2D34")).toBe("12-34");
   });
 
-  it("treats a bare payload as the plate, like the server does", () => {
-    // Covers a plain-text sticker, which is the fallback `qr.py`'s own header
-    // says to keep until a real sticker has been checked.
-    expect(plateFromQr("  1234567 ")).toBe("1234567");
-  });
-
-  it("falls back rather than failing on a malformed escape", () => {
-    const got = plateFromQr("x?number=%E0%A4%A");
-    expect(got).not.toBeNull();
-    // One bad %-sequence must not lose the whole scan.
-    expect(got).toContain("number=");
+  it("reads a malformed escape as not-a-plate rather than as the whole payload", () => {
+    // A bad %-sequence falls through to the bare reading, and the bare reading
+    // now refuses anything that is not digits — so this is `unreadable`, which
+    // is the truthful answer. Previously it came back as the plate
+    // "x?number=%E0%A4%A" and the rider was told that plate was not in the
+    // fleet.
+    expect(plateFromQr("x?number=%E0%A4%A")).toBeNull();
   });
 
   it("reads nothing out of nothing", () => {
@@ -89,13 +85,47 @@ describe("plateFromQr", () => {
     expect(plateFromQr("   ")).toBeNull();
   });
 
-  it("falls through to the bare reading on an EMPTY number, exactly as the server does", () => {
-    // `qr.py`'s regex is `[^&]+` too, so `number=` with nothing after it is not a
-    // match there either, and its fallback is the same "treat the whole trimmed
-    // payload as the plate". The result is a plate that resolves to no vehicle,
-    // which the rider is told — and that beats the two sides disagreeing about
-    // what a sticker says.
-    expect(plateFromQr("x?number=")).toBe("x?number=");
+  it("reads an EMPTY number as not-a-plate", () => {
+    // `qr.py`'s regex is `[^&]+` too, so `number=` with nothing after it is not
+    // a match there either and it falls through the same way. The server's
+    // fallback can afford to be loose because it hashes the result and
+    // compares; this one composes a sentence, so it refuses to call a URL a
+    // plate.
+    expect(plateFromQr("x?number=")).toBeNull();
+  });
+
+  it("refuses every QR code that is not a scooter sticker", () => {
+    // THE CASE THAT MOTIVATED THE STRICTNESS. With the loose fallback these all
+    // came back as "plates", which made `qr-ride-scan.ts`'s `unreadable` branch
+    // unreachable and told the rider that a wifi password was not in the live
+    // fleet.
+    for (const payload of [
+      "WIFI:S:MyNetwork;T:WPA;P:hunter2;;",
+      "https://example.com/some/page",
+      "BEGIN:VCARD\nFN:A Person\nEND:VCARD",
+      "mailto:someone@example.com",
+      "not a plate at all",
+    ]) {
+      expect(plateFromQr(payload)).toBeNull();
+    }
+  });
+
+  it("still accepts a plain-text plate sticker, which is what the fallback is for", () => {
+    expect(plateFromQr("1234567")).toBe("1234567");
+    expect(plateFromQr("  1234567 ")).toBe("1234567");
+    // Loose on length — plate length is Veo's to change — strict on shape.
+    expect(plateFromQr("425")).toBe("425");
+    expect(plateFromQr("123456789012")).toBe("123456789012");
+    expect(plateFromQr("12")).toBeNull();
+    expect(plateFromQr("1234567890123")).toBeNull();
+  });
+
+  it("takes a `number=` parameter at its word, whatever shape it is", () => {
+    // An explicit parameter is a claim about which vehicle this is, so it is
+    // not second-guessed. Only the GUESS has to be careful — and this is also
+    // what keeps us from refusing an alphanumeric plate if Veo ever ships one
+    // through the deep link.
+    expect(plateFromQr("veo://ride?number=AB-12")).toBe("AB-12");
   });
 });
 

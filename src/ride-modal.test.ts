@@ -864,6 +864,23 @@ describe("wireRideModal", () => {
       expect(currentRideScreen()).toBe("2");
     });
 
+    it("can let an entry through on a flag the doc alone cannot distinguish", () => {
+      // The New Destination case. `newDestination` leaves the doc on `wizard:3`
+      // with the ride's id intact, which is indistinguishable from a live ride
+      // by state alone — so the loop's reopen says "this is me coming back"
+      // with `resume`, and the integrator's guard reads the flag rather than
+      // guessing. Deflecting it stranded the rider on the HUD with their
+      // destination and route already cleared (main.ts's `beforeOpen`).
+      registerRideScreen("3", fakeScreen("3").factory);
+      wireRideModal({ beforeOpen: (entry) => entry.resume === true });
+
+      openRideModal({ fastForwardTo: "3" });
+      expect(isRideModalOpen()).toBe(false);
+
+      openRideModal({ fastForwardTo: "3", resume: true });
+      expect(currentRideScreen()).toBe("3");
+    });
+
     it("sees the entry it is vetoing", () => {
       const seen: RideModalEntry[] = [];
       wireRideModal({

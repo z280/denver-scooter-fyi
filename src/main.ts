@@ -507,6 +507,32 @@ const deviceNotifier = createDeviceNotifier({
   },
 });
 
+/** Is this scooter already unavailable, and if so in the rider's words?
+ *
+ *  Null when it is parked and rentable, which is the only state a move-watch
+ *  has anything to say about. Reads the same two flags the watcher does, and
+ *  keeps them apart in the copy: `is_reserved` means IN USE on this operator
+ *  (somebody is riding it), while `is_disabled` is the operator having pulled
+ *  it — from the rider's side both mean "not yours to wait for", but they are
+ *  not the same sentence and must not be told as one. */
+function currentlyUnavailable(vehicleIdentifier: string): string | null {
+  const f = devices
+    .allFeatures()
+    .find((x) => x.properties.vehicle_identifier === vehicleIdentifier);
+  // Absent from the feed is not a reason to refuse: the popup was opened from
+  // it, so this is a race with a refresh rather than a fact about the scooter.
+  if (!f) return null;
+  const p = f.properties as unknown as Record<string, unknown>;
+  const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+  if (truthy(p.is_reserved)) {
+    return "Someone's riding this one right now — there's nothing to watch for yet.";
+  }
+  if (truthy(p.is_disabled)) {
+    return "Veo isn't renting this one out at the moment, so there's nothing to watch for yet.";
+  }
+  return null;
+}
+
 /** Take the rider to a watched scooter — wherever it is NOW, falling back to
  *  where it was when the watch was armed. The alert carries no coordinates
  *  (`device-notify.ts`'s rule, and `ALONG_THE_WAY_PLAN` §4.4's), so this is how
@@ -1156,16 +1182,33 @@ map.on("load", async () => {
   // scan, no network — which is the whole difference from the ⭐ it replaced.
   devices.setNotifyMovedHandler(({ vehicleIdentifier, name, lat, lon, report }) => {
     const watches = loadWatches();
+    // THE SENTENCE HAS TO OUTLIVE THE RE-RENDER. `report` writes into the popup
+    // that is on screen now, and the `refreshOpenPopup` below replaces it with
+    // a fresh element — so anything written through `report` first is thrown
+    // away unread. Every outcome that is followed by a refresh hands its
+    // sentence to the refresh instead; `report` is kept only for the one that
+    // changes nothing and so does not refresh.
+    let said: string;
     if (isWatched(watches, vehicleIdentifier)) {
       track("device_notify_moved", { action: "off" });
       unwatchMoved(vehicleIdentifier);
       deviceNotifier.forget(vehicleIdentifier);
-      report(`We'll stop watching ${name}.`);
+      said = `We'll stop watching ${name}.`;
     } else {
       if (watches.length >= MAX_WATCHED_DEVICES) {
         report(
           `You're already watching ${MAX_WATCHED_DEVICES} scooters — stop one in Tools to add this.`,
         );
+        return;
+      }
+      // NOT WORTH WATCHING YET. A scooter that is already rented, or that the
+      // operator has pulled, satisfies the alert's own condition the moment the
+      // next device refresh lands — so arming here would buzz the rider about
+      // something they can already see on the card in front of them, and then
+      // delete the watch. Say what is true instead.
+      const alreadyGone = currentlyUnavailable(vehicleIdentifier);
+      if (alreadyGone) {
+        report(alreadyGone);
         return;
       }
       track("device_notify_moved", { action: "on" });
@@ -1177,10 +1220,10 @@ map.on("load", async () => {
       // at the dibs call site. Somebody who has just asked to be told when a
       // scooter moves knows what they are agreeing to be interrupted about.
       void requestMovedNotifications();
-      report(`We'll tell you if ${name} moves, while the app is open.`);
+      said = `We'll tell you if ${name} moves, while the app is open.`;
     }
     notifyPanel?.refresh();
-    devices.refreshOpenPopup();
+    devices.refreshOpenPopup(said);
   });
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
@@ -1332,9 +1375,23 @@ map.on("load", async () => {
     // different destination — Screens 8/9/10 are still waiting on them, and
     // `ride-post.ts` owns that surface, so leave the doc alone and say so
     // rather than opening a wizard that would be rejected anyway.
-    beforeOpen: () => {
+    beforeOpen: (entry) => {
       const doc = rideSession.current();
       if (!doc) return true;
+      // SCREEN 8'S [NEW DESTINATION] IS NOT AN ENTRY TO TURN AWAY.
+      //
+      // `newDestination` lands the doc on `wizard:3` keeping the ride's id and
+      // chain, and then reopens the wizard to ask where to next — so the doc it
+      // produces is `wizard` + screen "3" + a non-null `rideId`, which is
+      // exactly what `isRideLive` reports as live. Deflecting it sent the rider
+      // to the HUD with `dest` and `route` already nulled by the reducer and no
+      // way left to choose a new destination.
+      //
+      // The loop says so with `resume`, the same flag the free-ride button uses
+      // to mean "take me back to what I was doing" — and only in the wizard,
+      // because a doc that says `riding` has a HUD up and must never have a
+      // wizard built over it however the entry is labelled.
+      if (entry.resume === true && doc.state === "wizard") return true;
       if (isRideLive(doc)) {
         // The HUD's own `open()` resumes a BRB'd ride where it paused (and
         // re-attaches a reloaded one), which is exactly what the rider was
@@ -3281,10 +3338,13 @@ function wireDibsAlerts(): void {
       byId.set(id, {
         lat,
         lon,
-        // `is_reserved` means IN USE on this operator, not a held booking;
-        // `is_disabled` is the operator having pulled it, which from the
-        // rider's side is the same answer.
-        inUse: truthy(p.is_reserved) || truthy(p.is_disabled),
+        // `is_reserved` ONLY. It means IN USE on this operator (not a held
+        // booking), and `in_use` is the one verdict whose wording is
+        // "Someone's riding X right now" — which `is_disabled` would make a
+        // lie, since that is the operator pulling a scooter that has not
+        // moved and nobody is on. A parked scooter going unrentable is not
+        // the thing the rider asked to be told about.
+        inUse: truthy(p.is_reserved),
       });
     }
     deviceNotifier.check(watches, (id) => byId.get(id));
@@ -3614,10 +3674,24 @@ function scanForStartedVehicle(): Promise<ScannedVehicle | null> {
           },
         );
       },
-      // Fires on cancel AND on a successful scan (the scanner closes before it
-      // delivers), so `handed` is what tells them apart.
+      // CANCEL IS DECIDED A TICK LATE, ON PURPOSE.
+      //
+      // `qr-scan.ts` closes itself and THEN delivers the payload — `close()`
+      // (which fires this) and `options.onScan(raw)` are adjacent synchronous
+      // statements, in that order. So at the moment this runs, `handed` is
+      // still false even for a scan that is about to succeed, and resolving
+      // null here settles the promise before the payload arrives: the home
+      // bar refuses the trip and "I've already started one" can never start a
+      // ride. (This comment used to assert the opposite ordering, which is how
+      // the bug got written.)
+      //
+      // A microtask is enough and is guaranteed: `onScan` runs in the same
+      // task, immediately after, so by the time this fires `handed` is true
+      // for a real scan and still false for a real cancel.
       onClose: () => {
-        if (!handed) resolve(null);
+        queueMicrotask(() => {
+          if (!handed) resolve(null);
+        });
       },
     });
   });

@@ -496,10 +496,29 @@ export class Devices {
    *  Public because the watch store lives outside this class (see
    *  `setNotifyMovedHandler`): the bell's label says which way the next tap
    *  goes, so a watch dropped from the Tools panel has to un-press a bell this
-   *  class has no other way of hearing about. No-op with nothing open. */
-  refreshOpenPopup(): void {
+   *  class has no other way of hearing about. No-op with nothing open.
+   *
+   *  `hint` SURVIVES THE RE-RENDER, which is the only reason it is a parameter.
+   *  A caller that wrote to the old popup's hint line and then asked for a
+   *  refresh lost its sentence: `openDevicePopup` builds a fresh element with a
+   *  fresh, empty hint line, and the `report` callback the caller was handed is
+   *  closed over the detached one. So the sentence has to be handed in and
+   *  shown after the rebuild, not written before it. */
+  refreshOpenPopup(hint?: string): void {
     const open = this.openPopupFor;
-    if (open) this.openDevicePopup(open.props, open.coords);
+    if (!open) return;
+    this.openDevicePopup(open.props, open.coords);
+    if (hint === undefined) return;
+    // Same access shape as every other reader of the live popup in this file:
+    // `getElement()` is undefined until MapLibre has mounted it.
+    const popupEl = this.popup?.getElement();
+    const line = popupEl?.querySelector<HTMLElement>(
+      ".device-popup__actionhint",
+    );
+    if (line) {
+      line.textContent = hint;
+      line.hidden = false;
+    }
   }
 
   /** Intercept 🛴 I'll ride this one. Returns true when something else has

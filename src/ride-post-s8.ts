@@ -242,7 +242,7 @@ export interface RideScreen8Deps {
   /** [New Destination]'s wizard reopen. Injected for tests; defaults to
    *  `openRideModal` from ride-modal.ts. See the module's NEW-DESTINATION
    *  GAP note for what this does and does not solve on its own today. */
-  openRideModal?(entry: { fastForwardTo: "3" }): void;
+  openRideModal?(entry: { fastForwardTo: "3"; resume: true }): void;
   /** Resolves `RideGateFacts` for the `endReported` dispatch — the exact
    *  `(waypointCount + pendingCount) > 0` rule `ride-session.ts`'s own
    *  recovery table uses. Injected for tests; defaults to a lazily-opened
@@ -275,7 +275,7 @@ interface ResolvedDeps {
     signal?: AbortSignal,
   ): Promise<TrackedRide>;
   getLastFix(): LngLat | null;
-  openRideModal(entry: { fastForwardTo: "3" }): void;
+  openRideModal(entry: { fastForwardTo: "3"; resume: true }): void;
   getGateFacts(trackId: string | null): Promise<RideGateFacts>;
   now(): number;
   taxRate(): number;
@@ -587,7 +587,12 @@ function mountRideScreen8(
     // `doc.state === "wizard"`, which this transition sets synchronously.
     const transition = deps.session.dispatch({ type: "newDestination" });
     if (!transition?.accepted) return;
-    deps.openRideModal({ fastForwardTo: "3" });
+    // `resume: true` is what stops the integrator's own live-ride guard turning
+    // this away. The doc `newDestination` just produced is `wizard:3` with the
+    // ride's id still on it, which reads as a live ride to `isRideLive` — and a
+    // deflected [New Destination] drops the rider on the HUD with the old
+    // destination and route already cleared. See main.ts's `beforeOpen`.
+    deps.openRideModal({ fastForwardTo: "3", resume: true });
   }
 
   // Attach BEFORE the first render: `render()`'s own focus-on-mount only
