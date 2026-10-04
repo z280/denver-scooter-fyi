@@ -72,7 +72,14 @@ import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
-import { wireRideDeepLink } from "./ride-deeplink.ts";
+import {
+  VEHICLE_IDENTIFIER_RE,
+  normalizePlate,
+  primeDeepLinkPlates,
+  resolvePlateAgainstGbfs,
+  wireRideDeepLink,
+} from "./ride-deeplink.ts";
+import { vehicleDisplayName } from "./vehicle-name.ts";
 import {
   createRideSessionStore,
   recoverRideSession,
@@ -82,6 +89,8 @@ import {
   type RideRecoveryOutcome,
   type RideSessionStore,
   isRideLive,
+  isPostRide,
+  isWizardScreen,
   type RideSessionDoc,} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
@@ -109,11 +118,31 @@ import { createTripPins } from "./trip-pins.ts";
 import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
+import { reportFailedStart } from "./ride-failed-start.ts";
+import { plateFromQr, wireQrUtility } from "./qr-utility.ts";
+import { openQrScanner } from "./qr-scan.ts";
+import {
+  qrRideAction,
+  qrRideMessage,
+  type ScannedVehicle,
+} from "./qr-ride-scan.ts";
+import { submitDeviceReport } from "./reports.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
-  wireMyScooters,
-  type MyScootersHandle,
-} from "./my-scooters-panel.ts";
+  showMovedToast,
+  wireDeviceNotifyPanel,
+  type DeviceNotifyPanelHandle,
+} from "./device-notify-panel.ts";
+import {
+  MAX_WATCHED_DEVICES,
+  createDeviceNotifier,
+  isWatched,
+  loadWatches,
+  requestMovedNotifications,
+  unwatchMoved,
+  watchMoved,
+  type DeviceNow,
+} from "./device-notify.ts";
 import {
   wireRideSpecPanel,
   type RideSpecPanelHandle,
@@ -126,7 +155,11 @@ import {
   type Dibs,
   loadDibs,
 } from "./dibs.ts";
-import { setPendingTrip, takePendingTrip } from "./pending-trip.ts";
+import {
+  setPendingTrip,
+  takePendingTrip,
+  type TripPlace,
+} from "./pending-trip.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -368,6 +401,27 @@ need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
     status: "needs_features_confirmed",
   });
 });
+// The ribbon's QR tool: one scan, a dial in front of it deciding what the scan
+// does. See `qr-utility.ts` for why it is a dial and not two buttons, and
+// `qr-ride-scan.ts` for the four things a scan can mean to a ride. The listener
+// itself lives over there behind `wireQrUtility` — the house rule is one
+// `wireX()` call per surface and no new top-level wiring in this module.
+wireQrUtility({
+  button: need<HTMLButtonElement>("ribbon-qr"),
+  // Mode `features` hands the payload straight on and parses nothing: the
+  // server resolves which scooter the scan names (`qr_raw_value` on the
+  // feature report), which is why this mode works for a scooter that is not
+  // in the live feed at all and the ride mode below does not.
+  onConfirmFeatures: (rawValue) => {
+    track("qr_utility", { mode: "features" });
+    openConfirmFeatures({
+      requireQr: true,
+      status: "needs_features_confirmed",
+      prefillQr: rawValue,
+    });
+  },
+  onRideScan: (rawValue) => handleQrRideScan(rawValue),
+});
 // Equity Compliance moved off the ribbon into Tools: the (hidden) ribbon
 // tab still owns the drawer via wireDrawers, so opening it is one
 // programmatic click — which also closes the Tools drawer, exactly like a
@@ -429,8 +483,71 @@ let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
 let clearRideTypeFilter: () => void = () => {};
-/** Favorite Scooters, in the Tools drawer. Null until boot wires it. */
-let myScooters: MyScootersHandle | null = null;
+/** "Notify me if moved", in the Tools drawer. Null until boot wires it. */
+let notifyPanel: DeviceNotifyPanelHandle | null = null;
+
+/** The thing that actually tells the rider. Created eagerly rather than at
+ *  boot, because the bell's handler and the panel's Stop both need to clear its
+ *  per-vehicle bookkeeping and neither should have to care whether a watch list
+ *  has been painted yet. Holds only counters — nothing it does costs anything
+ *  until a watch exists. */
+const deviceNotifier = createDeviceNotifier({
+  inApp: (message, watch) => showMovedToast(message, () => showMovedDevice(watch)),
+  // Tapping the notification lands on the scooter it is about rather than a
+  // cold map. Wherever it is NOW: the message deliberately carries no
+  // coordinates, so this is the rider's way of finding out where it went.
+  onOpen: (watch) => showMovedDevice(watch),
+  // THE WATCH ENDS WITH THE ANSWER. The rider asked one question — has it gone
+  // — and it has been answered; a watch left running would re-ask it about a
+  // scooter that is now somewhere else entirely, and the comparison point it
+  // was armed with is stale the moment the thing moves.
+  onFired: (watch) => {
+    unwatchMoved(watch.vehicleIdentifier);
+    notifyPanel?.refresh();
+    devices.refreshOpenPopup();
+  },
+});
+
+/** Is this scooter already unavailable, and if so in the rider's words?
+ *
+ *  Null when it is parked and rentable, which is the only state a move-watch
+ *  has anything to say about. Reads the same two flags the watcher does, and
+ *  keeps them apart in the copy: `is_reserved` means IN USE on this operator
+ *  (somebody is riding it), while `is_disabled` is the operator having pulled
+ *  it — from the rider's side both mean "not yours to wait for", but they are
+ *  not the same sentence and must not be told as one. */
+function currentlyUnavailable(vehicleIdentifier: string): string | null {
+  const f = devices
+    .allFeatures()
+    .find((x) => x.properties.vehicle_identifier === vehicleIdentifier);
+  // Absent from the feed is not a reason to refuse: the popup was opened from
+  // it, so this is a race with a refresh rather than a fact about the scooter.
+  if (!f) return null;
+  const p = f.properties as unknown as Record<string, unknown>;
+  const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+  if (truthy(p.is_reserved)) {
+    return "Someone's riding this one right now — there's nothing to watch for yet.";
+  }
+  if (truthy(p.is_disabled)) {
+    return "Veo isn't renting this one out at the moment, so there's nothing to watch for yet.";
+  }
+  return null;
+}
+
+/** Take the rider to a watched scooter — wherever it is NOW, falling back to
+ *  where it was when the watch was armed. The alert carries no coordinates
+ *  (`device-notify.ts`'s rule, and `ALONG_THE_WAY_PLAN` §4.4's), so this is how
+ *  they find out where it went; a scooter that has left the feed entirely still
+ *  gets them to the spot it left from, which is more use than nothing. */
+function showMovedDevice(watch: { vehicleIdentifier: string; lat: number; lon: number }): void {
+  const f = devices
+    .allFeatures()
+    .find((x) => x.properties.vehicle_identifier === watch.vehicleIdentifier);
+  const at = f
+    ? (f.geometry.coordinates as [number, number])
+    : ([watch.lon, watch.lat] as [number, number]);
+  map.easeTo({ center: at, zoom: 17 });
+}
 let clearModelFilter: () => void = () => {};
 let clearFeatureFilter: () => void = () => {};
 let clearBatteryMin: () => void = () => {};
@@ -1037,28 +1154,77 @@ map.on("load", async () => {
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
-  // Favorite Scooters, in Tools beside My dibs. The popup's ⭐ and the panel's own
-  // button both run `keep()`, so there is one flow and one set of failure
-  // sentences rather than two that drift apart.
-  myScooters = wireMyScooters({
-    section: need("tools-my-scooters"),
-    list: need("my-scooters-list"),
-    keepButton: need<HTMLButtonElement>("my-scooters-keep"),
-    status: need("my-scooters-status"),
+  // "Notify me if moved", in Tools where Favorite Scooters used to be. The
+  // popup's 🔔 and this panel's Stop buttons write to the same local store, so
+  // there is one list and one set of sentences rather than two that drift.
+  notifyPanel = wireDeviceNotifyPanel({
+    section: need("tools-notify-moved"),
+    list: need("notify-moved-list"),
+    status: need("notify-moved-status"),
     locate,
-    onShowOnMap: (f) => {
-      if (typeof f.lat === "number" && typeof f.lon === "number") {
-        map.easeTo({ center: [f.lon, f.lat], zoom: 17 });
-      }
+    onShowOnMap: (w) => map.easeTo({ center: [w.lon, w.lat], zoom: 17 }),
+    // Dropping a watch from the panel has to un-press the bell on an open
+    // popup and clear the notifier's bookkeeping for that vehicle, or a
+    // re-armed watch inherits a miss count from the one before it.
+    // The panel's Stop goes through here rather than straight to the store, so
+    // the notifier's per-vehicle bookkeeping is cleared in the same breath — a
+    // watch re-armed later must not inherit the old one's miss count or its
+    // already-fired flag.
+    remove: (vehicleIdentifier) => {
+      const next = unwatchMoved(vehicleIdentifier);
+      deviceNotifier.forget(vehicleIdentifier);
+      return next;
     },
+    // ...and the bell on an open popup has to un-press.
+    onChanged: () => devices.refreshOpenPopup(),
   });
-  // The popup's star names the vehicle it was opened on, but the SCAN still
-  // decides which scooter is kept — the server refuses a payload that names a
-  // different one rather than quietly keeping the neighbour.
-  // The outcome is reported in the popup too: the panel's status line is in
-  // the Tools drawer, which is shut (and invisible) when the star was tapped.
-  devices.setKeepHandler(({ vehicleIdentifier, report }) => {
-    void myScooters?.keep({ vehicleIdentifier }, { report });
+  devices.setIsWatchedMoved((vid) => isWatched(loadWatches(), vid));
+  // The bell toggles. Both directions are local and instant — no account, no
+  // scan, no network — which is the whole difference from the ⭐ it replaced.
+  devices.setNotifyMovedHandler(({ vehicleIdentifier, name, lat, lon, report }) => {
+    const watches = loadWatches();
+    // THE SENTENCE HAS TO OUTLIVE THE RE-RENDER. `report` writes into the popup
+    // that is on screen now, and the `refreshOpenPopup` below replaces it with
+    // a fresh element — so anything written through `report` first is thrown
+    // away unread. Every outcome that is followed by a refresh hands its
+    // sentence to the refresh instead; `report` is kept only for the one that
+    // changes nothing and so does not refresh.
+    let said: string;
+    if (isWatched(watches, vehicleIdentifier)) {
+      track("device_notify_moved", { action: "off" });
+      unwatchMoved(vehicleIdentifier);
+      deviceNotifier.forget(vehicleIdentifier);
+      said = `We'll stop watching ${name}.`;
+    } else {
+      if (watches.length >= MAX_WATCHED_DEVICES) {
+        report(
+          `You're already watching ${MAX_WATCHED_DEVICES} scooters — stop one in Tools to add this.`,
+        );
+        return;
+      }
+      // NOT WORTH WATCHING YET. A scooter that is already rented, or that the
+      // operator has pulled, satisfies the alert's own condition the moment the
+      // next device refresh lands — so arming here would buzz the rider about
+      // something they can already see on the card in front of them, and then
+      // delete the watch. Say what is true instead.
+      const alreadyGone = currentlyUnavailable(vehicleIdentifier);
+      if (alreadyGone) {
+        report(alreadyGone);
+        return;
+      }
+      track("device_notify_moved", { action: "on" });
+      watchMoved({ vehicleIdentifier, name, lat, lon, since: Date.now() });
+      // A re-armed watch must not inherit the previous one's miss count or its
+      // already-fired flag, or it alerts on the first absent tick.
+      deviceNotifier.forget(vehicleIdentifier);
+      // ASK NOW, NOT AT LOAD — the same reasoning dibs uses, in its own words
+      // at the dibs call site. Somebody who has just asked to be told when a
+      // scooter moves knows what they are agreeing to be interrupted about.
+      void requestMovedNotifications();
+      said = `We'll tell you if ${name} moves, while the app is open.`;
+    }
+    notifyPanel?.refresh();
+    devices.refreshOpenPopup(said);
   });
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
@@ -1194,12 +1360,77 @@ map.on("load", async () => {
       const [lng, lat] = feat.geometry.coordinates;
       devices.jumpToDevice(feat.properties.device_id, lng, lat);
     },
+    // THE DOOR. Nothing builds a wizard over a ride that is already running.
+    //
+    // The reducer has always rejected `open` from a live or post-ride doc,
+    // but the rejection arrived too late to matter: `onOpen` runs with the
+    // shell already in the document, and the returned transition was
+    // discarded. So the wizard mounted, read a doc that said `riding`, and
+    // kept trying to start a ride that was already live — the rider who
+    // stepped out with BRB and then tapped a scooter had no way out but
+    // closing the app.
+    //
+    // A ride that is live is not an entry to serve, it is an entry to
+    // ANSWER: the rider is reaching for the ride they are already on, so
+    // hand them the HUD. A post-ride doc is the same shape of mistake with a
+    // different destination — Screens 8/9/10 are still waiting on them, and
+    // `ride-post.ts` owns that surface, so leave the doc alone and say so
+    // rather than opening a wizard that would be rejected anyway.
+    beforeOpen: (entry) => {
+      const doc = rideSession.current();
+      if (!doc) return true;
+      // SCREEN 8'S [NEW DESTINATION] IS NOT AN ENTRY TO TURN AWAY.
+      //
+      // `newDestination` lands the doc on `wizard:3` keeping the ride's id and
+      // chain, and then reopens the wizard to ask where to next — so the doc it
+      // produces is `wizard` + screen "3" + a non-null `rideId`, which is
+      // exactly what `isRideLive` reports as live. Deflecting it sent the rider
+      // to the HUD with `dest` and `route` already nulled by the reducer and no
+      // way left to choose a new destination.
+      //
+      // The loop says so with `resume`, the same flag the free-ride button uses
+      // to mean "take me back to what I was doing" — and only in the wizard,
+      // because a doc that says `riding` has a HUD up and must never have a
+      // wizard built over it however the entry is labelled.
+      if (entry.resume === true && doc.state === "wizard") return true;
+      if (isRideLive(doc)) {
+        // The HUD's own `open()` resumes a BRB'd ride where it paused (and
+        // re-attaches a reloaded one), which is exactly what the rider was
+        // asking for. `hudReturnMode` is captured by the mode bar, so going
+        // through the ribbon button keeps the "where do I land on exit"
+        // bookkeeping in the one place that owns it.
+        resumeLiveRide();
+        return false;
+      }
+      if (isPostRide(doc)) {
+        // Nothing to resume and nothing to start. Screens 8/9/10 mount off
+        // `phaseOf(doc)` through their own subscription (`ride-post.ts`), so
+        // the screen the rider still owes an answer to is already on top of
+        // everything — there is no "re-show" to do, only a wizard not to
+        // build underneath it.
+        return false;
+      }
+      return true;
+    },
     // Every open (a deep link, or a later re-entry) starts one fresh session
     // doc — `reduceRideSession`'s own guard rejects this over a live/post
     // ride, so a re-entry mid-ride can never clobber it. Guest-vs-private is
     // NOT decided here: it defaults to `false` and Screen 2's device pick
     // (own device vs. a real Veo scooter) is what actually derives it.
     onOpen: (entry) => {
+      // A RESUME IS NOT AN OPEN. `open` seeds a blank doc, so dispatching it
+      // for a rider coming back to a wizard they left mid-answer silently
+      // drops their scooter, destination and route. The free-ride button's
+      // own comment already promised this would never happen — but the
+      // promise was only kept as far as choosing to call `openRideModal`,
+      // and `open` fired anyway one layer down. With a doc that still holds
+      // answers, keep it and let `resolveStartScreen` put them back on the
+      // screen they left.
+      const live = rideSession.current();
+      if (entry.resume && live && live.state === "wizard" && hasAnswers(live)) {
+        homeBar?.collapse();
+        return;
+      }
       const context = { private: false, authenticated: isAuthenticated() };
       const base = defaultRideOptionsFor(context);
       // The device card's "Use in Ride Mode" survey (`ride-preflight.ts`)
@@ -1215,6 +1446,13 @@ map.on("load", async () => {
       // destination is what `navigation` means. Folded in here, through
       // `applyCascades` like every other seed, so the wizard can never be
       // handed an options blob it would call illegal.
+      //
+      // "started" is NOT `own_device`, which is the whole reason it is a third
+      // answer rather than a second label on that one — there is a rental
+      // running, so the ride is tracked against a real vehicle and the cost
+      // readout keeps the default that `own_device` would have forced off.
+      // `=== "own"` already says so; it is spelled out because the obvious
+      // reading of "they already have wheels" is the wrong one here.
       const trip = takePendingTrip();
       const fromHomeBar = trip
         ? { own_device: trip.wheels === "own", navigation: true }
@@ -2725,6 +2963,13 @@ function wireAreaFilter(): AreaFilter {
 // the analysis setup. The bar always shows the current mode: tweaking
 // filters or iconography does NOT drop it to a "custom" state (per Zeke,
 // PR #37 — the old capture-phase toCustom listener is gone).
+
+/** Hand the rider back the ride they are already on, instead of a wizard
+ *  built over it. Assigned by `wireModes`, which owns the mode bar's
+ *  "where do I land when the HUD closes" bookkeeping; a no-op before the bar
+ *  is wired, which is only reachable if an entry fires during boot. */
+let resumeLiveRide: () => void = () => {};
+
 function wireModes(): void {
   const btns = Array.from(
     document.querySelectorAll<HTMLButtonElement>(
@@ -2914,6 +3159,21 @@ function wireModes(): void {
   let hudReturnMode: string | null = "analysis";
   rideHud.setOnHidden(() => setActive(hudReturnMode));
 
+  // Back into the live ride, from anywhere. The ribbon's 🧭 tap was the only
+  // way in, which made every OTHER route to a live ride — a scooter popup, a
+  // deep link, the top bar's ride button — a route to a wizard built over it.
+  // Published so `beforeOpen` can answer those entries with the ride the
+  // rider is actually on. See that hook for the failure this closes.
+  resumeLiveRide = () => {
+    closeAllPopups();
+    hudReturnMode =
+      btns.find(
+        (b) => b.classList.contains("is-active") && b.dataset.mode !== "riding",
+      )?.dataset.mode ?? null;
+    setActive("riding");
+    rideHud.open();
+  };
+
   for (const btn of btns) {
     btn.addEventListener("click", () => {
       track("mode_switch", { mode: btn.dataset.mode ?? "?" });
@@ -2932,13 +3192,7 @@ function wireModes(): void {
           // tracking-integration lane's resume flow has re-attached the HUD).
           closeAllPopups();
           if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
-            hudReturnMode =
-              btns.find(
-                (b) =>
-                  b.classList.contains("is-active") && b.dataset.mode !== "riding",
-              )?.dataset.mode ?? null;
-            setActive("riding");
-            rideHud.open();
+            resumeLiveRide();
           } else {
             openRideModal();
           }
@@ -3066,6 +3320,36 @@ function wireDibsAlerts(): void {
       if (gone) dibsNotifier?.taken(d);
     }
   });
+
+  // "Notify me if moved" is the same kind of question — about the world, not a
+  // clock — so it is answered in the same place, on the same refresh. Nothing
+  // here polls: the feed this reads is the one the map was going to fetch
+  // anyway, which is also why a closed tab hears nothing and why the copy
+  // promises only "while the app is open".
+  window.addEventListener("scooter:devices-refreshed", () => {
+    const watches = loadWatches();
+    if (watches.length === 0) return;
+    const byId = new Map<string, DeviceNow>();
+    for (const f of devices.allFeatures()) {
+      const p = f.properties as unknown as Record<string, unknown>;
+      const id = typeof p.vehicle_identifier === "string" ? p.vehicle_identifier : "";
+      if (!id) continue;
+      const [lon, lat] = f.geometry.coordinates;
+      const truthy = (v: unknown): boolean => v === true || v === "true" || v === 1;
+      byId.set(id, {
+        lat,
+        lon,
+        // `is_reserved` ONLY. It means IN USE on this operator (not a held
+        // booking), and `in_use` is the one verdict whose wording is
+        // "Someone's riding X right now" — which `is_disabled` would make a
+        // lie, since that is the operator pulling a scooter that has not
+        // moved and nobody is on. A parked scooter going unrentable is not
+        // the thing the rider asked to be told about.
+        inUse: truthy(p.is_reserved),
+      });
+    }
+    deviceNotifier.check(watches, (id) => byId.get(id));
+  });
 }
 
 /** How often live claims are re-fetched.
@@ -3081,6 +3365,154 @@ function wireDibsAlerts(): void {
  *  Cheap enough to justify: `/api/v1/dibs/live` returns the live claims for
  *  the whole city, which is a handful of rows, not thousands. */
 const DIBS_REFRESH_MS = 25_000;
+
+// ---------- The ribbon QR tool's "Ride mode" dial position ----------
+
+/** Resolve a scanned sticker to a vehicle in the live feed.
+ *
+ *  WHY THE PLATE IS THE BRIDGE. The sticker carries a plate; the session doc
+ *  wants a `vehicle_identifier`, which is a salted hash the browser cannot
+ *  compute. The feed gives us both sides: the identifier on every feature, and
+ *  the plate either directly (`vehicle_plate`, served to signed-in riders) or
+ *  out of Veo's own public GBFS deep links (`gbfs.ts`), which works signed out.
+ *
+ *  The feed's own plate is tried FIRST and the public index only primed when
+ *  that misses, so a signed-in rider's scan costs no extra network at all. */
+async function resolveScannedVehicle(
+  plate: string,
+): Promise<ScannedVehicle | null> {
+  const features = devices.allFeatures();
+  const wanted = normalizePlate(plate);
+  if (wanted === "") return null;
+
+  const asVehicle = (
+    f: (typeof features)[number],
+    resolvedPlate: string,
+  ): ScannedVehicle | null => {
+    const vid = String(f.properties.vehicle_identifier ?? "").toLowerCase();
+    if (!VEHICLE_IDENTIFIER_RE.test(vid)) return null;
+    return {
+      vehicleIdentifier: vid,
+      deviceId: f.properties.device_id,
+      plate: resolvedPlate,
+      name: vehicleDisplayName(
+        f.properties.public_name,
+        resolvedPlate,
+        f.properties.vehicle_model_name,
+        f.properties.plate_suffix,
+      ),
+    };
+  };
+
+  for (const f of features) {
+    const fed = f.properties.vehicle_plate;
+    if (fed && normalizePlate(String(fed)) === wanted) {
+      const v = asVehicle(f, String(fed));
+      if (v) return v;
+    }
+  }
+
+  // Signed out, or a feed without plates: fall back to Veo's public feed
+  // through the index `ride-deeplink.ts` already keeps for `?ride=plate:`
+  // links. Never rejects — a blocked feed just means no match.
+  await primeDeepLinkPlates();
+  const deviceId = resolvePlateAgainstGbfs(
+    plate,
+    features.map((f) => f.properties.device_id),
+  );
+  if (!deviceId) return null;
+  const f = features.find((x) => x.properties.device_id === deviceId);
+  return f ? asVehicle(f, plate) : null;
+}
+
+/** Perform whatever the scan means, and return the sentence to show.
+ *
+ *  The DECISION is `qr-ride-scan.ts`'s, which is pure; this is only the doing.
+ *  Every branch ends with the rider somewhere useful — a wizard, the HUD, or a
+ *  sentence saying why not — because a camera they just pointed at a sticker is
+ *  the least informative place in the app to be left standing. */
+async function handleQrRideScan(rawValue: string): Promise<string> {
+  const plate = plateFromQr(rawValue);
+  const vehicle = plate ? await resolveScannedVehicle(plate) : null;
+  const action = qrRideAction(rideSession.current(), vehicle, plate);
+  track("qr_utility", { mode: "ride", action: action.kind });
+  const message = qrRideMessage(action);
+
+  switch (action.kind) {
+    case "start":
+      // The scan IS the proof of presence — a rider holding a phone at a
+      // sticker has answered "which one?" more conclusively than any picker
+      // could — so Screen 2 is skipped and the flow lands on the route choice.
+      openRideModal({
+        vehicleIdentifier: action.vehicle.vehicleIdentifier,
+        plate: action.vehicle.plate,
+        deviceConfirmed: true,
+        fastForwardTo: "4",
+      });
+      break;
+
+    case "resume": {
+      // Put the scooter in the doc BEFORE reopening, so the screen the rider
+      // lands on already knows about it. `resume` on the entry is what stops
+      // `onOpen` dispatching a fresh `open` and resetting their answers.
+      rideSession.dispatch({
+        type: "associateDevice",
+        device: {
+          vehicleIdentifier: action.vehicle.vehicleIdentifier,
+          plate: action.vehicle.plate,
+          model: null,
+          batteryConfirmed: null,
+        },
+      });
+      openRideModal({
+        resume: true,
+        vehicleIdentifier: action.vehicle.vehicleIdentifier,
+        plate: action.vehicle.plate,
+        deviceConfirmed: true,
+        fastForwardTo: isWizardScreen(action.screen) ? action.screen : undefined,
+      });
+      break;
+    }
+
+    case "associate": {
+      // The gap this whole mode exists for: a ride recording with no vehicle on
+      // it (the free-ride path — started the track, then got on a scooter).
+      // Naming the scooter is what gives the post-ride survey and its
+      // model-bonus question something to be about.
+      //
+      // It does NOT retro-price the ride. The cost readout is a picture of
+      // Veo's billing clock running from an unlock we never saw, and inventing
+      // a start time for it would be worse than leaving it off.
+      const t = rideSession.dispatch({
+        type: "associateDevice",
+        device: {
+          vehicleIdentifier: action.vehicle.vehicleIdentifier,
+          plate: action.vehicle.plate,
+          model: null,
+          batteryConfirmed: null,
+        },
+      });
+      if (t?.accepted !== true) {
+        return "Couldn't attach that scooter to your ride — it may have just finished.";
+      }
+      resumeLiveRide();
+      break;
+    }
+
+    case "already":
+      // Nothing to change, but the rider is mid-ride and reached for the app,
+      // so hand them the HUD rather than leaving them on a closed camera.
+      resumeLiveRide();
+      break;
+
+    case "post_ride":
+    case "unreadable":
+    case "unknown_vehicle":
+      // Nothing to do. The sentence is the whole response.
+      break;
+  }
+  return message;
+}
 
 function refreshLiveDibs(): void {
   void liveDibs()
@@ -3120,12 +3552,21 @@ function wireHomeBar(): HomeBarHandle {
     // The same one-shot picker the profile's home/work and Screen 3 use.
     pickOnMap: (hint) => mapPick.pick({ hint }),
     onPlanTrip: ({ dest, wheels, start }) => {
-      setPendingTrip({ dest, wheels, start });
       closeAllPopups();
       const click = (mode: string): void =>
         document
           .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
           ?.click();
+      // "I've already started one" is the only answer that needs something
+      // from the rider before it can be acted on, so it is the only one that
+      // can come back refused. Handled first, and it is the ONLY branch that
+      // defers `setPendingTrip` — a cancelled scan must not leave an intent
+      // lying around to steer some later ride (`pending-trip.ts`'s whole
+      // reason for being one-shot).
+      if (wheels === "started") {
+        return planStartedTrip({ dest, start });
+      }
+      setPendingTrip({ dest, wheels, start });
       // "Need wheels" is a question about which vehicle, which is exactly what
       // the find-a-ride ranker answers: the rider picks one on the map, and
       // 🧭 Use in Ride Mode hands them to the walk flow rather than the
@@ -3143,6 +3584,118 @@ function wireHomeBar(): HomeBarHandle {
     },
   });
   return bar;
+}
+
+/** "I've already started one" — the home bar's third answer.
+ *
+ *  WHAT MAKES IT ITS OWN ANSWER rather than a flavour of "got my own": there is
+ *  a rental running. Veo is billing by the minute right now, which makes this
+ *  the ride where the cost readout matters MOST, and it makes the trip a
+ *  tracked one against a specific vehicle rather than a private recording of
+ *  nothing in particular. Both answers skip the picker and that is all they
+ *  share; sending this rider down the own-device path priced their ride at zero
+ *  and recorded it as having been on no scooter at all.
+ *
+ *  WHY THE SCAN IS NOT NEGOTIABLE. The whole answer is "this one, the one I am
+ *  sitting on", and the thing that names it server-side is a salted hash no
+ *  browser can compute. The sticker on the stem is the only thing in reach that
+ *  carries it. A plate typed from memory would also be a claim about a vehicle
+ *  the rider might not be on, which is the distinction `qr-ride-scan.ts` and
+ *  master §13.8.1 both turn on — so it is the scan or nothing.
+ *
+ *  Returns false when the trip was NOT taken, which hands the rider back to the
+ *  home bar with their destination intact: backing out of a camera is not
+ *  changing your mind about where you are going. */
+async function planStartedTrip(trip: {
+  dest: TripPlace;
+  start: TripPlace | null;
+}): Promise<boolean> {
+  const scanned = await scanForStartedVehicle();
+  if (!scanned) return false;
+
+  setPendingTrip({ dest: trip.dest, wheels: "started", start: trip.start });
+  // Everything the wizard would otherwise ask is already answered: which
+  // scooter (the scan), where to (the home bar), and whether it is unlocked
+  // (that is what this answer MEANS). So Screen 2 skips on `deviceConfirmed`,
+  // Screen 3 skips on the destination the trip carries, and Screen 6 takes its
+  // `autoStart` branch — the same branch the device card's "I started the Veo
+  // already" takes, because it is the same claim arriving through a different
+  // door and must not produce a different session.
+  //
+  // Screen 4 still shows. The rider named a destination, and route choice is
+  // what they named it FOR; the meter running is a reason to make that screen
+  // quick, not a reason to skip the thing they asked for.
+  //
+  // One honest imprecision, worth knowing rather than hiding: the ride clock
+  // starts when `POST /tracked-rides` does, and the unlock happened a minute or
+  // two earlier. The HUD's ±15s/±1m nudges and its reset exist for exactly this
+  // and are the right place to fix it — inventing an earlier start time here
+  // would be guessing at the number the rider is actually being billed on.
+  openRideModal({
+    vehicleIdentifier: scanned.vehicleIdentifier,
+    plate: scanned.plate,
+    deviceConfirmed: true,
+    autoStart: true,
+    fastForwardTo: "4",
+  });
+  return true;
+}
+
+/** Open the camera and resolve what it reads to a vehicle in the live feed.
+ *
+ *  Resolves to null for every way this can come to nothing — cancelled,
+ *  unreadable, or a plate no live vehicle carries — having already told the
+ *  rider which. The caller only needs to know it did not work. */
+function scanForStartedVehicle(): Promise<ScannedVehicle | null> {
+  return new Promise((resolve) => {
+    let handed = false;
+    openQrScanner({
+      prompt: "Scan the QR code on the scooter you're riding",
+      onScan: (rawValue) => {
+        handed = true;
+        const plate = plateFromQr(rawValue);
+        void (plate ? resolveScannedVehicle(plate) : Promise.resolve(null)).then(
+          (vehicle) => {
+            if (vehicle) {
+              resolve(vehicle);
+              return;
+            }
+            // The same two failures `qr-ride-scan.ts` separates, in the same
+            // words, because they are different problems with different next
+            // steps: aim the camera again, versus this scooter is not in the
+            // fleet right now.
+            showMovedToast(
+              qrRideMessage(
+                plate === null
+                  ? { kind: "unreadable" }
+                  : { kind: "unknown_vehicle", plate },
+              ),
+            );
+            resolve(null);
+          },
+        );
+      },
+      // CANCEL IS DECIDED A TICK LATE, ON PURPOSE.
+      //
+      // `qr-scan.ts` closes itself and THEN delivers the payload — `close()`
+      // (which fires this) and `options.onScan(raw)` are adjacent synchronous
+      // statements, in that order. So at the moment this runs, `handed` is
+      // still false even for a scan that is about to succeed, and resolving
+      // null here settles the promise before the payload arrives: the home
+      // bar refuses the trip and "I've already started one" can never start a
+      // ride. (This comment used to assert the opposite ordering, which is how
+      // the bug got written.)
+      //
+      // A microtask is enough and is guaranteed: `onScan` runs in the same
+      // task, immediately after, so by the time this fires `handed` is true
+      // for a real scan and still false for a real cancel.
+      onClose: () => {
+        queueMicrotask(() => {
+          if (!handed) resolve(null);
+        });
+      },
+    });
+  });
 }
 
 // ---------- Walk to the scooter, then ride ----------
@@ -3242,6 +3795,26 @@ function beginWalkToVehicle(info: {
       // is free.
       if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
       endWalkFlow();
+    },
+    // THE WALK'S WORST OUTCOME, RECORDED. They went out of their way to get
+    // here and it will not ride. Telling us costs them one tap, and it is the
+    // only signal strong enough to stop the next rider making the same walk —
+    // see `ride-failed-start.ts` for what the fleet infers without it.
+    //
+    // The claim goes too, for the same reason `onCancel` drops it: they have
+    // stopped walking towards this scooter, and holding a dead one is worse
+    // than holding a live one.
+    onNotRideable: async () => {
+      const { message } = await reportFailedStart(
+        {
+          vehicleIdentifier: info.vehicleIdentifier,
+          lat: locate.current()?.lat,
+          lng: locate.current()?.lng,
+        },
+        submitDeviceReport,
+      );
+      if (info.vehicleIdentifier) dropDibs(info.vehicleIdentifier);
+      return message;
     },
     // Re-read each update rather than closing over a copy: the claim gains
     // its "started walking" stamp as the rider moves, and a stale copy would
@@ -3419,7 +3992,17 @@ function wireFreeRide(): void {
     // is how a rider ends a ride they meant to keep.
     const doc = rideSession.current();
     if (doc && (isRideLive(doc) || hasAnswers(doc))) {
-      openRideModal({});
+      // `resume` is what makes the "never destroys an answer" promise above
+      // actually hold (see `onOpen`), and a live ride is deflected to the HUD
+      // by `beforeOpen` before this entry is ever built.
+      // `doc.screen` is a `RideScreenId` — it also spans the post-ride
+      // screens ("8"/"9"/"10"), which the wizard has no page for. A
+      // post-ride doc never reaches here (`beforeOpen` deflects it), but the
+      // narrowing is what says so rather than leaving it to be true by luck.
+      openRideModal({
+        resume: true,
+        fastForwardTo: isWizardScreen(doc.screen) ? doc.screen : undefined,
+      });
       return;
     }
     track("ride_mode_free", {});
@@ -3474,10 +4057,10 @@ function wireDrawers(): void {
     // is hidden again.
     if (id === "leaderboard") leaderboardPanel?.open();
     else leaderboardPanel?.close();
-    // Same for Favorite Scooters in Tools: a kept scooter's state and place
-    // change while the drawer is shut, so re-read on every open. refresh()
-    // joins a read already in flight, so tab-flicking costs one request.
-    if (id === "tools") void myScooters?.refresh();
+    // Same for the watch list in Tools: a watch can be armed from a map popup
+    // or fire and remove itself while the drawer is shut, so re-read on every
+    // open. It reads `localStorage`, so this costs nothing.
+    if (id === "tools") notifyPanel?.refresh();
   };
 
   for (const tab of tabs) {

@@ -187,10 +187,32 @@ function defaultResolvePlate(
   deviceIds: (() => Iterable<string>) | undefined,
 ): string | null {
   if (!deviceIds) return null;
+  return resolvePlateAgainstGbfs(plate, deviceIds());
+}
+
+/** Reverse-resolve a plate to a `device_id` against THIS module's GBFS index.
+ *
+ *  Exported because the QR tool (`qr-utility.ts`, via main.ts) needs the same
+ *  answer from the same index: a scanned sticker carries a plate, and the
+ *  vehicle identifier it has to become is a salted hash the browser cannot
+ *  compute. Sharing this instance rather than building a third one keeps the
+ *  public-feed fetch count where it already was — devices.ts has one primed on
+ *  the first GPS fix, this module has one for links, and that is enough.
+ *
+ *  Call `primeDeepLinkPlates()` first: the index is only populated on demand. */
+export function resolvePlateAgainstGbfs(
+  plate: string,
+  deviceIds: Iterable<string>,
+): string | null {
   const index = plateIndex();
-  return reversePlateLookup(plate, deviceIds(), (id) =>
-    index.cachedPlateFor(id),
-  );
+  return reversePlateLookup(plate, deviceIds, (id) => index.cachedPlateFor(id));
+}
+
+/** Fetch the public GBFS feed into the index above, if it is not already fresh.
+ *  Never rejects — a blocked or down feed just leaves the previous index (or
+ *  none) and callers degrade to "no match". */
+export function primeDeepLinkPlates(): Promise<void> {
+  return plateIndex().prime();
 }
 
 /** How long the fallback watcher waits for `?ml=` to be consumed before giving

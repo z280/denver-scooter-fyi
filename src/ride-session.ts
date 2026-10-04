@@ -323,6 +323,18 @@ export type RideAction =
        *  own-device should make the ride points-eligible again. */
       private?: boolean;
     }
+  /** The QR utility's "associate this scooter with my ride" (the main menu's
+   *  dial, `qr-utility.ts`). Names the vehicle a ride that started WITHOUT one
+   *  is actually on — the free-ride path, where the rider started recording and
+   *  then got on a Veo scooter.
+   *
+   *  NOT a second `setDevice`. That one is Screen 2 choosing, is legal only
+   *  inside the wizard, and may flip `private`; this one is legal mid-ride and
+   *  deliberately changes NOTHING but the device. A live ride's privacy was
+   *  settled when it started — it is a local recording with no `tracked_rides`
+   *  row, and learning which scooter it is on does not retroactively create
+   *  one. */
+  | { type: "associateDevice"; device: RideSessionDevice }
   | { type: "setDest"; dest: RideSessionDest | null }
   | { type: "setRoute"; route: RideSessionRoute | null }
   /** Screen 6's "Open in Veo" — the default 10 s countdown. */
@@ -548,6 +560,24 @@ export function reduceRideSession(
         device: action.device,
         private: isPrivate,
       });
+    }
+
+    case "associateDevice": {
+      // Legal in the wizard, and mid-ride ONLY for a ride with no server row.
+      //
+      // A tracked ride's vehicle was stamped into `tracked_rides` by
+      // `POST /tracked-rides` at the moment it started, and nothing the client
+      // does afterwards moves it. Accepting this over such a ride would leave
+      // the local doc disagreeing with the server about what was ridden — and
+      // the doc is what the post-ride survey and the model-bonus question read,
+      // so the disagreement would end up submitted. Rejecting is what lets the
+      // caller say "this ride is already tied to a scooter" instead.
+      const liveWithoutRow =
+        (doc.state === "riding" || doc.state === "countdown") && doc.rideId === null;
+      if (doc.state !== "wizard" && !liveWithoutRow) {
+        return reject(doc, `a scooter cannot be associated from ${phase}`);
+      }
+      return accept(doc, { ...doc, device: action.device });
     }
 
     case "setDest":

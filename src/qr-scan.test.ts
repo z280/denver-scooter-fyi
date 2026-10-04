@@ -129,3 +129,43 @@ describe("openQrScanner", () => {
     expect(document.querySelectorAll(".qr-scan").length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The callback ORDER, pinned.
+//
+// `close()` fires `onClose` and the very next statement delivers `onScan`, so a
+// consumer that uses "onClose fired" to mean "cancelled" is wrong for every
+// successful scan too. That is not hypothetical: it is how the home bar's "I've
+// already started one" shipped unable to start a ride (main.ts's
+// `scanForStartedVehicle`, which now defers its cancel decision by a microtask
+// precisely because of this order). Pin it so a future reorder is a failing test
+// here rather than a silently dead feature over there.
+// ---------------------------------------------------------------------------
+
+describe("onClose and onScan ordering", () => {
+  it("fires onClose BEFORE onScan on a successful scan", async () => {
+    const calls: string[] = [];
+    const close = openQrScanner({
+      getStream: () => Promise.resolve(fakeStream().stream),
+      decodeFrame: () => Promise.resolve("x?number=1234567"),
+      onScan: () => calls.push("scan"),
+      onClose: () => calls.push("close"),
+    });
+    await vi.waitFor(() => expect(calls).toContain("scan"));
+    expect(calls).toEqual(["close", "scan"]);
+    close();
+  });
+
+  it("fires onClose alone on a cancel", async () => {
+    const calls: string[] = [];
+    const close = openQrScanner({
+      getStream: () => Promise.resolve(fakeStream().stream),
+      decodeFrame: () => Promise.resolve(null),
+      onScan: () => calls.push("scan"),
+      onClose: () => calls.push("close"),
+    });
+    close();
+    await Promise.resolve();
+    expect(calls).toEqual(["close"]);
+  });
+});

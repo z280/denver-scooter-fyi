@@ -706,7 +706,15 @@ describe("[New Destination]", () => {
     expect(doc?.screen).toBe("3");
     expect(doc?.rideId).toBe(RIDE_ID);
     expect(doc?.trackKeyId).toBe(RIDE_ID);
-    expect(openRideModal).toHaveBeenCalledWith({ fastForwardTo: "3" });
+    // `resume: true` is load-bearing, not decoration: the doc this transition
+    // produces (`wizard:3`, ride id intact) reads as a live ride to
+    // `isRideLive`, so without the flag the integrator's live-ride guard turns
+    // the reopen away and the rider lands on the HUD with their destination and
+    // route already cleared. See main.ts's `beforeOpen`.
+    expect(openRideModal).toHaveBeenCalledWith({
+      fastForwardTo: "3",
+      resume: true,
+    });
     expect(queryRoot()).toBeNull();
     unwire();
   });

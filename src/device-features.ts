@@ -58,7 +58,8 @@ import {
   type PointsScheduleResponse,
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
-import { openQrScanner } from "./qr-scan.ts";
+import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 
 // ---------------------------------------------------------------------------
@@ -323,6 +324,13 @@ export interface ConfirmFeaturesOptions {
    *  a QR code has been scanned — the scan is both the proof-of-presence
    *  and the only statement of which scooter the answers describe. */
   requireQr?: boolean;
+  /** A QR payload the caller has ALREADY scanned, so the rider is not asked to
+   *  scan the same sticker twice. The ribbon's QR tool (`qr-utility.ts`) is one
+   *  scanner in front of a mode dial — by the time it hands off to this modal
+   *  the scan has happened, and reopening the camera here would be the app
+   *  forgetting what the rider just did. Still only ever the RAW payload: this
+   *  module parses it no more than `openScanner` does. */
+  prefillQr?: string;
   lat?: number;
   lng?: number;
   /** Injected for tests; defaults to the real POST. */
@@ -367,6 +375,9 @@ export function openConfirmFeatures(
   document.querySelector(`.${ROOT_CLASS}`)?.remove();
 
   const answers = emptyAnswers();
+  // A scan handed in by the caller counts exactly as one taken here would: it
+  // satisfies `requireQr` and it is what gets submitted.
+  if (options.prefillQr) answers.qrRawValue = options.prefillQr;
   const cleanupFns: (() => void)[] = [];
   let closed = false;
   let sending = false;
@@ -545,6 +556,11 @@ export function openConfirmFeatures(
       const plateInput = el("input", `${ROOT_CLASS}__plate-input`);
       plateInput.id = "device-features-plate";
       plateInput.type = "text";
+      // A plate needs no undo history on any platform, and this modal is
+      // reachable mid-ride from the device popup's long press — which is how
+      // "Undo Typing" came back (see `ios-shake-undo.ts`'s regression note).
+      // Same reasoning, same call, as Screen 2's own plate field.
+      markUndoFree(plateInput);
       // `inputMode` rather than `type="number"`: plates are digit strings, and
       // a number input would strip a leading zero and offer spinners for a
       // value that is not a quantity.
@@ -723,7 +739,10 @@ export function openConfirmFeatures(
     if (e.target === backdrop) close();
   });
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") close();
+    // The scanner owns Escape while it is up — see `isQrScannerOpen`. Without
+    // this, backing out of the camera also closed this modal and threw away
+    // every answer the rider had given it.
+    if (e.key === "Escape" && !isQrScannerOpen()) close();
   };
   document.addEventListener("keydown", onKey);
   cleanupFns.push(() => document.removeEventListener("keydown", onKey));

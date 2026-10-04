@@ -817,6 +817,84 @@ describe("wireRideModal", () => {
     expect(order).toEqual(["wired", "open"]);
   });
 
+  // The BRB bug: an entry arriving over a live ride used to build a wizard
+  // anyway, because the only guard (the reducer's `open` rejection) ran after
+  // `onOpen`, with the shell already in the document.
+  describe("beforeOpen deflects an entry", () => {
+    it("builds nothing and fires no onOpen when it returns false", () => {
+      const onOpen = vi.fn();
+      wireRideModal({ beforeOpen: () => false, onOpen });
+      registerRideScreen("2", fakeScreen("2").factory);
+      openRideModal({ fastForwardTo: "2" });
+      expect(isRideModalOpen()).toBe(false);
+      expect(currentRideScreen()).toBeNull();
+      expect(onOpen).not.toHaveBeenCalled();
+      expect(document.querySelector(".ride-modal")).toBeNull();
+    });
+
+    it("leaves a wizard that is already open exactly as it was", () => {
+      let deflect = false;
+      const closes: string[] = [];
+      wireRideModal({
+        beforeOpen: () => !deflect,
+        onClose: (r) => closes.push(r),
+      });
+      registerRideScreen("2", fakeScreen("2").factory);
+      openRideModal({ fastForwardTo: "2" });
+      expect(currentRideScreen()).toBe("2");
+
+      // The deflected entry must not close the live instance on its way out —
+      // the `reopen` close has to stay downstream of the veto.
+      deflect = true;
+      openRideModal({ fastForwardTo: "2" });
+      expect(isRideModalOpen()).toBe(true);
+      expect(currentRideScreen()).toBe("2");
+      expect(closes).toEqual([]);
+    });
+
+    it("opens normally when it returns true, or is not wired at all", () => {
+      wireRideModal({ beforeOpen: () => true });
+      registerRideScreen("2", fakeScreen("2").factory);
+      openRideModal({ fastForwardTo: "2" });
+      expect(currentRideScreen()).toBe("2");
+      closeRideModal();
+
+      wireRideModal({});
+      openRideModal({ fastForwardTo: "2" });
+      expect(currentRideScreen()).toBe("2");
+    });
+
+    it("can let an entry through on a flag the doc alone cannot distinguish", () => {
+      // The New Destination case. `newDestination` leaves the doc on `wizard:3`
+      // with the ride's id intact, which is indistinguishable from a live ride
+      // by state alone — so the loop's reopen says "this is me coming back"
+      // with `resume`, and the integrator's guard reads the flag rather than
+      // guessing. Deflecting it stranded the rider on the HUD with their
+      // destination and route already cleared (main.ts's `beforeOpen`).
+      registerRideScreen("3", fakeScreen("3").factory);
+      wireRideModal({ beforeOpen: (entry) => entry.resume === true });
+
+      openRideModal({ fastForwardTo: "3" });
+      expect(isRideModalOpen()).toBe(false);
+
+      openRideModal({ fastForwardTo: "3", resume: true });
+      expect(currentRideScreen()).toBe("3");
+    });
+
+    it("sees the entry it is vetoing", () => {
+      const seen: RideModalEntry[] = [];
+      wireRideModal({
+        beforeOpen: (entry) => {
+          seen.push(entry);
+          return false;
+        },
+      });
+      registerRideScreen("2", fakeScreen("2").factory);
+      openRideModal({ fastForwardTo: "2", resume: true });
+      expect(seen).toEqual([{ fastForwardTo: "2", resume: true }]);
+    });
+  });
+
   it("reads the dev flag defensively", () => {
     const store: Record<string, string> = {};
     vi.stubGlobal("localStorage", {

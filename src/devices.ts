@@ -91,7 +91,6 @@ import {
   type RideType,
 } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
-import { KEEP_SIGNIN_HINT } from "./my-scooters.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 export type QualityFilter = "any" | "no-risk" | "ok-only";
@@ -492,9 +491,34 @@ export class Devices {
     this.apply();
   }
 
-  private refreshOpenPopup(): void {
+  /** Re-render the open popup against the current state.
+   *
+   *  Public because the watch store lives outside this class (see
+   *  `setNotifyMovedHandler`): the bell's label says which way the next tap
+   *  goes, so a watch dropped from the Tools panel has to un-press a bell this
+   *  class has no other way of hearing about. No-op with nothing open.
+   *
+   *  `hint` SURVIVES THE RE-RENDER, which is the only reason it is a parameter.
+   *  A caller that wrote to the old popup's hint line and then asked for a
+   *  refresh lost its sentence: `openDevicePopup` builds a fresh element with a
+   *  fresh, empty hint line, and the `report` callback the caller was handed is
+   *  closed over the detached one. So the sentence has to be handed in and
+   *  shown after the rebuild, not written before it. */
+  refreshOpenPopup(hint?: string): void {
     const open = this.openPopupFor;
-    if (open) this.openDevicePopup(open.props, open.coords);
+    if (!open) return;
+    this.openDevicePopup(open.props, open.coords);
+    if (hint === undefined) return;
+    // Same access shape as every other reader of the live popup in this file:
+    // `getElement()` is undefined until MapLibre has mounted it.
+    const popupEl = this.popup?.getElement();
+    const line = popupEl?.querySelector<HTMLElement>(
+      ".device-popup__actionhint",
+    );
+    if (line) {
+      line.textContent = hint;
+      line.hidden = false;
+    }
   }
 
   /** Intercept 🛴 I'll ride this one. Returns true when something else has
@@ -542,22 +566,40 @@ export class Devices {
     this.rideInterceptor = fn;
   }
 
-  /** "Keep this one" — the popup's star. Injected the same way the ride
-   *  interceptor is, so this file stays free of the favourites API, the QR
-   *  scanner and the rules around both: it renders a button and forwards a
-   *  tap. Absent means no star, which is what a page without the Tools
-   *  drawer gets. `report` writes to this popup's hint line: the handler's
-   *  outcome belongs where the rider tapped, not in a closed drawer. */
-  private keepHandler:
+  /** "Notify me if moved" — the popup's bell. Injected the same way the ride
+   *  interceptor is, so this file stays free of the watch store, the
+   *  notification permission prompt and the rules around both: it renders a
+   *  button and forwards a tap. Absent means no bell, which is what a page
+   *  without the Tools drawer gets. `report` writes to this popup's hint line:
+   *  the outcome belongs where the rider tapped, not in a closed drawer.
+   *
+   *  REPLACED "Keep this one" (the ⭐). That button needed a sign-in, a QR
+   *  scan and a fix within 75 m, and in exchange told the rider where a
+   *  scooter was parked — which this map already does, for every scooter, to
+   *  anybody. The bell needs none of the three and answers the one question a
+   *  map cannot answer by sitting there: has it gone? See
+   *  `device-notify.ts`'s header. */
+  private notifyMovedHandler:
     | ((info: {
         vehicleIdentifier: string;
         name: string;
+        lat: number;
+        lon: number;
         report(text: string): void;
       }) => void)
     | null = null;
 
-  setKeepHandler(fn: typeof Devices.prototype.keepHandler): void {
-    this.keepHandler = fn;
+  setNotifyMovedHandler(fn: typeof Devices.prototype.notifyMovedHandler): void {
+    this.notifyMovedHandler = fn;
+  }
+
+  /** Is this vehicle already being watched? Read at render time so the bell can
+   *  say which way it will toggle. Injected rather than imported for the same
+   *  reason the handler is. */
+  private isWatchedMoved: ((vehicleIdentifier: string) => boolean) | null = null;
+
+  setIsWatchedMoved(fn: (vehicleIdentifier: string) => boolean): void {
+    this.isWatchedMoved = fn;
   }
 
   constructor(
@@ -1729,22 +1771,22 @@ export class Devices {
       // same rule the pinned Home/Work row follows. Either one can be absent:
       // Open in Veo needs a plate and proximity, Confirm Features disappears
       // once the features are confirmed.
-      // ⭐ Keep this one. Offered only where it could work: a 16-hex
-      // identifier to keep, and a handler wired up. NOT gated on proximity
-      // here even though keeping needs it — the server owns that rule, and a
-      // second copy of the 75 m check in the client is one deploy away from
-      // disagreeing with it. A rider who taps this too far away gets the
-      // server's own sentence back, which names the distance — in this
-      // popup's hint line, since that is where they are looking.
+      // 🔔 Notify me if moved. Offered wherever it could work: a 16-hex
+      // identifier to watch, and a handler wired up.
       //
-      // Session IS checked here, the way the photo row does it: signed out,
-      // the star renders blocked and a tap says to sign in, rather than
-      // opening a flow whose only possible answer is the same sentence.
-      const keepBtn =
-        vid.length >= 16 && this.keepHandler
-          ? signedIn
-            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep" data-action="keep-scooter" aria-haspopup="dialog">⭐ Keep this one</button>`
-            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep is-blocked" data-action="keep-blocked" aria-disabled="true" title="${escapeHtml(KEEP_SIGNIN_HINT)}">⭐ Keep this one</button>`
+      // NO SIGN-IN GATE, and no proximity gate — the two things its ⭐
+      // predecessor demanded. A watch is a thing this browser does for the next
+      // few hours, so there is no account to attach it to and nothing to prove
+      // by standing next to the scooter. That is most of the point: the feature
+      // it replaced was the heaviest gate in the app guarding public data.
+      //
+      // The label says which way the tap goes, because a toggle whose two
+      // states look the same is a button riders press twice.
+      const watchingMoved =
+        vid.length >= 16 && this.isWatchedMoved ? this.isWatchedMoved(vid) : false;
+      const notifyBtn =
+        vid.length >= 16 && this.notifyMovedHandler
+          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--notify${watchingMoved ? " is-on" : ""}" data-action="notify-moved" aria-pressed="${watchingMoved}">${watchingMoved ? "🔔 Watching — tap to stop" : "🔔 Notify me if moved"}</button>`
           : "";
       const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
       const startFeatureRow = pairCount
@@ -1760,7 +1802,7 @@ export class Devices {
           ${rideBtn}
           ${certBtn}
           ${startFeatureRow}
-          ${keepBtn}
+          ${notifyBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
           ${photoRow}
@@ -2126,20 +2168,21 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
-      // ⭐ Keep this one — Favorite Scooters (API sql/081). Everything about what
-      // that means lives behind the handler.
+      // 🔔 Notify me if moved. Everything about what that means — the store,
+      // the permission prompt, the cap — lives behind the handler. The
+      // coordinates ride along because the watch is a comparison against where
+      // the scooter is NOW, and now is what this popup is showing.
       popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
+        ?.querySelector<HTMLButtonElement>('[data-action="notify-moved"]')
         ?.addEventListener("click", () => {
-          this.keepHandler?.({
+          this.notifyMovedHandler?.({
             vehicleIdentifier: vid,
             name: headerName,
+            lat: coords[1],
+            lon: coords[0],
             report: showHint,
           });
         });
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="keep-blocked"]')
-        ?.addEventListener("click", () => showHint(KEEP_SIGNIN_HINT));
 
       // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
       popupEl

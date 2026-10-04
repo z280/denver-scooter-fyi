@@ -819,7 +819,13 @@ describe("auto-start (entry.autoStart)", () => {
     openRideModal({ fastForwardTo: "6", autoStart: true });
 
     expect(anchors()).toHaveLength(0);
-    expect(root().querySelectorAll("button")).toHaveLength(0);
+    // The ONLY button is the failed-start exit, which re-asks nothing — it is
+    // the answer to "this scooter doesn't work", a thing the device card's
+    // survey could not have settled in advance. Asserted by name rather than
+    // by a count of zero, so a future button that DOES re-ask still trips it.
+    expect(
+      [...root().querySelectorAll("button")].map((b) => b.textContent),
+    ).toEqual(["🚫 It won't start"]);
     expect(root().textContent).toContain("Starting ride mode…");
   });
 
@@ -907,5 +913,140 @@ describe("auto-start (entry.autoStart)", () => {
     expect(startTrackedRide).not.toHaveBeenCalled();
     expect(onPrivateRideStarted).toHaveBeenCalledTimes(1);
     expect(session.current()?.rideId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "It won't start" — the failed-start report.
+//
+// The hole this closes is described at length in ride-failed-start.ts: the
+// fleet's `number_failed_starts` is inferred from a GBFS bike_id rotation, it
+// needs two of them to downgrade a device, and the rider's own report — the one
+// signal that overrides the tier outright — had no button anywhere in the flow
+// that starts a ride. These tests pin the button's existence at both moments it
+// matters and the two things it must never do: start a ride anyway, or leave
+// the rider looking at "try again" on a scooter they just said is dead.
+// ---------------------------------------------------------------------------
+
+describe("failed start", () => {
+  const FAILED_START_LABEL = "🚫 It won't start";
+
+  it("offers the exit on the idle screen", () => {
+    wire(sessionAt(DEVICE, true));
+    openRideModal({ fastForwardTo: "6" });
+    expect(buttonWithText(FAILED_START_LABEL)).toBeTruthy();
+  });
+
+  it("offers it during the countdown, where the failure actually happens", () => {
+    wire(sessionAt(DEVICE, true));
+    openRideModal({ fastForwardTo: "6" });
+    anchors()[0].click();
+    expect(root().textContent).toContain(String(START_COUNTDOWN_S));
+    expect(buttonWithText(FAILED_START_LABEL)).toBeTruthy();
+  });
+
+  it("sends not_rideable for the selected vehicle, with the rider's position", async () => {
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    wire(sessionAt(DEVICE, true), { submitDeviceReport });
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+
+    await vi.waitFor(() => expect(submitDeviceReport).toHaveBeenCalledTimes(1));
+    expect(submitDeviceReport).toHaveBeenCalledWith({
+      vehicle_identifier: DEVICE.vehicleIdentifier,
+      report_type: "not_rideable",
+      lat: FIX.lat,
+      lng: FIX.lng,
+    });
+    await vi.waitFor(() =>
+      expect(root().textContent).toContain("next rider"),
+    );
+  });
+
+  it("stops the countdown dead — a reported scooter never starts a ride", async () => {
+    vi.useFakeTimers();
+    const startTrackedRide = vi.fn().mockResolvedValue(fakeStartedRide());
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    const session = sessionAt(DEVICE, true);
+    wire(session, { startTrackedRide, submitDeviceReport });
+    openRideModal({ fastForwardTo: "6" });
+
+    anchors()[0].click();
+    expect(session.current()?.state).toBe("countdown");
+    buttonWithText(FAILED_START_LABEL).click();
+
+    // Well past when the countdown would have fired.
+    await vi.advanceTimersByTimeAsync((START_COUNTDOWN_S + 5) * 1000);
+    expect(startTrackedRide).not.toHaveBeenCalled();
+    expect(session.current()?.state).not.toBe("riding");
+    // Walked back off the countdown by the one legal route, so the screen is
+    // navigable again rather than stuck mid-count.
+    expect(session.current()?.state).toBe("wizard");
+  });
+
+  it("sends the rider to the picker, and offers no second attempt", async () => {
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    const session = sessionAt(DEVICE, true);
+    wire(session, { submitDeviceReport });
+    // Screen 2 has to exist for `ctx.go("2")` to land anywhere.
+    wireRideModal({});
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+
+    await vi.waitFor(() => expect(root().textContent).toContain("next rider"));
+    // The Veo links and "I already started" are gone: the report we just sent
+    // says this scooter does not ride.
+    expect(anchors()).toHaveLength(0);
+    expect(
+      [...root().querySelectorAll("button")].map((b) => b.textContent),
+    ).toEqual(["Pick another scooter"]);
+  });
+
+  it("carries on when the report is refused — the scooter is still broken", async () => {
+    const submitDeviceReport = vi.fn().mockRejectedValue(new Error("offline"));
+    wire(sessionAt(DEVICE, true), { submitDeviceReport });
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+
+    await vi.waitFor(() =>
+      expect(root().textContent).toContain("pick another"),
+    );
+    expect(buttonWithText("Pick another scooter")).toBeTruthy();
+  });
+
+  it("says so plainly when there is no vehicle to report against", async () => {
+    const submitDeviceReport = vi.fn();
+    // A manual-plate pick whose plate never reverse-resolved: the rider has a
+    // scooter in front of them and we have no identifier for it. The report
+    // needs the server-side hash, which the browser cannot compute, so there is
+    // nothing to send and nothing to pad it with.
+    const unidentified: RideSessionSelectedDevice = {
+      ...DEVICE,
+      vehicleIdentifier: "",
+    };
+    wire(sessionAt(unidentified, true), { submitDeviceReport });
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+    await vi.waitFor(() =>
+      expect(root().textContent).toContain("couldn't tell which scooter"),
+    );
+    expect(submitDeviceReport).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-start behind the report", async () => {
+    const startTrackedRide = vi.fn().mockResolvedValue(fakeStartedRide());
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    const session = sessionAt(DEVICE, true);
+    const locate = fakeLocate(null);
+    wire(session, { startTrackedRide, submitDeviceReport, locate });
+    // No fix yet, so auto-start is still waiting on one.
+    openRideModal({ fastForwardTo: "6", autoStart: true });
+    buttonWithText(FAILED_START_LABEL).click();
+    await vi.waitFor(() => expect(submitDeviceReport).toHaveBeenCalled());
+
+    // The fix the auto-start was waiting for finally lands.
+    locate.emitFix(FIX);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(startTrackedRide).not.toHaveBeenCalled();
   });
 });

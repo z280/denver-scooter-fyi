@@ -1222,3 +1222,93 @@ describe("recovery decision table", () => {
     expect(store.dispatch({ type: "endRide" })?.to).toBe("ending(8)");
   });
 });
+
+// ---------------------------------------------------------------------------
+// associateDevice — the QR tool's "this is the scooter I'm on".
+//
+// Deliberately NOT a second `setDevice`. That one is Screen 2 choosing, is legal
+// only inside the wizard, and may flip `private`; this one is legal mid-ride and
+// changes nothing but the device. See the action's own doc comment.
+// ---------------------------------------------------------------------------
+
+describe("associateDevice", () => {
+  const SCOOTER = {
+    vehicleIdentifier: "a1b2c3d4e5f60701",
+    plate: "1234567",
+    model: null,
+    batteryConfirmed: null,
+  };
+
+  it("names the scooter inside the wizard", () => {
+    const t = reduceRideSession(docAt("wizard", "4"), {
+      type: "associateDevice",
+      device: SCOOTER,
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.device).toEqual(SCOOTER);
+  });
+
+  it("names the scooter a running local ride is on", () => {
+    // The gap it exists for: a free ride recording with no vehicle, which the
+    // post-ride survey and its model-bonus question have nothing to be about.
+    for (const state of ["riding", "countdown"] as const) {
+      const t = reduceRideSession(
+        docAt(state, null, { rideId: null, private: true, startedAtMs: 1 }),
+        { type: "associateDevice", device: SCOOTER },
+      );
+      expect(t.accepted).toBe(true);
+      expect(t.doc.device).toEqual(SCOOTER);
+    }
+  });
+
+  it("refuses a ride whose vehicle the server already stamped", () => {
+    // `POST /tracked-rides` fixed it at the start and nothing the client does
+    // moves it; accepting would leave the doc disagreeing with the server about
+    // what was ridden, and the doc is what the survey submits.
+    const t = reduceRideSession(
+      docAt("riding", null, { rideId: "ride-1", startedAtMs: 1 }),
+      { type: "associateDevice", device: SCOOTER },
+    );
+    expect(t.accepted).toBe(false);
+  });
+
+  it("refuses from every state where there is nothing to associate with", () => {
+    for (const state of ["idle", "done", "ending", "survey", "eligibility"] as const) {
+      const t = reduceRideSession(docAt(state, null), {
+        type: "associateDevice",
+        device: SCOOTER,
+      });
+      expect(t.accepted).toBe(false);
+    }
+  });
+
+  it("changes NOTHING but the device", () => {
+    const before = docAt("riding", null, {
+      rideId: null,
+      private: true,
+      startedAtMs: 1234,
+      dest: { label: "Home", lat: 1, lon: 2 },
+      route: ROUTE,
+      trackKeyId: "private-abc",
+    });
+    const t = reduceRideSession(before, {
+      type: "associateDevice",
+      device: SCOOTER,
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc).toEqual({ ...before, device: SCOOTER });
+    // A live ride's privacy was settled when it started: it is a local
+    // recording with no server row, and learning which scooter it is on does
+    // not retroactively create one.
+    expect(t.doc.private).toBe(true);
+    expect(t.doc.rideId).toBeNull();
+  });
+
+  it("does not move the ride's phase", () => {
+    const t = reduceRideSession(
+      docAt("riding", null, { rideId: null, startedAtMs: 1 }),
+      { type: "associateDevice", device: SCOOTER },
+    );
+    expect(t.doc.state).toBe("riding");
+  });
+});

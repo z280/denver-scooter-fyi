@@ -663,6 +663,23 @@ describe("the QR flows", () => {
     expect(body.vehicle_identifier).toBe("8c4a1f0d2e9b7a35");
   });
 
+  it("leaves Escape to the scanner, instead of losing the rider's answers", () => {
+    // Both listeners are on `document`, so stopPropagation cannot separate them.
+    // Before this, pressing Escape to back out of the camera also closed this
+    // modal and threw away every toggle the rider had answered.
+    open();
+    answerToggles();
+    const scanner = document.createElement("div");
+    scanner.className = "qr-scan";
+    document.body.append(scanner);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".device-features")).not.toBeNull();
+
+    scanner.remove();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".device-features")).toBeNull();
+  });
+
   it("requireQr hides the plate field and gates Send on the scan", () => {
     const scan = instantScan("raw-payload");
     open({ requireQr: true, vehicleIdentifier: undefined, deviceId: undefined, scan });
@@ -675,6 +692,27 @@ describe("the QR flows", () => {
       .querySelector<HTMLButtonElement>('[data-action="scan-qr"]')!
       .click();
     expect(sendBtn().disabled).toBe(false);
+  });
+
+  it("prefillQr counts as the scan — the rider is not asked for it twice", async () => {
+    // The ribbon's QR tool is one scanner behind a mode dial, so by the time it
+    // hands off here the scan has already happened; reopening the camera would
+    // be the app forgetting what the rider just did.
+    const scan = instantScan("should-not-be-used");
+    const { submit } = open({
+      requireQr: true,
+      vehicleIdentifier: undefined,
+      deviceId: undefined,
+      prefillQr: "already-scanned",
+      scan,
+    });
+    answerToggles();
+    // Send is live without touching the scan button at all.
+    expect(sendBtn().disabled).toBe(false);
+    sendBtn().click();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    expect(submit.mock.calls[0][0].qr_raw_value).toBe("already-scanned");
+    expect(scan).not.toHaveBeenCalled();
   });
 
   it("requireQr sends no vehicle at all — the scan is the identity", async () => {

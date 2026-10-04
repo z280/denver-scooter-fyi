@@ -236,6 +236,29 @@
         </svg>
         <span class="drawer-tab__label">Leaderboard</span>
       </button>
+      <!-- The QR tool. A ribbon BUTTON, not a drawer tab — deliberately
+           without the .drawer-tab class, because wireDrawers() queries that
+           class document-wide and would treat this as a tab for a drawer that
+           does not exist. It shares the tab styling through .ribbon-action
+           instead, so the ribbon still reads as one strip. Opens a modal:
+           pointing a camera at a sticker is a thing you finish and leave, not a
+           panel you work in beside the map. -->
+      <button
+        id="ribbon-qr"
+        class="ribbon-action"
+        type="button"
+        title="Scan a scooter"
+      >
+        <!-- QR frame: four corner brackets and a dot -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+          <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+          <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+          <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+          <rect x="10" y="10" width="4" height="4" rx="1" />
+        </svg>
+        <span class="drawer-tab__label">Scan</span>
+      </button>
       <button
         class="drawer-tab"
         type="button"
@@ -797,27 +820,25 @@
           <ul class="my-dibs" id="my-dibs-list"></ul>
         </section>
 
-        <!-- Favorite Scooters. Directly below My dibs because they are the same
-             shape — a short personal list of specific vehicles, meaningful
-             only signed in — and a rider looking for "the scooters I keep"
-             looks where "the claims I hold" already is. Below rather than
-             above because dibs EXPIRE and these do not. Hidden while signed
-             out: keeping one needs an account, and an empty heading is a
-             permanent reminder of a feature you cannot use.
-             Populated by wireMyScooters(). -->
-        <section class="control-group" id="tools-my-scooters"
-                 aria-labelledby="tools-my-scooters-label" hidden>
-          <h3 id="tools-my-scooters-label" class="control-label">Favorite Scooters</h3>
+        <!-- Notify me if moved. Where Favorite Scooters was, because it answers
+             the question that feature was reaching for and the one a map cannot
+             answer by sitting there: has that scooter gone? Below My dibs for
+             the same reason favourites were — a claim is racing a clock, a watch
+             is waiting on the world.
+
+             NOT hidden while signed out. Watching needs no account and no QR
+             scan, which is the whole difference from the ⭐ it replaced, so
+             there is no state in which this heading is a reminder of something
+             the visitor cannot have. Populated by wireDeviceNotifyPanel(). -->
+        <section class="control-group" id="tools-notify-moved"
+                 aria-labelledby="tools-notify-moved-label">
+          <h3 id="tools-notify-moved-label" class="control-label">Notify me if moved</h3>
           <p class="finder-help">
-            Scooters you&rsquo;ve kept. We&rsquo;ll show you where one is
-            parked &mdash; never where it&rsquo;s going while somebody is
-            riding it.
+            Scooters you&rsquo;re watching. We&rsquo;ll tell you when one is
+            ridden away &mdash; while the app is open.
           </p>
-          <ul class="my-scooters" id="my-scooters-list"></ul>
-          <button id="my-scooters-keep" class="preset-btn" type="button">
-            &#11088; Keep a scooter
-          </button>
-          <p class="finder-help" id="my-scooters-status" role="status" aria-live="polite" hidden></p>
+          <ul class="notify-moved" id="notify-moved-list"></ul>
+          <p class="finder-help" id="notify-moved-status" role="status" aria-live="polite" hidden></p>
         </section>
 
         <section class="control-group" aria-labelledby="finder-label">
