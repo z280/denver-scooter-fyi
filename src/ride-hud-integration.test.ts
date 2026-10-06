@@ -116,7 +116,6 @@ function buildRoute(): RideSessionRoute {
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: true,
   save_tracks: true,
   battery_modeling: true,

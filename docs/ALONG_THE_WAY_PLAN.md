@@ -1306,6 +1306,41 @@ here: it is the Screen 4 route-preview basemap flavour, not the app theme,
 which is why `ride-settings.ts` deliberately has no Theme row and a paragraph
 explaining the absence. A field that needs a paragraph is misnamed.
 
+**`theme` was not misnamed, it was INERT — so it is deleted, not renamed.**
+`ride-screen-routes.ts` never mentioned it. Nothing read it on any screen: it
+was defaulted, copied into `RideOptions`, validated on recovery, stored in
+`tracked_rides.ride_options` and in Usuals, echoed back by the server, and
+consumed by no one — the only references outside that chain were test fixtures.
+Renaming it would have codified an intention nothing implements. The deletion is
+client-only and needs no migration: the server's `_serialize_ride_options`
+validates `if key in options`, so an absent key is simply not checked, and
+`parseRideSession` is a version-skewed read that builds an explicit object, so
+blobs already carrying `theme` still parse and drop it.
+
+**The audit, which found a worse problem than the naming.** Every question
+either flow asks, against the per-ride-or-standing test:
+
+| Field | Asked where | Read? | Verdict |
+|---|---|---|---|
+| `save_tracks` | nowhere — Settings → Local Data | yes | **Correct, and the precedent.** A rider who wants their tracks wants them every ride |
+| `navigation` | pre-flight | yes | Genuinely per-ride — turn-by-turn is a property of *this* trip |
+| `cost_hud` | pre-flight only | **yes, now** | **Open question for the owner.** One entrance asks, the other dropped its row. Plausibly standing, like Save Tracks |
+| `speedometer` | **nowhere** | **yes, now** | **A control that went missing.** Read, three meaningful values, pinned to `"classic"` for every rider forever |
+| `battery_modeling`, `nav_improvement`, `end_survey` | Screens 9/10 | yes | Correct — asked once the data exists, not pre-committed |
+| `theme` | nowhere | **no** | Deleted (above) |
+
+**`ride-settings.ts`'s header had gone stale, and that is the drift this seam is
+about.** It justified removing the Cost HUD and Speedometer rows on the grounds
+that "both `RideOptions` fields were never actually read by `ride-hud.ts`" —
+true when written, false now: that module says "`RideOptions.cost_hud` finally
+being READ" and "`RideOptions.speedometer`, finally read", and applies both in
+`renderRiding`. A reader trusting the old paragraph would have concluded the
+fields were dead and deleted them, blanking the readouts. The paragraph now
+records what expired and what each absence costs.
+
+**Not done, because they are the owner's calls, not a refactor's:** whether
+`cost_hud` becomes a standing setting, and where `speedometer` gets asked.
+
 ### 6.6 Tests
 
 - `#mode-switch` is absent from `index.html`, and no module queries it.

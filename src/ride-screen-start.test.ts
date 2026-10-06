@@ -45,7 +45,6 @@ function baseOptions(costHud: boolean): RideOptions {
   return {
     cost_hud: costHud,
     speedometer: "classic",
-    theme: "auto",
     navigation: false,
     save_tracks: true,
     battery_modeling: false,

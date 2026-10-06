@@ -10,26 +10,42 @@
 //
 // FRICTION-REDUCTION PASS — down from the original eight rows to two.
 //
-// No Theme row: the app already has two live, ambient theme fixtures that
-// cover both surfaces this panel could ever reach — `theme.ts`'s ThemeControl
-// map button (Analysis/regular interface) and `ride-hud.ts`'s `toggle-night`
-// button (once ride mode is actually live). A THIRD "Theme" question here,
-// asked before a rider has even picked a scooter, only ever fed the narrow
-// `RideOptions.theme` field (`ride-screen-routes.ts`'s Screen 4 route-preview
-// basemap flavor) — not the app's actual visible theme — so it looked like a
-// live toggle (☀️/🌘/auto) without ever behaving like one. Removed rather than
-// wired up for real: a redundant, confusing third theme control is worse than
-// none.
+// No Theme row, and since §6.5 no `RideOptions.theme` field either. The app
+// has two live, ambient theme fixtures that cover both surfaces this panel
+// could reach — `theme.ts`'s ThemeControl map button and `ride-hud.ts`'s
+// `toggle-night` — so a third "Theme" question here, asked before a rider has
+// even picked a scooter, looked like a live toggle (☀️/🌘/auto) without ever
+// behaving like one.
 //
-// No Est. Veo Cost HUD / Speedometer rows either: both `RideOptions` fields
-// were never actually read by `ride-hud.ts` — the live HUD's speedometer and
-// cost display are unconditional, driven entirely by `ride-cost.ts`'s own
-// always-on rate-plan preference, completely independent of either toggle.
-// Turning "Est. Veo Cost HUD" off here did nothing; the live HUD showed cost
-// regardless of the ride's private/guest status either way. Pre-ride display
-// preferences that don't even do anything, asked before a rider has picked a
-// scooter, are pure friction — removed rather than wired up, same call as
-// Theme.
+// This paragraph used to defend the field as "the Screen 4 route-preview
+// basemap flavour, not the app theme" — and §6.5 asked for it to be renamed on
+// the grounds that a field needing a paragraph is misnamed. It was worse than
+// misnamed: `ride-screen-routes.ts` never mentioned it. Nothing read it, on any
+// screen. Written, copied into `RideOptions`, validated on recovery, stored in
+// `tracked_rides.ride_options` and in Usuals, echoed back by the server, and
+// consumed by no one. Renaming it would have codified an intention nothing
+// implements, so it is gone instead.
+//
+// No Est. Veo Cost HUD / Speedometer rows either. The reason given here was
+// that neither `RideOptions` field was read by `ride-hud.ts` — the HUD's cost
+// and speed readouts were unconditional — so asking about them before a rider
+// had even picked a scooter was friction buying nothing.
+//
+// THAT REASON HAS SINCE EXPIRED, and the §6.5 audit caught it. Both fields are
+// read now: `ride-hud.ts` says "`RideOptions.cost_hud` finally being READ" and
+// "`RideOptions.speedometer`, finally read", and applies them at
+// `renderRiding`. So do not take this paragraph as licence to delete either
+// field — that would blank the readouts it used to be safe to ignore.
+//
+// What the rows' absence costs now is different for each:
+//   - `cost_hud` is still ASKED, by `ride-preflight.ts`, which is the entrance
+//     for a rider already standing at a scooter. One surface asks, one does
+//     not, and §6.5's open question is whether it should be a standing setting
+//     instead (like Save Tracks) rather than a per-ride one.
+//   - `speedometer` is asked NOWHERE. It is read, it has three meaningful
+//     values, and it is pinned to `defaultRideOptions()`'s "classic" for every
+//     rider forever. That is not a resolved friction decision, it is a control
+//     that went missing while its field came alive.
 //
 // No Improve battery modeling / Navigation Improvement / End ride survey
 // rows: asking a rider to pre-commit to donating data they don't have yet is
@@ -128,7 +144,6 @@ export function defaultRideOptions(): RideOptions {
   return {
     cost_hud: true,
     speedometer: "classic",
-    theme: "auto",
     navigation: false,
     // The rider's standing answer, not a per-ride default — see
     // `track-preference.ts` for why it stopped being a question. Still
@@ -481,7 +496,6 @@ export function optionsFromRideUsual(usual: RideUsual): RideOptions {
   return {
     cost_hud: s.cost_hud,
     speedometer: s.speedometer,
-    theme: s.theme,
     navigation: s.navigation,
     save_tracks: s.save_tracks,
     battery_modeling: s.battery_modeling,

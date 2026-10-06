@@ -818,7 +818,6 @@ function parseOptions(raw: unknown): RideOptions | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const speedometer = o.speedometer;
-  const theme = o.theme;
   return {
     cost_hud: o.cost_hud === true,
     speedometer:
@@ -827,10 +826,10 @@ function parseOptions(raw: unknown): RideOptions | null {
       speedometer === "none"
         ? speedometer
         : "classic",
-    theme:
-      theme === "light" || theme === "dark" || theme === "auto"
-        ? theme
-        : "auto",
+    // No `theme`. It was dropped in §6.5 — written, copied, validated and
+    // stored, and read by nothing. Rows saved before that still carry the key;
+    // this reader builds an explicit object, so it is ignored rather than
+    // needing a migration.
     navigation: o.navigation === true,
     save_tracks: o.save_tracks === true,
     battery_modeling: o.battery_modeling === true,

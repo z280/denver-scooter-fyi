@@ -47,7 +47,6 @@ function baseOptions(navigation: boolean): RideOptions {
   return {
     cost_hud: false,
     speedometer: "classic",
-    theme: "auto",
     navigation,
     save_tracks: false,
     battery_modeling: false,

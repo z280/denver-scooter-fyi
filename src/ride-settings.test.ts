@@ -62,7 +62,6 @@ import {
 const BASE_OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "classic",
-  theme: "auto",
   navigation: false,
   save_tracks: true,
   battery_modeling: true,
@@ -98,7 +97,6 @@ describe("defaultRideOptions", () => {
     expect(defaultRideOptions()).toEqual({
       cost_hud: true,
       speedometer: "classic",
-      theme: "auto",
       navigation: false,
       save_tracks: true,
       battery_modeling: true,

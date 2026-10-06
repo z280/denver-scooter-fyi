@@ -928,8 +928,6 @@ function query(
 export type SpeedometerStyle = "classic" | "digital" | "none";
 /** Ride-scoped theme pick. `auto` follows sunrise/sunset for the ride and must
  *  NOT touch the rider's durable preference (see ride-hud's toggle-night). */
-export type RideThemeChoice = "light" | "dark" | "auto";
-
 /** Screen 2's Ride Mode Options, stored on the ride row as `ride_options`
  *  JSONB. Client-owned: the server echoes it back and reads only the booleans
  *  it gates awards on (`save_tracks`, `battery_modeling`, `nav_improvement`,
@@ -937,7 +935,6 @@ export type RideThemeChoice = "light" | "dark" | "auto";
 export interface RideOptions {
   cost_hud: boolean;
   speedometer: SpeedometerStyle;
-  theme: RideThemeChoice;
   navigation: boolean;
   save_tracks: boolean;
   /** 🏆 Requires a specific Veo device + donated tracks. */

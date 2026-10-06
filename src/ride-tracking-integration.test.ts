@@ -210,7 +210,6 @@ const VEHICLE = "a1b2c3d4e5f60718";
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: false,
   save_tracks: true,
   battery_modeling: true,
