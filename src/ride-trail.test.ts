@@ -193,7 +193,8 @@ function buildDoc(
 function fakeDeviceCtl(): RideDeviceControl {
   return {
     setRideActive: () => {},
-    setRideModelFilter: () => {},
+    setModelSelection: () => {},
+    modelSelection_: () => ({ kind: "all" }) as const,
     hasOpenPopup: () => false,
   };
 }

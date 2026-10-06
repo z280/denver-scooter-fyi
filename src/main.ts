@@ -11,6 +11,7 @@ import {
   liveDibs,
   releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
+import { modelsOf } from "./model-filter.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
@@ -4292,6 +4293,20 @@ function wireDrawers(): void {
     // is hidden again.
     if (id === "leaderboard") leaderboardPanel?.open();
     else leaderboardPanel?.close();
+    // ONE FILTER, TWO SURFACES (Phase 6 §6.3). The model toggles are a view
+    // onto `devices`' single selection, which the ride HUD's "Show" pills
+    // edit too — so re-read it when the Filters drawer is shown rather than
+    // trusting the buttons' own memory. Lazily, on open, which is what §6.3
+    // means by "visible in the other when the rider gets there": a live
+    // listener would re-enter `setToggleGroup`, whose synthetic clicks drive
+    // the very handler that would fire it.
+    if (id === "devices") {
+      setToggleGroup(
+        "#model-filter",
+        "model",
+        modelsOf(devices.modelSelection_()),
+      );
+    }
     // Same for the watch list in Tools: a watch can be armed from a map popup
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.

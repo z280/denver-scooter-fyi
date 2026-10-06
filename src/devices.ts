@@ -88,6 +88,13 @@ import {
   uploadDevicePhoto,
 } from "./device-photos.ts";
 import {
+  ALL_SELECTED,
+  admits,
+  admitsEverything,
+  selectionOf,
+  type ModelSelection,
+} from "./model-filter.ts";
+import {
   ALL_MODELS,
   ALL_RIDE_TYPES,
   MODELS_BY_RIDE_TYPE,
@@ -333,10 +340,15 @@ export class Devices {
   private all: DevicesResponse | null = null;
   private areaFilter: AreaFilter = null;
   private hideUnavailable = false;
-  /** Ride-type and model toggles: everything enabled by default, users
-   *  click to *disable*. Unrecognized models are never filtered out. */
+  /** Ride-type toggles: everything enabled by default, users click to
+   *  *disable*. Unrecognized ride types are never filtered out. */
   private rideTypes = new Set<RideType>(ALL_RIDE_TYPES);
-  private models = new Set<ModelKey>(ALL_MODELS);
+  /** THE model filter — one value, shared by the Filters drawer and the ride
+   *  HUD's "Show" pills (Phase 6 §6.3). Both surfaces read and write this; the
+   *  HUD is a view onto it, not a second filter that happens to run on the
+   *  same features. `model-filter.ts` explains why a `Set` could not do this
+   *  job and which half of the old behaviour was a bug. */
+  private modelSelection: ModelSelection = ALL_SELECTED;
   /** Minimum battery percentage (0 = off). When > 0, devices without a
    *  usable battery_percent are hidden too — an unknown charge can't
    *  satisfy a minimum. */
@@ -421,10 +433,6 @@ export class Devices {
   /** True while the rider is choosing a point on the map for their profile;
    *  a tap then means "here", not "tell me about this scooter". */
   private pickActive = false;
-  /** Ride-scoped device visibility (HUD "Show" pills). null = no ride filter
-   *  (everything, incl. unrecognized hardware); a set restricts to those
-   *  models; an empty set shows none. */
-  private rideModelFilter: ReadonlySet<ModelKey> | null = null;
   /** In-flight long-press on a device during a ride (null between presses). */
   private ridePress:
     | { props: PopupProps; coords: [number, number]; longFired: boolean }
@@ -2700,10 +2708,23 @@ export class Devices {
     this.apply();
   }
 
-  /** Model toggles (default: all). Unrecognized models are unaffected. */
-  setModels(models: ReadonlySet<ModelKey>): void {
-    this.models = new Set(models);
+  /** Set the one model filter. Both the Filters drawer and the ride HUD call
+   *  this; whichever the rider used last is what both of them show. */
+  setModelSelection(selection: ModelSelection): void {
+    this.modelSelection = selection;
     this.apply();
+  }
+
+  /** The current model filter, for a surface rendering its own toggles. */
+  modelSelection_(): ModelSelection {
+    return this.modelSelection;
+  }
+
+  /** Toggle-shaped convenience for the Filters drawer, which reports the set
+   *  of ticked boxes. Normalising here rather than at the call site is what
+   *  keeps "every box ticked" and "no filter" the same value. */
+  setModels(models: ReadonlySet<ModelKey>): void {
+    this.setModelSelection(selectionOf(models));
   }
 
   /** Minimum battery percentage (0 disables the filter). */
@@ -2793,14 +2814,6 @@ export class Devices {
   setPickActive(on: boolean): void {
     this.pickActive = on;
     if (on) hideMapTooltip();
-  }
-
-  /** Ride-scoped model visibility, driven by the HUD "Show" pills. Pass null
-   *  to clear the ride filter (show everything, including unrecognized
-   *  hardware); an empty set shows none. */
-  setRideModelFilter(models: ReadonlySet<ModelKey> | null): void {
-    this.rideModelFilter = models ? new Set(models) : null;
-    this.apply();
   }
 
   /** "Always" bakes the ring into every icon; "On Hover" reserves the ring's
@@ -2894,13 +2907,12 @@ export class Devices {
     if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
       feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
     }
-    if (this.models.size < ALL_MODELS.length) {
-      // Only *recognized* models can be toggled off; mystery hardware
-      // always stays visible (it's what the model-report flow feeds on).
-      feats = feats.filter((f) => {
-        const key = modelKeyOf(f.properties);
-        return key === null || this.models.has(key);
-      });
+    if (!admitsEverything(this.modelSelection)) {
+      // `admits` owns every case, including what happens to unrecognized
+      // hardware — which is exactly what the two old branches disagreed
+      // about. Do not re-derive it here.
+      const sel = this.modelSelection;
+      feats = feats.filter((f) => admits(sel, modelKeyOf(f.properties)));
     }
     if (this.hideUnavailable) {
       feats = feats.filter(
@@ -2956,21 +2968,6 @@ export class Devices {
         const [lng, lat] = f.geometry.coordinates;
         return pointInAny(lng, lat, polys);
       });
-    }
-    if (this.rideModelFilter) {
-      // Ride HUD visibility. An empty set is the explicit "show none." A
-      // partial set keeps the chosen models AND unrecognized hardware —
-      // deselecting one model shouldn't silently hide mystery scooters the
-      // rider never toggled. (All-selected is passed as null upstream, so we
-      // only reach here for a genuine "none" or "some" choice.)
-      const allow = this.rideModelFilter;
-      feats =
-        allow.size === 0
-          ? []
-          : feats.filter((f) => {
-              const key = modelKeyOf(f.properties);
-              return key === null || allow.has(key);
-            });
     }
     return feats;
   }

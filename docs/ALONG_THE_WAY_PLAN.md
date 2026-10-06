@@ -1111,6 +1111,30 @@ ride-model filter on the way to `hidden` and `resumeRide` pushes the unchanged
 selection back — a correctness patch that exists only because there are two
 filters to keep in step. With one, there is nothing to re-push.
 
+**AND IT OVERTURNS F3's RIDE-START RESET, which is a decision, not a tidy-up.**
+`RideHud` emptied its pills at the start of every ride — *"F3: hide every
+scooter by default"*. That was reachable only because the pills owned a second
+filter: emptying a ride-scoped copy left the rider's real filter alone. Against
+one shared value the same line is a **filter wipe**, and §6.1's ONE MAP
+guarantee — "entering a ride flow no longer wipes filters" — forbids it. The
+reset was the last surviving counterexample to a guarantee this plan states as
+already true.
+
+So it goes, and the intent behind it survives in a better form: a rider who
+wants an uncluttered ride view picks **`none`**, which is now a named state
+they chose and which persists, instead of one imposed on every ride and
+silently discarded at the end of it. The hand-off program argues the same way
+from the other side — Phase 2's whole point is the *next* scooter, and a ride
+view that hides every scooter by default hides it.
+
+**Shipped.** `model-filter.ts` holds the three-state and the one `admits()`
+that decides what each means; `devices.ts` has one model branch and one field;
+the HUD renders from it and writes to it; the clear/re-push pair and the F3
+reset are gone. The Filters drawer re-reads the value when it opens, which is
+what "visible in the other when the rider gets there" buys — a live listener
+would re-enter `setToggleGroup`, whose synthetic clicks drive the very handler
+that would fire it.
+
 ### 6.3.1 Seam 2b — the camera has exactly TWO framings
 
 **The regular map is never tilted.** It is built today with no pitch or rotate

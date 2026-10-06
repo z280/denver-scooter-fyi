@@ -26,7 +26,12 @@ import {
  *  and on-map visibility filtering. */
 export interface RideDeviceControl {
   setRideActive(on: boolean): void;
-  setRideModelFilter(models: ReadonlySet<ModelKey> | null): void;
+  /** The ONE model filter (Phase 6 §6.3). The HUD's "Show" pills are a view
+   *  onto the map's filter, so these two methods read and write the same
+   *  value the Filters drawer does — there is no ride-scoped copy to push or
+   *  to put back. */
+  setModelSelection(selection: ModelSelection): void;
+  modelSelection_(): ModelSelection;
   /** True while a device details popup is open — the follow-cam holds the
    *  camera still so the popup doesn't drift out from under the reader. */
   hasOpenPopup(): boolean;
@@ -45,6 +50,11 @@ import {
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
+import {
+  admits,
+  toggleModel,
+  type ModelSelection,
+} from "./model-filter.ts";
 import { dropNativeUndoHistory, setRideLive } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
@@ -133,24 +143,11 @@ export interface TrackedRideHandoff {
 
 // ---------------------------------------------------------------------------
 // Pure decision helpers — extracted so the branches the F3 phase section
-// calls out ("the rideModels-empty-push decision, the BRB tracked-vs-private
-// branch decision, the interim end-report field set") are unit-testable
+// calls out ("the BRB tracked-vs-private branch decision, the interim
+// end-report field set") are unit-testable
 // without a DOM, a Map, or geolocation. The class methods below call these
 // rather than re-implementing the same conditions inline.
 // ---------------------------------------------------------------------------
-
-/** Which model filter to push to the device layer for a given "Show"
- *  selection. Every model selected (the ride-start default is now EMPTY, not
- *  every model — see `RideHud`'s `rideModels` field) means "no filter" (also
- *  shows unrecognized hardware); anything else, including the empty set,
- *  restricts to exactly that set — an empty set is `setRideModelFilter`'s
- *  documented "show none" path, which is what makes ride start hide every
- *  scooter by default. */
-export function rideModelFilterFor(
-  models: ReadonlySet<ModelKey>,
-): ReadonlySet<ModelKey> | null {
-  return models.size === ALL_MODELS.length ? null : new Set(models);
-}
 
 /** BRB's tracked-vs-private branch (frontend plan, Phase F3 "BRB" note): a
  *  tracked ride (a server `rideId`) keeps its clock anchored and its
@@ -284,12 +281,9 @@ export class RideHud {
   /** Teardown for the map-gesture listeners that set the flag above, held so
    *  they come off with the follow-cam rather than outliving the ride. */
   private mapGestureOff: (() => void) | null = null;
-  /** Which models the follow-cam shows (HUD "Show" pills). Reset to EMPTY at
-   *  the start of each ride (F3: hide every scooter by default) — the rider
-   *  re-shows models on demand via the wrench panel's chips. All-selected
-   *  means no filter (also shows unrecognized hardware); anything else,
-   *  including empty, restricts to that set (see `rideModelFilterFor`). */
-  private rideModels = new Set<ModelKey>();
+  // The "Show" pills have no field of their own any more. They render from,
+  // and write to, the one filter in the device layer (Phase 6 §6.3) — see
+  // `rideSelection()` below.
   /** A ride "backgrounded" via BRB: the HUD is hidden and the map returns to
    *  Analysis / Find wheels, but the ride state (counter) is preserved so
    *  reopening the HUD resumes it. */
@@ -615,10 +609,11 @@ export class RideHud {
     const riding = state === "riding";
     this.root.classList.toggle("is-riding", riding);
     document.body.classList.toggle("ride-active", state !== "hidden");
-    // Long-press-to-open device taps only while the follow-cam is live; drop
-    // the ride-scoped visibility filter whenever we leave it.
+    // Long-press-to-open device taps only while the follow-cam is live. There
+    // is no ride-scoped filter to drop on the way out any more: the pills edit
+    // the map's own filter, so leaving the ride leaves it exactly as the rider
+    // last set it (Phase 6 §6.3, and §6.1's ONE MAP guarantee).
     this.deviceCtl.setRideActive(riding);
-    if (!riding) this.deviceCtl.setRideModelFilter(null);
     if (state === "armed") this.renderArmed();
     // Crossing into the riding view is the last quiet moment before the deck
     // starts shaking: drop focus and take our one shot at emptying WebKit's
@@ -787,16 +782,15 @@ export class RideHud {
       }
       case "dev": {
         const model = btn.dataset.model as ModelKey;
-        if (this.rideModels.has(model)) this.rideModels.delete(model);
-        else this.rideModels.add(model);
-        const on = this.rideModels.has(model);
+        const next = toggleModel(this.rideSelection(), model);
+        this.deviceCtl.setModelSelection(next);
+        const on = admits(next, model);
         btn.classList.toggle("is-on", on);
         btn.setAttribute("aria-pressed", String(on));
         // Rover service-area caveat, mirroring the Filters drawer's note:
         // visible whenever the Show selection includes the Rover.
         const note = this.root.querySelector<HTMLElement>("#hud-rover-note");
-        if (note) note.hidden = !this.rideModels.has("trike");
-        this.applyRideModels();
+        if (note) note.hidden = !admits(next, "trike");
         break;
       }
       case "done":
@@ -850,9 +844,10 @@ export class RideHud {
   /** Chips for the adjust panel's "Show" row, reflecting the current
    *  selection. Deselecting all hides every device from the follow-cam. */
   private deviceChipsMarkup(): string {
+    const sel = this.rideSelection();
     return ALL_MODELS
       .map((m) => {
-        const on = this.rideModels.has(m);
+        const on = admits(sel, m);
         // MODEL_NAMES, never a capitalized key: the raw "trike" key is how
         // Rovers leaked out as "Trike" (model-catalog.ts) — this chip row
         // was the one surface PR 63's sweep missed, disagreeing with the
@@ -863,10 +858,11 @@ export class RideHud {
       .join("");
   }
 
-  /** Push the current model selection to the map — see `rideModelFilterFor`
-   *  for the all/partial/none decision. */
-  private applyRideModels(): void {
-    this.deviceCtl.setRideModelFilter(rideModelFilterFor(this.rideModels));
+  /** The one model filter, read from the device layer rather than mirrored
+   *  here. There is deliberately no setter-and-cache pair: a copy is what
+   *  made the drawer and the pills disagree in the first place. */
+  private rideSelection(): ModelSelection {
+    return this.deviceCtl.modelSelection_();
   }
 
   // ---------- Leave the ride view (exit door → End Ride / BRB) ----------
@@ -988,10 +984,9 @@ export class RideHud {
     void this.enterImmersive();
     this.setState("riding");
     this.renderRiding();
-    // `setState` cleared the ride-model filter on the way to `hidden` — push
-    // the (unchanged) current selection back (frontend plan: "resumeRide
-    // needs the SAME re-push").
-    this.applyRideModels();
+    // No filter re-push here. `setState` no longer clears anything on the way
+    // to `hidden`, so there is nothing to put back — the whole dance existed
+    // only because the pills owned a second copy of the filter (§6.3).
     this.enterFollowCam();
     if (!tracked) this.startSensors();
     void this.acquireWakeLock();
@@ -1095,8 +1090,8 @@ export class RideHud {
 
   /** Fresh ride entry, shared by the legacy armed→countdown→start flow and
    *  `beginHandoff`'s wizard/reload handoff — the two ways a ride can begin.
-   *  Resets every per-ride accumulator, hides every scooter by default (F3;
-   *  see `rideModelFilterFor`), closes any lingering popups/tooltips, and
+   *  Resets every per-ride accumulator, closes any lingering popups/tooltips,
+   *  and
    *  starts the single shared watchPosition (F3; see `onFix`/`startSensors`). */
   private enterRiding(opts: {
     startedAtMs: number;
@@ -1153,7 +1148,13 @@ export class RideHud {
     this.lastBearing = 0;
     this.paused = false;
     this.pausedElapsedMs = 0;
-    this.rideModels = new Set(); // every ride starts hiding every scooter
+    // NO MODEL-FILTER RESET HERE. Ride start used to empty the "Show" pills
+    // ("F3: hide every scooter by default"), which it could only do because
+    // the pills owned a second filter. With one shared value that reset is a
+    // filter wipe, and §6.1's ONE MAP guarantee — entering a ride flow no
+    // longer wipes filters — forbids it. A rider who wants an uncluttered
+    // ride view picks `none`, which is now a state they chose and that
+    // survives the ride rather than being imposed on every one.
     // Fresh ride: any nav overlay from a PRIOR ride this HUD instance already
     // showed (armed → countdown → riding → summary → hidden → armed again)
     // must not leak into this one — `mountNavHud` (called from `renderRiding`
@@ -1164,7 +1165,6 @@ export class RideHud {
     this.navDismissed = false;
     this.setState("riding");
     this.renderRiding();
-    this.applyRideModels();
     closeAllPopups();
     this.enterFollowCam();
     // After `enterFollowCam` (which is what makes the trail visible), so a
@@ -1438,7 +1438,7 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
-          <p id="hud-rover-note" class="control-hint control-hint--warning"${this.rideModels.has("trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
+          <p id="hud-rover-note" class="control-hint control-hint--warning"${admits(this.rideSelection(), "trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
