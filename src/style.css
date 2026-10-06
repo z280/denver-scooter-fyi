@@ -4323,86 +4323,12 @@ body.is-map-picking .ride-modal {
   background: #8a8f98;
 }
 
-/* ---------- The governing documents, in the attribution corner ---------- */
-/* Registered last in bottom-left, so this is that stack's bottom row: zoom,
-   then the attribution pill, then this. One footer group.
-
-   A CHIP THAT OPENS, for a measured reason. Inline links did not fit: at
-   390×844 the pill ran x 22–121 against a home bar starting at x 78. The chip
-   is sized to clear that edge and the panel opens upward over the map, the
-   same shape as the attribution's own collapsed ⓘ. */
-.legal-links {
-  border-radius: 999px;
-  background: var(--bg-panel);
-  box-shadow: var(--shadow);
-  font-size: 10.5px;
-  line-height: 1.2;
-}
-.legal-links__summary {
-  /* The default triangle costs ~12px of the width this is budgeting. */
-  list-style: none;
-  cursor: pointer;
-  color: var(--fg-muted);
-  padding: 5px 10px;
-  border-radius: 999px;
-  user-select: none;
-  /* Keeps the chip under the home bar's left edge (x 78 at 390px wide, with
-     the corner's own 12px inset leaving 66px of room). */
-  max-width: 56px;
-}
-.legal-links__summary::-webkit-details-marker {
-  display: none;
-}
-.legal-links__summary:hover,
-.legal-links[open] .legal-links__summary {
-  color: var(--fg);
-}
-.legal-links__summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* Opens UPWARD. Down is off the bottom of the screen, and up is the only
-   direction with map in it — the same reason the attribution lifts rather
-   than expanding into the corner it is already in. */
-.legal-links__panel {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 11px;
-  border-radius: 10px;
-  background: var(--bg-panel);
-  box-shadow: var(--shadow);
-  white-space: nowrap;
-}
-.legal-links[open] {
-  /* The panel is positioned against this, so it has to be the containing
-     block — only while open, so the closed chip stays a plain pill. */
-  position: relative;
-}
-.legal-links__link {
-  color: var(--fg-muted);
-  text-decoration: none;
-  /* 10.5px text in a 2px-gapped column is well under a 44px target; the
-     padding buys height without making each link look like a button. */
-  padding: 5px 0;
-  font-size: 11.5px;
-}
-.legal-links__link:hover,
-.legal-links__link:focus-visible {
-  color: var(--fg);
-  text-decoration: underline;
-}
-/* The two states that own this corner outright. Same rule, and the same
-   reasoning, as the attribution and zoom control directly above: two surfaces
-   claiming one corner, and the one underneath is unusable anyway. A rider
-   mid-ride is not reading the terms of service. */
-body.arrival-open .legal-links,
-body.ride-active .legal-links {
-  display: none;
-}
+/* The governing documents now ride INSIDE the attribution bar
+   (`customAttribution`, see legal-links.ts) rather than in a pill beside the
+   ⓘ. They inherit `.maplibregl-ctrl-attrib a` directly below, so there is no
+   `.legal-links` block any more — deleting it rather than leaving it unused,
+   because a styled class with no markup is an invitation to put the control
+   back, and putting the control back is the regression. */
 .maplibregl-ctrl-attrib a {
   color: var(--fg-muted);
 }
@@ -9562,4 +9488,143 @@ input[data-ride-keypad="on"] {
   font-size: 12px;
   line-height: 1.4;
   color: var(--fg-muted);
+}
+
+
+/* ---------- The rider story panel ----------
+   Sits under the failed-start report. It has to read as an OFFER, not as the
+   next step of a form the rider is trapped in: hence the rule above it, the
+   modest type, and a prompt that is a question rather than a field label. */
+.story-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.ride-screen-start__story {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.story-panel__lede {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+.story-panel__prompt {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.story-panel__text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.story-panel__text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.story-panel__switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.story-panel__switch input {
+  margin-top: 2px;
+  flex: none;
+}
+.story-panel__hint {
+  margin: 4px 0 0 24px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+/* The third-party block is visually inset, because everything inside it is a
+   consequence of one tick and should read as belonging to it. */
+.story-panel__wsyv {
+  margin: 10px 0 0 24px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--border);
+}
+.story-panel__field {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.story-panel__select,
+.story-panel__input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.story-panel__disclose-head {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+/* Not small print. A person deciding whether to hand their words to somebody
+   else reads this, so it is the same size as the rest of the block. */
+.story-panel__disclose {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.story-panel__disclose li {
+  margin-bottom: 3px;
+}
+.story-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.story-panel__status {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  min-height: 1em;
+}
+
+/* The Rover's ride-area note, in the popup's stat list and on the route
+   screen. Warning-coloured rather than error-coloured on purpose: the rider is
+   not doing anything wrong, and the boundary we are drawing is an
+   approximation of somebody else's — see src/rover-zone.ts. */
+.device-popup__warn {
+  color: var(--warn-fg);
+  background: var(--warn-soft);
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+.ride-route-rover {
+  color: var(--warn-fg);
+  background: var(--warn-soft);
+  padding: 8px 10px;
+  border-radius: 8px;
+  line-height: 1.45;
 }

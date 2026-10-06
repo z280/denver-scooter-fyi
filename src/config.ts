@@ -177,6 +177,19 @@ export function veoDeepLink(vehicleNumber: string): string {
 // `src/templates/legal/*.html` over there, which is also what
 // `GET /api/v1/meta/privacy` is generated from — so the policy a rider reads
 // and the retention statement the API makes cannot disagree.
+/** We See You Veo, the property a rider story can be sent to.
+ *
+ *  A SECOND ORIGIN, named here rather than inlined, because posting to it is
+ *  the one thing this app does that leaves our own infrastructure. Everything
+ *  that reaches it does so because a rider ticked a box that said what was
+ *  being sent and to whom (`rider-story.ts`).
+ *
+ *  In dev it goes through Vite's proxy: that server's CORS allowlist holds the
+ *  production origins and nothing else, deliberately — adding localhost to a
+ *  live allowlist to make local testing convenient is how an allowlist stops
+ *  meaning anything. The proxy is a server-side hop, so no CORS applies. */
+export const WSYV_BASE = import.meta.env.DEV ? "/wsyv" : "https://weseeyouveo.com";
+
 export const LEGAL_LINKS: readonly { label: string; href: string }[] = [
   {
     label: "Privacy",
