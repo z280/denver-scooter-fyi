@@ -324,11 +324,17 @@ export function resolveRideModePoints(
     navRouteFeedback: navRoute?.points ?? FALLBACK_RIDE_MODE_POINTS.navRouteFeedback,
     navQualitativeFeedback:
       navQual?.points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback,
-    navQualitativeDetailed:
-      navQual?.upper_points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailed,
-    navQualitativeDetailedMinChars:
-      navQual?.upper_min_chars ??
-      FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailedMinChars,
+    // The detailed tier is promised only when the API publishes it. If the
+    // entry is there WITHOUT upper fields (an API older than the tier, or a
+    // rollback), that API pays the base value for any length, so "detailed"
+    // collapses onto it rather than promising 12 nobody will pay. Only a
+    // missing entry (offline) falls back to the baked-in tier.
+    navQualitativeDetailed: navQual
+      ? (navQual.upper_points ?? navQual.points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback)
+      : FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailed,
+    navQualitativeDetailedMinChars: navQual
+      ? (navQual.upper_min_chars ?? Number.POSITIVE_INFINITY)
+      : FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailedMinChars,
     navDistancePerStep:
       navDistance?.per_step ?? FALLBACK_RIDE_MODE_POINTS.navDistancePerStep,
     navDistanceStepKm:

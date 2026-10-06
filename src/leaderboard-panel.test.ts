@@ -397,7 +397,7 @@ describe("points table: tiered entries and growth awards (2026-10-06)", () => {
     expect(formatScheduleValue(schedule, "stand_down")).toBe("50 pts (300 for a new rider)");
     const html = buildPointsScheduleHtml(schedule);
     expect(html).toContain("Bringing people in");
-    expect(html).toContain("Refer a new rider who takes a ride");
+    expect(html).toContain("Someone signs up from your dibs certificate, then rides");
     expect(html).toContain("100 pts");
     expect(html).not.toContain(">More<");
   });

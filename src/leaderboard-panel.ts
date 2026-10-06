@@ -123,8 +123,8 @@ const SCHEDULE_GROUPS: { title: string; actions: [string, string][] }[] = [
   {
     title: "Bringing people in",
     actions: [
-      ["referral", "Refer a new rider who takes a ride"],
-      ["stand_down", "Stand down when someone has dibs on your scooter"],
+      ["referral", "Someone signs up from your dibs certificate, then rides"],
+      ["stand_down", "Let someone with dibs have the scooter (ride the same day to collect)"],
     ],
   },
   {
