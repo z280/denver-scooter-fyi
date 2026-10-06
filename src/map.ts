@@ -9,6 +9,24 @@ import { legalAttribution } from "./legal-links.ts";
 
 const BASEMAP_SOURCE = "protomaps";
 
+/** The basemap credit, which is a CONDITION of the Protomaps/OSM licence.
+ *
+ *  It is declared on the source below AND passed to the attribution control
+ *  as custom attribution, because the source declaration alone does not
+ *  survive: MapLibre replaces a vector source's fields with the TileJSON it
+ *  loads from the source `url`, and the self-hosted pmtiles archive's
+ *  metadata carries no attribution — so the control rendered EMPTY, with the
+ *  ⓘ collapsed to zero width and the credit nowhere on the page. Verified in
+ *  a browser against the live dev build, both before and after this line
+ *  existed.
+ *
+ *  Declared in both places rather than only the one that works: the source
+ *  field is what a future basemap pipeline (or an archive rebuilt with
+ *  metadata) would honour, and a credit that depends on which of two
+ *  mechanisms wins is the one that goes missing again. */
+const BASEMAP_ATTRIBUTION =
+  '<a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a> © <a href="https://openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>';
+
 /** Basemap color scheme. Dark uses the Protomaps charcoal `dark` flavor (not
  *  `black`): this is a data map, and labels/overlays read better on charcoal. */
 export type Flavor = "light" | "dark";
@@ -45,8 +63,7 @@ function styleFor(flavor: Flavor, base: LayerSpecification[]): StyleSpecificatio
       [BASEMAP_SOURCE]: {
         type: "vector",
         url: `pmtiles://${BASEMAP_PMTILES_URL}`,
-        attribution:
-          '<a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a> © <a href="https://openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>',
+        attribution: BASEMAP_ATTRIBUTION,
       },
     },
     layers: base,
@@ -143,7 +160,11 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
   map.addControl(
     new maplibregl.AttributionControl({
       compact: true,
-      customAttribution: legalAttribution(),
+      // Order here is not the order on screen — MapLibre sorts attributions
+      // by length, so the basemap credit lands last behind the two short
+      // links. That is fine (it is present and legible, which is what the
+      // licence asks) and it is not worth fighting the control over.
+      customAttribution: [BASEMAP_ATTRIBUTION, ...legalAttribution()],
     }),
     "bottom-left",
   );
