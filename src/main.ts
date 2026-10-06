@@ -26,14 +26,12 @@ import { createDibsNotifier } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
-  ALL_RIDE_TYPES,
   ALL_MODELS,
   MODELS_BY_RIDE_TYPE,
   gaugeColor,
   iconPreviewURL,
   whenModelIconsReady,
   hideMapTooltip,
-  type RideType,
   type ModelKey,
   modelKeyOf,
   type QualityFilter,
@@ -506,7 +504,6 @@ const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 // resets the originating control through its normal event path so the
 // drawer UI stays in sync.
 const chips = new FilterChips(need("filter-chips"));
-let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
 /** The ideal-scooter bridge. Null when its markup is absent (a page that
  *  does not carry the Filters drawer). */
 let rideSpecPanel: RideSpecPanelHandle | null = null;
@@ -530,7 +527,6 @@ let qualityOn: QualityFilter = "any";
 let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
-let clearRideTypeFilter: () => void = () => {};
 /** "Notify me if moved", in the Tools drawer. Null until boot wires it. */
 let notifyPanel: DeviceNotifyPanelHandle | null = null;
 
@@ -621,11 +617,6 @@ function fetchIncludes(): DeviceInclude[] {
   return document.body.classList.contains("ride-active") ? [] : ["h3", "ranks"];
 }
 
-const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
-  standing: "🛴 Standing only",
-  sitting: "🚲 Seated only",
-};
-
 const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "no-risk": "Hiding high-risk",
   "ok-only": "✓ Likely rideable",
@@ -643,15 +634,6 @@ const FEATURE_CHIP_LABEL: Record<FeatureFilterKey, string> = {
  *  suggestion, and the wizard's carried-filters summary. */
 function activeFilterChips(): Chip[] {
   const active: Chip[] = [];
-
-  if (rideTypesOn.size < ALL_RIDE_TYPES.length) {
-    const only = [...rideTypesOn][0];
-    active.push({
-      id: "ride-type",
-      label: only ? RIDE_TYPE_CHIP_LABEL[only] : "🚫 No ride types",
-      onClear: clearRideTypeFilter,
-    });
-  }
 
   const pickedModels = modelsOn();
   if (pickedModels.size < ALL_MODELS.length) {
@@ -1128,7 +1110,6 @@ map.on("load", async () => {
   // one is first drawn.
   ensureBands(map);
   buildLayerToggles();
-  wireRideTypes();
   wireModels();
   wireFeatureFilter();
   wireHideUnavailable();
@@ -2027,57 +2008,30 @@ function wireToggleGroup<T extends string>(
   };
 }
 
-function wireRideTypes(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(
-      "#ride-type-filter .toggle-pill",
-    ),
-  );
-  clearRideTypeFilter = wireToggleGroup(
-    btns,
-    (b) => b.dataset.ride as RideType,
-    ALL_RIDE_TYPES,
-    (enabled) => {
-      rideTypesOn = enabled;
-      devices.setRideTypes(enabled);
-      syncModelsToRideTypes(enabled);
-      clusters.update(devices.visibleFeatures());
-      refreshChips();
-    },
-    "ride-types",
-  );
-}
-
-/** Ride type → model sync: the two controls are deliberately redundant
- *  (Astro is the only standing model), so every ride-type change drives the
- *  model toggles to exactly the models that ride type can produce —
- *  otherwise "Seated" + a leftover Astro-only model pick is a dead filter
- *  showing nothing. Deliberately one-directional: a model tap is a narrower
- *  statement than a ride-type tap and never rewrites the type pills.
- *  Both-off is left alone (the empty ride-type set already hides
- *  everything, and any model rewrite would just be lost state). */
-function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
-  if (types.size === 0) return;
-  const want = new Set<string>(
-    ALL_RIDE_TYPES.filter((t) => types.has(t)).flatMap((t) => [
-      ...MODELS_BY_RIDE_TYPE[t],
-    ]),
-  );
-  // A narrower model pick that can still produce the enabled ride types
-  // SURVIVES the sync — expanding it wholesale re-showed models the user
-  // deliberately hid (Apollo-only + "Seated" is a perfectly live filter).
-  // Only the actual dead-filter case this sync exists for — none of the
-  // picked models can produce any enabled type — expands to the full
-  // per-type set.
-  const compatible = new Set<string>(
-    [...modelsOn()].filter((m) => want.has(m)),
-  );
-  setToggleGroup(
-    "#model-filter",
-    "model",
-    compatible.size > 0 ? compatible : want,
-  );
-}
+// NO RIDE-TYPE FILTER, and no ride-type → model sync.
+//
+// The sitting/standing control was a second way to say something the model
+// toggles already said. Posture is DERIVED from the model, and not loosely:
+// the API's ingest maps one Veo vehicle-type id to both the model name and the
+// sitting/standing value (`_KNOWN_VEHICLE_TYPES`), so for a recognized model
+// the two can never disagree. "Seated only" was "Cosmo or Apollo or Rover"
+// with extra steps.
+//
+// Being redundant is not what made it worth deleting. What made it worth
+// deleting is that the redundancy was LOAD-BEARING: `syncModelsToRideTypes`
+// existed because the two controls could combine into a filter that shows
+// nothing ("Seated" plus an Astro-only model pick), and it had to be careful —
+// preserving a narrower model pick that could still produce the enabled types,
+// expanding only in the genuinely dead case, one-directional so a model tap
+// never rewrote the pills. All of that is gone with the control it guarded.
+//
+// WHAT STAYS, deliberately: `rideTypeOf` (the device icon's sprite picks
+// `use-sitting`/`use-standing`), `MODELS_BY_RIDE_TYPE` (the ride spec's
+// model-widening rung — "anything you'd sit on the same way"), and the
+// `vehicle_use_type` field itself, which on the API side is a SplitDimension in
+// the equity-compliance metrics and is described there as the
+// accessibility-relevant split. Deleting the concept would delete an
+// accessibility metric; only the redundant control is going.
 
 /** "I'm rude AF" — other people's claims stop dimming the map.
  *
@@ -2186,9 +2140,16 @@ function wireQuickFilters(): void {
       setQualityFilter("no-risk");
       setHideUnavailableControl(true);
     },
-    // Seated rides only — the ride-type sync turns the Astro off in step.
+    // Seated rides only. Now says it directly in models rather than setting a
+    // ride type and relying on a sync to turn the Astro off in step —
+    // `MODELS_BY_RIDE_TYPE` is the same mapping that sync read, so this is the
+    // identical selection by a shorter route.
     "no-standing": () => {
-      setToggleGroup("#ride-type-filter", "ride", new Set(["sitting"]));
+      setToggleGroup(
+        "#model-filter",
+        "model",
+        new Set<string>(MODELS_BY_RIDE_TYPE.sitting),
+      );
       setHideUnavailableControl(true);
     },
   };
@@ -2290,7 +2251,6 @@ function wireQuality(): void {
 function snapshotFilters(): FilterSnapshot {
   const display = lastAreaState?.display;
   return {
-    rideTypes: [...rideTypesOn],
     models: [...modelsOn()],
     // The lineup as of this save, so a model added AFTER can be told apart
     // from one the saver deselected (see effectiveModels) — absence from
@@ -2311,21 +2271,24 @@ function snapshotFilters(): FilterSnapshot {
  *  wireToggleGroup can tell a synthetic click from a rider's tap and skip
  *  the `control_change` telemetry for it — the same programmatic-replay
  *  suppression wireSeg already does for its setter. Without this, one
- *  ride-type tap also recorded a phantom "models" gesture (via
- *  syncModelsToRideTypes), and every quick filter recorded a burst of
- *  control_change events for controls the rider never touched. */
+ *  quick filter recorded a burst of control_change events for controls the
+ *  rider never touched. (It also stopped a ride-type tap recording a phantom
+ *  "models" gesture through the old ride-type → model sync; that sync and the
+ *  control that drove it are gone, but the quick filters still replay.) */
 let drivingToggleGroup = false;
 
 function setToggleGroup(
   rootSel: string,
-  key: "ride" | "model" | "feature",
+  key: "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
-  // Save/restore rather than set/clear: setToggleGroup re-enters itself
-  // (a Quick Filter drives the ride-type buttons, whose click handler runs
-  // syncModelsToRideTypes → setToggleGroup for the models), and an inner
-  // call blanking the flag would unsuppress telemetry for the rest of the
-  // outer drive.
+  // Save/restore rather than set/clear. The known re-entrant path is gone with
+  // the ride-type sync — a Quick Filter used to drive the ride-type buttons,
+  // whose handler drove the model buttons — but this stays: `applyFilterSnapshot`
+  // still drives several groups in one pass, and an inner call blanking the flag
+  // would unsuppress telemetry for the rest of the outer drive. Keeping the
+  // save/restore costs two lines; trading it for the assumption that nothing
+  // will ever nest again costs a silent burst of phantom gestures.
   const wasDriving = drivingToggleGroup;
   drivingToggleGroup = true;
   try {
@@ -2350,7 +2313,9 @@ let applyFilterSnapshot: (s: FilterSnapshot) => Promise<void> = () =>
 
 function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
   return async (s: FilterSnapshot): Promise<void> => {
-    setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
+    // No ride-type group to drive: an old preset's `rideTypes` says nothing
+    // its `models` does not already say, because posture is derived from the
+    // model upstream (see the note above `wireModels`).
     // effectiveModels, not s.models verbatim: a model the preset never knew
     // about (saved before it joined the lineup) defaults to ON rather than
     // being read as deselected.
@@ -2367,7 +2332,6 @@ function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
 
 function wireClearFilters(): void {
   resetAllFilters = () => {
-    clearRideTypeFilter();
     clearModelFilter();
     clearFeatureFilter();
     clearBatteryMin();

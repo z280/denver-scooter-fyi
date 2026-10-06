@@ -348,7 +348,16 @@ describe("toFilterSnapshot", () => {
   it("carries map-only state through untouched", () => {
     const snap = toFilterSnapshot(s, CURRENT);
     expect(snap.area).toEqual(CURRENT.area);
-    expect(snap.rideTypes).toEqual(CURRENT.rideTypes);
+  });
+
+  it("emits no ride-type selection at all", () => {
+    // It used to pass `current.rideTypes` through — never deriving it, just
+    // preserving whatever the map had. That control is gone (posture is
+    // derived from the model upstream), so a snapshot that still carried the
+    // key would be writing a field nothing reads back into every new preset.
+    const snap = toFilterSnapshot(s, CURRENT);
+    expect(snap.rideTypes).toBeUndefined();
+    expect("rideTypes" in snap).toBe(false);
   });
 
   it("forces hideUnavailable on", () => {

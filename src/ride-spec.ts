@@ -398,9 +398,11 @@ export function relax(spec: RideSpec, rungs: number): RideSpec {
  *       spec rejects it. So a scooter can be on the map under this toggle and
  *       still not be one the trip search would offer.
  *
- *  Map-only state — the area filter and the ride-type toggles — is carried
- *  through from `current` untouched, because a spec has nothing to say about
- *  geography or about a control whose work the model list already does.
+ *  Map-only state — the area filter — is carried through from `current`
+ *  untouched, because a spec has nothing to say about geography. The ride-type
+ *  toggles used to be carried the same way, with the note that the model list
+ *  already did their work; that turned out to be the argument for deleting the
+ *  control, and it is gone.
  *
  *  `hideUnavailable` is the exception, and is forced ON. Availability is the
  *  one requirement the spec never relaxes, and a view labelled "your ideal
@@ -411,7 +413,6 @@ export function toFilterSnapshot(
   current: FilterSnapshot,
 ): FilterSnapshot {
   return {
-    rideTypes: [...current.rideTypes],
     models: spec.models === null ? [...ALL_MODELS] : [...spec.models],
     // Stamped with the CURRENT line-up, always. A snapshot that claimed to
     // know only some of today's models would have every later model default

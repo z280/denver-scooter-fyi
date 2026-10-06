@@ -211,9 +211,17 @@ describe("sameFilters", () => {
     expect(sameFilters(LIVE, { ...LIVE, knownModels: ["astro"] })).toBe(true);
   });
 
+  it("ignores a legacy preset's rideTypes", () => {
+    // Nothing writes that key any more — the ride-type control is gone and
+    // posture is derived from the model upstream — so a stored preset carrying
+    // it must not read as a filter the rider has edited. Before, this field was
+    // compared; a live snapshot (which never has it) against an old projection
+    // (which did) would have detached instantly.
+    expect(sameFilters(LIVE, { ...LIVE, rideTypes: ["sitting"] })).toBe(true);
+  });
+
   it("notices every field the map actually filters on", () => {
     const differences: Partial<FilterSnapshot>[] = [
-      { rideTypes: ["sitting"] },
       { models: ["astro"] },
       { features: ["basket"] },
       { hideUnavailable: true },

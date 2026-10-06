@@ -1159,6 +1159,47 @@ what "visible in the other when the rider gets there" buys — a live listener
 would re-enter `setToggleGroup`, whose synthetic clicks drive the very handler
 that would fire it.
 
+### 6.3.3 Seam 2d — the ride-type filter was a THIRD way to say it
+
+Not in the original plan; added after §6.3 shipped and the question was put
+directly: should sitting/standing stop being a filter, with posture simply
+documented per model?
+
+**Yes for the control, no for the concept.** Posture was never an independent
+signal. The API's `ingest.py` maps one Veo vehicle-type id to **both** the model
+name and the sitting/standing value (`_KNOWN_VEHICLE_TYPES`: `1` → Astro /
+standing, `3` → Cosmo / sitting, `4` → Apollo / sitting, `5` → Rover /
+sitting). For a recognized model the two cannot disagree, so "seated only" was
+"Cosmo or Apollo or Rover" with extra steps — and `MODELS_BY_RIDE_TYPE` was
+already the documented mapping the question asked for, as a local copy of that
+table's posture column.
+
+**There is no correlation win, and that was the hypothesis worth testing.**
+Nothing correlates posture against model, because posture *is* the model
+upstream. What the deletion buys is the removal of a redundancy that was
+**load-bearing**: `syncModelsToRideTypes` existed only because the two controls
+could combine into a filter that shows nothing ("Seated" plus an Astro-only
+model pick), and it had to be careful about it — preserving a narrower model
+pick that could still produce the enabled types, expanding only in the genuinely
+dead case, one-directional so a model tap never rewrote the pills. That, the
+chip, the device-layer branch and the preset field all go with the control.
+
+**What stays, and why deleting it would have been a mistake:**
+
+| Kept | Because |
+|---|---|
+| `vehicle_use_type` on the API | A `SplitDimension` in the equity-compliance metrics, generating stored columns per equity region. `ingest.py` calls it "the accessibility-relevant split" — a rider who cannot stand needs a seated vehicle, so its distribution is an advocacy question |
+| `rideTypeOf` | The device icon picks `use-sitting`/`use-standing`, and must answer for hardware with **no recognized model** — the one case a model-only rule cannot cover |
+| `MODELS_BY_RIDE_TYPE` | The ride spec's model-widening rung ("anything you'd sit on the same way") and the Quick Filters' "No Standing" preset, which now reads it directly instead of setting a ride type and relying on the sync |
+
+**The repo had already made this argument once, in the other direction.**
+`ingest.py` keeps `use_type` separate from `form_factor` with the note that
+"every vehicle here happens to agree with its (corrected) form_factor today, but
+the two are tracked separately since GBFS's vocabulary and the
+compliance-relevant distinction aren't guaranteed to be the same axis forever."
+That is exactly why the field survives while the control does not: two tracked
+fields cost nothing, two **controls** cost a sync and a dead-filter state.
+
 ### 6.3.1 Seam 2b — the camera has exactly TWO framings
 
 **The regular map is never tilted.** It is built today with no pitch or rotate

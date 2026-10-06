@@ -340,9 +340,6 @@ export class Devices {
   private all: DevicesResponse | null = null;
   private areaFilter: AreaFilter = null;
   private hideUnavailable = false;
-  /** Ride-type toggles: everything enabled by default, users click to
-   *  *disable*. Unrecognized ride types are never filtered out. */
-  private rideTypes = new Set<RideType>(ALL_RIDE_TYPES);
   /** THE model filter — one value, shared by the Filters drawer and the ride
    *  HUD's "Show" pills (Phase 6 §6.3). Both surfaces read and write this; the
    *  HUD is a view onto it, not a second filter that happens to run on the
@@ -2703,11 +2700,6 @@ export class Devices {
   }
 
   /** Ride-type toggles (default: both). Empty set hides everything. */
-  setRideTypes(types: ReadonlySet<RideType>): void {
-    this.rideTypes = new Set(types);
-    this.apply();
-  }
-
   /** Set the one model filter. Both the Filters drawer and the ride HUD call
    *  this; whichever the rider used last is what both of them show. */
   setModelSelection(selection: ModelSelection): void {
@@ -2904,9 +2896,6 @@ export class Devices {
   private filtered(): DevicesResponse["features"] {
     if (!this.all) return [];
     let feats = this.all.features;
-    if (this.rideTypes.size < ALL_RIDE_TYPES.length) {
-      feats = feats.filter((f) => this.rideTypes.has(rideTypeOf(f.properties)));
-    }
     if (!admitsEverything(this.modelSelection)) {
       // `admits` owns every case, including what happens to unrecognized
       // hardware — which is exactly what the two old branches disagreed
