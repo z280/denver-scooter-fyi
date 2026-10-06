@@ -189,24 +189,47 @@ describe("buildAboutHtml", () => {
 function setup(overrides: Partial<{
   fetchRegional: () => Promise<LeaderboardRegionalResponse>;
   fetchSchedule: () => Promise<PointsScheduleResponse>;
+  /** The two switches' starting state. Both ship checked in index.html; the
+   *  defaults here are false so the existing cases still describe a rider
+   *  turning things ON. */
+  territoryOn: boolean;
+  mutedOn: boolean;
 }> = {}) {
-  const toggle = document.createElement("input");
-  toggle.type = "checkbox";
+  const box = (checked: boolean): HTMLInputElement => {
+    const b = document.createElement("input");
+    b.type = "checkbox";
+    b.checked = checked;
+    return b;
+  };
+  const toggle = box(overrides.territoryOn ?? false);
+  const mutedToggle = box(overrides.mutedOn ?? false);
   const els: LeaderboardPanelElements = {
     toggle,
+    mutedToggle,
     regionalBody: document.createElement("div"),
     aboutBody: document.createElement("div"),
     scheduleBody: document.createElement("div"),
   };
   const setTerritory = vi.fn();
+  const setTerritoryMuted = vi.fn();
   const fetchRegional = vi.fn(overrides.fetchRegional ?? (async () => TALLY));
   const fetchSchedule = vi.fn(overrides.fetchSchedule ?? (async () => SCHEDULE));
   const handle = wireLeaderboardPanel(els, {
     setTerritory,
+    setTerritoryMuted,
     fetchRegional,
     fetchSchedule,
   });
-  return { els, toggle, setTerritory, fetchRegional, fetchSchedule, handle };
+  return {
+    els,
+    toggle,
+    mutedToggle,
+    setTerritory,
+    setTerritoryMuted,
+    fetchRegional,
+    fetchSchedule,
+    handle,
+  };
 }
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -293,5 +316,72 @@ describe("wireLeaderboardPanel", () => {
     release(TALLY);
     await settle();
     expect(els.regionalBody.innerHTML).not.toContain("Duke Swift 🦦");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two switches, and the order they are applied in.
+//
+// Both ship checked: the territory IS the leaderboard's point, and a
+// leaderboard nobody can see on the map is just a table. Muted is what keeps
+// it under the scooters — see hexdensity.ts's TERRITORY_MUTE_FACTOR.
+// ---------------------------------------------------------------------------
+
+describe("the territory switches", () => {
+  it("applies both at wire time, strength before presence", () => {
+    // The other order paints one frame of full-strength colour over the whole
+    // city and then dims it, which on a first load is the thing a rider sees.
+    const calls: string[] = [];
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = true;
+    const mutedToggle = document.createElement("input");
+    mutedToggle.type = "checkbox";
+    mutedToggle.checked = true;
+    wireLeaderboardPanel(
+      {
+        toggle,
+        mutedToggle,
+        regionalBody: document.createElement("div"),
+        aboutBody: document.createElement("div"),
+        scheduleBody: document.createElement("div"),
+      },
+      {
+        setTerritory: () => calls.push("territory"),
+        setTerritoryMuted: () => calls.push("muted"),
+        fetchRegional: async () => TALLY,
+        fetchSchedule: async () => SCHEDULE,
+      },
+    );
+    expect(calls).toEqual(["muted", "territory"]);
+  });
+
+  it("leaves the layer alone at wire time when its switch is off", () => {
+    // Muting is still recorded — switching territory on later must arrive at
+    // the right strength rather than flash full and then dim.
+    const { setTerritory, setTerritoryMuted } = setup({
+      territoryOn: false,
+      mutedOn: true,
+    });
+    expect(setTerritory).not.toHaveBeenCalled();
+    expect(setTerritoryMuted).toHaveBeenCalledWith(true);
+  });
+
+  it("passes the muted switch straight through on change", () => {
+    const { mutedToggle, setTerritoryMuted } = setup({ mutedOn: true });
+    setTerritoryMuted.mockClear();
+    mutedToggle.checked = false;
+    mutedToggle.dispatchEvent(new Event("change"));
+    expect(setTerritoryMuted).toHaveBeenCalledWith(false);
+  });
+
+  it("muting is not a way of turning the layer off", () => {
+    // Two questions, two switches: "is it on the map" and "how loud". A rider
+    // who dims the shading has not asked for it to go away.
+    const { mutedToggle, setTerritory } = setup({ territoryOn: true });
+    setTerritory.mockClear();
+    mutedToggle.checked = true;
+    mutedToggle.dispatchEvent(new Event("change"));
+    expect(setTerritory).not.toHaveBeenCalled();
   });
 });

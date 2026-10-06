@@ -56,6 +56,7 @@ import {
   type FeatureFilterKey,
 } from "./device-features.ts";
 import { Locate } from "./locate.ts";
+import { requestLocationOnLoad } from "./locate-on-load.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
@@ -1064,6 +1065,18 @@ function wireRecommended(): void {
 }
 
 map.on("load", async () => {
+  // Ask for location now. Almost every number this app shows is relative to
+  // where the rider is standing — the walk estimate on every popup, the
+  // "worth the walk" ranking, the 75 m proximity gates, which scooter Screen 2
+  // preselects — and until now all of it waited behind a button a first-time
+  // visitor had no reason to press. `locate-on-load.ts` owns the three rules
+  // (never re-ask a rider who declined, never ask twice, and a granted
+  // permission must be silent); it never throws, so this is not awaited and
+  // nothing below it depends on the answer.
+  void requestLocationOnLoad({
+    trigger: () => locate.trigger(),
+    hasFix: () => locate.current() !== null,
+  });
   devices.addLayers();
   buildLayerToggles();
   wireRideTypes();
@@ -1084,11 +1097,15 @@ map.on("load", async () => {
   leaderboardPanel = wireLeaderboardPanel(
     {
       toggle: need<HTMLInputElement>("leaderboard-territory-toggle"),
+      mutedToggle: need<HTMLInputElement>("leaderboard-muted-toggle"),
       regionalBody: need("leaderboard-regional-body"),
       aboutBody: need("leaderboard-about-body"),
       scheduleBody: need("leaderboard-schedule-body"),
     },
-    { setTerritory: (on) => setTerritoryShading(on) },
+    {
+      setTerritory: (on) => setTerritoryShading(on),
+      setTerritoryMuted: (muted) => hexDensity.setTerritoryMuted(muted),
+    },
   );
   wireDrawers();
   // Theme, in the Account drawer's header above the tabs. Mounted for the
@@ -3900,19 +3917,67 @@ function beginWalkToVehicle(info: {
 // an equity area, because otherwise the discount stays discoverable only to
 // people already looking for it — the exact asymmetry this app exists to
 // correct.
+/** The Areas drawer's two equity controls: whether the boundary is drawn at
+ *  all, and how loudly.
+ *
+ *  BOTH DEFAULT ON, which is a change of policy and not just of markup. The
+ *  boundary is the thing this app exists to point at — a discount written into
+ *  a contract, owed to anyone inside a line nobody can see — so it is now
+ *  drawn for everybody, and drawn quietly. "Muted display" is what turns it
+ *  back up to the full wash it used to be at when a rider switched it on.
+ *
+ *  The checkboxes are the source of truth for the initial state, not the
+ *  module's field defaults: `index.html` ships them checked, and this reads
+ *  them once at wire time, so changing a default means changing one attribute
+ *  rather than two files that have to agree. */
 function wireEquityAreas(): void {
   const toggle = need<HTMLInputElement>("equity-areas-toggle");
-  toggle.addEventListener("change", async () => {
-    toggle.disabled = true;
-    try {
-      await equityAreas.setOverlayVisible(toggle.checked);
-    } catch (e) {
-      console.error("equity areas overlay failed", e);
-      toggle.checked = false;
-    } finally {
-      toggle.disabled = false;
-    }
+  const muted = need<HTMLInputElement>("equity-areas-muted-toggle");
+
+  /** Both handlers are the same shape: disable while the geometry fetch is in
+   *  flight (the first call awaits it), and on failure put the checkbox back
+   *  where it was rather than leave it claiming something the map is not
+   *  doing. */
+  const guard = (
+    box: HTMLInputElement,
+    label: string,
+    apply: () => Promise<void>,
+  ) => {
+    const was = box.checked;
+    box.disabled = true;
+    void apply()
+      .catch((e: unknown) => {
+        console.error(`${label} failed`, e);
+        box.checked = !was;
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  };
+
+  toggle.addEventListener("change", () => {
+    guard(toggle, "equity areas overlay", () =>
+      equityAreas.setOverlayVisible(toggle.checked),
+    );
   });
+  muted.addEventListener("change", () => {
+    guard(muted, "equity areas muting", () =>
+      equityAreas.setOverlayMuted(muted.checked),
+    );
+  });
+
+  // Draw it now, at whatever strength the markup says. Deliberately not
+  // awaited: the geometry is a fetch, and the rest of the map's wiring has no
+  // business waiting on a boundary overlay.
+  void equityAreas
+    .setOverlayMuted(muted.checked)
+    .then(() => equityAreas.setOverlayVisible(toggle.checked))
+    .catch((e: unknown) => {
+      // The app works without it — the indicator chip is a separate path and
+      // does not depend on these layers at all.
+      console.error("equity areas initial draw failed", e);
+      toggle.checked = false;
+    });
 }
 
 /** The Filters drawer's accordion sections: one open at a time. Native

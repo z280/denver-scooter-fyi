@@ -1,13 +1,12 @@
 // @vitest-environment happy-dom
 //
-// The QR tool: the dial's arithmetic, the plate extraction that mirrors the
-// server's, and the modal's two outcomes. See `qr-utility.ts`'s header for why
-// one scanner behind a dial rather than two buttons with a camera flow each.
+// The QR tool: the mode switch, the plate extraction that mirrors the server's,
+// and the modal's two outcomes. See `qr-utility.ts`'s header for why one
+// scanner behind a mode switch rather than two buttons with a camera flow each.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   QR_UTILITY_MODES,
-  modeAngle,
   modeSpec,
   openQrUtility,
   plateFromQr,
@@ -16,10 +15,10 @@ import {
   type QrUtilityDeps,
 } from "./qr-utility.ts";
 
-describe("the dial's arithmetic", () => {
+describe("the mode switch's arithmetic", () => {
   it("wraps in both directions", () => {
-    // A dial that silently stops is a dial a rider keeps pushing — and with two
-    // positions, clamping would make one direction dead.
+    // Unordered jobs, not a scale: there is no "off the end" to protect, and
+    // with two positions clamping would make one arrow direction dead.
     const first = QR_UTILITY_MODES[0].mode;
     const last = QR_UTILITY_MODES[QR_UTILITY_MODES.length - 1].mode;
     expect(rotateMode(last, 1)).toBe(first);
@@ -32,20 +31,10 @@ describe("the dial's arithmetic", () => {
     expect(m).toBe(QR_UTILITY_MODES[0].mode);
   });
 
-  it("handles a delta bigger than the dial", () => {
+  it("handles a delta bigger than the switch", () => {
     const n = QR_UTILITY_MODES.length;
     expect(rotateMode("features", n * 3)).toBe("features");
     expect(rotateMode("features", -n * 3 - 1)).toBe(rotateMode("features", -1));
-  });
-
-  it("spreads the positions evenly over the full circle", () => {
-    const angles = QR_UTILITY_MODES.map((m) => modeAngle(m.mode));
-    expect(angles[0]).toBe(0);
-    expect(new Set(angles).size).toBe(QR_UTILITY_MODES.length);
-    for (const a of angles) {
-      expect(a).toBeGreaterThanOrEqual(0);
-      expect(a).toBeLessThan(360);
-    }
   });
 
   it("gives every mode a short label and a sentence saying what it does", () => {
@@ -166,76 +155,112 @@ describe("the modal", () => {
   }
 
   const root = () => document.querySelector<HTMLElement>(".qr-utility")!;
-  const notches = () =>
-    [...root().querySelectorAll<HTMLButtonElement>(".qr-utility__notch")];
-  const notch = (mode: string) =>
-    notches().find((b) => b.dataset.mode === mode)!;
+  const segments = () =>
+    [...root().querySelectorAll<HTMLButtonElement>(".qr-utility__mode")];
+  const segment = (mode: string) =>
+    segments().find((b) => b.dataset.mode === mode)!;
   const scanBtn = () =>
     root().querySelector<HTMLButtonElement>(".qr-utility__scan")!;
-  const pointer = () => root().querySelector<HTMLElement>(".qr-utility__pointer")!;
   const status = () => root().querySelector<HTMLElement>(".qr-utility__status");
 
-  it("renders one notch per mode, as a radiogroup", () => {
+  it("renders one segment per mode, as a radiogroup", () => {
     open();
-    expect(notches()).toHaveLength(QR_UTILITY_MODES.length);
-    const dial = root().querySelector(".qr-utility__dial")!;
-    expect(dial.getAttribute("role")).toBe("radiogroup");
-    for (const b of notches()) expect(b.getAttribute("role")).toBe("radio");
+    expect(segments()).toHaveLength(QR_UTILITY_MODES.length);
+    const group = root().querySelector(".qr-utility__modes")!;
+    expect(group.getAttribute("role")).toBe("radiogroup");
+    for (const b of segments()) expect(b.getAttribute("role")).toBe("radio");
   });
 
-  it("names each notch for assistive tech — a glyph is not a label", () => {
+  it("names each segment in text, with the glyph marked decorative", () => {
+    // The word is the label now that it is on screen beside the glyph, so a
+    // screen reader should say "Ride mode", not "compass, Ride mode".
     open();
     for (const spec of QR_UTILITY_MODES) {
-      expect(notch(spec.mode).getAttribute("aria-label")).toBe(spec.label);
+      const btn = segment(spec.mode);
+      expect(btn.textContent).toContain(spec.label);
+      expect(
+        btn.querySelector(".qr-utility__mode-glyph")!.getAttribute("aria-hidden"),
+      ).toBe("true");
     }
+  });
+
+  it("points the selected segment at the sentence that explains it", () => {
+    // A radio announces its own label and nothing else, so the detail below
+    // the switch has to be attached deliberately or it is never read out.
+    open();
+    const detail = root().querySelector(".qr-utility__mode-detail")!;
+    expect(detail.id).toBeTruthy();
+    expect(segment("features").getAttribute("aria-describedby")).toBe(detail.id);
+    // Only the selected one: the unselected description is not about anything
+    // the rider has chosen.
+    expect(segment("ride").getAttribute("aria-describedby")).toBeNull();
   });
 
   it("starts on the first mode, and says what it will do", () => {
     open();
     const first = QR_UTILITY_MODES[0];
-    expect(notch(first.mode).getAttribute("aria-checked")).toBe("true");
+    expect(segment(first.mode).getAttribute("aria-checked")).toBe("true");
     expect(root().textContent).toContain(first.label);
     expect(root().textContent).toContain(first.detail);
   });
 
   it("can be opened on a chosen mode", () => {
     open({ initialMode: "ride" });
-    expect(notch("ride").getAttribute("aria-checked")).toBe("true");
+    expect(segment("ride").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("turns to a tapped notch, pointer and all", () => {
+  it("moves to a tapped segment, and rewrites the explanation with it", () => {
     open();
-    notch("ride").click();
-    expect(notch("ride").getAttribute("aria-checked")).toBe("true");
-    expect(notch("features").getAttribute("aria-checked")).toBe("false");
-    // The pointer's direction IS the readout — the only reason a dial beats a
-    // list.
-    expect(pointer().style.transform).toBe(`rotate(${modeAngle("ride")}deg)`);
+    segment("ride").click();
+    expect(segment("ride").getAttribute("aria-checked")).toBe("true");
+    expect(segment("features").getAttribute("aria-checked")).toBe("false");
+    expect(segment("ride").classList.contains("is-active")).toBe(true);
     expect(root().textContent).toContain(modeSpec("ride").detail);
+    expect(root().textContent).not.toContain(modeSpec("features").detail);
   });
 
-  it("turns on the arrow keys, in both directions", () => {
+  it("moves on the arrow keys, in both axes", () => {
     open();
     const press = (key: string) =>
-      notches()
+      segments()
         .find((b) => b.getAttribute("aria-checked") === "true")!
-        .dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+        );
     press("ArrowRight");
-    expect(notch("ride").getAttribute("aria-checked")).toBe("true");
+    expect(segment("ride").getAttribute("aria-checked")).toBe("true");
     press("ArrowLeft");
-    expect(notch("features").getAttribute("aria-checked")).toBe("true");
-    // Up/down work too — a dial has no one axis.
+    expect(segment("features").getAttribute("aria-checked")).toBe("true");
+    // Up/down as well — a thumb that swipes has no one axis in mind.
     press("ArrowDown");
-    expect(notch("ride").getAttribute("aria-checked")).toBe("true");
+    expect(segment("ride").getAttribute("aria-checked")).toBe("true");
+    press("Home");
+    expect(segment("features").getAttribute("aria-checked")).toBe("true");
+    press("End");
+    expect(
+      segment(QR_UTILITY_MODES[QR_UTILITY_MODES.length - 1].mode)
+        .getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
-  it("keeps only the chosen notch in the tab order", () => {
+  it("keeps focus on the switch when a keystroke rebuilds it", () => {
+    // Selecting re-renders the body, which destroys the focused button. Lose
+    // focus here and one arrow press drops a keyboard rider onto <body>.
     open();
-    expect(notch("features").tabIndex).toBe(0);
-    expect(notch("ride").tabIndex).toBe(-1);
-    notch("ride").click();
-    expect(notch("ride").tabIndex).toBe(0);
-    expect(notch("features").tabIndex).toBe(-1);
+    segment("features").focus();
+    segment("features").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(segment("ride"));
+  });
+
+  it("keeps only the chosen segment in the tab order", () => {
+    open();
+    expect(segment("features").tabIndex).toBe(0);
+    expect(segment("ride").tabIndex).toBe(-1);
+    segment("ride").click();
+    expect(segment("ride").tabIndex).toBe(0);
+    expect(segment("features").tabIndex).toBe(-1);
   });
 
   it("features mode hands the RAW payload on and gets out of the way", () => {
@@ -279,11 +304,11 @@ describe("the modal", () => {
     expect(scanBtn().disabled).toBe(false);
   });
 
-  it("drops a previous answer when the dial turns", async () => {
+  it("drops a previous answer when the mode changes", async () => {
     open({ initialMode: "ride", onRideScan: async () => "an old answer" });
     scanBtn().click();
     await vi.waitFor(() => expect(status()?.textContent).toBe("an old answer"));
-    notch("features").click();
+    segment("features").click();
     // The last mode's answer is no longer about anything.
     expect(status()).toBeNull();
   });
@@ -299,7 +324,7 @@ describe("the modal", () => {
   it("leaves Escape to the scanner while the camera is up", () => {
     // Both listeners are on `document`, so stopPropagation cannot separate
     // them — a rider backing out of the camera must not lose the tool behind it,
-    // and the mode they dialled in.
+    // and the mode they selected.
     const scanner = document.createElement("div");
     scanner.className = "qr-scan";
     open();
@@ -362,7 +387,7 @@ describe("wireQrUtility", () => {
 
     expect(open).toHaveBeenCalledTimes(1);
     const deps = open.mock.calls[0][0];
-    // Passed through, not re-wrapped: the dial's two positions are the app's
+    // Passed through, not re-wrapped: the switch's two positions are the app's
     // to answer and this boundary must not become a second place that decides.
     deps.onConfirmFeatures("raw");
     void deps.onRideScan("raw");

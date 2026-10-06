@@ -682,7 +682,10 @@
              fourth checkbox in the list below. It is not one boundary set
              among several: it is the map the Veo contract is measured
              against, and the one that decides whether a rider is owed a
-             discount. OFF by default all the same — see wireEquityAreas(). -->
+             discount. ON by default, and MUTED by default — a boundary
+             nobody can see explains nothing, and a full-strength wash over a
+             third of the city is not what someone came for. These two
+             attributes ARE the defaults; wireEquityAreas() reads them. -->
         <section class="control-group" aria-labelledby="equity-areas-label">
           <h3 id="equity-areas-label" class="control-label">Equity areas</h3>
           <p class="control-hint">
@@ -691,9 +694,18 @@
             $0.13/min. Same map this app's compliance numbers use.
           </p>
           <label class="switch">
-            <input type="checkbox" id="equity-areas-toggle" />
+            <input type="checkbox" id="equity-areas-toggle" checked />
             <span>Show equity areas on map</span>
           </label>
+          <label class="switch">
+            <input type="checkbox" id="equity-areas-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">
+            Muted draws the outline with only a hint of fill, so the streets
+            and the scooters on top stay readable. Turn it off for the solid
+            wash when you are studying coverage rather than riding.
+          </p>
         </section>
 
         <section class="control-group" aria-labelledby="layers-label">
@@ -767,12 +779,21 @@
         <button class="drawer-close" type="button" aria-label="Close Leaderboard">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- Both ON by default, like the equity overlay next door and for the
+             same reason: a leaderboard nobody can see on the map is a table,
+             and the territory IS the game. Muted keeps it under the scooters.
+             These attributes are the defaults — main.ts reads them. -->
         <section class="control-group">
           <label class="switch">
-            <input type="checkbox" id="leaderboard-territory-toggle" />
+            <input type="checkbox" id="leaderboard-territory-toggle" checked />
             <span>Show Territory Control</span>
           </label>
           <p class="control-hint">Shades the map's large hexagons with the ruling colors of whoever leads each one.</p>
+          <label class="switch">
+            <input type="checkbox" id="leaderboard-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">Keeps the shading faint enough to read the map through. Turn it off for full-strength colors.</p>
         </section>
 
         <section class="control-group">

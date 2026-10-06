@@ -1,8 +1,13 @@
 // User-location plumbing for "worth the walk" economics: tracks the
 // GeolocateControl's fixes, computes straight-line walk estimates, and
-// draws a dashed guide line from the user to a selected device. Location
-// is strictly opt-in — nothing here runs until the user taps the
-// geolocate button (or a mode preset triggers it, which is itself a tap).
+// draws a dashed guide line from the user to a selected device.
+//
+// The browser's permission prompt is the only gate, and it still is: nothing
+// here can grant anything. What changed is WHEN we ask. This used to say
+// location was "strictly opt-in — nothing here runs until the user taps the
+// geolocate button", and the app now asks at page load instead — see
+// `locate-on-load.ts` for why, and for the rules that keep asking early from
+// becoming nagging.
 
 import type { Map as MLMap, GeolocateControl, GeoJSONSource } from "maplibre-gl";
 import { emptyFC } from "./util.ts";
@@ -123,10 +128,18 @@ export class Locate {
   }
 
   /** Programmatically start locating (fires the browser permission prompt
-   *  if needed). Must be called from a user gesture. Uses the same
-   *  freshness gate as current(): a stale fix means the watch died, so
-   *  re-trigger rather than no-op (otherwise the Find-a-ride "Awaiting
-   *  approval…" step could wait forever on a fix that never comes). */
+   *  if needed).
+   *
+   *  A user gesture is NOT required — geolocation's prompt has never needed
+   *  one, which is what lets `locate-on-load.ts` ask at page load. Calling it
+   *  inside a tap is still the right shape for the buttons that do (Screen
+   *  3's "Enable GPS" and friends), because there the tap is the rider's
+   *  question and the prompt is the answer to it.
+   *
+   *  Uses the same freshness gate as current(): a stale fix means the watch
+   *  died, so re-trigger rather than no-op (otherwise the Find-a-ride
+   *  "Awaiting approval…" step could wait forever on a fix that never
+   *  comes). */
   trigger(): void {
     if (!this.current()) this.control.trigger();
   }

@@ -3,10 +3,16 @@
 //
 // Two surfaces, one source of truth (equity-areas.ts):
 //
-//   * The OVERLAY — the polygons drawn on the map. Off by default. It is a
-//     compliance boundary, not a rider feature; most people opening this app
-//     want to find a scooter, and a purple wash over a third of the city is
-//     not what they came for. Riders who want it turn it on in Areas.
+//   * The OVERLAY — the polygons drawn on the map. ON by default now, and
+//     MUTED by default: outlines a rider can see without being asked, over a
+//     fill faint enough that the basemap and the scooters on top of it still
+//     read. The old default was off, for a good reason that turned out to be
+//     an argument about opacity rather than about presence — a purple wash
+//     over a third of the city is not what someone came for, but the fact
+//     that the city drew a line and a discount lives inside it IS the point
+//     of this app, and a boundary nobody can see explains nothing. So the
+//     boundary is always drawn, quietly; "Muted display" in Areas is what
+//     turns it up to the old full-strength wash.
 //
 //   * The INDICATOR — a chip that appears when the map is zoomed into an
 //     equity area, saying "$0.13/min", and explains itself when tapped.
@@ -44,6 +50,21 @@ import {
 const SRC = "equity-areas";
 const FILL = "equity-areas-fill";
 const LINE = "equity-areas-line";
+
+/** The two strengths the overlay draws at.
+ *
+ *  MUTED is the default, and it is deliberately outline-forward: the line
+ *  carries where the boundary is, and the fill is there only to say which side
+ *  of it you are on. At 0.04 two overlapping areas still do not stack into
+ *  something that hides the basemap, which is what the old 0.12 did.
+ *
+ *  FULL is the previous look, kept for a rider actually studying coverage —
+ *  the compliance question ("is 30% of the fleet in here?") is asked of the
+ *  area, not of the streets, so there the wash is the useful rendering. */
+const PAINT = {
+  muted: { fill: 0.04, line: 0.45, width: 1 },
+  full: { fill: 0.1, line: 0.9, width: 1.8 },
+} as const;
 
 /** What the indicator should currently say, given a map position. Pure, so
  *  the decision is testable without a map or a DOM.
@@ -113,7 +134,10 @@ export function explainerHtml(areaName: string | null): string {
 
 export class EquityAreaMap {
   private layersAdded = false;
-  private overlayOn = false;
+  /** Default ON — see the header. */
+  private overlayOn = true;
+  /** Default MUTED — see `PAINT`. */
+  private muted = true;
   /** The area the chip is currently showing, so a pan within one area
    *  doesn't rewrite the DOM on every frame. */
   private shownArea: string | null | undefined = undefined;
@@ -147,14 +171,38 @@ export class EquityAreaMap {
     return this.overlayOn;
   }
 
+  isOverlayMuted(): boolean {
+    return this.muted;
+  }
+
   /** Show or hide the polygons. Idempotent, and safe to call before the
    *  geometry has loaded — it awaits the fetch. */
   async setOverlayVisible(visible: boolean): Promise<void> {
-    await this.ensureLayers();
+    // State BEFORE the await: `ensureLayers` builds the layer specs from
+    // these fields, and the fetch it waits on can easily outlive the call
+    // that asked. Assigning after would build the layers at the old setting
+    // and then correct them — a visible flash of the wrong look on arrival.
     this.overlayOn = visible;
+    await this.ensureLayers();
     const vis = visible ? "visible" : "none";
     this.map.setLayoutProperty(FILL, "visibility", vis);
     this.map.setLayoutProperty(LINE, "visibility", vis);
+  }
+
+  /** Switch between the quiet outline and the full wash. Independent of
+   *  visibility on purpose: a rider who turns the overlay off and back on
+   *  should find it the strength they left it, not reset to the default. */
+  async setOverlayMuted(muted: boolean): Promise<void> {
+    this.muted = muted; // before the await — see setOverlayVisible
+    await this.ensureLayers();
+    this.applyPaint();
+  }
+
+  private applyPaint(): void {
+    const p = this.muted ? PAINT.muted : PAINT.full;
+    this.map.setPaintProperty(FILL, "fill-opacity", p.fill);
+    this.map.setPaintProperty(LINE, "line-opacity", p.line);
+    this.map.setPaintProperty(LINE, "line-width", p.width);
   }
 
   private async ensureLayers(): Promise<void> {
@@ -170,11 +218,15 @@ export class EquityAreaMap {
         id: FILL,
         type: "fill",
         source: SRC,
-        layout: { visibility: "none" },
-        // Lighter than the retired overlays' 0.12: this one covers a large
-        // share of the city, and at 0.12 the basemap underneath stopped
-        // being readable where two areas met.
-        paint: { "fill-color": EQUITY_AREA_COLOR, "fill-opacity": 0.1 },
+        // Built from the CURRENT state rather than a hardcoded default: the
+        // Areas checkboxes may have been restored from storage and applied
+        // before the geometry fetch resolved, and a layer that ignored that
+        // would flash the default strength on arrival.
+        layout: { visibility: this.overlayOn ? "visible" : "none" },
+        paint: {
+          "fill-color": EQUITY_AREA_COLOR,
+          "fill-opacity": (this.muted ? PAINT.muted : PAINT.full).fill,
+        },
       },
       FIRST_DEVICE_LAYER,
     );
@@ -183,11 +235,14 @@ export class EquityAreaMap {
         id: LINE,
         type: "line",
         source: SRC,
-        layout: { visibility: "none", "line-join": "round" },
+        layout: {
+          visibility: this.overlayOn ? "visible" : "none",
+          "line-join": "round",
+        },
         paint: {
           "line-color": EQUITY_AREA_COLOR,
-          "line-width": 1.8,
-          "line-opacity": 0.9,
+          "line-width": (this.muted ? PAINT.muted : PAINT.full).width,
+          "line-opacity": (this.muted ? PAINT.muted : PAINT.full).line,
         },
       },
       FIRST_DEVICE_LAYER,
