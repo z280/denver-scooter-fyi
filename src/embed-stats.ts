@@ -45,13 +45,21 @@ export function voiceFromSearch(search: string): StatsVoice {
  *  READ from the host: this page has no message listener at all. */
 function publishHeight(): void {
   const send = (): void => {
-    const height = Math.ceil(document.documentElement.scrollHeight);
+    // The BODY's box, not the document's. `documentElement.scrollHeight`
+    // reports the frame's own viewport whenever the content is shorter than
+    // it — which it always is at the host's initial guess — so the panel kept
+    // asking for exactly the height it had been given and never shrank.
+    // Measuring the body measures the content, and it also breaks the
+    // feedback loop: the number this sends does not depend on the height the
+    // host last set. Caught framing the page for real; a unit test would not
+    // have seen it, because nothing is wrong until there is an iframe.
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
     window.parent?.postMessage({ type: "scooterfyi:stats-height", height }, "*");
   };
   send();
   // The panel's height changes once — loading placeholder to rendered — and
   // again if the host resizes it narrow enough to rewrap.
-  new ResizeObserver(send).observe(document.documentElement);
+  new ResizeObserver(send).observe(document.body);
 }
 
 const root = document.getElementById("fleet-stats");
