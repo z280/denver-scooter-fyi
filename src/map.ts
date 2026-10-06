@@ -94,6 +94,34 @@ export interface MapHandles {
   geolocate: maplibregl.GeolocateControl;
 }
 
+/** The gesture handlers that can tilt or spin a map, as a structural type so
+ *  the rule below is testable without a WebGL context. */
+export interface FlatCameraHandles {
+  dragRotate: { disable(): void };
+  touchZoomRotate: { disableRotation(): void };
+  touchPitch: { disable(): void };
+  keyboard: { disableRotation(): void };
+}
+
+/** Take tilt and rotation away from the rider's fingers.
+ *
+ *  Extracted from `createMap` so it can be asserted: constructing a real
+ *  MapLibre map needs WebGL, so a test that only ever runs through
+ *  `createMap` cannot check this rule at all — and this is a rule that failed
+ *  silently in production, which is exactly the kind that needs a test.
+ *
+ *  Programmatic camera moves are untouched: `ride-hud.ts`'s follow-cam drives
+ *  pitch and bearing through `easeTo`, which no handler governs. Disabling the
+ *  gestures is precisely what lets the follow-cam own tilt outright. */
+export function lockToFlatCamera(map: FlatCameraHandles): void {
+  map.dragRotate.disable();
+  map.touchZoomRotate.disableRotation();
+  map.touchPitch.disable();
+  // Keyboard pitch/rotate (shift+arrows) goes the same way, and for the same
+  // reason: it is a gesture that reaches a framing nothing can undo.
+  map.keyboard.disableRotation();
+}
+
 export function createMap(container: string, flavor: Flavor = "light"): MapHandles {
   // Register the pmtiles:// protocol so MapLibre can read the self-hosted archive.
   const protocol = new Protocol();
@@ -123,6 +151,21 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
       [-104.1, 40.25],
     ],
   });
+
+  // THE 2D MAP IS NEVER TILTED (frontend plan §6.3.1). The app has exactly
+  // two framings: this one, flat, and `ride-hud.ts`'s 3D follow-cam. There is
+  // nothing in between and no gesture that produces one.
+  //
+  // This was a live bug rather than a tidying opportunity. MapLibre enables
+  // pitch and rotate by default, so a two-finger drag tilted the map — and the
+  // navigation control below is registered `showCompass: false`, which is the
+  // only control that would put it back. A rider who tilted the map by
+  // accident had no way to undo it.
+  //
+  // The follow-cam is unaffected: it drives pitch and bearing PROGRAMMATICALLY
+  // through `easeTo`, and these handlers only govern what a rider's fingers
+  // can do. Disabling them is what lets the follow-cam own tilt outright.
+  lockToFlatCamera(map);
 
   map.addControl(
     new maplibregl.NavigationControl({ showCompass: false, visualizePitch: false }),

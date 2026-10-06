@@ -1072,24 +1072,98 @@ displayed nothing since the bar went `hidden`.
   before". With no bar, that has to become explicit state, or the rider lands
   nowhere.
 
-### 6.3 Seam 2 — two model filters, opposite empty sets
+### 6.3 Seam 2 — ONE FILTER SYSTEM, not two that agree by coincidence
 
 `devices.ts` holds `rideModelFilter` (HUD "Show" pills) alongside the Filters
-drawer's `models`:
+drawer's `models`, and they disagree about the one gesture a rider is most
+likely to make by accident — turning everything off.
 
-| | `null` | empty set |
+**An earlier draft of this table was wrong**, and the correction is the reason
+this seam is worth more than tidying. Read `filtered()`: the drawer's branch is
+`if (this.models.size < ALL_MODELS.length)`, so an EMPTY set does not skip the
+filter — it enters it, and keeps only what `key === null || has(key)` admits,
+which with nothing selected is **unrecognized hardware alone**:
+
+| Selection | drawer `models` | `rideModelFilter` |
 |---|---|---|
-| drawer `models` | every model | **every model** |
-| `rideModelFilter` | no ride filter | **none** |
+| all | every model (branch skipped) | passed upstream as `null` — no filter |
+| some | those **plus** unrecognized | those **plus** unrecognized |
+| **none** | **only unrecognized hardware** | **nothing at all** |
 
-Both are documented, both are right in isolation, one map applies both. Same
-gesture — deselect everything — opposite outcome, with nothing in the UI to
-tell them apart.
+So "some" agrees and "none" disagrees — and neither answer is what a rider
+means by turning every toggle off. `wireToggleGroup` has no all-off guard, so
+both states are reachable with ordinary taps.
 
-**The work:** one concept, one meaning for the empty set. If the HUD really
-needs "show none" (it may — the pills are a live control, not a search), it
-becomes a **named** state, not an empty selection that inverts its meaning one
-drawer away.
+**The decision: one filter system, one vocabulary, both surfaces driving the
+same value.** The HUD is a *view onto* the map's filter, not a second filter
+that happens to run on the same features. Concretely:
+
+- the model selection becomes a **named three-state** — `all`, `only(models)`,
+  `none` — so "show none" is a state somebody chose rather than an empty set
+  whose meaning inverts one drawer away;
+- unrecognized hardware stays visible under `all` and `only`, and is hidden
+  under `none`, because `none` means none;
+- a change in either surface is a change to the one filter, visible in the
+  other when the rider gets there. No copy, no re-push.
+
+**That last point deletes a whole dance.** `setState` currently clears the
+ride-model filter on the way to `hidden` and `resumeRide` pushes the unchanged
+selection back — a correctness patch that exists only because there are two
+filters to keep in step. With one, there is nothing to re-push.
+
+### 6.3.1 Seam 2b — the camera has exactly TWO framings
+
+**The regular map is never tilted.** It is built today with no pitch or rotate
+restrictions at all, so a two-finger drag tilts it — and the navigation control
+is registered `showCompass: false`, so there is **no visible way to undo that**.
+A rider who tilts the map by accident is stuck with a tilted map. That is a bug
+today, and under this phase it stops being reachable:
+
+| | Pitch | Bearing | Where |
+|---|---|---|---|
+| **2D map** | **0, always** | 0 | everywhere outside the ride view |
+| **3D ride view** | `RIDE_PITCH` (60) | tracks direction of travel | `ride-hud.ts`'s follow-cam |
+
+Nothing in between, and no rider-reachable gesture that produces an
+in-between. The work is to disable the pitch gesture on the map and let the
+follow-cam keep driving pitch programmatically, which it already does.
+
+**This also simplifies the restore.** `enterFollowCam` saves `{center, zoom,
+pitch, bearing}` and `exitFollowCam` puts all four back — which, once the map
+cannot be tilted, is saving a pitch that is always 0 and a bearing that is
+always 0. Restoring the framing becomes **centre and zoom**, and the pitch and
+bearing go back to the only values the 2D map is allowed to have. One less pair
+of fields that can disagree with reality.
+
+### 6.3.2 Seam 2c — 3D is a VIEW, not a mode, and the toggle already exists
+
+The one mode this app keeps is the 3D ride view (`wireModes()` says so in
+those words). What it does not yet have is a way in and out that reads as a
+**view toggle** rather than as leaving the ride.
+
+**The mechanism is already built and already correct — it is BRB.**
+`pauseRide()` tears the follow-cam down *without* stopping a tracked ride: the
+clock stays anchored, the shared watcher and track-store recording keep
+running, and only the HUD's visual display leaves, so the map chrome returns.
+`resumeRide()` re-mounts it. The hard parts — not double-counting the clock,
+not moving a map the rider is reading for something else (`onFix`'s
+`following` gate), trail and route-line visibility, theme restore, immersive
+fullscreen — are all solved and commented.
+
+**The work is promotion, not construction:**
+
+- surface it as **2D ⇄ 3D**, because "BRB" and "pause" describe leaving a ride
+  and the rider is doing nothing of the kind — they are looking at the map;
+- make the 3D framing reachable **without** a tracked ride, so a rider can use
+  the view the app is proudest of while they are deciding, not only after
+  committing. The follow-cam needs a GPS fix, not a ride id;
+- keep the one guarantee that makes it safe: popping out must leave the ride's
+  clock, watcher and recording exactly as they were — which is what
+  `brbStrategyFor(...) === "continue_tracking"` already promises.
+
+**What must not happen** is a third framing or a second entry point. If this
+grows a "tilt slider" or a map that remembers a 40° pitch, both tables above
+are void and the seam is back.
 
 ### 6.4 Seam 3 — the spec stops at the ride
 
@@ -1133,9 +1207,30 @@ explaining the absence. A field that needs a paragraph is misnamed.
 - Entering and leaving a ride leaves every filter, drawer tab and iconography
   setting exactly as it was — the ONE MAP guarantee, now asserted rather than
   described.
-- One property over both filter paths: an empty model selection produces the
-  same visible set in the drawer and in the HUD, or the HUD's "none" is a
-  distinct named state that the drawer has no way to express.
+- **One filter, asserted as one value**: a change made in the drawer is
+  readable from the HUD and vice versa, with no copy step between them. The
+  three-state selection round-trips — `all`, `only(models)`, `none` — and
+  `none` hides unrecognized hardware too, which is the case the old empty set
+  got wrong in two different directions.
+- The `setState`/`resumeRide` re-push is **gone**, not merely working: nothing
+  clears a filter on a state change, so nothing has to put it back.
+
+**The camera, which is where this phase could do visible harm:**
+
+- **The 2D map cannot be tilted by any gesture.** Drive the pitch gesture
+  directly and assert `getPitch() === 0` after it. This is the test that would
+  have caught today's bug, where the map tilts and `showCompass: false` leaves
+  no way back.
+- **The framing round-trips.** Entering the 3D view pitches to `RIDE_PITCH`;
+  leaving restores the rider's centre and zoom and returns pitch and bearing
+  to 0. Asserted as one gesture, because undoing one and not the others leaves
+  the map somewhere nobody chose.
+- **Popping out and back in does not touch the ride.** With a tracked ride
+  live, 2D → 3D → 2D leaves the clock anchored, the watcher running and the
+  track recording unbroken — the guarantee `pauseRide` already makes, now
+  asserted because a view toggle will be used far more often than a pause was.
+- **The 3D view opens without a ride id.** It needs a GPS fix, not a
+  commitment.
 - With a spec attached, the HUD's initial pill state equals
   `toFilterSnapshot(spec).models`; changing a pill detaches, once.
 - No `RideOptions` field is written by two surfaces meaning two things.
