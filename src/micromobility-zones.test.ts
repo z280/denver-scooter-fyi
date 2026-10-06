@@ -337,13 +337,12 @@ describe("triple-tap: zone cards", () => {
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
   });
 
-  it("hits carry a stable key, hold double-tap zoom, and open the card", () => {
+  it("hits carry a stable key and open the card", () => {
     const openCard = vi.fn();
     const z = new MicromobilityZones(fakeMap() as never, serve(), openCard);
     const a = z.hitForZones([slow, noPark]);
     const b = z.hitForZones([noPark, slow, slow]);
     expect(a?.key).toBe(b?.key);
-    expect(a?.holdsDoubleClickZoom).toBe(true);
     a!.open();
     expect(openCard).toHaveBeenCalledWith("Denver rules here", expect.stringContaining("zone-inspect"));
     expect(z.hitForZones([])).toBeNull();

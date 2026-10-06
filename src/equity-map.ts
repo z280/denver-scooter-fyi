@@ -310,9 +310,6 @@ export class EquityAreaMap implements InspectSource {
     if (!area) return null;
     return {
       key: `equity:${area.region_name}`,
-      // An Equity Area covers a third of the city; holding double-tap zoom
-      // across all of it would break panning around. See map-inspect.ts.
-      holdsDoubleClickZoom: false,
       open: () =>
         this.openModal("This is an Equity Area", explainerHtml(area.region_name)),
     };
