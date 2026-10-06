@@ -3,7 +3,7 @@
 // Triple-tap anywhere: the most relevant thing under the finger answers, in
 // stacking order; taps on scooters are not area questions; three taps must
 // be three taps in the same place.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BAND_ANCHOR } from "./map-bands.ts";
 import {
@@ -12,6 +12,7 @@ import {
   MapInspector,
   SPOT_INSPECT_TITLE,
   TAP_SLOP_PX,
+  ZOOM_DEFER_MS,
   buildSpotHtml,
 } from "./map-inspect.ts";
 
@@ -43,11 +44,10 @@ function fakeMap(opts: { above?: boolean; halo?: boolean } = {}) {
   };
 }
 
-function source(key: string | null, holds = false): InspectSource & { opened: number } {
+function source(key: string | null): InspectSource & { opened: number } {
   const s = {
     opened: 0,
-    hitAt: (): InspectHit | null =>
-      key ? { key, holdsDoubleClickZoom: holds, open: () => s.opened++ } : null,
+    hitAt: (): InspectHit | null => (key ? { key, open: () => s.opened++ } : null),
   };
   return s;
 }
@@ -141,42 +141,194 @@ describe("MapInspector", () => {
     insp.handleTap({ x: 50 + TAP_SLOP_PX + 30 + 5, y: 52 }, LL);
     expect(equity.opened).toBe(1);
   });
+});
 
-  it("holds double-tap zoom only for targets that ask (zones, hexes), and gives it back", () => {
-    vi.useFakeTimers();
-    try {
-      const { tap, map } = setup([source("zone:a", true)]);
-      tap(1);
-      expect(map.doubleClickZoom.enabled).toBe(false);
-      tap(2);
-      expect(map.doubleClickZoom.enabled).toBe(true);
+// ---------------------------------------------------------------------------
+// Input: touch taps from touch events, and the inspector's own double-tap zoom
+// ---------------------------------------------------------------------------
 
-      const big = setup([source("equity:EQ_001", false)]);
-      big.tap(2);
-      expect(big.map.doubleClickZoom.disable).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
+function liveMap(above = false) {
+  const handlers = new Map<string, ((e: unknown) => void)[]>();
+  const dcz = {
+    enabled: true,
+    isEnabled: () => dcz.enabled,
+    enable: vi.fn(() => (dcz.enabled = true)),
+    disable: vi.fn(() => (dcz.enabled = false)),
+  };
+  const map = {
+    doubleClickZoom: dcz,
+    zoom: 14,
+    getZoom: () => map.zoom,
+    getMaxZoom: () => 22,
+    getMinZoom: () => 0,
+    unproject: ([x, y]: [number, number]) => ({ lng: x, lat: y }),
+    easeTo: vi.fn((o: { zoom: number }) => (map.zoom = o.zoom)),
+    on: (type: string, fn: (e: unknown) => void) =>
+      handlers.set(type, [...(handlers.get(type) ?? []), fn]),
+    fire: (type: string, e: unknown) => (handlers.get(type) ?? []).forEach((f) => f(e)),
+    getLayersOrder: () => ["basemap", BAND_ANCHOR.zones, "device-points"],
+    queryRenderedFeatures: () =>
+      above ? [{ layer: { id: "device-points", type: "symbol" } }] : [],
+  };
+  return map;
+}
+
+function harness(key = "equity:EQ_001", above = false) {
+  let t = 1_000;
+  const map = liveMap(above);
+  const target = source(key);
+  const insp = new MapInspector(map as never, {
+    sources: [target],
+    fallback: () => ({ key: "spot", open: () => {} }),
+    now: () => t,
+  });
+  insp.attach();
+  const at = { x: 100, y: 100 };
+  const ll = { lng: -104.9, lat: 39.7 };
+  const wait = (ms: number) => {
+    t += ms;
+    vi.advanceTimersByTime(ms);
+  };
+  // `hold` advances the fake timers too: a pending zoom must see the same
+  // clock the taps do.
+  const touchTap = (move = 0, hold = 60, wiggle = 0) => {
+    map.fire("touchstart", { points: [at], point: at, lngLat: ll });
+    if (wiggle) {
+      wait(hold / 2);
+      const far = { x: at.x + wiggle, y: at.y };
+      map.fire("touchmove", { points: [far], point: far, lngLat: ll });
+      wait(hold / 2);
+    } else {
+      wait(hold);
     }
+    const end = { x: at.x + move, y: at.y };
+    map.fire("touchend", { points: [end], point: end, lngLat: ll, originalEvent: { touches: [] } });
+  };
+  const click = (shiftKey = false) =>
+    map.fire("click", { point: at, lngLat: ll, originalEvent: { shiftKey } });
+  const twoFingerTap = (hold = 80) => {
+    const a = { x: 90, y: 100 };
+    const b = { x: 110, y: 100 };
+    map.fire("touchstart", { points: [a], point: a, lngLat: ll });
+    map.fire("touchstart", { points: [a, b], point: at, lngLat: ll });
+    wait(hold);
+    map.fire("touchend", { points: [b], point: b, lngLat: ll, originalEvent: { touches: [{}] } });
+    map.fire("touchend", { points: [a], point: a, lngLat: ll, originalEvent: { touches: [] } });
+  };
+  return { map, target, touchTap, click, wait, twoFingerTap, fire: map.fire };
+}
+
+describe("MapInspector input", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("takes over the map's double-tap zoom", () => {
+    const { map } = harness();
+    expect(map.doubleClickZoom.disable).toHaveBeenCalled();
   });
 
-  it("an abandoned run hands double-tap zoom back on its own", () => {
-    vi.useFakeTimers();
-    try {
-      const { tap, map } = setup([source("hex:x", true)]);
-      tap(1);
-      expect(map.doubleClickZoom.enabled).toBe(false);
-      vi.advanceTimersByTime(5000);
-      expect(map.doubleClickZoom.enabled).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("a touch triple-tap opens the card and NEVER zooms (the Android bug)", () => {
+    const { map, target, touchTap, wait, click } = harness();
+    touchTap(); wait(120); touchTap(); wait(150); touchTap();
+    // The browser's late clicks for those taps are echoes, not more taps.
+    wait(200); click(); click(); click();
+    wait(2000);
+    expect(target.opened).toBe(1);
+    expect(map.easeTo).not.toHaveBeenCalled();
   });
 
-  it("leaves double-tap zoom alone if the map already had it off", () => {
-    const { tap, map } = setup([source("hex:x", true)]);
-    map.doubleClickZoom.enabled = false;
-    tap(3);
-    expect(map.doubleClickZoom.enable).not.toHaveBeenCalled();
+  it("a slightly wobbly fingertip still counts as a tap", () => {
+    const { target, touchTap, wait } = harness();
+    touchTap(8); wait(120); touchTap(6); wait(120); touchTap(9);
+    expect(target.opened).toBe(1);
+  });
+
+  it("a SLOW third tap still beats the zoom: any new touch cancels it", () => {
+    const { map, target, touchTap, wait } = harness();
+    // tap, 150 ms, tap, then the third finger lands ~340 ms after the second
+    // lifts (400 ms end-to-end with a 60 ms hold).
+    touchTap(); wait(150); touchTap(); wait(340); touchTap();
+    wait(2000);
+    expect(target.opened).toBe(1);
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("a drag right after a double tap drops the zoom instead of lurching", () => {
+    const { map, touchTap, wait, fire } = harness();
+    touchTap(); wait(150); touchTap(); wait(100);
+    fire("touchstart", { points: [{ x: 100, y: 100 }], point: { x: 100, y: 100 }, lngLat: { lng: 0, lat: 0 } });
+    wait(1000);
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("an out-and-back wiggle is not a tap", () => {
+    const { target, touchTap, wait } = harness();
+    touchTap(0, 100, 80); wait(100); touchTap(0, 100, 80); wait(100); touchTap(0, 100, 80);
+    expect(target.opened).toBe(0);
+  });
+
+  it("a thumb resting on a panel elsewhere does not turn map taps into a pinch", () => {
+    const { target, wait, fire } = harness();
+    const at = { x: 100, y: 100 };
+    const ll = { lng: -104.9, lat: 39.7 };
+    for (let i = 0; i < 3; i++) {
+      // Two touches on the screen, one of them on the map.
+      fire("touchstart", { points: [at, { x: 5, y: 700 }], point: at, lngLat: ll, originalEvent: { targetTouches: [{}], touches: [{}, {}] } });
+      wait(60);
+      fire("touchend", { points: [at], point: at, lngLat: ll, originalEvent: { targetTouches: [], touches: [{}] } });
+      wait(120);
+    }
+    expect(target.opened).toBe(1);
+  });
+
+  it("a two-finger tap zooms OUT, as MapLibre's tap zoom did", () => {
+    const { map, twoFingerTap } = harness();
+    twoFingerTap();
+    expect(map.easeTo).toHaveBeenCalledTimes(1);
+    expect(map.zoom).toBe(13);
+  });
+
+  it("shift+double-click zooms out", () => {
+    const { map, click, wait } = harness();
+    click(true); wait(150); click(true); wait(ZOOM_DEFER_MS + 10);
+    expect(map.zoom).toBe(13);
+  });
+
+  it("a drag or a long press is not a tap", () => {
+    const { target, touchTap, wait } = harness();
+    touchTap(40); wait(100); touchTap(40); wait(100); touchTap(40);
+    expect(target.opened).toBe(0);
+    touchTap(0, 900); wait(100); touchTap(0, 900); wait(100); touchTap(0, 900);
+    expect(target.opened).toBe(0);
+  });
+
+  it("a double-tap still zooms in, one beat later", () => {
+    const { map, target, touchTap, wait } = harness();
+    touchTap(); wait(150); touchTap();
+    expect(map.easeTo).not.toHaveBeenCalled();
+    wait(ZOOM_DEFER_MS + 10);
+    expect(map.easeTo).toHaveBeenCalledTimes(1);
+    expect(map.zoom).toBe(15);
+    expect(target.opened).toBe(0);
+  });
+
+  it("a double-click with a mouse zooms too; a triple-click opens the card", () => {
+    const h = harness();
+    h.click(); h.wait(150); h.click(); h.wait(ZOOM_DEFER_MS + 10);
+    expect(h.map.easeTo).toHaveBeenCalledTimes(1);
+    const g = harness();
+    g.click(); g.wait(150); g.click(); g.wait(150); g.click(); g.wait(1000);
+    expect(g.target.opened).toBe(1);
+    expect(g.map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("on a scooter: a double-tap still zooms, a triple opens no area card", () => {
+    const { map, target, touchTap, wait } = harness("zone:a", true);
+    touchTap(); wait(150); touchTap(); wait(ZOOM_DEFER_MS + 10);
+    expect(map.easeTo).toHaveBeenCalledTimes(1);
+    wait(2000);
+    touchTap(); wait(120); touchTap(); wait(120); touchTap();
+    expect(target.opened).toBe(0);
   });
 });
 

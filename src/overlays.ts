@@ -151,7 +151,6 @@ export class Overlays {
         const group = OVERLAY_BY_LAYER[hit.layer]?.label ?? "map areas";
         return {
           key: `region:${hit.layer}:${hit.regionName}`,
-          holdsDoubleClickZoom: false,
           open: () => openCard(name, regionInspectHtml(name, group)),
         };
       },

@@ -316,7 +316,6 @@ export class MicromobilityZones implements InspectSource {
       key:
         "zone:" +
         zones.map((z) => `${z.zone_kind}/${z.zone_label}/${z.zone_venue ?? ""}`).join("+"),
-      holdsDoubleClickZoom: true,
       open: () => this.openCard(zoneInspectTitle(zones), buildZoneInspectHtml(zones)),
     };
   }

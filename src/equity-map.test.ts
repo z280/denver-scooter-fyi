@@ -344,8 +344,6 @@ describe("triple-tap inspect sources", () => {
     const { eq, openModal } = await loaded(true);
     const hit = eq.hitAt(P, at(INSIDE));
     expect(hit?.key).toMatch(/^equity:EQ_\d{3}$/);
-    // A third of the city: never holds double-tap zoom.
-    expect(hit?.holdsDoubleClickZoom).toBe(false);
     hit!.open();
     expect(openModal).toHaveBeenCalledWith(
       "This is an Equity Area",

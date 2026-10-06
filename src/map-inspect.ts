@@ -29,11 +29,8 @@
 // translucent context, and blocking on them would switch the gesture off
 // across whole neighbourhoods.
 
-import type { Map as MLMap, MapMouseEvent } from "maplibre-gl";
-import {
-  TRIPLE_CLICK_WINDOW_MS,
-  createTripleClickDetector,
-} from "./triple-click.ts";
+import type { Map as MLMap, MapMouseEvent, MapTouchEvent } from "maplibre-gl";
+import { createTripleClickDetector } from "./triple-click.ts";
 import { layerOrder, topAnchorIndex } from "./map-bands.ts";
 
 /** What a source found under the pointer. */
@@ -44,14 +41,6 @@ export interface InspectHit {
   key: string;
   /** Open the explanation. */
   open(): void;
-  /** Hold the map's double-click zoom while a run on this target is in
-   *  progress. True for small, deliberate targets (zones, hexes), where a
-   *  zoom on the second tap would yank the target away. False for the big
-   *  ones — an Equity Area covers a third of the city, and turning
-   *  double-tap zoom off over all of it would break how people move the
-   *  map. There, the second tap zooms around the finger, the point under it
-   *  stays put, and the third tap still lands. */
-  holdsDoubleClickZoom?: boolean;
 }
 
 export interface InspectPoint {
@@ -83,6 +72,38 @@ const PASS_THROUGH_TYPES = new Set<string>([
  *  are three separate taps. Generous for fingers. */
 export const TAP_SLOP_PX = 24;
 
+// ---------------------------------------------------------------------------
+// Input: why taps are read from TOUCH events, and why this owns double-tap zoom.
+//
+// On a phone the browser's `click` is the wrong signal. It arrives ~300-400 ms
+// after the finger lifts (the browser is waiting to see whether this is a
+// double-tap), and three quick taps are read as a double-tap GESTURE, whose
+// clicks arrive late or not at all. MapLibre's own double-tap zoom listens to
+// raw touches and fires regardless. On Android that added up to exactly the
+// reported symptom: triple-tap "just zooms me in", and no card.
+//
+// So: a touch tap is recognized here from touchstart/touchend (short, still),
+// the late `click` that echoes it is ignored, and mouse clicks still come
+// through `click`. And the map's built-in double-tap/double-click zoom is
+// replaced by one this module runs: on the second tap it waits
+// ZOOM_DEFER_MS for a third, zooms in only if none comes, and a triple-tap
+// never zooms. Double-tap zoom keeps working everywhere, one beat later.
+// ---------------------------------------------------------------------------
+
+/** A touch counts as a tap if it lifts within this long... */
+export const TAP_MAX_MS = 450;
+/** ...and moves no further than this (screen px). MapLibre's click tolerance
+ *  is 3 px, which a fingertip blows through routinely. */
+export const TAP_MAX_MOVE_PX = 12;
+/** The browser's delayed `click` for a touch tap lands inside this. */
+export const TOUCH_ECHO_MS = 900;
+/** Max gap between the two taps of a double tap (MapLibre uses 500 ms). */
+export const DOUBLE_TAP_GAP_MS = 500;
+/** After a double tap, wait this long for a third before zooming. Any new
+ *  touch or mousedown in that time cancels the zoom outright, so a slow
+ *  third tap only has to START within it, not finish. */
+export const ZOOM_DEFER_MS = 350;
+
 export interface MapInspectorOptions {
   /** Top first: the first source with a hit answers. */
   sources: InspectSource[];
@@ -97,12 +118,48 @@ export interface MapInspectorOptions {
   now?: () => number;
 }
 
+/** Fingers on the MAP: targetTouches (touches that started on the map), not
+ *  every touch on the screen — a thumb resting on a panel is not a pinch. */
+function mapTouches(e: MapTouchEvent): number {
+  return e.originalEvent?.targetTouches?.length ?? e.points.length;
+}
+function remainingMapTouches(e: MapTouchEvent): number {
+  return e.originalEvent?.targetTouches?.length ?? e.originalEvent?.touches?.length ?? 0;
+}
+function stampOf(e: { originalEvent?: Event }): number {
+  return e.originalEvent?.timeStamp ?? Number.NaN;
+}
+/** Event-stamp duration when both stamps exist, else handler-clock time. */
+function elapsed(stamp0: number, stamp1: number, at0: number, at1: number): number {
+  return Number.isFinite(stamp0) && Number.isFinite(stamp1) ? stamp1 - stamp0 : at1 - at0;
+}
+
 export class MapInspector {
   private readonly detector = createTripleClickDetector<string>();
   private lastPoint: InspectPoint | null = null;
-  private dczSuppressTimer: number | undefined;
-  private dczWasEnabled = false;
   private readonly now: () => number;
+
+  /** Gesture-level tap run for double-tap zoom: counts EVERY tap, blocked or
+   *  not (a double-tap on a scooter still zooms), unlike `detector`. */
+  private gestureCount = 0;
+  private gestureLast: { pt: InspectPoint; at: number } | null = null;
+  private pendingZoom: ReturnType<typeof setTimeout> | undefined;
+  /** Whether this module took double-tap zoom over from the map (it only
+   *  does if the map had it on). */
+  private ownsZoom = false;
+
+  /** The one-finger touch in progress. `stamp` is the DOM event's own
+   *  timeStamp: when the finger actually went down, not when a busy main
+   *  thread got round to the handler. `moved` latches if it ever strays
+   *  past TAP_MAX_MOVE_PX, so an out-and-back wiggle is not a tap. */
+  private touchStart: { pt: InspectPoint; at: number; stamp: number; moved: boolean } | null =
+    null;
+  /** A two-finger touch in progress: a quick two-finger tap zooms OUT, as
+   *  MapLibre's tap-zoom did before this module took it over. */
+  private twoFinger: { mid: InspectPoint; stamp: number; at: number; moved: boolean } | null =
+    null;
+  private lastTouchTapAt = Number.NEGATIVE_INFINITY;
+  private lastTouchTapStamp = Number.NaN;
 
   constructor(
     private readonly map: MLMap,
@@ -112,16 +169,87 @@ export class MapInspector {
   }
 
   attach(): void {
-    this.map.on("click", (e: MapMouseEvent) =>
-      this.handleTap(e.point, e.lngLat),
-    );
+    const dcz = this.map.doubleClickZoom;
+    if (dcz?.isEnabled()) {
+      dcz.disable();
+      this.ownsZoom = true;
+    }
+    this.map.on("touchstart", (e: MapTouchEvent) => {
+      // Any new touch means the double tap was not the end of the gesture:
+      // the start of a third tap, a drag, a pinch. Never zoom under it.
+      this.cancelPendingZoom();
+      const fingers = mapTouches(e);
+      if (fingers === 1) {
+        this.touchStart = {
+          pt: { x: e.point.x, y: e.point.y },
+          at: this.now(),
+          stamp: stampOf(e),
+          moved: false,
+        };
+        this.twoFinger = null;
+      } else {
+        this.touchStart = null;
+        this.twoFinger =
+          fingers === 2
+            ? { mid: { x: e.point.x, y: e.point.y }, stamp: stampOf(e), at: this.now(), moved: false }
+            : null;
+      }
+    });
+    this.map.on("touchmove", (e: MapTouchEvent) => {
+      const fingers = mapTouches(e);
+      const s = this.touchStart;
+      if (s) {
+        if (fingers > 1) this.touchStart = null; // became a pinch
+        else if (Math.hypot(e.point.x - s.pt.x, e.point.y - s.pt.y) > TAP_MAX_MOVE_PX) s.moved = true;
+      }
+      const t = this.twoFinger;
+      if (t && Math.hypot(e.point.x - t.mid.x, e.point.y - t.mid.y) > TAP_MAX_MOVE_PX) t.moved = true;
+    });
+    this.map.on("touchend", (e: MapTouchEvent) => {
+      if (remainingMapTouches(e) > 0) return; // wait for the last finger
+      const two = this.twoFinger;
+      this.twoFinger = null;
+      if (two) {
+        if (!two.moved && elapsed(two.stamp, stampOf(e), two.at, this.now()) <= TAP_MAX_MS) {
+          this.zoomBy(-1, this.map.unproject([two.mid.x, two.mid.y]));
+        }
+        return;
+      }
+      const start = this.touchStart;
+      this.touchStart = null;
+      if (!start || start.moved) return;
+      if (elapsed(start.stamp, stampOf(e), start.at, this.now()) > TAP_MAX_MS) return;
+      if (Math.hypot(e.point.x - start.pt.x, e.point.y - start.pt.y) > TAP_MAX_MOVE_PX) return;
+      this.lastTouchTapAt = this.now();
+      this.lastTouchTapStamp = stampOf(e);
+      this.tap(e.point, e.lngLat);
+    });
+    this.map.on("mousedown", () => this.cancelPendingZoom());
+    this.map.on("click", (e: MapMouseEvent) => {
+      // The browser's late click for a touch tap we already counted. Judged
+      // by the events' own timestamps (~400 ms apart however busy the main
+      // thread is), falling back to handler time.
+      const stamp = stampOf(e);
+      const sinceTouch =
+        Number.isFinite(stamp) && Number.isFinite(this.lastTouchTapStamp)
+          ? stamp - this.lastTouchTapStamp
+          : this.now() - this.lastTouchTapAt;
+      if (sinceTouch >= 0 && sinceTouch < TOUCH_ECHO_MS) return;
+      this.tap(e.point, e.lngLat, e.originalEvent?.shiftKey === true);
+    });
+  }
+
+  /** One recognized tap, from either input path. `zoomOut` is a
+   *  shift-click: shift+double-click zooms out, as MapLibre's did. */
+  tap(point: InspectPoint, lngLat: InspectLngLat, zoomOut = false): void {
+    this.trackZoomGesture(point, lngLat, zoomOut);
+    this.handleTap(point, lngLat);
   }
 
   /** Forget any half-finished run. */
   reset(): void {
     this.detector.reset();
     this.lastPoint = null;
-    this.restoreDoubleClickZoom();
   }
 
   /** The hit a triple tap HERE would open. Exposed for tests and for the
@@ -135,6 +263,8 @@ export class MapInspector {
     return this.opts.fallback(lngLat);
   }
 
+  /** The triple-tap half: count toward a run on the thing under the tap and
+   *  open it on the third. */
   handleTap(point: InspectPoint, lngLat: InspectLngLat): void {
     if (this.opts.suspended?.()) {
       this.reset();
@@ -151,14 +281,55 @@ export class MapInspector {
     }
     this.lastPoint = { x: point.x, y: point.y };
 
-    if (!this.detector.register(hit.key, this.now())) {
-      if (hit.holdsDoubleClickZoom) this.suppressDoubleClickZoom();
-      return;
-    }
+    if (!this.detector.register(hit.key, this.now())) return;
     this.lastPoint = null;
-    this.restoreDoubleClickZoom();
+    this.cancelPendingZoom();
     hit.open();
     this.opts.onTriple?.();
+  }
+
+  /** The double-tap-zoom half (see the header): zoom on a double tap, but
+   *  only once it is clear it is not the start of a triple. */
+  private trackZoomGesture(
+    point: InspectPoint,
+    lngLat: InspectLngLat,
+    zoomOut = false,
+  ): void {
+    if (!this.ownsZoom) return;
+    const t = this.now();
+    const prev = this.gestureLast;
+    const continues =
+      prev !== null &&
+      t - prev.at <= DOUBLE_TAP_GAP_MS &&
+      Math.hypot(point.x - prev.pt.x, point.y - prev.pt.y) <= TAP_SLOP_PX;
+    this.gestureCount = continues ? this.gestureCount + 1 : 1;
+    this.gestureLast = { pt: { x: point.x, y: point.y }, at: t };
+    if (this.gestureCount === 2) {
+      this.cancelPendingZoom();
+      this.pendingZoom = setTimeout(() => {
+        this.pendingZoom = undefined;
+        this.zoomBy(zoomOut ? -1 : 1, lngLat);
+      }, ZOOM_DEFER_MS);
+    } else if (this.gestureCount >= 3) {
+      // A triple: never a zoom.
+      this.cancelPendingZoom();
+      this.gestureCount = 0;
+      this.gestureLast = null;
+    }
+  }
+
+  private zoomBy(delta: number, around: InspectLngLat): void {
+    const z = this.map.getZoom() + delta;
+    this.map.easeTo({
+      zoom: Math.max(this.map.getMinZoom?.() ?? 0, Math.min(z, this.map.getMaxZoom())),
+      around: [around.lng, around.lat],
+      duration: 300,
+    });
+  }
+
+  private cancelPendingZoom(): void {
+    if (this.pendingZoom !== undefined) clearTimeout(this.pendingZoom);
+    this.pendingZoom = undefined;
   }
 
   /** Did the tap land on a scooter, cluster, pin or route — anything
@@ -178,33 +349,6 @@ export class MapInspector {
         (f) =>
           (order.get(f.layer.id) ?? -1) > top && !PASS_THROUGH_TYPES.has(f.layer.type),
       );
-  }
-
-  /** Hold double-click zoom for one triple-click window (moved here from
-   *  hexdensity.ts, which used to own the gesture). Restores only what it
-   *  turned off: if the map had it disabled already, it stays that way. */
-  private suppressDoubleClickZoom(): void {
-    const dcz = this.map.doubleClickZoom;
-    if (this.dczSuppressTimer !== undefined) {
-      clearTimeout(this.dczSuppressTimer);
-    } else if (dcz?.isEnabled()) {
-      this.dczWasEnabled = true;
-      dcz.disable();
-    }
-    this.dczSuppressTimer = setTimeout(() => {
-      this.dczSuppressTimer = undefined;
-      this.restoreDoubleClickZoom();
-    }, TRIPLE_CLICK_WINDOW_MS) as unknown as number;
-  }
-
-  private restoreDoubleClickZoom(): void {
-    if (this.dczSuppressTimer !== undefined) {
-      clearTimeout(this.dczSuppressTimer);
-      this.dczSuppressTimer = undefined;
-    }
-    if (!this.dczWasEnabled) return;
-    this.dczWasEnabled = false;
-    this.map.doubleClickZoom?.enable();
   }
 }
 

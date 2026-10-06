@@ -339,43 +339,8 @@ describe("triple-click readout", () => {
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
 
-  it("holds the map's double-click zoom during a run, then gives it back", async () => {
-    const { hex, map } = setup();
-    vi.useFakeTimers();
-    try {
-      await hex.setView("medium", "device_count");
-      clickCell(hex, map, CELL_R9, 1, 7);
-      expect(map.doubleClickZoom.disable).toHaveBeenCalled();
-      clickCell(hex, map, CELL_R9, 2, 7);
-      // The third click completes the run and releases it immediately.
-      expect(map.doubleClickZoom.enable).toHaveBeenCalled();
-      expect(map.doubleClickZoom.enabled).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("releases double-click zoom on its own when a run is abandoned", async () => {
-    const { hex, map } = setup();
-    vi.useFakeTimers();
-    try {
-      await hex.setView("medium", "device_count");
-      clickCell(hex, map, CELL_R9, 1, 7);
-      expect(map.doubleClickZoom.enabled).toBe(false);
-      vi.advanceTimersByTime(5000);
-      expect(map.doubleClickZoom.enabled).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("leaves double-click zoom alone if the map already had it off", async () => {
-    const { hex, map } = setup();
-    map.doubleClickZoom.enabled = false;
-    await hex.setView("medium", "device_count");
-    clickCell(hex, map, CELL_R9, 3, 7);
-    expect(map.doubleClickZoom.enable).not.toHaveBeenCalled();
-  });
+  // Double-tap zoom is owned by map-inspect.ts now (deferred, never on a
+  // triple); its tests live in map-inspect.test.ts.
 
   it("changing the view abandons a half-finished run", async () => {
     const { hex, map } = setup();

@@ -585,7 +585,6 @@ export class HexDensity implements InspectSource {
     const territory = this.metric === TERRITORY_METRIC;
     return {
       key: `hex:${this.size}:${this.metric}:${cellId}`,
-      holdsDoubleClickZoom: true,
       open: () =>
         territory
           ? this.openTerritoryDetail(cellId)
