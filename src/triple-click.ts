@@ -9,8 +9,10 @@
 // them.
 //
 // This module owns only the recognizer, keyed and clock-injected so it can
-// be tested as pure logic. Who reacts to a recognized triple — the territory
-// leaderboard, the hex-metric readout — is `hexdensity.ts`'s business.
+// be tested as pure logic. Who reacts to a recognized triple is
+// `map-inspect.ts`'s business: it owns the gesture for the whole map and
+// hands it to whatever is on top under the finger — a city zone, an Equity
+// Area, a territory or hex cell, or the plain-spot card.
 
 /** How long a click stays "part of the current run". Measured between
  *  CONSECUTIVE clicks, not from the first: a slow-but-steady triple still

@@ -327,3 +327,41 @@ describe("EquityAreaMap", () => {
     expect(chip.hidden).toBe(true);
   });
 });
+
+describe("triple-tap inspect sources", () => {
+  const P = { x: 0, y: 0 };
+  const at = (ll: [number, number]) => ({ lng: ll[0], lat: ll[1] });
+
+  async function loaded(overlayOn: boolean) {
+    await loadEquityAreas();
+    const openModal = vi.fn();
+    const eq = new EquityAreaMap(fakeMap() as never, document.createElement("button"), openModal);
+    await eq.setOverlayVisible(overlayOn);
+    return { eq, openModal };
+  }
+
+  it("answers inside an area while the overlay is drawn, and opens the explainer", async () => {
+    const { eq, openModal } = await loaded(true);
+    const hit = eq.hitAt(P, at(INSIDE));
+    expect(hit?.key).toMatch(/^equity:EQ_\d{3}$/);
+    // A third of the city: never holds double-tap zoom.
+    expect(hit?.holdsDoubleClickZoom).toBe(false);
+    hit!.open();
+    expect(openModal).toHaveBeenCalledWith(
+      "This is an Equity Area",
+      expect.stringContaining(EQUITY_DISCOUNT_NOTICE),
+    );
+    expect(eq.hiddenAreaSource().hitAt(P, at(INSIDE))).toBeNull();
+  });
+
+  it("with the overlay off, steps aside for what IS drawn and answers from the hidden source", async () => {
+    const { eq } = await loaded(false);
+    expect(eq.hitAt(P, at(INSIDE))).toBeNull();
+    expect(eq.hiddenAreaSource().hitAt(P, at(INSIDE))?.key).toMatch(/^equity:/);
+  });
+
+  it("says nothing outside every area", async () => {
+    const { eq } = await loaded(true);
+    expect(eq.hitAt(P, at(OUTSIDE))).toBeNull();
+  });
+});

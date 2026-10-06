@@ -64,7 +64,10 @@ import { requestLocationOnLoad } from "./locate-on-load.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
-import { equityAreaFeatures } from "./equity-areas.ts";
+import { equityAreaFeatures, isInEquityArea } from "./equity-areas.ts";
+import { ensureBands } from "./map-bands.ts";
+import { MapInspector, SPOT_INSPECT_TITLE, buildSpotHtml } from "./map-inspect.ts";
+import { NUDGE_DELAY_MS, TripleTapNudge } from "./triple-tap-nudge.ts";
 import {
   HexDensity,
   TERRITORY_HEX_SIZE,
@@ -351,7 +354,7 @@ const equityAreas = new EquityAreaMap(map, need("equity-indicator"), (t, b) =>
 /** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
  *  See `micromobility-zones.ts` for the provenance and for what the city's
  *  rulebook does and does not tell us. */
-const zones = new MicromobilityZones(map);
+const zones = new MicromobilityZones(map, fetch, (t, b) => openFloatingModal(t, b));
 const hexDensity = new HexDensity(map, need("hexbin-legend"), {
   // The territory readout's "claim your colors" hint lands on Community,
   // where the ruling colors it's pointing at actually live.
@@ -1101,6 +1104,10 @@ map.on("load", async () => {
     hasFix: () => locate.current() !== null,
   });
   devices.addLayers();
+  // Open the area bands (map-bands.ts) right under the scooters before any
+  // area layer exists, so zones > equity > territory however late each
+  // one is first drawn.
+  ensureBands(map);
   buildLayerToggles();
   wireRideTypes();
   wireModels();
@@ -1115,6 +1122,7 @@ map.on("load", async () => {
   wireRecommended();
   wireChoropleth();
   wireHexDensity();
+  wireMapInspector();
   // 🏆 Leaderboard panel. Must come after wireHexDensity() — that's what
   // assigns `setTerritoryShading`, which the panel's switch drives.
   leaderboardPanel = wireLeaderboardPanel(
@@ -2879,6 +2887,51 @@ function wireChoropleth(): void {
  *  the Leaderboard panel — leaving the select on a metric whose data is no
  *  longer showing would keep the size buttons locked for no visible reason. */
 const DEFAULT_HEX_METRIC: HexMetric = "device_count";
+
+/** Triple-tap anywhere on the map (map-inspect.ts). Sources in stacking
+ *  order, top first, matching map-bands.ts: the city's zones, a drawn Equity
+ *  Area, a territory / hex cell, a shaded region (choropleth or boundary
+ *  overlay), then an Equity Area whose overlay is off, then the plain-spot
+ *  card. Plus the weekly "tap tap tap" nudge, which
+ *  retires itself the first time the gesture is used. */
+const tripleTapNudge = new TripleTapNudge();
+function wireMapInspector(): void {
+  const inspector = new MapInspector(map, {
+    sources: [
+      zones,
+      equityAreas,
+      hexDensity,
+      overlays.inspectSource((t, b) => openFloatingModal(t, b)),
+      equityAreas.hiddenAreaSource(),
+    ],
+    fallback: (ll) => ({
+      key: "spot",
+      open: () =>
+        openFloatingModal(
+          SPOT_INSPECT_TITLE,
+          buildSpotHtml({
+            zones: !zones.isVisible("rules")
+              ? "off"
+              : zones.isLoaded()
+                ? "shown"
+                : "not_loaded",
+            inEquityArea: isInEquityArea(ll.lng, ll.lat),
+          }),
+        ),
+    }),
+    onTriple: () => tripleTapNudge.learned(),
+    // While picking a spot, a tap drops the pin; it must not start a run.
+    suspended: () => mapPick.isPicking(),
+  });
+  inspector.attach();
+  map.once("idle", () => {
+    setTimeout(() => {
+      // Never over an open card or drawer: it will be due again next visit.
+      if (document.querySelector(".ranks-modal, .drawer.is-open")) return;
+      tripleTapNudge.maybeShow();
+    }, NUDGE_DELAY_MS);
+  });
+}
 
 function wireHexDensity(): void {
   const btns = Array.from(
