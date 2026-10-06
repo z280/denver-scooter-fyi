@@ -286,6 +286,12 @@ export class MicromobilityZones implements InspectSource {
     return this.muted;
   }
 
+  /** Have the zone layers been drawn at all? False until the geometry
+   *  fetch resolves, and for good if it failed. */
+  isLoaded(): boolean {
+    return this.layersAdded;
+  }
+
   /** `InspectSource`: the city zones drawn under `point`. Only what is
    *  DRAWN counts: a group switched off in Areas is not on the map, and
    *  explaining an invisible polygon would answer a question nobody asked.

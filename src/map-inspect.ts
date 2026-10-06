@@ -24,13 +24,17 @@
 // Taps that land on something drawn ABOVE the areas — a scooter, a cluster,
 // a pin, a route — are not area questions. They belong to that thing's own
 // click handler, so they abandon a run instead of counting toward one.
+// Area-like layers drawn up there (a scooter's range halo, which can be
+// kilometres across; 3D buildings during a ride) do NOT block: they are
+// translucent context, and blocking on them would switch the gesture off
+// across whole neighbourhoods.
 
 import type { Map as MLMap, MapMouseEvent } from "maplibre-gl";
 import {
   TRIPLE_CLICK_WINDOW_MS,
   createTripleClickDetector,
 } from "./triple-click.ts";
-import { topAnchorIndex } from "./map-bands.ts";
+import { layerOrder, topAnchorIndex } from "./map-bands.ts";
 
 /** What a source found under the pointer. */
 export interface InspectHit {
@@ -64,6 +68,16 @@ export interface InspectSource {
   hitAt(point: InspectPoint, lngLat: InspectLngLat): InspectHit | null;
 }
 
+/** Layer types above the area bands that a tap passes through. */
+const PASS_THROUGH_TYPES = new Set<string>([
+  "fill",
+  "fill-extrusion",
+  "background",
+  "raster",
+  "hillshade",
+  "heatmap",
+]);
+
 /** Taps further apart than this (screen px) are not "the same place", even
  *  if they resolve to the same key — three taps across one big equity area
  *  are three separate taps. Generous for fingers. */
@@ -77,6 +91,9 @@ export interface MapInspectorOptions {
   /** Called after every completed triple (the nudge uses it to retire
    *  itself once someone has done the gesture). */
   onTriple?: () => void;
+  /** True while taps mean something else (map-pick mode: the tap drops a
+   *  pin). Such taps neither count nor open anything. */
+  suspended?: () => boolean;
   now?: () => number;
 }
 
@@ -119,6 +136,10 @@ export class MapInspector {
   }
 
   handleTap(point: InspectPoint, lngLat: InspectLngLat): void {
+    if (this.opts.suspended?.()) {
+      this.reset();
+      return;
+    }
     const hit = this.resolve(point, lngLat);
     if (!hit) {
       this.reset();
@@ -140,19 +161,23 @@ export class MapInspector {
     this.opts.onTriple?.();
   }
 
-  /** Did the tap land on a scooter, cluster, pin or route — anything drawn
-   *  above the area bands? Those are not area questions. Maps without a
-   *  style (tests) or without the band anchors yet have nothing above. */
+  /** Did the tap land on a scooter, cluster, pin or route — anything
+   *  point- or line-like drawn above the area bands? Those are not area
+   *  questions. Area-like layer types up there pass through (see the header).
+   *  Maps without the band anchors yet (tests) have nothing above. */
   private tappedSomethingAbove(point: InspectPoint): boolean {
     const top = topAnchorIndex(this.map);
     if (top < 0 || typeof this.map.queryRenderedFeatures !== "function") {
       return false;
     }
     const order = new Map<string, number>();
-    (this.map.getStyle()?.layers ?? []).forEach((l, i) => order.set(l.id, i));
+    layerOrder(this.map).forEach((id, i) => order.set(id, i));
     return this.map
       .queryRenderedFeatures([point.x, point.y])
-      .some((f) => (order.get(f.layer.id) ?? -1) > top);
+      .some(
+        (f) =>
+          (order.get(f.layer.id) ?? -1) > top && !PASS_THROUGH_TYPES.has(f.layer.type),
+      );
   }
 
   /** Hold double-click zoom for one triple-click window (moved here from
@@ -190,9 +215,10 @@ export class MapInspector {
 export const SPOT_INSPECT_TITLE = "Nothing marked here";
 
 export interface SpotFacts {
-  /** Are the city's rule zones (no riding / no parking / slow) drawn? If
-   *  not, the card cannot say there is none here. */
-  zonesShown: boolean;
+  /** The city's rule zones (no riding / no parking / slow): drawn, switched
+   *  off in Areas, or not loaded (yet, or the fetch failed). Only "shown"
+   *  lets the card say there is none here. */
+  zones: "shown" | "off" | "not_loaded";
   /** Is this spot in an Equity Area? null = the boundaries have not loaded,
    *  so say nothing rather than guess. */
   inEquityArea: boolean | null;
@@ -202,9 +228,12 @@ export interface SpotFacts {
  *  the map knows: a hidden layer or unloaded data is said out loud, not
  *  read as "nothing here". */
 export function buildSpotHtml(f: SpotFacts): string {
-  const zones = f.zonesShown
-    ? "No city slow, no-riding or no-parking zone covers this spot."
-    : "City zones are switched off in Areas, so this can't rule one out.";
+  const zones =
+    f.zones === "shown"
+      ? "No city slow, no-riding or no-parking zone covers this spot."
+      : f.zones === "off"
+        ? "City zones are switched off in Areas, so this can't rule one out."
+        : "City zones haven't loaded, so this can't rule one out.";
   const equity =
     f.inEquityArea === false
       ? "<p>It's outside Denver's Equity Areas, so no Equity Area discount applies here.</p>"

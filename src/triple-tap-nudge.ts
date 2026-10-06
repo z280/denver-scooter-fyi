@@ -27,7 +27,9 @@ export const NUDGE_VISIBLE_MS = 20_000;
  *  on top of the first thing a rider is trying to do. */
 export const NUDGE_DELAY_MS = 6_000;
 
-export const NUDGE_TEXT = "Triple-tap anything on the map to see what it is";
+/** "any spot", not "anything": taps on scooters and pins are left to their
+ *  own popups (map-inspect.ts), so "anything" would overpromise. */
+export const NUDGE_TEXT = "Triple-tap any spot on the map to see what's there";
 
 export interface NudgeState {
   /** Epoch ms of the last time it was shown; 0 = never. */

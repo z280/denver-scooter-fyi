@@ -17,19 +17,28 @@ import {
 
 const LL = { lng: -104.99, lat: 39.74 };
 
-function fakeMap(opts: { above?: boolean } = {}) {
+function fakeMap(opts: { above?: boolean; halo?: boolean } = {}) {
   const dcz = {
     enabled: true,
     isEnabled: () => dcz.enabled,
     enable: vi.fn(() => (dcz.enabled = true)),
     disable: vi.fn(() => (dcz.enabled = false)),
   };
-  const layers = [{ id: "basemap" }, { id: BAND_ANCHOR.zones }, { id: "device-points" }];
+  const layers = [
+    { id: "basemap" },
+    { id: BAND_ANCHOR.zones },
+    { id: "device-range-fill" },
+    { id: "device-points" },
+  ];
   return {
     doubleClickZoom: dcz,
-    getStyle: () => ({ layers }),
+    getLayersOrder: () => layers.map((l) => l.id),
     queryRenderedFeatures: () =>
-      opts.above ? [{ layer: { id: "device-points" } }] : [{ layer: { id: "basemap" } }],
+      opts.above
+        ? [{ layer: { id: "device-points", type: "symbol" } }]
+        : opts.halo
+          ? [{ layer: { id: "device-range-fill", type: "fill" } }, { layer: { id: "basemap", type: "fill" } }]
+          : [{ layer: { id: "basemap", type: "fill" } }],
     on: vi.fn(),
   };
 }
@@ -43,7 +52,11 @@ function source(key: string | null, holds = false): InspectSource & { opened: nu
   return s;
 }
 
-function setup(sources: InspectSource[], mapOpts = {}) {
+function setup(
+  sources: InspectSource[],
+  mapOpts: { above?: boolean; halo?: boolean } = {},
+  suspended?: () => boolean,
+) {
   const map = fakeMap(mapOpts);
   const fallback = { opened: 0 };
   const onTriple = vi.fn();
@@ -51,6 +64,7 @@ function setup(sources: InspectSource[], mapOpts = {}) {
     sources,
     fallback: () => ({ key: "spot", open: () => fallback.opened++ }),
     onTriple,
+    suspended,
   });
   const tap = (n: number, x = 50, y = 50) => {
     for (let i = 0; i < n; i++) insp.handleTap({ x, y }, LL);
@@ -97,6 +111,24 @@ describe("MapInspector", () => {
     tap(3);
     expect(zone.opened).toBe(0);
     expect(fallback.opened).toBe(0);
+  });
+
+  it("a big translucent fill drawn above the areas (a range halo) does not block", () => {
+    const zone = source("zone:a");
+    const { tap } = setup([zone], { halo: true });
+    tap(3);
+    expect(zone.opened).toBe(1);
+  });
+
+  it("taps while picking a spot on the map neither count nor open anything", () => {
+    let picking = true;
+    const zone = source("zone:a");
+    const { tap } = setup([zone], {}, () => picking);
+    tap(3);
+    expect(zone.opened).toBe(0);
+    picking = false;
+    tap(3);
+    expect(zone.opened).toBe(1);
   });
 
   it("three taps must land in the same place", () => {
@@ -149,26 +181,32 @@ describe("MapInspector", () => {
 });
 
 describe("buildSpotHtml", () => {
+  it("can't rule a zone out before the zones have loaded", () => {
+    const html = buildSpotHtml({ zones: "not_loaded", inEquityArea: false });
+    expect(html).toContain("haven't loaded");
+    expect(html).not.toContain("No city slow");
+  });
+
   it("says no zone covers the spot only when zones are drawn", () => {
-    expect(buildSpotHtml({ zonesShown: true, inEquityArea: false })).toContain(
+    expect(buildSpotHtml({ zones: "shown", inEquityArea: false })).toContain(
       "No city slow, no-riding or no-parking zone covers this spot.",
     );
-    const hidden = buildSpotHtml({ zonesShown: false, inEquityArea: false });
+    const hidden = buildSpotHtml({ zones: "off", inEquityArea: false });
     expect(hidden).toContain("switched off in Areas");
     expect(hidden).not.toContain("No city slow");
   });
 
   it("says no Equity Area discount applies outside them, and nothing before they load", () => {
-    const out = buildSpotHtml({ zonesShown: true, inEquityArea: false });
+    const out = buildSpotHtml({ zones: "shown", inEquityArea: false });
     expect(out).toContain("no Equity Area discount applies here");
     // Outside Denver Veo may not even operate; the card claims only what the
     // boundaries support.
     expect(out).not.toContain("standard Veo rate");
-    expect(buildSpotHtml({ zonesShown: true, inEquityArea: null })).not.toContain("Equity Areas,");
+    expect(buildSpotHtml({ zones: "shown", inEquityArea: null })).not.toContain("Equity Areas,");
   });
 
   it("teaches the gesture", () => {
-    expect(buildSpotHtml({ zonesShown: true, inEquityArea: null })).toContain("Triple-tap");
+    expect(buildSpotHtml({ zones: "shown", inEquityArea: null })).toContain("Triple-tap");
     expect(SPOT_INSPECT_TITLE).toBe("Nothing marked here");
   });
 });

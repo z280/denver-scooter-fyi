@@ -2890,25 +2890,38 @@ const DEFAULT_HEX_METRIC: HexMetric = "device_count";
 
 /** Triple-tap anywhere on the map (map-inspect.ts). Sources in stacking
  *  order, top first, matching map-bands.ts: the city's zones, a drawn Equity
- *  Area, a territory / hex cell, then an Equity Area whose overlay is off,
- *  then the plain-spot card. Plus the weekly "tap tap tap" nudge, which
+ *  Area, a territory / hex cell, a shaded region (choropleth or boundary
+ *  overlay), then an Equity Area whose overlay is off, then the plain-spot
+ *  card. Plus the weekly "tap tap tap" nudge, which
  *  retires itself the first time the gesture is used. */
 const tripleTapNudge = new TripleTapNudge();
 function wireMapInspector(): void {
   const inspector = new MapInspector(map, {
-    sources: [zones, equityAreas, hexDensity, equityAreas.hiddenAreaSource()],
+    sources: [
+      zones,
+      equityAreas,
+      hexDensity,
+      overlays.inspectSource((t, b) => openFloatingModal(t, b)),
+      equityAreas.hiddenAreaSource(),
+    ],
     fallback: (ll) => ({
       key: "spot",
       open: () =>
         openFloatingModal(
           SPOT_INSPECT_TITLE,
           buildSpotHtml({
-            zonesShown: zones.isVisible("rules"),
+            zones: !zones.isVisible("rules")
+              ? "off"
+              : zones.isLoaded()
+                ? "shown"
+                : "not_loaded",
             inEquityArea: isInEquityArea(ll.lng, ll.lat),
           }),
         ),
     }),
     onTriple: () => tripleTapNudge.learned(),
+    // While picking a spot, a tap drops the pin; it must not start a run.
+    suspended: () => mapPick.isPicking(),
   });
   inspector.attach();
   map.once("idle", () => {

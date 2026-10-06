@@ -290,7 +290,7 @@ export class EquityAreaMap implements InspectSource {
    *  and a territory hex the rider CAN see should win the tap. That case is
    *  `hiddenAreaSource()`, which answers beneath territory instead. */
   hitAt(_point: InspectPoint, lngLat: InspectLngLat): InspectHit | null {
-    return this.overlayOn ? this.hitForLngLat(lngLat) : null;
+    return this.overlayOn && this.layersAdded ? this.hitForLngLat(lngLat) : null;
   }
 
   /** The Equity Area at `lngLat` when the overlay is OFF — asked after
@@ -299,7 +299,9 @@ export class EquityAreaMap implements InspectSource {
    *  the same call. */
   hiddenAreaSource(): InspectSource {
     return {
-      hitAt: (_p, lngLat) => (this.overlayOn ? null : this.hitForLngLat(lngLat)),
+      // Not drawn = overlay off, or on but not rendered yet.
+      hitAt: (_p, lngLat) =>
+        this.overlayOn && this.layersAdded ? null : this.hitForLngLat(lngLat),
     };
   }
 

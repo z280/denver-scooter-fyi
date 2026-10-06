@@ -2528,8 +2528,8 @@ body.is-map-picking .home-bar {
 .triple-tap-nudge__tap:nth-child(3) { animation-delay: 0.36s; }
 .triple-tap-nudge__close {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.22);

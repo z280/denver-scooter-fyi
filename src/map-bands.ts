@@ -74,6 +74,13 @@ export function ensureBands(map: MLMap): void {
  *  (scooters, pins, routes) is not an area, and a tap that lands on one is
  *  that thing's business, not the inspector's. */
 export function topAnchorIndex(map: MLMap): number {
-  const layers = map.getStyle?.()?.layers ?? [];
-  return layers.findIndex((l) => l.id === BAND_ANCHOR.zones);
+  return layerOrder(map).indexOf(BAND_ANCHOR.zones);
+}
+
+/** Layer ids bottom to top. `getLayersOrder` where the map has it: called on
+ *  every tap, and `getStyle()` serialises the whole style, GeoJSON included. */
+export function layerOrder(map: MLMap): string[] {
+  const m = map as Partial<MLMap>;
+  if (typeof m.getLayersOrder === "function") return m.getLayersOrder.call(map);
+  return (m.getStyle?.call(map)?.layers ?? []).map((l) => l.id);
 }
