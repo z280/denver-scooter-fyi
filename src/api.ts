@@ -97,8 +97,12 @@ export interface DeviceProperties {
   // local assessment, then attaches a human-readable `reliability_reasons`.
   reliability_tier?: "ok" | "unknown" | "risk" | "high_risk";
   reliability_reasons?: string;
-  /** Recent failed unlock/start attempts. Public. */
+  /** Failed unlock/start attempts since the vehicle last proved it works
+   *  (a relocation of ≥ 500 m clears it). Public. */
   number_failed_starts?: number;
+  /** Failed starts among the last 3 completed rentals, 0–3; ≥ 2 is
+   *  high risk on its own. Public (API sql/087). */
+  recent_rentals_no_go?: number | null;
   /** When the device first appeared at its current spot (dwell start). Public. */
   first_observed_at_location?: string;
   /** Peer-relative dwell: this device's dwell percentile among its H3

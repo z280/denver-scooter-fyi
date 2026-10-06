@@ -3157,6 +3157,8 @@ interface PopupProps {
   battery_percent?: number | string | null;
   reliability_tier?: string | null;
   reliability_reasons?: string | null;
+  // public since the API's sql/087: failed starts among the last 3 rentals
+  recent_rentals_no_go?: number | string | null;
   // admin-only extras (ride along on /user/devices/current for
   // ADMIN_EMAILS sessions)
   vehicle_plate?: string;
