@@ -727,6 +727,62 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(pill("apollo")?.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("opens honouring an attached spec, and names it", () => {
+    // §6.4: Phase 1 stores, syncs and attaches a spec, and the ride surface
+    // used to ignore it — a rider who had said "only Cosmos" opened the HUD to
+    // everything and said it again in pills. Honouring it needs no wiring now
+    // (a spec projects onto the one filter, which the pills read), but a
+    // selection the rider did not make on THIS screen has to say where it came
+    // from, and what the next tap will undo.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    hud.setAttachedSpecName(() => "Commuter");
+    // Re-render the panel so the note is built with the name registered.
+    container
+      .querySelector<HTMLButtonElement>('[data-hud="adjust"]')
+      ?.click();
+    const text = container.textContent ?? "";
+    expect(text).toContain("Commuter");
+    expect(text).toMatch(/detaches/i);
+  });
+
+  it("says nothing about specs when none is attached", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.textContent ?? "").not.toMatch(/spec/i);
+  });
+
+  it("escapes a rider-typed spec name", () => {
+    // The name is rider-typed text landing in a template literal assigned
+    // with innerHTML.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    hud.setAttachedSpecName(() => '<img src=x onerror="boom()">');
+    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("#hud-spec-note")?.textContent).toContain("img src");
+  });
+
+  it("stops naming the spec once a pill tap detaches it", () => {
+    // The note must not outlive the attachment it describes — that staleness
+    // is the very thing this seam removes.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    let attached: string | null = "Commuter";
+    hud.setAttachedSpecName(() => attached);
+    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    expect(container.querySelector("#hud-spec-note")?.textContent).toContain("Commuter");
+    // The host detaches off the device layer's filter-change signal, which a
+    // pill tap triggers; model that by clearing the source, then tap.
+    attached = null;
+    container
+      .querySelector<HTMLButtonElement>('[data-hud="dev"][data-model="apollo"]')
+      ?.click();
+    const note = container.querySelector<HTMLElement>("#hud-spec-note");
+    expect(note?.hidden).toBe(true);
+    expect(note?.textContent).toBe("");
+  });
+
   it("tapping a pill writes the one shared filter", () => {
     const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
     const { container } = mountWith(ownDeviceDoc(), ctl);

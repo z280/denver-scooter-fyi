@@ -292,6 +292,9 @@ export class RideHud {
    *  BRB) — wireModes uses it to hand the mode bar back to whichever mode
    *  was active before the HUD covered it. */
   private onHidden: (() => void) | null = null;
+  /** See `setAttachedSpecName`. Defaults to "no spec", so a host that never
+   *  registers one simply gets the plain Show row. */
+  private attachedSpecName: () => string | null = () => null;
   /** Elapsed ms captured at BRB, so the clock resumes from where it paused
    *  instead of counting the time spent away. */
   private pausedElapsedMs = 0;
@@ -593,6 +596,19 @@ export class RideHud {
       </p>`;
   }
 
+  /** Where the HUD learns which saved spec the map's filter came from
+   *  (§6.4). A function rather than a value because the attachment can end
+   *  while the HUD is up — a pill tap detaches — and the panel re-renders
+   *  from this each time it opens.
+   *
+   *  NOT on `RideDeviceControl`: that interface is the slice of the DEVICE
+   *  LAYER the HUD drives, and `devices.ts` has never heard of ride specs.
+   *  Putting it there would have dragged the spec store into the one module
+   *  whose model filter is supposed to be a plain value. */
+  setAttachedSpecName(fn: () => string | null): void {
+    this.attachedSpecName = fn;
+  }
+
   /** Register the close hook (see onHidden). Last registration wins. */
   setOnHidden(fn: () => void): void {
     this.onHidden = fn;
@@ -711,6 +727,8 @@ export class RideHud {
         this.root
           .querySelector(".hud-adjust-panel")
           ?.toggleAttribute("hidden");
+        // The attachment may have ended since this panel was last open.
+        this.renderSpecNote();
         break;
       case "display-panel":
         this.root.querySelector(".hud-adjust-panel")?.setAttribute("hidden", "");
@@ -791,6 +809,11 @@ export class RideHud {
         // visible whenever the Show selection includes the Rover.
         const note = this.root.querySelector<HTMLElement>("#hud-rover-note");
         if (note) note.hidden = !admits(next, "trike");
+        // This tap is what detaches an attached spec (§6.4). The host's
+        // detach runs off the device layer's own filter-change signal, so by
+        // now `attachedSpecName()` already answers "none" — re-read it rather
+        // than leaving the line claiming a spec the map stopped matching.
+        this.renderSpecNote();
         break;
       }
       case "done":
@@ -856,6 +879,41 @@ export class RideHud {
         return `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="dev" data-model="${m}" aria-pressed="${on}">${label}</button>`;
       })
       .join("");
+  }
+
+  /** "Showing your Commuter spec", when the map's filter came from a saved
+   *  one (§6.4).
+   *
+   *  The point is not decoration: the pills now open already matching the
+   *  spec, so without this line a rider sees a selection they did not make on
+   *  this screen and has no way to tell where it came from. Naming it also
+   *  makes the next tap legible — changing a pill detaches the spec, and a
+   *  rider should be able to see what they are detaching from.
+   *
+   *  Escaped, because a spec name is rider-typed text going into a template
+   *  literal that is assigned with `innerHTML`. */
+  private specNoteMarkup(): string {
+    // Empty at build time and filled by `renderSpecNote`, because the
+    // attachment can end WHILE THE HUD IS UP — changing a pill detaches the
+    // spec — and a note baked into the markup once would go on naming a spec
+    // the map no longer matches. That is the same staleness this seam exists
+    // to remove, so it must not be reintroduced by the line announcing it.
+    return `<p id="hud-spec-note" class="control-hint" hidden></p>`;
+  }
+
+  /** Fill (or clear) the Show row's spec line from the current attachment. */
+  private renderSpecNote(): void {
+    const note = this.root.querySelector<HTMLElement>("#hud-spec-note");
+    if (!note) return;
+    const name = this.attachedSpecName();
+    if (!name) {
+      note.hidden = true;
+      note.textContent = "";
+      return;
+    }
+    // textContent, not innerHTML: a spec name is rider-typed.
+    note.textContent = `Showing your ${name} spec. Changing these detaches it.`;
+    note.hidden = false;
   }
 
   /** The one model filter, read from the device layer rather than mirrored
@@ -1438,6 +1496,7 @@ export class RideHud {
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
           </div>
+          ${this.specNoteMarkup()}
           <p id="hud-rover-note" class="control-hint control-hint--warning"${admits(this.rideSelection(), "trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">

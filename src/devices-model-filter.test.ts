@@ -127,6 +127,23 @@ describe("the one model filter, through the device layer", () => {
     expect(devices.modelSelection_()).toEqual({ kind: "all" });
   });
 
+  it("tells the filter-change listeners, whichever surface wrote it", () => {
+    // THE SEAM §6.4 DEPENDS ON. `main.ts` hangs the ride-spec detach off
+    // `onCountsChange` — "the one signal that fires for all of them" — so a
+    // HUD pill tap has to reach it exactly as a drawer tick does. Otherwise an
+    // attached spec goes on claiming to show "only my ideal scooters" over a
+    // map the pills have changed underneath it.
+    const seen: number[] = [];
+    devices.onCountsChange((visible) => seen.push(visible));
+    expect(seen).toEqual([5]); // fires once on subscribe, with the current count
+    devices.setModelSelection(selectionOf(["cosmo"])); // as the HUD's pills do
+    expect(seen).toEqual([5, 2]);
+    devices.setModels(new Set(["apollo"])); // as the drawer does
+    expect(seen).toEqual([5, 2, 2]);
+    devices.setModelSelection(NONE_SELECTED);
+    expect(seen).toEqual([5, 2, 2, 0]);
+  });
+
   it("defaults to showing everything", () => {
     expect(devices.modelSelection_()).toEqual({ kind: "all" });
     expect(visibleNames()).toHaveLength(5);

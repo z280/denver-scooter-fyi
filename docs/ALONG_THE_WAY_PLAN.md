@@ -1240,6 +1240,29 @@ attach/detach rule already specifies for the map — reuse
 `ride-spec-store.ts`'s `noticeFilterChange`, do not invent a second notion of
 "this no longer matches".
 
+**Shipped, and seam 2 did most of it.** Honouring the spec needed no wiring in
+the end: a spec projects onto the model filter, and after §6.3 the HUD's pills
+ARE that filter, so a ride opens matching the attached spec by construction.
+Detaching likewise — `main.ts` hangs the detach off `devices.onCountsChange`,
+"the one signal that fires for all of them", and a pill tap now goes through
+`setModelSelection`, which fires it.
+
+**But seam 2 left a third copy of the filter, and this seam is where it would
+have bitten.** `main.ts` held `modelsOn`, a module-level `Set` written only by
+the Filters drawer's toggle handler, and `snapshotFilters` reads it — which is
+what `noticeFilterChange` compares against its projection. So once the pills
+began writing the shared selection, a pill tap changed the map and left the
+snapshot stale: `sameFilters` saw no change, nothing detached, and the spec went
+on claiming to show "only my ideal scooters" over a map it no longer matched.
+`modelsOn` is now derived from `devices.modelSelection_()`. **Two copies were
+visible in §6.3's table; the third was not, and unifying two of three is worse
+than leaving all three, because the remaining disagreement is the silent one.**
+
+What was left to build is the sentence: the Show row names the attached spec
+and says that changing a pill detaches it. Rendered **live**, not baked into the
+markup, because the attachment can end while the HUD is up — a note that
+outlived its attachment would be the same staleness this seam removes.
+
 ### 6.5 Seam 4 — one settings vocabulary across two entrances
 
 Two ways in, correctly different: the wizard (`ride-modal.ts`, Screens 1–6)

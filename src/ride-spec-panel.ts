@@ -73,6 +73,9 @@ export interface RideSpecPanelHandle {
   /** The spec currently driving the map, if any — the corridor search's seed
    *  once Phase 2 lands. */
   activeSpec(): RideSpec | null;
+  /** Its NAME, for a surface that wants to say which spec it is honouring —
+   *  the ride HUD's Show row (§6.4). Null when nothing is attached. */
+  activeSpecName(): string | null;
   destroy(): void;
 }
 
@@ -620,6 +623,10 @@ export function wireRideSpecPanel(
       // projected from the former, and the two part company whenever the
       // list reloads while attached.
       return attachment.attachedSpec;
+    },
+    activeSpecName(): string | null {
+      // Same source as `activeSpec`, for the same reason.
+      return attachment.attachedName;
     },
     destroy(): void {
       for (const fn of cleanupFns.splice(0)) fn();

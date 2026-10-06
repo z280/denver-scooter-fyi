@@ -510,7 +510,21 @@ let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
 /** The ideal-scooter bridge. Null when its markup is absent (a page that
  *  does not carry the Filters drawer). */
 let rideSpecPanel: RideSpecPanelHandle | null = null;
-let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
+/** The model selection, DERIVED (Phase 6 §6.3). This used to be a third copy
+ *  of the filter — a module-level `Set` written only by the Filters drawer's
+ *  toggle handler. Once the ride HUD's pills began writing the one shared
+ *  selection, that copy went stale on every pill tap, and `snapshotFilters`
+ *  reads it: an attached ride spec compares the live filters against its
+ *  projection to decide whether the rider has edited it, so a stale snapshot
+ *  left the spec claiming to show "only my ideal scooters" over a map the
+ *  pills had changed underneath it.
+ *
+ *  Reading through `devices` instead makes that detach work by itself, which
+ *  is what §6.4 means by reusing `noticeFilterChange` rather than inventing a
+ *  second notion of "this no longer matches". */
+function modelsOn(): ReadonlySet<ModelKey> {
+  return modelsOf(devices.modelSelection_());
+}
 let minBatteryPct = 0;
 let qualityOn: QualityFilter = "any";
 let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
@@ -639,11 +653,12 @@ function activeFilterChips(): Chip[] {
     });
   }
 
-  if (modelsOn.size < ALL_MODELS.length) {
+  const pickedModels = modelsOn();
+  if (pickedModels.size < ALL_MODELS.length) {
     // Capitalized key ≠ display name for the three-wheeler: the internal
     // key stays "trike" (presets/sprites/wire format) but riders know it
     // as the Rover.
-    const names = [...modelsOn].map((m) =>
+    const names = [...pickedModels].map((m) =>
       m === "trike" ? "Rover" : m[0].toUpperCase() + m.slice(1),
     );
     active.push({
@@ -1205,6 +1220,13 @@ map.on("load", async () => {
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
   });
+  // THE SPEC REACHES THE RIDE (§6.4). Honouring it needs no wiring any more —
+  // a spec projects onto the one model filter, and the HUD's pills read that
+  // same value — but a rider opening the Show row to a selection they did not
+  // make on this screen deserves to be told where it came from, and what the
+  // next tap will detach. Read through a function, because a pill tap ends the
+  // attachment while the HUD is still up.
+  rideHud.setAttachedSpecName(() => rideSpecPanel?.activeSpecName() ?? null);
   wireEquityAreas();
   wireMicromobilityZones();
   wireIgnoreDibs();
@@ -2055,7 +2077,7 @@ function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
   // picked models can produce any enabled type — expands to the full
   // per-type set.
   const compatible = new Set<string>(
-    [...modelsOn].filter((m) => want.has(m)),
+    [...modelsOn()].filter((m) => want.has(m)),
   );
   setToggleGroup(
     "#model-filter",
@@ -2203,7 +2225,8 @@ function wireModels(): void {
     (b) => b.dataset.model as ModelKey,
     ALL_MODELS,
     (enabled) => {
-      modelsOn = enabled;
+      // No local mirror to update: `setModels` below writes the one selection
+      // and `modelsOn()` reads it back.
       roverNote.hidden = !(
         enabled.has("trike") && enabled.size < ALL_MODELS.length
       );
@@ -2275,7 +2298,7 @@ function snapshotFilters(): FilterSnapshot {
   const display = lastAreaState?.display;
   return {
     rideTypes: [...rideTypesOn],
-    models: [...modelsOn],
+    models: [...modelsOn()],
     // The lineup as of this save, so a model added AFTER can be told apart
     // from one the saver deselected (see effectiveModels) — absence from
     // `models` alone can't distinguish the two, which is how pre-Rover
