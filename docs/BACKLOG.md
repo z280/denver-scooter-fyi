@@ -77,12 +77,19 @@ implemented beyond what shipped in PR #89 and #90.
 
 ## 5. Smaller things noted in passing
 
-- **`docs/ANALYTICS_PLAN.md` §0.2** still describes three disagreeing radii.
-  Once `claude/radius-25m` merges, that section is stale and should be cut
-  down to the decision and its date.
-- **`src/fleet_outcomes.py`'s module header** names "16 m in config.json".
-  Same fix, same branch dependency.
-- **The basemap attribution fix is unmerged.** The OSM/Protomaps credit — a
-  condition of the basemap licence — currently renders EMPTY in production.
-  It is fixed on `claude/scooter-app-sticky-usage-wqcq9z` and that branch has
-  no PR. This is the one item here with a live consequence.
+Everything previously listed here is done: the radius decision landed
+(scooter-fyi-api #106), `src/fleet_outcomes.py`'s header was corrected with it,
+`docs/ANALYTICS_PLAN.md` §0.2 now records the decision rather than demanding
+one, and the basemap attribution fix — the licence condition that was rendering
+empty — merged in #96 and is verified live.
+
+One new item took their place, and it is the only one here that gates
+publishing:
+
+- **Measure the round-trip share of `rentals_no_go`.** It counts END
+  displacement while the copy describes a maximum, so loop rides are counted as
+  no-gos. `rental_max_distance_m` is tracked live during rentals, so sampling
+  it at release answers how big the gap is. Then fix the copy, or add a second
+  counter — do not quietly redefine `rentals_no_go`, because
+  `smart_ride_grade` is calibrated on it. Full detail in the server-agent
+  handoff, item 1b.
