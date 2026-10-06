@@ -69,6 +69,15 @@ export interface RidePostDeps {
   recoveryNote?: RideRecoveryNote | null;
   /** Injected for tests; defaults to a lazily-opened `openTrackStore()`. */
   getGateFacts?(trackId: string | null): Promise<RideGateFacts>;
+  /** Screen 8's post-ride move-watch offer — one of the capability's only two
+   *  doors (`device-notify.ts`'s header). Both default to refusing, so a host
+   *  that does not pass them simply never shows the offer. */
+  canOfferMoveWatch?(vehicleIdentifier: string): boolean;
+  armMoveWatch?(
+    vehicleIdentifier: string,
+    name: string,
+    at: { lat: number; lon: number },
+  ): boolean;
   /** Shared TrackStore accessor (review fix): with IndexedDB unavailable,
    *  `openTrackStore()` degrades to a fresh, empty in-memory adapter on
    *  EVERY call, so a `getGateFacts`/donation reader that opens its own store
@@ -222,6 +231,10 @@ export function wireRidePost(deps: RidePostDeps): () => void {
     // shared `getTrackStore` (see the module's shared-store review fix).
     getGateFacts,
     getLastFix: deps.getLastFix ?? (() => null),
+    // The post-ride move-watch offer. Both default to refusing — see
+    // `ride-post-s8.ts`'s own doc comment and `device-notify.ts`'s header.
+    canOfferMoveWatch: deps.canOfferMoveWatch ?? (() => false),
+    armMoveWatch: deps.armMoveWatch ?? (() => false),
   } satisfies RideScreen8Deps);
 
   const unwireS9 = wireRidePostS9({

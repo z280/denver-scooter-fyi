@@ -750,3 +750,109 @@ describe("recoveryNote", () => {
     unwire();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The post-ride move-watch offer.
+//
+// One of only TWO doors to that capability — the bell on the device popup is
+// gone, and `device-notify.ts`'s header explains why at length. This one
+// exists because a rider who has just got off a scooter has the most
+// legitimate version of the question: can I have that one again later?
+//
+// So what is pinned here is mostly the NOT-offering: no vehicle, no slot, no
+// fix, and above all never twice.
+// ---------------------------------------------------------------------------
+
+describe("Screen 8 — the move-watch offer", () => {
+  const ask = () =>
+    queryRoot()?.querySelector<HTMLElement>(".ride-post-s8__watch-ask") ?? null;
+  const armBtn = () =>
+    [...(queryRoot()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent?.includes("Tell me if it moves"),
+    ) ?? null;
+
+  it("is not offered unless the host says there is a slot", () => {
+    // Default-deny: a host that passes neither dep shows nothing at all.
+    wire(sessionAtEnding());
+    expect(ask()).toBeNull();
+    expect(armBtn()).toBeNull();
+  });
+
+  it("offers it for a real scooter with a slot free", () => {
+    wire(sessionAtEnding(), {
+      canOfferMoveWatch: () => true,
+      armMoveWatch: () => true,
+    });
+    expect(ask()?.textContent).toContain("again later");
+    expect(armBtn()).not.toBeNull();
+  });
+
+  it("asks the host about THIS vehicle, not just whether any slot exists", () => {
+    const canOffer = vi.fn(() => true);
+    wire(sessionAtEnding(), { canOfferMoveWatch: canOffer, armMoveWatch: () => true });
+    expect(canOffer).toHaveBeenCalledWith(DEVICE.vehicleIdentifier);
+  });
+
+  it("arms with the ride's own last fix as the anchor", () => {
+    // The anchor is what "has it moved" is measured from, so it has to be
+    // where the ride actually ended — not a stale browse-time position.
+    const arm = vi.fn(() => true);
+    wire(sessionAtEnding(), {
+      canOfferMoveWatch: () => true,
+      armMoveWatch: arm,
+      getLastFix: () => FIX,
+    });
+    armBtn()!.click();
+    expect(arm).toHaveBeenCalledWith(
+      DEVICE.vehicleIdentifier,
+      expect.stringContaining("1234567"),
+      { lat: FIX.lat, lon: FIX.lng },
+    );
+  });
+
+  it("confirms in words that match what it can actually do", () => {
+    // Local, a couple of hours, app-open only. The copy must not read as
+    // "we'll keep an eye on it", which a rider would take as permanent.
+    wire(sessionAtEnding(), {
+      canOfferMoveWatch: () => true,
+      armMoveWatch: () => true,
+    });
+    armBtn()!.click();
+    const said = queryRoot()?.querySelector(".ride-post-s8__watch")?.textContent ?? "";
+    expect(said).toContain("couple of hours");
+    expect(said).toContain("while the app is open");
+    expect(said).toContain("Tools");
+  });
+
+  it("never asks twice — not after arming, and not after a refusal", () => {
+    // A second ask is the nagging this design is deliberately not. The
+    // refusal case matters more: a host that said no once will say no again,
+    // and re-offering would train the rider to ignore the control.
+    wire(sessionAtEnding(), {
+      canOfferMoveWatch: () => true,
+      armMoveWatch: () => false,
+    });
+    armBtn()!.click();
+    expect(armBtn()).toBeNull();
+    expect(ask()).toBeNull();
+  });
+
+  it("is not offered on an own-device ride", () => {
+    // There is no Veo scooter in it to watch.
+    const session = sessionAtEnding();
+    const doc = session.current();
+    if (doc) session.replace({ ...doc, device: { own: true } });
+    wire(session, { canOfferMoveWatch: () => true, armMoveWatch: () => true });
+    expect(armBtn()).toBeNull();
+  });
+
+  it("is not offered with no fix to anchor against", () => {
+    wire(sessionAtEnding(), {
+      canOfferMoveWatch: () => true,
+      armMoveWatch: () => true,
+      getLastFix: () => null,
+      locate: fakeLocate(null),
+    });
+    expect(armBtn()).toBeNull();
+  });
+});

@@ -145,14 +145,68 @@ describe("territory control as a hex metric", () => {
       "get",
       "fillColor",
     ]);
-    expect(map.paint.get("hex-density-fill.fill-opacity")).toEqual([
-      "get",
-      "fillOpacity",
-    ]);
     expect(map.paint.get("hex-density-line.line-color")).toEqual([
       "get",
       "lineColor",
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Muted display.
+  //
+  // Territory opacities are PER FEATURE — each hexagon carries its holder's
+  // own strength — so muting has to be a factor inside the expression. A flat
+  // opacity would throw away the ranking those values encode, which is the
+  // one thing the layer is for.
+  // -------------------------------------------------------------------------
+
+  it("starts muted, scaling each feature's own opacity rather than flattening it", async () => {
+    const { hex, map } = setup();
+    expect(hex.isTerritoryMuted()).toBe(true);
+    await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    const fill = map.paint.get("hex-density-fill.fill-opacity") as unknown[];
+    expect(fill[0]).toBe("*");
+    expect(fill[1]).toEqual(["get", "fillOpacity"]);
+    expect(fill[2]).toBeLessThan(1);
+    expect(fill[2]).toBeGreaterThan(0);
+    const line = map.paint.get("hex-density-line.line-opacity") as unknown[];
+    expect(line[1]).toEqual(["get", "lineOpacity"]);
+    expect(line[2]).toBe(fill[2]);
+  });
+
+  it("un-muting leaves each feature's opacity exactly as the feed set it", async () => {
+    const { hex, map } = setup();
+    await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    hex.setTerritoryMuted(false);
+    expect(map.paint.get("hex-density-fill.fill-opacity")).toEqual([
+      "*",
+      ["get", "fillOpacity"],
+      1,
+    ]);
+  });
+
+  it("remembers a mute set while another metric is showing", async () => {
+    // Applying it eagerly would paint the aggregate ramp's opacity with a
+    // territory factor; not remembering it would flash full strength when
+    // territory does come up.
+    const { hex, map } = setup();
+    await hex.setView("medium", "device_count");
+    hex.setTerritoryMuted(false);
+    expect(map.paint.get("hex-density-fill.fill-opacity")).toBe(0.55);
+    await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    expect(map.paint.get("hex-density-fill.fill-opacity")).toEqual([
+      "*",
+      ["get", "fillOpacity"],
+      1,
+    ]);
+  });
+
+  it("re-setting the same mute does not repaint", async () => {
+    const { hex, map } = setup();
+    await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
+    map.paint.delete("hex-density-fill.fill-opacity");
+    hex.setTerritoryMuted(true);
+    expect(map.paint.get("hex-density-fill.fill-opacity")).toBeUndefined();
   });
 
   it("restores the ramp paint when switching back to an aggregate metric", async () => {

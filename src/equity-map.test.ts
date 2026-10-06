@@ -34,6 +34,7 @@ function fakeMap(center = { lng: INSIDE[0], lat: INSIDE[1] }, zoom = ZOOMED_IN) 
   const handlers = new globalThis.Map<string, (() => void)[]>();
   const layers: Record<string, unknown>[] = [];
   const layout = new globalThis.Map<string, string>();
+  const paint = new globalThis.Map<string, unknown>();
   return {
     addSource: vi.fn(),
     addLayer: vi.fn((spec: Record<string, unknown>) => {
@@ -41,6 +42,9 @@ function fakeMap(center = { lng: INSIDE[0], lat: INSIDE[1] }, zoom = ZOOMED_IN) 
     }),
     setLayoutProperty: vi.fn((id: string, prop: string, v: string) => {
       layout.set(`${id}.${prop}`, v);
+    }),
+    setPaintProperty: vi.fn((id: string, prop: string, v: unknown) => {
+      paint.set(`${id}.${prop}`, v);
     }),
     getCenter: () => center,
     getZoom: () => zoom,
@@ -51,6 +55,7 @@ function fakeMap(center = { lng: INSIDE[0], lat: INSIDE[1] }, zoom = ZOOMED_IN) 
     _fire: (evt: string) => (handlers.get(evt) ?? []).forEach((f) => f()),
     _layers: layers,
     _layout: layout,
+    _paint: paint,
     _move: (lng: number, lat: number, z = zoom) => {
       center = { lng, lat };
       zoom = z;
@@ -146,13 +151,80 @@ describe("EquityAreaMap", () => {
     return { eq, chip, map, openModal };
   }
 
-  it("draws the polygons hidden, so the overlay is off by default", async () => {
+  it("is on and muted before anything touches it", () => {
+    // The default flipped: a boundary nobody can see explains nothing, and
+    // the discount inside it is the reason this app exists. Muted is what
+    // makes always-on bearable — see the module header.
+    const { eq } = setup();
+    expect(eq.isOverlayVisible()).toBe(true);
+    expect(eq.isOverlayMuted()).toBe(true);
+  });
+
+  it("builds the layers at the visibility it was asked for, not the default", async () => {
+    // `ensureLayers` waits on a geometry fetch, so the call that asked can
+    // easily finish last. A spec built from the old setting flashes the wrong
+    // look on arrival and then corrects itself.
     const { eq, map } = setup();
     await eq.setOverlayVisible(false);
-    expect(eq.isOverlayVisible()).toBe(false);
     for (const layer of map._layers) {
       expect((layer.layout as Record<string, string>).visibility).toBe("none");
     }
+  });
+
+  it("builds the layers at the strength it was asked for", async () => {
+    const { eq, map } = setup();
+    await eq.setOverlayMuted(false);
+    const fill = map._layers.find((l) => l.id === "equity-areas-fill")!;
+    const line = map._layers.find((l) => l.id === "equity-areas-line")!;
+    expect((fill.paint as Record<string, number>)["fill-opacity"]).toBe(0.1);
+    expect((line.paint as Record<string, number>)["line-opacity"]).toBe(0.9);
+    expect((line.paint as Record<string, number>)["line-width"]).toBe(1.8);
+  });
+
+  it("hides both layers together when switched off", async () => {
+    const { eq, map } = setup();
+    await eq.setOverlayVisible(false);
+    expect(eq.isOverlayVisible()).toBe(false);
+    expect(map._layout.get("equity-areas-fill.visibility")).toBe("none");
+    expect(map._layout.get("equity-areas-line.visibility")).toBe("none");
+  });
+
+  it("muting favours the outline over the fill", async () => {
+    // The point of the muted look: the LINE says where the boundary is, and
+    // the fill only says which side of it you are on. A fill strong enough
+    // to hide the basemap is the thing the old off-by-default was avoiding.
+    const { eq, map } = setup();
+    await eq.setOverlayMuted(true);
+    const fill = map._paint.get("equity-areas-fill.fill-opacity") as number;
+    const line = map._paint.get("equity-areas-line.line-opacity") as number;
+    expect(fill).toBeLessThan(0.06);
+    expect(line).toBeGreaterThan(fill * 5);
+  });
+
+  it("turns all the way up, and back down, without touching visibility", async () => {
+    const { eq, map } = setup();
+    await eq.setOverlayVisible(true);
+    map.setLayoutProperty.mockClear();
+    await eq.setOverlayMuted(false);
+    expect(map._paint.get("equity-areas-fill.fill-opacity")).toBe(0.1);
+    expect(map._paint.get("equity-areas-line.line-opacity")).toBe(0.9);
+    expect(map._paint.get("equity-areas-line.line-width")).toBe(1.8);
+    await eq.setOverlayMuted(true);
+    expect(map._paint.get("equity-areas-fill.fill-opacity")).toBe(0.04);
+    // Two questions, two switches: how loud is not whether.
+    expect(map.setLayoutProperty).not.toHaveBeenCalled();
+    expect(eq.isOverlayVisible()).toBe(true);
+  });
+
+  it("remembers the strength across an off-and-on", async () => {
+    // A rider who turned it up and then hid it should find it turned up when
+    // they bring it back, not reset to the default.
+    const { eq, map } = setup();
+    await eq.setOverlayMuted(false);
+    await eq.setOverlayVisible(false);
+    await eq.setOverlayVisible(true);
+    expect(eq.isOverlayMuted()).toBe(false);
+    expect(map._paint.get("equity-areas-fill.fill-opacity")).toBe(0.1);
   });
 
   it("shows and hides both the fill and the outline together", async () => {
@@ -216,7 +288,11 @@ describe("EquityAreaMap", () => {
   it("shows the chip whether or not the overlay is on", async () => {
     // The discount notice must not be gated on a rider having found the
     // Areas drawer — that is the exact asymmetry this app exists to fix.
+    // Asserted with the overlay explicitly OFF, which is the direction that
+    // can actually break: the two are separate paths, and only one of them
+    // is now on by default.
     const { eq, chip } = setup();
+    await eq.setOverlayVisible(false);
     eq.wire();
     await vi.waitFor(() => expect(chip.hidden).toBe(false));
     expect(eq.isOverlayVisible()).toBe(false);

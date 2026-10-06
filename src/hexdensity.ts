@@ -92,6 +92,19 @@ const RAMP_LINE_WIDTH = 0.8;
 const RAMP_LINE_OPACITY = 0.45;
 const TERRITORY_LINE_WIDTH = 1.2;
 
+/** What "muted display" multiplies the territory opacities by.
+ *
+ *  Territory colors are per-feature — each hexagon carries its holder's
+ *  `fillOpacity`/`lineOpacity` — so muting cannot be a flat number without
+ *  throwing away the ranking those values encode. It is a factor applied in
+ *  the paint expression instead, which keeps a strong holder stronger than a
+ *  weak one while bringing the whole layer down under the scooters.
+ *
+ *  0.35 rather than something smaller because the territory fill IS the
+ *  readout here: muted has to stay legible as a color, where the equity
+ *  overlay's muted fill only has to say which side of a line you are on. */
+const TERRITORY_MUTE_FACTOR = 0.35;
+
 /** One sequential ColorBrewer ramp per metric so switching "shade by" is
  *  visually unmistakable even without reading the legend. */
 const RAMP_BLUES = ["#c6dbef", "#9ecae1", "#6baed6", "#3182bd", "#08519c"];
@@ -236,6 +249,10 @@ export class HexDensity {
   /** Latest `/leaderboard/map` fetch, backing both the territory fills and
    *  the triple-click detail panel (one payload, no second request). */
   private territory: LeaderboardMapResponse | null = null;
+  /** Muted by default, to match the equity overlay: both are now drawn for
+   *  everybody on arrival, and two full-strength layers over the same city
+   *  would leave nothing readable underneath either. */
+  private territoryMuted = true;
   /** ONE controller for whichever fetch is in flight, aggregates or
    *  territory alike: switching between the two kinds mid-flight has to
    *  cancel the other, and two independent controllers couldn't. */
@@ -447,12 +464,35 @@ export class HexDensity {
         ? leaderboardMapToFeatureCollection(this.territory)
         : emptyFC(),
     );
+    const dim = this.territoryMuted ? TERRITORY_MUTE_FACTOR : 1;
     this.map.setPaintProperty(FILL, "fill-color", ["get", "fillColor"]);
-    this.map.setPaintProperty(FILL, "fill-opacity", ["get", "fillOpacity"]);
+    this.map.setPaintProperty(FILL, "fill-opacity", [
+      "*",
+      ["get", "fillOpacity"],
+      dim,
+    ]);
     this.map.setPaintProperty(LINE, "line-color", ["get", "lineColor"]);
-    this.map.setPaintProperty(LINE, "line-opacity", ["get", "lineOpacity"]);
+    this.map.setPaintProperty(LINE, "line-opacity", [
+      "*",
+      ["get", "lineOpacity"],
+      dim,
+    ]);
     this.map.setPaintProperty(LINE, "line-width", TERRITORY_LINE_WIDTH);
     this.renderTerritoryLegend();
+  }
+
+  /** Turn the territory shading down (or back up). Re-renders only when the
+   *  territory layer is what is actually showing — the mute is remembered
+   *  either way, so switching to territory later arrives at the right
+   *  strength rather than flashing full and then dimming. */
+  setTerritoryMuted(muted: boolean): void {
+    if (this.territoryMuted === muted) return;
+    this.territoryMuted = muted;
+    if (this.size && this.metric === TERRITORY_METRIC) this.renderTerritory();
+  }
+
+  isTerritoryMuted(): boolean {
+    return this.territoryMuted;
   }
 
   /** Read one metric field per cell from the last aggregates fetch,

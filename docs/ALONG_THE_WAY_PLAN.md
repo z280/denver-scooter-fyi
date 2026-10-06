@@ -95,9 +95,9 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied and reversible (§3.1), and **announced only when it changes something actionable** — §3.4's two cases, which this row used to flatten into "announced". |
 | ~~`my-scooters.ts`~~ | 4 | **Built, then deleted.** Favourite vehicles — `locationOf` keyed off the `position_withheld` FLAG, the title, the sentence for every refusal. It worked, and it was the wrong feature: a sign-in, a QR scan and a fix within 75 m, in exchange for telling the rider where a scooter was parked, which the map already does for every scooter to anybody. §4.1's reasoning about why it is not `favorites.ts` still stands and is still worth reading; its payoff did not. Replaced by `device-notify.ts` below. |
 | ~~`my-scooters-panel.ts`~~ | 4 | **Built, then deleted** with the module above. Its Tools-drawer slot is now the watch list. |
-| `device-notify.ts` | 4, 9 | "Notify me if moved" — what replaced keeping a scooter. The local watch store, the moved / in-use / gone verdict against a 50 m anchor (§9.7.4), the message, and the one-alert-per-scooter rule. **Pure apart from its `localStorage` adapter.** The question a map cannot answer by sitting there is whether a scooter has gone, which is what this asks. |
-| `device-notify-panel.ts` | 4, 9 | The Tools-drawer list and the in-app toast. Renders; decides nothing. §9.7.6: rows learn a tier, because "while the app is open" is the wrong promise for a row that will text. |
-| `qr-utility.ts` | 4, 9 | The ribbon's QR tool: one scanner behind a rotatable mode dial. Confirm features, Ride mode, and — §9.7.2 — Notify if moved, which is the scan-anchored, SMS-eligible tier. A third job is a label on the dial, not a third camera flow. |
+| `device-notify.ts` | 4, 9 | The gated move-watch — what replaced keeping a scooter, twice over. The local watch store, the two permitted origins and their caps and expiries (`WATCH_RULES`), the moved / in-use / gone verdict against a 50 m anchor (§9.7.4), the message, and the one-alert-per-scooter rule. **Pure apart from its `localStorage` adapter.** Its header is the normative statement of why this capability is gated; read it before adding an entry point. |
+| `device-notify-panel.ts` | 4, 9 | The Tools-drawer list and the in-app toast. Renders; decides nothing; **starts nothing** — it exists to show what is watched and to stop it. §9.7.6: rows learn a tier, because "while the app is open" is the wrong promise for a row that will text. |
+| `qr-utility.ts` | 4, 6 | The ribbon's QR tool: one scanner behind a two-position segmented mode switch (Confirm features, Ride mode). A third job would be a third segment, not a third camera flow — but see §9.7.2 for the one that was planned and deliberately dropped. |
 | `qr-ride-scan.ts` | 4 | What a scanned sticker MEANS to a ride — start, resume, associate, or already-tied — and the two ways a scan names nothing. **Pure.** It exists because tying a scooter to a ride used to depend on which of five doors the rider came through, and none of them worked once the ride was running. |
 | `equity-savings.ts` | 5 | Cost terms, not a second optimizer: the start-in-area bonus and `equityLegRate` for the Phase 2 planner's money term. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
 | `arrival-panel.ts` *(existing)* | 3 | Gains a **re-solved** face and a `reportResolve()` beside its `reportGone()`. |
@@ -1627,10 +1627,23 @@ fiddly part — and it is `plan-resume.ts`'s whole job.
 
 ### 9.7 Texting a watched scooter's departure
 
-Master plan §13.8. The in-app half of this already ships — `device-notify.ts`
-and the Tools-drawer list that replaced Favorite Scooters — and its copy is
-careful to promise only "while the app is open", because a closed tab detects
-nothing. This is the other half.
+Master plan §13.8. The in-app half of this ships — `device-notify.ts` and the
+Tools-drawer list that replaced Favorite Scooters — and its copy is careful to
+promise only "while the app is open", because a closed tab detects nothing.
+This is the other half.
+
+> **REVISED, AND THE REVISION IS THE IMPORTANT PART.** This section was first
+> written against a version of the in-app watch that could be armed from the
+> 🔔 bell on **any** device popup. That bell has been deleted. "Tell me when
+> this vehicle leaves this address" is a tracking tool — the scooter parked
+> outside a house is a proxy for the person inside it, and an ex's, a
+> partner's or a shelter's address is the use case nobody writes in a feature
+> request. The capability now requires a present, demonstrated connection to
+> the specific vehicle, it expires with that connection, and there are exactly
+> two origins: a **dibs claim** made while building a route (max 2, dies with
+> the claim, so ≤25 minutes and within a 15-minute walk), and the **end of a
+> ride** on that scooter (1, two hours, offered once). `device-notify.ts`'s
+> header is the normative statement; everything below is downstream of it.
 
 **One text, and its exact words:**
 
@@ -1638,57 +1651,74 @@ nothing. This is the other half.
 Astral Osprey 123 is no longer within 50m of where you scanned. This move was first observed at 2:32pm.
 ```
 
-#### 9.7.1 Two tiers, and the scan is the line between them
+#### 9.7.1 Two origins, and proximity is NOT what separates them
 
-This is the decision the rest of the section follows from.
+This is the decision the rest of the section follows from, and it is the one
+that changed.
 
 | Armed from | Where it lives | In-app notice | SMS |
 |---|---|---|---|
-| the device popup's 🔔 bell | `localStorage` | yes | **no** |
-| a QR scan (the ribbon's dial) | a row on the server | yes | **yes, on opt-in** |
+| a **dibs claim** while building a route (max 2) | `localStorage`, expiring with the claim | yes | **yes, on opt-in** |
+| the **end of a ride** on that scooter (max 1, 2 h) | `localStorage` | yes | **yes, on opt-in** |
+| anything else — a bell, a tap on the map, a bare scan | **nowhere. It cannot be armed.** | — | — |
 
-A watch armed off the map is a watch on a scooter the rider may never have been
-near, and master §13.8.1 is unambiguous about what an SMS-capable version of
-that would be: the following tool §8.4 refuses to build, delivered to a lock
-screen. The scan is what makes the anchor point somewhere the rider physically
-stood — the same thing §8.2's 75 m gate proves — and it is why the copy says
-"where you scanned" rather than "where it was".
+**The first draft of this section got the line in the wrong place.** It
+proposed that a QR scan — proof the rider stood within 75 m — was what earned
+the SMS tier, with the map's bell staying local-only. Both halves of that are
+wrong now:
 
-So the bell does not grow an SMS switch. The local tier stays exactly as
-shipped: no account, no scan, no network, in-app only, and the honest sentence
-it already carries. Nothing about it changes.
+* **A bell on the map had to go entirely**, not be held back from SMS. An
+  in-app-only tracker is still a tracker; the rider watching an address does
+  not mind opening the app.
+* **A scan is not a meaningful barrier.** Standing beside a scooter for ten
+  seconds is something anyone outside the building can do. Proof of presence
+  at a VEHICLE is not proof of a relationship to it, and §8.4's rule — you
+  may know where a vehicle is standing, you may not follow it — is not
+  satisfied by having been there once.
 
-#### 9.7.2 The dial gains its third position
+What the two surviving origins have in common is not proximity but
+**commitment that expires**: a claim is a vehicle this rider is walking to
+right now, and a finished ride is one they were just on. Both are states the
+rider cannot manufacture about a stranger's address, and both end on their own.
+That, rather than metres, is what makes an SMS defensible — and it is why the
+texted tier inherits exactly the same two doors and the same expiries.
 
-`qr-utility.ts` was built for this — its header says a third job "is a label on
-the dial, not a third flow", and this is the first one to arrive. A new position
-beside Confirm features and Ride mode:
+#### 9.7.2 The dial does NOT gain a third position
 
-| | | |
-|---|---|---|
-| 🔔 | **Notify if moved** | Watch this scooter and tell me when somebody rides it away. |
+`qr-utility.ts`'s header says a third job "is a third segment, not a third
+flow", and this was going to be the first one to arrive: a 🔔 Notify-if-moved
+position, scan a sticker, watch that scooter. **It is not being built**, for
+§9.7.1's reason — a standalone scan is an arming path with no expiring
+commitment behind it, which is the bell again with an extra step.
 
-One scanner, three outcomes, and the geometry is already a pure function of the
-mode count (`modeAngle`) so the ring re-spaces itself with no layout work.
+(The dial is also a segmented control now rather than a dial: two unordered
+jobs, one applied to whatever the camera reads next. `modeAngle` and the
+pointer geometry this section used to lean on are gone with it.)
 
-The scan posts to `POST /profile/device-move-watches` with the **raw payload**,
-unparsed, exactly as the Confirm Features position does — the server extracts
-the plate, resolves the vehicle and judges the 75 m. The client's local
-`plateFromQr` is for the Ride-mode position's own lookup and has no business
-deciding this.
+So the texted tier is armed from the two origins in §9.7.1 and nowhere else:
 
-A refusal is a sentence, not a code, and `too_far_from_device` is the one an
-honest rider will actually hit: *"You'll need to be standing at this one"* plus
-the distance, which is the shape `my-scooters.ts`'s `keepErrorMessage` landed on
-before it was deleted and is worth taking back out of git history rather than
-re-deriving.
+* **With a claim.** `registerDibs` already posts the claim to the server with
+  the vehicle, the position and the claimant. The move-watch is one more field
+  on that request — `notify_sms: true` — not a second endpoint, and the
+  server already holds everything the watch needs. It expires when the claim
+  does, which the server also already computes.
+* **At the end of a ride.** `PATCH /tracked-rides/{id}/end` is the one call
+  Screen 8 makes. Same shape: one field, and the server has the vehicle and
+  the end position in the request it is already handling.
+
+**This deletes `POST /profile/device-move-watches` from the plan**, and with it
+the `qr_raw_value` / 75 m-gate machinery master §13.8.7 specified for it. The
+watch stops being a thing a rider can create directly and becomes a property of
+a claim or a completed ride — which is a smaller API, a smaller table, and a
+capability with no door that can be pointed at an address.
 
 #### 9.7.3 The opt-in, asked once, at the moment it is useful
 
 §9.2's rule, unchanged: a number typed for a sign-in code is not consent to be
-texted about scooters. So the scan sheet carries the trip-alert opt-in — the
-same one grant Phase 9's other texts use, not a second switch — asked at the
-moment the watch is armed, and never as a wall in front of it.
+texted about scooters. So the opt-in rides with whichever origin armed the
+watch — the claim confirmation, or Screen 8's offer — using the same one grant
+Phase 9's other texts use, not a second switch, asked at the moment the watch
+is armed and never as a wall in front of it.
 
 **Declining is a first-class answer.** The watch is still armed; it is simply
 the local tier, with the in-app notice and no text. Nothing about this feature
@@ -1733,27 +1763,36 @@ client-side string for someone to interpolate a coordinate into.
 
 | Module | Responsibility |
 |---|---|
-| `device-notify.ts` *(existing)* | `MOVED_METERS` 25 → 50 with the citation. Gains nothing else: the verdict, the message and the one-alert rule are the local tier's and stay pure. |
-| `device-notify-panel.ts` *(existing)* | Rows learn a tier: a scan-anchored watch says so and says whether a text is coming, because "we'll tell you while the app is open" is the wrong promise for a row that will text. The status line stops being one sentence for every row. |
-| `qr-utility.ts` *(existing)* | The third dial position, and the opt-in + phone-verification states on its sheet. Still one scanner. |
-| `api.ts` *(existing)* | `createDeviceMoveWatch`, `listDeviceMoveWatches`, `deleteDeviceMoveWatch`. House rule: the calls live here, not in the feature module. |
+| `device-notify.ts` *(existing)* | Already carries the gated policy: `WatchOrigin`, `WATCH_RULES` (the per-origin caps and TTLs), `expiresAt` on every watch, and `liveWatches`/`watchSlotsLeft`. The texted tier adds a per-watch `sms` flag and nothing else — the verdict, the message and the one-alert rule stay pure and stay local. |
+| `device-notify-panel.ts` *(existing)* | Rows learn a tier: a row that will text says so, because "we'll tell you while the app is open" is the wrong promise for one that will. The status line stops being one sentence for every row. It still STARTS nothing. |
+| `dibs-certificate.ts` *(existing)* | The claim confirmation already discloses that a watch was armed; it gains the SMS opt-in when the rider has no grant yet. |
+| `ride-post-s8.ts` *(existing)* | The post-ride offer already exists and already arms the local watch; it gains the same opt-in. |
+| `api.ts` *(existing)* | `notify_sms` on `registerDibs` and on the ride-end `PATCH`. **No `device-move-watches` endpoints** — see §9.7.2 for why they are deleted rather than deferred. |
 | `trip-alerts.ts` *(§9.1)* | Gains nothing. Its opt-in is the grant this reuses — which is the point of it being one grant. |
-| `main.ts` *(existing)* | The dial's third position wires through the existing `openQrUtility` call; the panel's refresh already exists. No new `wireX()`. |
+| `qr-utility.ts` *(existing)* | Gains nothing, and that is the change: the third segment is not being built. |
+| `main.ts` *(existing)* | Gains nothing. Both arming paths already route through `armDibsWatch` / `armRideEndWatch`. |
 
 #### 9.7.7 Tests
 
-- The bell's watch is never SMS-eligible — asserted at the store boundary, not
-  just absent from the UI.
-- A scan-anchored watch posts the **raw** payload and no parsed plate.
-- `too_far_from_device` renders the distance, in a sentence.
-- Declining the opt-in still arms the watch, locally, and says so.
+- **A watch cannot be created from any origin but the two.** Asserted at the
+  store boundary, not just by the absence of a button: a stored watch whose
+  `origin` is anything else is treated as corrupt and dropped.
+- **Every watch has an expiry, and an expired one is invisible to every
+  reader.** This is the half of the design that makes the feature not a
+  standing subscription, so it is tested at the store rather than in the UI.
+- A dibs watch inherits the CLAIM's expiry, not a duration of this feature's
+  choosing — so releasing or losing the claim cannot leave a watch behind.
+- The caps are per origin: a third claimed scooter cannot evict the watch on
+  the one the rider just rode.
+- The ride-end offer is made once and never returns, including after a refusal.
+- Declining the SMS opt-in still arms the watch, locally, and says so.
 - A watch row that will text says so; a local one promises only "while the app
   is open". The two rows do not share a sentence.
 - `MOVED_METERS` is 50, asserted against the constant rather than a literal, so
   the in-app verdict and the server's cannot drift.
-- The dial re-spaces to three positions and every one is reachable by arrow key
-  — `modeAngle`'s existing property test covers the geometry; this is the
-  regression guard for the count changing.
+- **The device popup renders no arming control at all** — asserted on the
+  popup HTML, because the button is cheap to re-add and the harm is not
+  visible in the diff that adds it.
 
 ---
 
@@ -1793,6 +1832,340 @@ identically with the CC off, and if it ever stops doing so, that is a bug.
 - On the clipboard fallback the CC is exposed as its own field, and never
   appended to the body.
 - Phase 8's verdict and complaint paths behave identically with the CC off.
+
+---
+
+## Phase 11 — Ride mode, for somebody actually on a scooter
+
+Ride mode works. A rider can plan a trip, claim a scooter, walk to it, start a
+tracked ride, watch a speedometer and a cost estimate, follow a route, end the
+ride, file a report and answer a survey. What follows is not a list of bugs; it
+is the gap between that and a thing a rider reaches for twice.
+
+**The organising observation: almost all of it assumes you are looking at the
+phone.** A scooter has no cradle, no speakers, and no safe moment to read a
+card. Ride mode is a rich visual HUD for a situation in which looking at a
+screen is the single most dangerous thing the rider can do. Nearly every item
+below is downstream of that.
+
+### 11.1 It cannot be used while riding, and that is one fix
+
+`ride-nav-hud.ts` draws an instruction card, a directional arrow and a
+step list. To use any of it the rider looks down — at the exact moment they are
+moving, in traffic, on a vehicle with 8-inch wheels. The honest summary of
+turn-by-turn today is that it works while stopped.
+
+**Voice and haptics, and they are the highest-value thing in this phase.**
+
+- `speechSynthesis`, local, free, no backend, no permission prompt. One
+  utterance per maneuver, spoken at a distance scaled to current speed (a
+  fixed 100 m is too late at 15 mph and absurd at walking pace), deduped by
+  maneuver index so a re-route or a GPS wobble cannot repeat it.
+- `navigator.vibrate` as the "something changed" cue, where it exists — the
+  rider feels the phone in a pocket and knows to listen, which is what makes
+  audio work without headphones.
+- **Prime it inside the Start tap.** Safari will not speak unless
+  `speechSynthesis` has been touched inside a user gesture; Screen 6's start
+  button is the only gesture guaranteed to precede a ride. A silent
+  `speak("")` there is the whole fix, and discovering this in the field is a
+  feature that works for every tester on Android and for nobody on iOS.
+- **A hard mute, in the display panel, remembered.** Some riders have
+  headphones in and some have a passenger; a HUD that cannot be silenced gets
+  closed.
+- **Never speak over the device popup or a modal** — the same rule the
+  follow-cam already follows via `hasOpenPopup()`.
+
+Tests worth having: one utterance per maneuver across a re-route; nothing
+spoken while muted; the distance threshold scaling with speed; nothing spoken
+when the ride is not `riding`.
+
+### 11.2 The clock is a guess, and the rider is doing the reconciling
+
+The HUD offers ±15s/±1m nudges and a reset because we cannot see Veo's billing
+clock. That is an honest workaround, and it has become the rider's job.
+
+Two things already in hand would mostly retire it:
+
+- **The QR scan is the start moment.** Ride mode's scan (`qr-ride-scan.ts`)
+  happens within seconds of the unlock, and we timestamp it. When a ride is
+  started that way, the scan time is a better `startedAt` than "when the
+  countdown finished", and no nudging is needed.
+- **Screen 8 already collects the truth.** The rider types the real cost from
+  the Veo app. That number, against our estimate, is a per-rider calibration:
+  if every ride comes in 1m20s over, the next estimate should start there.
+  Store an offset, apply it, show it ("your estimates have been running ~1
+  min short"), and let the rider clear it. This is the difference between a
+  counter that is roughly right and one they trust.
+
+### 11.3 Nothing happens at the two moments money changes
+
+The cost readout crosses both of these silently:
+
+- **The equity-area boundary.** `equityAreaCostCents` already prices a ride
+  inside one at 13¢/min against 39¢. Crossing in or out is the most
+  on-mission event this app can observe, and the rider is told by a number
+  getting smaller, if they happen to look. This is the first thing voice
+  should say after turn cues: *"you're in an equity area now — 13 cents a
+  minute."*
+- **The free-minutes cliff.** Pass-holders have an allowance. The HUD knows
+  the plan (`RATE_PLANS`, `savedRatePlan`) and the elapsed time, and says
+  nothing as the allowance runs out. "Two minutes of your free time left" is
+  worth more than every other number on the screen combined.
+
+### 11.4 A ride that ends badly has no path
+
+Three endings, one of which corrupts data:
+
+1. **The phone dies, or the tab is killed.** Handled —
+   `ride-resume-prompt.ts` and the recovery table in `ride-session.ts`.
+2. **The rider walks away without finishing Screen 8.** The ride stays open.
+   Recovery exists but is framed as "resume"; what is missing is the other
+   offer: *"did your ride end at 4:12pm?"*, using the last fix's timestamp,
+   which is the honest answer and one tap. Today the rider has to reconstruct
+   it themselves, and a ride ended hours late is worse data than no ride.
+3. **Something went wrong — a crash, a fall, a stop.** Nothing. There is no
+   detection and no check-in. This is worth stating as a deliberate decision
+   rather than an omission: a false "are you OK?" is alarming, and a missed
+   real one is worse than never having promised. The minimum honest version is
+   not detection at all but **a share-my-ride link** — somebody else can see
+   the live track — which needs the API lane and is §9's shape.
+
+### 11.5 Battery anxiety is unaddressed in both directions
+
+We know more about a scooter's battery than the rider does: the reported
+percentage at pickup, `max_observed_range_meters`, and the API's own
+`battery_model.py`. Ride mode never uses it to answer the one question a rider
+asks before setting off — *will this reach where I am going?*
+
+- **Before:** Screen 2/6 should refuse quietly rather than cheerfully. A 14%
+  Astro and a 6 km destination is a walk home, and we can see it coming.
+- **During:** one warning, once, when the remaining route exceeds the modelled
+  remaining range. Not a gauge — a sentence.
+
+This is the item most likely to produce a wrong claim, so it wants a
+confidence floor: no warning at all unless the model has a range observation
+for that vehicle class, because "you might not make it" said wrongly teaches
+the rider to ignore it.
+
+### 11.6 Out of the zone, and the data we do not have
+
+The expensive ending is parking somewhere that costs a fee. The app cannot warn
+about it, and the reason is worth recording: **Veo publishes no
+`geofencing_zones` feed.** Checked 2026-10-06 against
+`cluster-prod.veoride.com/api/shares/name/den/gbfs/` — `system_information`
+returns 200, `geofencing_zones` and `gbfs` both 404. There is no authoritative
+operating area, no no-park zone and no slow zone available to us.
+
+So the honest options are, in order:
+
+1. **Use the fleet as its own parking dataset.** Thousands of currently-parked
+   vehicles are thousands of positions where parking was, in practice,
+   accepted. "Nine scooters are parked within 50 m of here" is a true
+   statement that answers the rider's real question without claiming a
+   boundary we cannot see. This is buildable today from data already on the
+   client.
+2. **Ask the city.** The permit area is likely in the same Open Data Catalog
+   the equity areas came from. If it exists, it is authoritative for the
+   *city's* rule, which is not identical to Veo's fee rule — and the copy
+   would have to say which one it is.
+3. **Invent nothing.** A drawn boundary we cannot source is exactly the kind of
+   confident wrong claim this codebase refuses elsewhere.
+
+### 11.7 The HUD has eight controls and one question
+
+During a ride there is one question — *how much is this costing me and where do
+I turn* — and one action: end. The HUD currently offers exit, end, adjust,
+display-panel, re-center, nudges ×4, reset, rate select, theme, four display
+chips and model filters, across two sliding panels.
+
+The fix is not deleting features, it is admitting a hierarchy: the glanceable
+readout, one primary action, everything else behind a single control. And the
+controls belong at the **bottom** — a phone on a handlebar mount is reached
+with a thumb from below, and the current cluster is at the top.
+
+### 11.8 The ride ends and nothing accumulates
+
+Screen 10 awards points. The track lands in IndexedDB and is visible in the
+Account drawer's Local Data tab, which is not a place anybody goes. What is
+missing from the end of a ride is the sentence that brings somebody back:
+*that was your 12th ride, 38 miles, and you've saved $47 against the
+comparator.* `equity-savings.ts` (Phase 5) already computes most of it. The
+asset exists and the ride flow does not use it.
+
+### 11.9 Leg two is a new ride
+
+Screen 8's [New Destination] loops back to the wizard, which is the hand-off
+plan's visible edge, but the HUD has no concept of a trip with legs: the clock
+restarts, the cost restarts, the trail is a new trail. Phases 2 and 3 own the
+planning; what this phase owes is a HUD that can show "leg 2 of 3" and a
+total. Until it can, "along the way" is a planning feature the ride itself
+cannot represent.
+
+### 11.10 What NOT to build
+
+- **No crash detection.** See §11.4.
+- **No live position sharing from this lane.** It is a server feature (§9) and
+  a consent conversation, not a client one.
+- **No speedometer precision work.** It is derived from GPS and it is already
+  as good as that gets; a prettier dial is not what is missing.
+- **No in-ride social.** The leaderboard is a reason to ride, not a thing to
+  read while riding.
+
+### 11.11 Order, and why
+
+1. **Voice + haptics** (§11.1) — unblocks every other in-ride signal, because
+   a signal nobody can receive is not a signal.
+2. **The two money moments** (§11.3) — the first things worth saying out loud,
+   and the most on-mission.
+3. **"Did your ride end at …?"** (§11.4 case 2) — the data-integrity one.
+4. **Scan-time start + the Screen 8 calibration** (§11.2) — retires the nudges
+   for most rides.
+5. **Battery reach** (§11.5) — highest risk of a wrong claim, so it goes after
+   the signals that are certain.
+6. **HUD hierarchy** (§11.7) and **the ride's closing sentence** (§11.8).
+7. **Legs** (§11.9), with Phases 2–3.
+
+---
+
+## Phase 12 — The device card
+
+The popup is the most-opened surface in the app and the one that has absorbed
+every feature: it now carries a header, a verdict bar, an arrival block, up to
+eight action buttons, a status badge row, a six-row definition list and a walk
+estimate. Everything in it was a good idea. Together they answer the rider's
+question fourth.
+
+### 12.1 What is actually wrong, in the order it matters
+
+**(a) The four things a rider chooses on are below the buttons.** Rideability
+earned the verdict bar and is right at the top — that part works. Vehicle
+type, battery and features sit in a `<dl>` underneath ~8 full-width actions,
+at the same visual weight as `Vehicle ID` and `Parked for`. The rider scrolls
+past the controls to reach the facts the controls depend on.
+
+**(b) Features are rendered twice and labelled neither time.** Glyph-only
+buttons in the header (`🔔 🧺 📱` with the explanation behind a tap) and a
+prose summary in the stat list. Two renderings, no words on the prominent one.
+
+**(c) Blocked actions explain themselves with `title`, which does not exist on
+a phone.** `▶️ Open in Veo` greys out with `title="You're too far away,
+sorry!"`. Touch devices never show a tooltip. The rider gets a dead grey
+button and no reason — on the primary CTA. Some paths route through
+`showHint` on tap, which works; the gated ones mostly do not.
+
+**(d) The proximity rules are three different radii and two of them are
+missing.** Measured, not guessed:
+
+| Action | Sign-in | Proximity | Admin exempt |
+|---|---|---|---|
+| `▶️ Open in Veo` | yes | **75 m** (`UNLOCK_PROXIMITY_M`) | proximity only |
+| `🛴 I'll ride this one` | no | **~1125 m** (`RIDE_MAX_WALK_M`, 15 min) | yes |
+| `⚠️ Report bad parking` → Veo | no | **100 m** (`PARKING_REPORT_PROXIMITY_M`) | yes |
+| `Report a problem` chips (not rideable / dead battery / damaged) | no | **none** | n/a |
+| `📷 Take Photo` | yes | **none** | n/a |
+| `☑️ Confirm Features` | no | none | n/a |
+| `🖼️ Show Photos`, `ℹ️ Details` | yes / no | none | — |
+
+Three radii is defensible — they answer different questions, and each one has
+a comment explaining itself. **The two blanks are not.** The ungated
+`Report a problem` chips flip `has_negative_report`, which overrides a
+vehicle's reliability tier for 24 hours across the whole fleet: the single
+most consequential thing a rider can do from this card, available from
+anywhere in the world. And `📷 Take Photo` attaches rider evidence to a
+specific vehicle from any distance. Meanwhile *reporting bad parking* — which
+is a complaint about a thing you can see — is correctly gated at 100 m. The
+cheap actions are gated and the expensive ones are not.
+
+### 12.2 The rule to adopt
+
+**Three tiers, named, and every action declares which one it is in.**
+
+| Tier | Means | Radius | Who is exempt |
+|---|---|---|---|
+| `anywhere` | reading public data, or a purely local act | — | — |
+| `in_reach` | "I could walk to this": starts a journey | `RIDE_MAX_WALK_M` | admins |
+| `at_the_vehicle` | "I am standing here and I can see it": any claim about this vehicle's condition, position, or equipment, and the unlock | one radius, **75 m** | admins |
+
+So `Report a problem`, `Take Photo` and `Confirm Features` move into
+`at_the_vehicle`, and the parking report's 100 m collapses into the same 75 m
+— a second radius for the same claim-type is a distinction no rider can
+perceive and nobody will maintain.
+
+**Admins are exempt from proximity, never from sign-in**, which is already
+how `startAllowed` behaves; the tier table makes it one rule instead of four
+coincidences. The justification already written at the parking-report gate is
+the general one and should move to the tier definition: the gate is a
+*credibility* check, not a data dependency — the report is built from the
+device's coordinates, never the reporter's, so a distant admin files exactly
+the same report, and an admin working a compliance queue from a desk is doing
+the job.
+
+**One consequence to accept deliberately:** gating the failure-report chips
+loses reports from riders browsing the map. That is the point. A reliability
+signal that overrides a tier for 24 h should come from somebody who was there,
+and §1's own argument for the arrival-panel and Screen 6 buttons —
+*both moments of certainty rather than browsing* — is the same argument.
+
+### 12.3 What the card should look like
+
+Order by what the rider decides on, then what they can do:
+
+```
+┌────────────────────────────────────────────┐
+│  🛴  Lunar 🐸 928            [Veo Cosmo]   │   ← name + model badge
+│      Seated · two wheels                   │
+├────────────────────────────────────────────┤
+│  ✅ Likely rideable                         │   ← the verdict bar, unchanged
+├────────────────────────────────────────────┤
+│  🔋 82%   ·   ~6.2 mi left                  │   ← ONE facts strip, big
+│  🧺 basket  📱 phone holder  🔔 bell (!)    │   ← features, WITH WORDS
+├────────────────────────────────────────────┤
+│  ~4 min walk (0.2 mi)                       │
+├────────────────────────────────────────────┤
+│  [ 🛴 I'll ride this one        ]           │   ← one primary
+│  [ ▶️ Open in Veo ] [ ☑️ Features ]         │
+│  ⚠️ Report   ℹ️ Details   📷 Photos          │   ← secondary, one row, small
+└────────────────────────────────────────────┘
+```
+
+- **One facts strip** replaces the top half of the `<dl>`: battery (with the
+  range estimate it already has), and features as labelled chips. `Vehicle ID`
+  and `Parked for` move into `ℹ️ Details`, where the rest of the forensics
+  already live — `Parked for` is an auditing fact, not a choosing fact.
+- **Features get their words back**, and the broken ones keep the `(!)` they
+  already have. A glyph is not a label (`emoji-scale.ts` had to learn the same
+  thing).
+- **The secondary row is text-sized**, not three more full-width bars.
+
+### 12.4 Blocked is a sentence, in the card
+
+Every gated action renders enabled-looking and, on tap, writes the reason into
+the existing `.device-popup__actionhint` live region — which already exists,
+already announces politely, and is already how the dibs and bell paths behave.
+`title` stays for pointer users and stops being the only channel.
+
+The sentences are already written and already good ("You're too far away,
+sorry!", "Sign in (Account tab) to start rides here."). The bug is purely that
+a phone never shows them.
+
+**`aria-disabled` stays, `disabled` must not be used** — a `disabled` button
+cannot be tapped, so the reason could never be delivered. This is the existing
+`is-blocked` pattern; §12.4 just makes it universal.
+
+### 12.5 Tests
+
+- Every action in the card is covered by a tier assertion: no action may ship
+  without declaring one, asserted over a table rather than per button.
+- The failure-report chips and the photo button are refused beyond 75 m, with
+  a sentence, and allowed for an admin at any distance.
+- There is exactly one proximity radius for `at_the_vehicle` actions —
+  asserted against the constant, so a second one cannot be introduced quietly.
+- Tapping any blocked action writes its reason into the hint region. Asserted
+  for every blocked variant, because `title`-only is the bug.
+- The facts strip renders battery and features above the action row (order
+  asserted on the DOM, since this is the whole complaint).
+- Features render their words, not only glyphs.
+- `Vehicle ID` and `Parked for` are NOT in the compact card.
 
 ---
 
@@ -1858,10 +2231,12 @@ the wrong call and the envelope should come back.
 | `trip-plan.ts` | `replaces` on `POST /dibs` | **no, for a claim-moving re-solve — hard dependency** (§3.3). Two calls cannot do it: release-then-claim can lose the claim with nothing to restore, and claim-then-release is refused by the server's one-claim invariant. What ships first is a re-solve that changes the route and leaves the new pickup **unclaimed**, said plainly. The migration is **the next free one** adding `replaces_dibs_id` — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted. **Also on this row: the server-enforced time-to-arrival claim bound.** `registerDibs` sends no ETA today and the old gate is a walk-minute rule, so a *ridden* pickup — the thing this phase exists for — fails a gate written for walking. Without the bound, Phase 3 can look ready while every hand-off is refused |
 | ~~`my-scooters.ts`~~ | ~~`sql/081` + `/profile/favorite-devices`~~ | **moot** — built, shipped, then deleted as the wrong feature (see the module map). The endpoints still exist and still work; nothing calls them |
 | `device-notify.ts` (the local tier) | **nothing at all** | yes, and it shipped that way — a watch in `localStorage`, an in-app notice on the device refresh the map already does |
-| **the texted tier** (§9.7) | `device_move_watches` + its three endpoints + the per-cycle watcher (master §13.8.7–8) | **no, and it cannot be faked here** — same shape as background loss detection above: a closed tab detects nothing, so "it moved while my phone was in my pocket" is satisfied by that watcher or not at all. The dial position and the opt-in UI can be built against a stub; the text cannot |
+| **the texted tier** (§9.7) | a `notify_sms` flag on the dibs claim and on the ride-end PATCH, plus the per-cycle watcher (master §13.8.8). **Not** `device_move_watches` and its endpoints — §9.7.2 deletes those | **no, and it cannot be faked here** — same shape as background loss detection above: a closed tab detects nothing, so "it moved while my phone was in my pocket" is satisfied by that watcher or not at all. The opt-in UI can be built against a stub; the text cannot |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
 | Phase 7 (the walkthrough) | **nothing at all** | yes, but *after* Phase 6 — see below |
+| Phase 11 (ride mode) | **almost nothing.** Voice, haptics, the equity and free-minute callouts, the clock calibration, the HUD hierarchy and the ride's closing sentence are all local. Two exceptions: the battery-reach warning wants `battery_model.py`'s view of range rather than a client guess, and share-my-ride (§11.4) is a server feature or it is nothing | yes, for everything except those two |
+| Phase 12 (the device card) | **nothing at all.** Every gate it moves is client-side, and the one data change — dropping `Vehicle ID` and `Parked for` from the compact card — is a render decision | yes |
 
 Phases 1, 2 and 5a have no hard API dependency and can land first. Phase 3
 wants the atomic swap. **Phase 4 is the one phase that cannot start on this

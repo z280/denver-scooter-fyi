@@ -682,7 +682,10 @@
              fourth checkbox in the list below. It is not one boundary set
              among several: it is the map the Veo contract is measured
              against, and the one that decides whether a rider is owed a
-             discount. OFF by default all the same — see wireEquityAreas(). -->
+             discount. ON by default, and MUTED by default — a boundary
+             nobody can see explains nothing, and a full-strength wash over a
+             third of the city is not what someone came for. These two
+             attributes ARE the defaults; wireEquityAreas() reads them. -->
         <section class="control-group" aria-labelledby="equity-areas-label">
           <h3 id="equity-areas-label" class="control-label">Equity areas</h3>
           <p class="control-hint">
@@ -691,9 +694,62 @@
             $0.13/min. Same map this app's compliance numbers use.
           </p>
           <label class="switch">
-            <input type="checkbox" id="equity-areas-toggle" />
+            <input type="checkbox" id="equity-areas-toggle" checked />
             <span>Show equity areas on map</span>
           </label>
+          <label class="switch">
+            <input type="checkbox" id="equity-areas-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">
+            Muted draws the outline with only a hint of fill, so the streets
+            and the scooters on top stay readable. Turn it off for the solid
+            wash when you are studying coverage rather than riding.
+          </p>
+        </section>
+
+        <!-- Denver's own micromobility rules (DOTI, via a CORA request —
+             see src/micromobility-zones.ts). FIRST in this drawer, above the
+             equity areas and the boundary outlines, because it is the only
+             thing in here that can stop a rider breaking a rule they did not
+             know about. The other two are context; this one is the law. -->
+        <section class="control-group" aria-labelledby="zones-label">
+          <h3 id="zones-label" class="control-label">City rules for scooters</h3>
+          <p class="control-hint">
+            Denver&rsquo;s own slow-ride, no-parking and no-ride zones, obtained
+            from the city under an open-records request. These are the
+            <em>city&rsquo;s</em> rules &mdash; Veo&rsquo;s own geofence, which
+            is what actually charges you, is not published anywhere we can
+            read.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="zones-rules-toggle" checked />
+            <span>Slow &amp; no-parking zones</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-schools-toggle" />
+            <span>School grounds</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-outside-toggle" />
+            <span>Outside Denver (Glendale)</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">
+            <span class="zone-key"><span class="zone-key__dot" data-zone="no_ride"></span>No riding</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="no_parking"></span>No parking</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="slow"></span>Slow</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="school"></span>Unstated rule</span>
+          </p>
+          <p class="control-hint">
+            School grounds and Glendale are drawn grey on purpose: the city
+            gave us the land, not the rule. Treat school grounds as
+            ride-with-care, and note that Denver&rsquo;s rules &mdash; and this
+            app&rsquo;s numbers &mdash; stop at the Glendale line.
+          </p>
         </section>
 
         <section class="control-group" aria-labelledby="layers-label">
@@ -767,12 +823,21 @@
         <button class="drawer-close" type="button" aria-label="Close Leaderboard">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- Both ON by default, like the equity overlay next door and for the
+             same reason: a leaderboard nobody can see on the map is a table,
+             and the territory IS the game. Muted keeps it under the scooters.
+             These attributes are the defaults — main.ts reads them. -->
         <section class="control-group">
           <label class="switch">
-            <input type="checkbox" id="leaderboard-territory-toggle" />
+            <input type="checkbox" id="leaderboard-territory-toggle" checked />
             <span>Show Territory Control</span>
           </label>
           <p class="control-hint">Shades the map's large hexagons with the ruling colors of whoever leads each one.</p>
+          <label class="switch">
+            <input type="checkbox" id="leaderboard-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">Keeps the shading faint enough to read the map through. Turn it off for full-strength colors.</p>
         </section>
 
         <section class="control-group">
@@ -820,22 +885,23 @@
           <ul class="my-dibs" id="my-dibs-list"></ul>
         </section>
 
-        <!-- Notify me if moved. Where Favorite Scooters was, because it answers
-             the question that feature was reaching for and the one a map cannot
-             answer by sitting there: has that scooter gone? Below My dibs for
-             the same reason favourites were — a claim is racing a clock, a watch
-             is waiting on the world.
+        <!-- Watched scooters. Below My dibs because most of this list IS the
+             dibs list: a watch is armed as part of claiming a scooter while
+             building a route, and the only other way to get one is the offer
+             at the end of a ride.
 
-             NOT hidden while signed out. Watching needs no account and no QR
-             scan, which is the whole difference from the ⭐ it replaced, so
-             there is no state in which this heading is a reminder of something
-             the visitor cannot have. Populated by wireDeviceNotifyPanel(). -->
+             THERE IS NO CONTROL HERE THAT STARTS A WATCH, and that is the
+             point rather than an omission — see src/device-notify.ts's
+             header. This section exists to show what is being watched and to
+             STOP it, which is the surface a rider needs when they want this
+             off. Populated by wireDeviceNotifyPanel(). -->
         <section class="control-group" id="tools-notify-moved"
                  aria-labelledby="tools-notify-moved-label">
-          <h3 id="tools-notify-moved-label" class="control-label">Notify me if moved</h3>
+          <h3 id="tools-notify-moved-label" class="control-label">Watched scooters</h3>
           <p class="finder-help">
-            Scooters you&rsquo;re watching. We&rsquo;ll tell you when one is
-            ridden away &mdash; while the app is open.
+            Scooters you&rsquo;ve claimed or just ridden. We&rsquo;ll tell you
+            if one is ridden away &mdash; while the app is open, and only for
+            as long as your claim or your ride is recent.
           </p>
           <ul class="notify-moved" id="notify-moved-list"></ul>
           <p class="finder-help" id="notify-moved-status" role="status" aria-live="polite" hidden></p>
@@ -1054,6 +1120,13 @@
           your trust. I take your privacy and data security extremely
           seriously. The governing documents are here:
         </p>
+        <!-- These are no longer the ONLY place these links appear — the map
+             carries them in its attribution corner now (src/legal-links.ts),
+             because the governing documents of a site with accounts and usage
+             events cannot live behind a collapsed disclosure. They stay here
+             too: this paragraph is the one place that explains what they are,
+             and a reader who has got this far is owed the link rather than a
+             direction to go and find it. -->
         <p>
           <a href="https://data.scooter.fyi/legal/privacy-policy" target="_blank" rel="noopener">Privacy&nbsp;Policy</a>
           ·

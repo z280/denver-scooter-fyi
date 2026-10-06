@@ -45,7 +45,14 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
-import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import {
+  callDibs,
+  canCallDibs,
+  dibsOn,
+  dropDibs,
+  saveDibs,
+  type Dibs,
+} from "./dibs.ts";
 import { requestDibsNotifications } from "./dibs-notify.ts";
 import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
@@ -566,40 +573,27 @@ export class Devices {
     this.rideInterceptor = fn;
   }
 
-  /** "Notify me if moved" — the popup's bell. Injected the same way the ride
-   *  interceptor is, so this file stays free of the watch store, the
-   *  notification permission prompt and the rules around both: it renders a
-   *  button and forwards a tap. Absent means no bell, which is what a page
-   *  without the Tools drawer gets. `report` writes to this popup's hint line:
-   *  the outcome belongs where the rider tapped, not in a closed drawer.
+  /** Arm the move-watch that rides along with a dibs claim, and hand back the
+   *  sentence to show (or null when nothing was armed).
    *
-   *  REPLACED "Keep this one" (the ⭐). That button needed a sign-in, a QR
-   *  scan and a fix within 75 m, and in exchange told the rider where a
-   *  scooter was parked — which this map already does, for every scooter, to
-   *  anybody. The bell needs none of the three and answers the one question a
-   *  map cannot answer by sitting there: has it gone? See
-   *  `device-notify.ts`'s header. */
-  private notifyMovedHandler:
-    | ((info: {
-        vehicleIdentifier: string;
-        name: string;
-        lat: number;
-        lon: number;
-        report(text: string): void;
-      }) => void)
-    | null = null;
+   *  THERE IS NO BELL ON THIS POPUP ANY MORE, and this hook is the shape that
+   *  replaced it. The old one let a rider arm a watch on any scooter on the
+   *  map from here, which is an "alert me when this address's occupant
+   *  leaves" tool — see `device-notify.ts`'s header for why that cannot
+   *  exist. A watch now has to ride along with a connection the rider already
+   *  has to the specific vehicle, and this popup owns exactly one of those:
+   *  claiming it while building a route.
+   *
+   *  So it is not a button. It is part of what "I'll ride this one" does, and
+   *  the confirmation says so — the same argument the claim itself makes
+   *  about not being a second button to know about.
+   *
+   *  Injected rather than imported because the store, the cap, the permission
+   *  prompt and the Tools list all live outside this class. */
+  private claimWatchHook: ((claim: Dibs) => string | null) | null = null;
 
-  setNotifyMovedHandler(fn: typeof Devices.prototype.notifyMovedHandler): void {
-    this.notifyMovedHandler = fn;
-  }
-
-  /** Is this vehicle already being watched? Read at render time so the bell can
-   *  say which way it will toggle. Injected rather than imported for the same
-   *  reason the handler is. */
-  private isWatchedMoved: ((vehicleIdentifier: string) => boolean) | null = null;
-
-  setIsWatchedMoved(fn: (vehicleIdentifier: string) => boolean): void {
-    this.isWatchedMoved = fn;
+  setClaimWatchHook(fn: (claim: Dibs) => string | null): void {
+    this.claimWatchHook = fn;
   }
 
   constructor(
@@ -1671,12 +1665,6 @@ export class Devices {
             : model
               ? model.name
               : null,
-          vehicleId: props.vehicle_identifier
-            ? String(props.vehicle_identifier)
-            : null,
-          dwellText: props.first_observed_at_location
-            ? formatDwell(props.first_observed_at_location)
-            : null,
           address: null, // upgraded async after render (reverseGeocode)
         };
         const parkingReportUrl = veoParkingReportUrl(parkingInput);
@@ -1771,23 +1759,11 @@ export class Devices {
       // same rule the pinned Home/Work row follows. Either one can be absent:
       // Open in Veo needs a plate and proximity, Confirm Features disappears
       // once the features are confirmed.
-      // 🔔 Notify me if moved. Offered wherever it could work: a 16-hex
-      // identifier to watch, and a handler wired up.
-      //
-      // NO SIGN-IN GATE, and no proximity gate — the two things its ⭐
-      // predecessor demanded. A watch is a thing this browser does for the next
-      // few hours, so there is no account to attach it to and nothing to prove
-      // by standing next to the scooter. That is most of the point: the feature
-      // it replaced was the heaviest gate in the app guarding public data.
-      //
-      // The label says which way the tap goes, because a toggle whose two
-      // states look the same is a button riders press twice.
-      const watchingMoved =
-        vid.length >= 16 && this.isWatchedMoved ? this.isWatchedMoved(vid) : false;
-      const notifyBtn =
-        vid.length >= 16 && this.notifyMovedHandler
-          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--notify${watchingMoved ? " is-on" : ""}" data-action="notify-moved" aria-pressed="${watchingMoved}">${watchingMoved ? "🔔 Watching — tap to stop" : "🔔 Notify me if moved"}</button>`
-          : "";
+      // NO 🔔 HERE. A "tell me when this one moves" button on every scooter
+      // on the map is a tracking tool — `device-notify.ts`'s header has the
+      // argument in full. The capability still exists, behind the two doors
+      // that require the rider to be connected to the vehicle already: the
+      // claim this popup's "I'll ride this one" makes, and the end of a ride.
       const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
       const startFeatureRow = pairCount
         ? `<div class="device-popup__pair ${pairCount === 1 ? "is-single" : "is-pair"}">
@@ -1802,7 +1778,6 @@ export class Devices {
           ${rideBtn}
           ${certBtn}
           ${startFeatureRow}
-          ${notifyBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
           ${photoRow}
@@ -2071,7 +2046,13 @@ export class Devices {
               lat: at.lat,
               lon: at.lon,
             });
-            showDibsConfirmation(claim);
+            // The watch rides along with the claim — see `setClaimWatchHook`.
+            // Armed BEFORE the confirmation so its sentence can go in the
+            // confirmation rather than arriving as a second notice: a rider
+            // being told they have dibs is the same breath in which to say
+            // we will warn them if it goes.
+            const watchLine = this.claimWatchHook?.(claim) ?? null;
+            showDibsConfirmation(claim, watchLine);
             // ASK NOW, NOT AT LOAD. Somebody who has just tapped "call dibs"
             // has a reason to be interrupted and knows what about; the same
             // prompt on arrival at the map is the one everybody denies
@@ -2168,22 +2149,6 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
-      // 🔔 Notify me if moved. Everything about what that means — the store,
-      // the permission prompt, the cap — lives behind the handler. The
-      // coordinates ride along because the watch is a comparison against where
-      // the scooter is NOW, and now is what this popup is showing.
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="notify-moved"]')
-        ?.addEventListener("click", () => {
-          this.notifyMovedHandler?.({
-            vehicleIdentifier: vid,
-            name: headerName,
-            lat: coords[1],
-            lon: coords[0],
-            report: showHint,
-          });
-        });
-
       // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="confirm-features"]')

@@ -246,6 +246,8 @@ export function buildAboutHtml(): string {
 export interface LeaderboardPanelElements {
   /** The Show Territory Control switch. */
   toggle: HTMLInputElement;
+  /** The Muted display switch. Checked = faint shading. */
+  mutedToggle: HTMLInputElement;
   regionalBody: HTMLElement;
   aboutBody: HTMLElement;
   scheduleBody: HTMLElement;
@@ -255,6 +257,11 @@ export interface LeaderboardPanelDeps {
   /** Turn the map's territory-control shading on or off. Owned by `main.ts`
    *  (it owns the hex-density controls); this panel only asks. */
   setTerritory(on: boolean): void;
+  /** Turn that shading down to a faint wash, or back up to full strength.
+   *  Separate from `setTerritory` because the two answer different questions
+   *  — "is it on the map" and "how loud" — and a rider who turns the layer
+   *  off and on again should find the strength they left it at. */
+  setTerritoryMuted(muted: boolean): void;
   /** Defaults to the real endpoints; injectable for tests. */
   fetchRegional?: (
     signal?: AbortSignal,
@@ -291,6 +298,20 @@ export function wireLeaderboardPanel(
     if (syncing) return;
     deps.setTerritory(els.toggle.checked);
   });
+
+  els.mutedToggle.addEventListener("change", () => {
+    deps.setTerritoryMuted(els.mutedToggle.checked);
+  });
+
+  // Apply what the markup says, at wire time, in this order: strength first,
+  // then presence. The other way round paints one frame at full opacity
+  // before dimming, which on a first load is the whole city flashing.
+  //
+  // The CHECKBOXES are the source of truth for the defaults (both ship
+  // checked in index.html), so a default moves by editing one attribute
+  // rather than two files that have to agree about it.
+  deps.setTerritoryMuted(els.mutedToggle.checked);
+  if (els.toggle.checked) deps.setTerritory(true);
 
   const loadRegional = (signal: AbortSignal): void => {
     const fetchRegional = deps.fetchRegional ?? fetchLeaderboardRegionalLive;

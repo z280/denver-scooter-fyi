@@ -56,6 +56,11 @@ import {
   type FeatureFilterKey,
 } from "./device-features.ts";
 import { Locate } from "./locate.ts";
+import {
+  MicromobilityZones,
+  type ZoneGroup,
+} from "./micromobility-zones.ts";
+import { requestLocationOnLoad } from "./locate-on-load.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
@@ -134,13 +139,14 @@ import {
   type DeviceNotifyPanelHandle,
 } from "./device-notify-panel.ts";
 import {
-  MAX_WATCHED_DEVICES,
+  WATCH_RULES,
   createDeviceNotifier,
   isWatched,
   loadWatches,
   requestMovedNotifications,
   unwatchMoved,
   watchMoved,
+  watchSlotsLeft,
   type DeviceNow,
 } from "./device-notify.ts";
 import {
@@ -148,6 +154,7 @@ import {
   type RideSpecPanelHandle,
 } from "./ride-spec-panel.ts";
 import {
+  dibsExpiresAt,
   dibsOn,
   dropDibs,
   recordProgress,
@@ -341,6 +348,10 @@ const overlays = new Overlays(map, need("choropleth-legend"));
 const equityAreas = new EquityAreaMap(map, need("equity-indicator"), (t, b) =>
   openFloatingModal(t, b),
 );
+/** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
+ *  See `micromobility-zones.ts` for the provenance and for what the city's
+ *  rulebook does and does not tell us. */
+const zones = new MicromobilityZones(map);
 const hexDensity = new HexDensity(map, need("hexbin-legend"), {
   // The territory readout's "claim your colors" hint lands on Community,
   // where the ruling colors it's pointing at actually live.
@@ -364,6 +375,19 @@ let clearHexDensity: () => void = () => {};
 // rather than the HexDensity instance directly, or the two controls would
 // disagree about what the map is showing.
 let setTerritoryShading: (on: boolean) => void = () => {};
+/** The two gated doors to a move-watch, assigned inside `map.on("load")` once
+ *  the notifier and the Tools panel exist. Module-level for the same reason
+ *  `resumeLiveRide` is: the callers are a device-popup handler and Screen 8,
+ *  neither of which can reach into that closure.
+ *
+ *  Both default to refusing, which is the right default for a capability whose
+ *  whole design is about not being available by accident. */
+let armDibsWatch: (claim: Dibs) => string | null = () => null;
+let armRideEndWatch: (
+  vehicleIdentifier: string,
+  name: string,
+  at: { lat: number; lon: number },
+) => boolean = () => false;
 let leaderboardPanel: LeaderboardPanelHandle | null = null;
 const freshness = new Freshness(
   need("freshness"),
@@ -1064,6 +1088,18 @@ function wireRecommended(): void {
 }
 
 map.on("load", async () => {
+  // Ask for location now. Almost every number this app shows is relative to
+  // where the rider is standing — the walk estimate on every popup, the
+  // "worth the walk" ranking, the 75 m proximity gates, which scooter Screen 2
+  // preselects — and until now all of it waited behind a button a first-time
+  // visitor had no reason to press. `locate-on-load.ts` owns the three rules
+  // (never re-ask a rider who declined, never ask twice, and a granted
+  // permission must be silent); it never throws, so this is not awaited and
+  // nothing below it depends on the answer.
+  void requestLocationOnLoad({
+    trigger: () => locate.trigger(),
+    hasFix: () => locate.current() !== null,
+  });
   devices.addLayers();
   buildLayerToggles();
   wireRideTypes();
@@ -1084,11 +1120,15 @@ map.on("load", async () => {
   leaderboardPanel = wireLeaderboardPanel(
     {
       toggle: need<HTMLInputElement>("leaderboard-territory-toggle"),
+      mutedToggle: need<HTMLInputElement>("leaderboard-muted-toggle"),
       regionalBody: need("leaderboard-regional-body"),
       aboutBody: need("leaderboard-about-body"),
       scheduleBody: need("leaderboard-schedule-body"),
     },
-    { setTerritory: (on) => setTerritoryShading(on) },
+    {
+      setTerritory: (on) => setTerritoryShading(on),
+      setTerritoryMuted: (muted) => hexDensity.setTerritoryMuted(muted),
+    },
   );
   wireDrawers();
   // Theme, in the Account drawer's header above the tabs. Mounted for the
@@ -1151,6 +1191,7 @@ map.on("load", async () => {
     apply: (s) => applyFilterSnapshot(s),
   });
   wireEquityAreas();
+  wireMicromobilityZones();
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
@@ -1178,54 +1219,78 @@ map.on("load", async () => {
     // ...and the bell on an open popup has to un-press.
     onChanged: () => devices.refreshOpenPopup(),
   });
-  devices.setIsWatchedMoved((vid) => isWatched(loadWatches(), vid));
-  // The bell toggles. Both directions are local and instant — no account, no
-  // scan, no network — which is the whole difference from the ⭐ it replaced.
-  devices.setNotifyMovedHandler(({ vehicleIdentifier, name, lat, lon, report }) => {
+  // NO BELL ON THE DEVICE POPUP. There used to be one, and removing it is the
+  // point rather than a side effect — see `device-notify.ts`'s header. A watch
+  // armable from any scooter on the map is a "tell me when this address's
+  // occupant leaves" alert, and no amount of rider convenience pays for that.
+  //
+  // The capability now has exactly two doors, both of which require the rider
+  // to already be connected to the specific vehicle, and both of which arm the
+  // watch as part of something else they were doing:
+  //
+  //   * CLAIMING ONE while building a route — `devices.ts`'s "I'll ride this
+  //     one" calls dibs, and `armDibsWatch` below rides along with the claim.
+  //   * FINISHING A RIDE on it — Screen 8 offers it once, and only then.
+  //
+  // What stays here is the un-arming: Tools lists what is being watched and
+  // stops it, which is the surface a rider needs when they want this OFF.
+
+  /** Arm the move-watch that rides along with a dibs claim.
+   *
+   *  Returns the sentence to show, or null when nothing was armed — the caller
+   *  is mid-confirmation and a silent no-op is better than a second dialog.
+   *  Everything that can refuse does so quietly: the cap, a vehicle that is
+   *  already unavailable (arming would fire on the next refresh and consume
+   *  the watch), and a claim with no expiry to inherit. */
+  armDibsWatch = (claim: Dibs): string | null => {
     const watches = loadWatches();
-    // THE SENTENCE HAS TO OUTLIVE THE RE-RENDER. `report` writes into the popup
-    // that is on screen now, and the `refreshOpenPopup` below replaces it with
-    // a fresh element — so anything written through `report` first is thrown
-    // away unread. Every outcome that is followed by a refresh hands its
-    // sentence to the refresh instead; `report` is kept only for the one that
-    // changes nothing and so does not refresh.
-    let said: string;
-    if (isWatched(watches, vehicleIdentifier)) {
-      track("device_notify_moved", { action: "off" });
-      unwatchMoved(vehicleIdentifier);
-      deviceNotifier.forget(vehicleIdentifier);
-      said = `We'll stop watching ${name}.`;
-    } else {
-      if (watches.length >= MAX_WATCHED_DEVICES) {
-        report(
-          `You're already watching ${MAX_WATCHED_DEVICES} scooters — stop one in Tools to add this.`,
-        );
-        return;
-      }
-      // NOT WORTH WATCHING YET. A scooter that is already rented, or that the
-      // operator has pulled, satisfies the alert's own condition the moment the
-      // next device refresh lands — so arming here would buzz the rider about
-      // something they can already see on the card in front of them, and then
-      // delete the watch. Say what is true instead.
-      const alreadyGone = currentlyUnavailable(vehicleIdentifier);
-      if (alreadyGone) {
-        report(alreadyGone);
-        return;
-      }
-      track("device_notify_moved", { action: "on" });
-      watchMoved({ vehicleIdentifier, name, lat, lon, since: Date.now() });
-      // A re-armed watch must not inherit the previous one's miss count or its
-      // already-fired flag, or it alerts on the first absent tick.
-      deviceNotifier.forget(vehicleIdentifier);
-      // ASK NOW, NOT AT LOAD — the same reasoning dibs uses, in its own words
-      // at the dibs call site. Somebody who has just asked to be told when a
-      // scooter moves knows what they are agreeing to be interrupted about.
-      void requestMovedNotifications();
-      said = `We'll tell you if ${name} moves, while the app is open.`;
-    }
+    if (isWatched(watches, claim.vehicleIdentifier)) return null;
+    if (watchSlotsLeft(watches, "dibs") <= 0) return null;
+    if (currentlyUnavailable(claim.vehicleIdentifier)) return null;
+    track("device_notify_moved", { action: "on", origin: "dibs" });
+    watchMoved({
+      vehicleIdentifier: claim.vehicleIdentifier,
+      name: claim.vehicleName,
+      lat: claim.lat,
+      lon: claim.lon,
+      since: Date.now(),
+      origin: "dibs",
+      // THE CLAIM'S OWN DEATH, not a duration of this feature's choosing. A
+      // watch that outlived the dibs it rests on would be a watch on a
+      // scooter the rider has no remaining connection to, which is the whole
+      // thing being prevented.
+      expiresAt: dibsExpiresAt(claim),
+    });
+    deviceNotifier.forget(claim.vehicleIdentifier);
+    void requestMovedNotifications();
     notifyPanel?.refresh();
-    devices.refreshOpenPopup(said);
-  });
+    return `We'll tell you if ${claim.vehicleName} moves before you get there.`;
+  };
+
+  devices.setClaimWatchHook((claim) => armDibsWatch(claim));
+
+  /** Arm the one-per-ride watch Screen 8 offers. Same refusals, plus its own
+   *  two-hour ceiling from `WATCH_RULES`. */
+  armRideEndWatch = (vehicleIdentifier, name, at) => {
+    const watches = loadWatches();
+    if (watchSlotsLeft(watches, "ride_end") <= 0 && !isWatched(watches, vehicleIdentifier)) {
+      return false;
+    }
+    track("device_notify_moved", { action: "on", origin: "ride_end" });
+    watchMoved({
+      vehicleIdentifier,
+      name,
+      lat: at.lat,
+      lon: at.lon,
+      since: Date.now(),
+      origin: "ride_end",
+      expiresAt: Date.now() + WATCH_RULES.ride_end.ttlMs,
+    });
+    deviceNotifier.forget(vehicleIdentifier);
+    void requestMovedNotifications();
+    notifyPanel?.refresh();
+    return true;
+  };
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
@@ -1339,6 +1404,15 @@ map.on("load", async () => {
           // fresh `Locate.current()` read (see `ride-hud.ts`'s `getLastFix`
           // doc comment for why).
           getLastFix: () => rideHud.getLastFix(),
+          // Screen 8's post-ride move-watch offer — the second of the
+          // capability's two doors. `canOffer` is asked before the control is
+          // drawn so a rider whose one slot is spent is never shown an offer
+          // that would refuse them.
+          canOfferMoveWatch: (vid) =>
+            watchSlotsLeft(loadWatches(), "ride_end") > 0 &&
+            !isWatched(loadWatches(), vid) &&
+            !currentlyUnavailable(vid),
+          armMoveWatch: (vid, name, at) => armRideEndWatch(vid, name, at),
         });
       });
     },
@@ -3900,19 +3974,127 @@ function beginWalkToVehicle(info: {
 // an equity area, because otherwise the discount stays discoverable only to
 // people already looking for it — the exact asymmetry this app exists to
 // correct.
+/** The Areas drawer's city-rules section.
+ *
+ *  Three group switches and a muted switch, all reading their defaults from
+ *  `index.html` the way the equity controls do — one attribute to change a
+ *  default, rather than two files that have to agree.
+ *
+ *  ON by default for the rules group alone. This is the only overlay in the
+ *  app that can stop somebody breaking a rule they did not know about, and it
+ *  comes from the city rather than from us; school grounds and Glendale stay
+ *  off because both are drawn from land, not from a stated restriction (see
+ *  `micromobility-zones.ts`). */
+function wireMicromobilityZones(): void {
+  const groups: [ZoneGroup, HTMLInputElement][] = [
+    ["rules", need<HTMLInputElement>("zones-rules-toggle")],
+    ["schools", need<HTMLInputElement>("zones-schools-toggle")],
+    ["outside", need<HTMLInputElement>("zones-outside-toggle")],
+  ];
+  const muted = need<HTMLInputElement>("zones-muted-toggle");
+
+  const guard = (box: HTMLInputElement, label: string, apply: () => Promise<void>) => {
+    const was = box.checked;
+    box.disabled = true;
+    void apply()
+      .catch((e: unknown) => {
+        console.error(`${label} failed`, e);
+        box.checked = !was;
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  };
+
+  for (const [group, box] of groups) {
+    box.addEventListener("change", () => {
+      guard(box, `zones ${group}`, () => zones.setVisible(group, box.checked));
+    });
+  }
+  muted.addEventListener("change", () => {
+    guard(muted, "zones muting", () => zones.setMuted(muted.checked));
+  });
+
+  // Draw now, at whatever the markup says. Strength before presence, same as
+  // the equity overlay: the other order paints a frame at full opacity and
+  // then dims it.
+  void zones
+    .setMuted(muted.checked)
+    .then(async () => {
+      for (const [group, box] of groups) {
+        await zones.setVisible(group, box.checked);
+      }
+    })
+    .catch((e: unknown) => {
+      // The app works without the rulebook; it simply cannot warn anybody.
+      // Unchecking says so rather than leaving a switch claiming a layer that
+      // is not there.
+      console.error("micromobility zones failed to load", e);
+      for (const [, box] of groups) box.checked = false;
+    });
+}
+
+/** The Areas drawer's two equity controls: whether the boundary is drawn at
+ *  all, and how loudly.
+ *
+ *  BOTH DEFAULT ON, which is a change of policy and not just of markup. The
+ *  boundary is the thing this app exists to point at — a discount written into
+ *  a contract, owed to anyone inside a line nobody can see — so it is now
+ *  drawn for everybody, and drawn quietly. "Muted display" is what turns it
+ *  back up to the full wash it used to be at when a rider switched it on.
+ *
+ *  The checkboxes are the source of truth for the initial state, not the
+ *  module's field defaults: `index.html` ships them checked, and this reads
+ *  them once at wire time, so changing a default means changing one attribute
+ *  rather than two files that have to agree. */
 function wireEquityAreas(): void {
   const toggle = need<HTMLInputElement>("equity-areas-toggle");
-  toggle.addEventListener("change", async () => {
-    toggle.disabled = true;
-    try {
-      await equityAreas.setOverlayVisible(toggle.checked);
-    } catch (e) {
-      console.error("equity areas overlay failed", e);
-      toggle.checked = false;
-    } finally {
-      toggle.disabled = false;
-    }
+  const muted = need<HTMLInputElement>("equity-areas-muted-toggle");
+
+  /** Both handlers are the same shape: disable while the geometry fetch is in
+   *  flight (the first call awaits it), and on failure put the checkbox back
+   *  where it was rather than leave it claiming something the map is not
+   *  doing. */
+  const guard = (
+    box: HTMLInputElement,
+    label: string,
+    apply: () => Promise<void>,
+  ) => {
+    const was = box.checked;
+    box.disabled = true;
+    void apply()
+      .catch((e: unknown) => {
+        console.error(`${label} failed`, e);
+        box.checked = !was;
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  };
+
+  toggle.addEventListener("change", () => {
+    guard(toggle, "equity areas overlay", () =>
+      equityAreas.setOverlayVisible(toggle.checked),
+    );
   });
+  muted.addEventListener("change", () => {
+    guard(muted, "equity areas muting", () =>
+      equityAreas.setOverlayMuted(muted.checked),
+    );
+  });
+
+  // Draw it now, at whatever strength the markup says. Deliberately not
+  // awaited: the geometry is a fetch, and the rest of the map's wiring has no
+  // business waiting on a boundary overlay.
+  void equityAreas
+    .setOverlayMuted(muted.checked)
+    .then(() => equityAreas.setOverlayVisible(toggle.checked))
+    .catch((e: unknown) => {
+      // The app works without it — the indicator chip is a separate path and
+      // does not depend on these layers at all.
+      console.error("equity areas initial draw failed", e);
+      toggle.checked = false;
+    });
 }
 
 /** The Filters drawer's accordion sections: one open at a time. Native
