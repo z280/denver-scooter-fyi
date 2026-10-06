@@ -158,8 +158,12 @@ describe("buildSpotHtml", () => {
     expect(hidden).not.toContain("No city slow");
   });
 
-  it("states the standard rate outside Equity Areas, and nothing before they load", () => {
-    expect(buildSpotHtml({ zonesShown: true, inEquityArea: false })).toContain("outside Denver's Equity Areas");
+  it("says no Equity Area discount applies outside them, and nothing before they load", () => {
+    const out = buildSpotHtml({ zonesShown: true, inEquityArea: false });
+    expect(out).toContain("no Equity Area discount applies here");
+    // Outside Denver Veo may not even operate; the card claims only what the
+    // boundaries support.
+    expect(out).not.toContain("standard Veo rate");
     expect(buildSpotHtml({ zonesShown: true, inEquityArea: null })).not.toContain("Equity Areas,");
   });
 

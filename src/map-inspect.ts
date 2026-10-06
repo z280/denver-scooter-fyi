@@ -207,7 +207,7 @@ export function buildSpotHtml(f: SpotFacts): string {
     : "City zones are switched off in Areas, so this can't rule one out.";
   const equity =
     f.inEquityArea === false
-      ? "<p>It's outside Denver's Equity Areas, so the standard Veo rate applies here.</p>"
+      ? "<p>It's outside Denver's Equity Areas, so no Equity Area discount applies here.</p>"
       : "";
   return `
     <div class="spot-inspect">
