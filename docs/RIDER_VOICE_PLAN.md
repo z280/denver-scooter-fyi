@@ -219,6 +219,22 @@ Two decisions for that lane, flagged here rather than assumed:
 
 ## 10. Sequencing
 
+**Status, 2026-10-06.** Steps 1–4 are built and on
+`claude/scooter-app-sticky-usage-wqcq9z` across both repos. §6.2 was decided:
+**post directly**, with the disclosure in §5 doing the work. What remains is
+step 5, and two things §4 called for that are not in yet — the optional photo,
+and the fleet figure for that place and week attached to the story, which needs
+`ANALYTICS_PLAN.md`'s tier-2 table before it is computable.
+
+The one substantive departure from §1: v1 had nowhere to put a free-text
+account, so it gained an optional `story` section alongside the `source` field
+this plan anticipated. Both are additive and a pre-story payload still
+validates unchanged — `keepdenverfair/tests/survey-story.test.ts` asserts
+exactly that, because it is the whole case for extending rather than forking.
+The neighbourhood list is served from the instrument (`GET /api/survey-options`)
+rather than mirrored, which removes the drift hazard §9 flagged.
+
+
 1. **The failure prompt** (§3.1). Smallest, highest value, needs no account and
    no WSYV integration — it can land as a local story draft on day one.
 2. **The local store and the pre-fill derivation.**
