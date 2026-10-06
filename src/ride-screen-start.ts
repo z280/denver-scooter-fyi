@@ -102,6 +102,11 @@ import {
   type FailedStartResult,
 } from "./ride-failed-start.ts";
 import { submitDeviceReport as defaultSubmitDeviceReport } from "./reports.ts";
+import {
+  fetchSurveyOptions as defaultFetchSurveyOptions,
+  submitRiderStory as defaultSubmitRiderStory,
+} from "./api.ts";
+import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -163,6 +168,13 @@ export interface RideScreenStartDeps {
    *  under a caller-supplied id when no local record exists yet (see that
    *  function's own doc comment) — the one-ID contract this hook exists to
    *  make possible. Optional for the same reasons as `onRideStarted`. */
+  /** The survey instrument's value sets, and the story submission. Injected
+   *  for the same reason `submitDeviceReport` is — and here it also keeps the
+   *  test suite off the network: this screen fetches the neighbourhood list in
+   *  the background, and an un-stubbed default makes a real request from
+   *  every test that opens the failure face. */
+  fetchSurveyOptions?: typeof defaultFetchSurveyOptions;
+  submitRiderStory?: typeof defaultSubmitRiderStory;
   onPrivateRideStarted?(trackKeyId: string): void;
   /** Fires when `startTrackedRide` throws a 409 — "an active ride already
    *  exists" (that function's own doc comment: "the resume-or-end prompt's
@@ -315,6 +327,12 @@ function buildStartScreen(
    *  scooter, so re-rendering the Veo buttons under the answer would invite
    *  them to try again on a scooter they just told us is dead. */
   let failedStart: FailedStartResult | null = null;
+  /** The story panel under the failure message, and the list its third-party
+   *  lane needs. Both are lazy: a rider whose scooter starts normally never
+   *  pays for either. */
+  let storyPanel: StoryPanel | null = null;
+  let storyNeighborhoods: readonly string[] | null = null;
+  let storyNeighborhoodsTried = false;
   let reportingFailedStart = false;
 
   // ---- Auto-start (the device-card "Use in Ride Mode" survey path).
@@ -406,9 +424,15 @@ function buildStartScreen(
     root.append(actions);
   }
 
-  /** After the report. One sentence about where the information went, and one
-   *  button — back to the picker, because a rider who has just told us their
-   *  scooter is dead wants a different scooter and nothing else. */
+  /** After the report. One sentence about where the information went, the
+   *  offer to say what happened in their own words, and one button — back to
+   *  the picker, because a rider who has just told us their scooter is dead
+   *  wants a different scooter.
+   *
+   *  ORDER MATTERS AND IS THE RULE. The report is the useful artefact and it
+   *  has already landed by the time anything here renders; the story is
+   *  offered AFTER it, never instead of it and never in front of it. A rider
+   *  who ignores the box has still done the thing that helps the next person. */
   function renderFailedStart(): void {
     const result = failedStart;
     if (!result) return;
@@ -418,10 +442,14 @@ function buildStartScreen(
     note.setAttribute("aria-live", "polite");
     root.append(note);
 
+    appendStoryPanel();
+
     const actions = el("div", "ride-wizard__actions");
     const pickBtn = el("button", "login-btn", "Pick another scooter");
     pickBtn.type = "button";
     pickBtn.addEventListener("click", () => {
+      storyPanel?.destroy();
+      storyPanel = null;
       failedStart = null;
       // Screen 2 is the picker. Dispatch the `goto` as well as navigating the
       // shell: the shell's own `onScreenChange` persists it, but `go()` is
@@ -434,6 +462,62 @@ function buildStartScreen(
     // No "try it anyway". The report we just sent says this scooter does not
     // ride; offering a second attempt on the same screen would be the app
     // disagreeing with the rider about something they can see and we cannot.
+  }
+
+  /** The story offer, under the report.
+   *
+   *  `ride-failed-start.ts` turns this moment into one enum, and that enum is
+   *  the whole of what the fleet learns from the most certain person in the
+   *  app: somebody standing over a scooter that will not turn on. The sentence
+   *  they could write is the part no count can carry, and this is the only
+   *  moment they will ever be asked.
+   *
+   *  Offered on every outcome, including `unreportable` and `failed`. A rider
+   *  whose report could not be sent has MORE to say about their morning, not
+   *  less, and the panel keeps the story locally either way. */
+  function appendStoryPanel(): void {
+    const host = el("div", "ride-screen-start__story");
+    root.append(host);
+
+    const doc = deps.session.current();
+    const device = doc ? selectedDevice(doc.device) : null;
+    storyPanel?.destroy();
+    storyPanel = mountStoryPanel(host, {
+      origin: "failed_start",
+      context: {
+        happenedAt: new Date().toISOString(),
+        vehicleModel: device?.model ?? null,
+        // The app's own verdict on this vehicle is a genuinely useful field
+        // ("it said it was fine" is a different complaint from "it was
+        // broken"), but the session doc does not carry the reliability tier
+        // and threading it through the picker is a wider change than this
+        // lane. Omitted rather than guessed: the payload field is optional
+        // and the disclosure simply does not mention what we do not send.
+        appAssessment: null,
+      },
+      neighborhoods: storyNeighborhoods,
+      submit: (draftId, payload) =>
+        (deps.submitRiderStory ?? defaultSubmitRiderStory)(draftId, payload),
+    });
+
+    // Fetch the instrument's neighbourhood list once, in the background. The
+    // panel renders immediately without it — the question is the point and it
+    // does not need a list — and re-mounts with the third-party lane enabled
+    // when it arrives. A failure is silent and permanent for this screen: the
+    // rider still gets the box, and simply is not offered a send we could not
+    // file correctly.
+    if (!storyNeighborhoodsTried) {
+      storyNeighborhoodsTried = true;
+      void (deps.fetchSurveyOptions ?? defaultFetchSurveyOptions)()
+        .then((opts) => {
+          if (destroyed || !failedStart) return;
+          storyNeighborhoods = opts.neighborhoods;
+          render();
+        })
+        .catch(() => {
+          /* no send option this time; the story is still kept locally */
+        });
+    }
   }
 
   /** The exit this screen was missing. A rider standing over a scooter that
@@ -882,6 +966,10 @@ function buildStartScreen(
     primary: root,
     destroy() {
       destroyed = true;
+      // The panel owns a draft and a pending submit; leaving it mounted under
+      // a torn-down screen would let a late response write into a dead DOM.
+      storyPanel?.destroy();
+      storyPanel = null;
     },
   };
 }

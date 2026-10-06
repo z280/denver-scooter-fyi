@@ -236,6 +236,23 @@
         </svg>
         <span class="drawer-tab__label">Leaderboard</span>
       </button>
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="stats"
+        aria-pressed="false"
+        aria-controls="drawer-stats"
+        title="Rider stats"
+      >
+        <!-- Bar chart. Monochrome line art like every other tab's icon. -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="3" y1="21" x2="21" y2="21" />
+          <line x1="7" y1="21" x2="7" y2="13" />
+          <line x1="12" y1="21" x2="12" y2="8" />
+          <line x1="17" y1="21" x2="17" y2="4" />
+        </svg>
+        <span class="drawer-tab__label">Stats</span>
+      </button>
       <!-- The QR tool. A ribbon BUTTON, not a drawer tab — deliberately
            without the .drawer-tab class, because wireDrawers() queries that
            class document-wide and would treat this as a tab for a drawer that
@@ -752,6 +769,30 @@
           </p>
         </section>
 
+        <!-- Veo's Rover service area. The Rover is the only vehicle in the
+             fleet whose trip cannot START OR END outside a downtown box, and
+             a rider who walks to one meaning to ride it home to Park Hill has
+             already lost the afternoon.
+
+             ON by default, and the only operator-specific layer in here, for
+             that reason. The boundary is six named streets read off Veo's own
+             map — see src/rover-zone.ts. -->
+        <section class="control-group" aria-labelledby="rover-zone-label">
+          <h3 id="rover-zone-label" class="control-label">Rover area (downtown only)</h3>
+          <p class="control-hint">
+            Veo only lets a <strong>Rover</strong> &mdash; the three-wheeled
+            seated trike &mdash; start or end a trip downtown. The outline
+            follows Broadway, Colfax, 14th, Wynkoop, 19th and Blake. Veo
+            doesn&rsquo;t publish the boundary, so which side of each street it
+            runs is the part we can&rsquo;t pin down &mdash; right at the edge,
+            check the Veo app.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="rover-zone-toggle" checked />
+            <span>Show the Rover area</span>
+          </label>
+        </section>
+
         <section class="control-group" aria-labelledby="layers-label">
           <h3 id="layers-label" class="control-label">Boundary outlines</h3>
           <ul class="layer-list" id="layer-list">
@@ -1033,6 +1074,29 @@
             📅 Compliance calendar
           </button>
         </section>
+      </div>
+    </aside>
+
+    <!-- ---------- Rider stats drawer ---------- -->
+    <!-- The panel reports and does not argue: scooter.fyi is pro-rider, not
+         an advocacy platform (docs/ANALYTICS_PLAN.md, THE VOICE). What share
+         of rentals go nowhere is consumer information about a service, like a
+         battery level — so the copy says what was counted and never who is to
+         blame. The same numbers carry a civic voice on weseeyouveo.com; the
+         voice selects words only, never a different filter or window.
+
+         Everything inside #fleet-stats is built by fleet-stats.ts. The
+         placeholder below is the ONLY static content, and only a successful
+         render replaces it. -->
+    <aside class="drawer" id="drawer-stats" aria-labelledby="drawer-stats-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-stats-h">Rider stats</h2>
+        <button class="drawer-close" type="button" aria-label="Close Rider stats">&times;</button>
+      </header>
+      <div class="drawer-body">
+        <div id="fleet-stats" class="fleet-stats" role="status" aria-live="polite" aria-label="Rental outcome statistics">
+          <div class="compliance-loading">Loading stats…</div>
+        </div>
       </div>
     </aside>
 

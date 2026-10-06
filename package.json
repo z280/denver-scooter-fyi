@@ -23,6 +23,7 @@
   "devDependencies": {
     "happy-dom": "^20.11.1",
     "playwright": "^1.56.1",
+    "polygon-clipping": "^0.15.7",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vitest": "^4.1.10"

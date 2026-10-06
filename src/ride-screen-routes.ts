@@ -64,6 +64,8 @@ import {
 import { distanceMeters, type Locate, type LngLat } from "./locate.ts";
 import type { Devices } from "./devices.ts";
 import type { RideDestWithCoverage } from "./ride-screen-dest.ts";
+import { modelKeyOf } from "./model-catalog.ts";
+import { roverVerdict, roverZoneMessage } from "./rover-zone.ts";
 import {
   selectedDevice,
   type RideSessionDoc,
@@ -503,9 +505,35 @@ function buildLoadedScreen(
   const controls = el("div", "ride-route-controls");
   controls.append(nextBtn);
 
+  // THE ROVER'S RIDE AREA, above the routes rather than beside them.
+  //
+  // A Rover trip cannot start OR end outside Veo's downtown area, so for this
+  // one vehicle the question "can I make this trip at all" comes before "which
+  // way shall I go" — and every route on this screen would otherwise look
+  // equally fine. Computed once: neither the vehicle nor the destination can
+  // change while this screen is up.
+  //
+  // IT NEVER BLOCKS. `rover-zone.ts` explains why at length: the outline is
+  // Denver's downtown standing in for a boundary Veo does not publish, so this
+  // is a warning that points at the Veo app, not a ruling. Disabling NEXT on a
+  // line we are not sure of would strand a rider over our own approximation.
+  const roverEl = (() => {
+    const sel = selectedDevice(doc.device);
+    if (modelKeyOf({ vehicle_model_name: sel?.model ?? null }) !== "trike") {
+      return null;
+    }
+    const verdict = roverVerdict({ lng: dest.lon, lat: dest.lat });
+    const msg = roverZoneMessage(verdict, "destination");
+    if (!msg) return null; // comfortably inside: say nothing
+    const node = el("p", "ride-modal__hint ride-route-rover", msg);
+    node.setAttribute("role", "status");
+    return node;
+  })();
+
   const primary = el("div", "ride-wizard__body ride-route-panel");
   primary.append(
     el("h3", "ride-modal__lede", "Choose your route"),
+    ...(roverEl ? [roverEl] : []),
     statusEl,
     betaEl,
     listEl,
