@@ -104,7 +104,7 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     crossPromo: {
       lead: "Riding today?",
       label: "Scooter.fyi",
-      href: "https://scooter.fyi",
+      href: "https://denver.scooter.fyi",
     },
   },
 };
