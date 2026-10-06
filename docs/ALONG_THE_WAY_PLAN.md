@@ -1200,6 +1200,29 @@ nothing that says so or takes them back.
 grows a "tilt slider" or a map that remembers a 40° pitch, both tables above
 are void and the seam is back.
 
+**Shipped, and smaller than this section expected.** The control already
+existed: the top bar's `#free-ride` button is labelled "Ride Mode", and
+`main.ts`'s `beforeOpen` already deflects a live doc to `RideHud.open()`, which
+resumes a BRB'd ride exactly where it paused. The way back in WORKED. What it
+did not do was **say so** — it read "Ride Mode — start recording a free ride"
+the entire time a ride was running, so a rider who stepped away had no way to
+tell their ride was still going, let alone one tap away. A control nobody can
+see is the same as no control, which is what "the gap is not the leaving, it is
+the returning" turned out to mean in practice.
+
+So `ride-reentry.ts` answers one question — *given the session doc, what is
+this button right now?* — as four named intents, and the button renders and
+acts from the same answer. A ride in flight lights it and changes its
+accessible name; the fact lives in the name, not only in the colour.
+
+**One correction to this section.** It asks for an "in-and-out control" where
+"leaving again is the same gesture". A single control cannot do both halves:
+`body.ride-active` sets `.topbar { display: none }`, so the top bar is not on
+screen while the HUD is up. BRB stays the way out — as it should, per the
+paragraph above — and the top bar is the way in. What holds, and what the tests
+assert, is that the PAIR is repeatable and that neither direction touches the
+clock, the watcher or the recording.
+
 ### 6.4 Seam 3 — the spec stops at the ride
 
 Phase 1 stores, syncs and attaches a spec. `rideModelFilterFor()` in

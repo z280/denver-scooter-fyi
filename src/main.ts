@@ -12,6 +12,12 @@ import {
   releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
 import { modelsOf } from "./model-filter.ts";
+import {
+  hasAnswers,
+  isLiveIntent,
+  rideButtonCopy,
+  rideButtonIntent,
+} from "./ride-reentry.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
@@ -100,7 +106,7 @@ import {
   isRideLive,
   isPostRide,
   isWizardScreen,
-  type RideSessionDoc,} from "./ride-session.ts";
+} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -3285,7 +3291,14 @@ function wireModes(): void {
   // Done, or BRB) — captured when the HUD opens, since the HUD covers the
   // bar and a "selected" Ride button is never actually seen.
   let hudReturnMode: string | null = "analysis";
-  rideHud.setOnHidden(() => setActive(hudReturnMode));
+  rideHud.setOnHidden(() => {
+    setActive(hudReturnMode);
+    // The HUD just left the screen, which is the exact moment the top bar's
+    // ride button becomes the only way back to a live ride (§6.3.2). Re-read
+    // it now: BRB does not dispatch, so the session subscription alone would
+    // not fire here.
+    refreshRideButton();
+  });
 
   // Back into the live ride, from anywhere. The ribbon's 🧭 tap was the only
   // way in, which made every OTHER route to a live ride — a scooter popup, a
@@ -4188,30 +4201,32 @@ function wireFilterAccordion(): void {
  *  The device is marked "own" because that is what it is: whatever you are
  *  riding, we did not rent it to you.
  */
-/** Does this doc carry anything the rider told us? A doc outlives the surface
- *  that made it (a reload, a closed wizard, a "back in a minute"), and any of
- *  these means a ride is in progress even when nothing is on screen. `state`
- *  alone is not enough — `wizard` covers both "just opened, asked nothing"
- *  and "chose a scooter and a destination". */
-function hasAnswers(doc: RideSessionDoc): boolean {
-  // A FINISHED ride is not an unfinished one. `done` and `idle` docs keep
-  // their device and `startedAtMs` — that is the record of the ride that just
-  // happened — so answering this on the fields alone made every tap after the
-  // first reopen the last ride's wizard instead of starting a new one. The
-  // second through nth attempt "broke" for exactly this reason.
-  if (doc.state === "idle" || doc.state === "done") return false;
-  return (
-    doc.device !== null ||
-    doc.dest !== null ||
-    doc.route !== null ||
-    doc.rideId !== null ||
-    doc.startedAtMs !== null
-  );
-}
+/** Re-read the top bar's ride button. Assigned by `wireFreeRide`; called by
+ *  the HUD's hide hook, which is the one transition the session subscription
+ *  does not cover (BRB tears the HUD down without dispatching). */
+let refreshRideButton: () => void = () => {};
 
 function wireFreeRide(): void {
   const btn = document.getElementById("free-ride");
   if (!(btn instanceof HTMLButtonElement)) return;
+
+  // THE BUTTON SAYS WHICH ONE IT IS (Phase 6 §6.3.2). It always took a rider
+  // back to a live ride — `beforeOpen` deflects a live doc to `RideHud.open()`
+  // — but it read "start recording a free ride" while doing it, so a rider who
+  // BRB'd out had no way to tell their ride was still running, let alone one
+  // tap away. A control nobody can see is the same as no control.
+  const render = (): void => {
+    const intent = rideButtonIntent(rideSession.current());
+    const copy = rideButtonCopy(intent);
+    btn.title = copy.title;
+    btn.setAttribute("aria-label", copy.ariaLabel);
+    // The lit state is CSS only; the accessible name above is what carries
+    // the same fact to a reader who gets no colour.
+    btn.classList.toggle("topbar__btn--live", isLiveIntent(intent));
+  };
+  render();
+  refreshRideButton = render;
+  rideSession.subscribe(() => render());
 
   btn.addEventListener("click", () => {
     // THIS BUTTON NEVER DESTROYS AN ANSWER THE RIDER ALREADY GAVE.
@@ -4227,7 +4242,11 @@ function wireFreeRide(): void {
     // the HUD owns ending, and a second control for one irreversible action
     // is how a rider ends a ride they meant to keep.
     const doc = rideSession.current();
-    if (doc && (isRideLive(doc) || hasAnswers(doc))) {
+    // One source of truth with `render` above: whatever the button SAYS it
+    // will do is what it does. Reading the doc twice with two different sets
+    // of conditions is how a control starts lying.
+    const intent = rideButtonIntent(doc);
+    if (doc && intent.kind !== "start_free") {
       // `resume` is what makes the "never destroys an answer" promise above
       // actually hold (see `onOpen`), and a live ride is deflected to the HUD
       // by `beforeOpen` before this entry is ever built.

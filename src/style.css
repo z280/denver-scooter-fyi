@@ -273,6 +273,41 @@ body::before {
   background: var(--accent-soft);
   color: var(--fg);
 }
+/* A ride is running behind this button (Phase 6 §6.3.2). BRB takes the HUD
+   down without stopping the clock, the watcher or the recording, and this is
+   the only thing on the map that says so — the accessible name carries the
+   same fact for a reader who gets no colour. Accent, not a warning hue:
+   nothing is wrong, there is simply somewhere to go back to.
+
+   `currentColor` on the dot so it tracks the button's own hover/active
+   colour rather than drifting from it, and `prefers-reduced-motion` turns
+   the pulse off: a persistent animation in fixed chrome is exactly what that
+   preference is for. */
+.topbar__btn--live {
+  color: var(--accent);
+  background: var(--accent-soft);
+  position: relative;
+}
+.topbar__btn--live::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: topbar-live-pulse 2s ease-in-out infinite;
+}
+@keyframes topbar-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar__btn--live::after {
+    animation: none;
+  }
+}
 /* The profile button doubles as a .drawer-tab (wireDrawers() drives it);
    is-active state comes from that shared rule set. */
 .drawer-tab--topbar {
