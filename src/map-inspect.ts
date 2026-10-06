@@ -99,8 +99,10 @@ export const TAP_MAX_MOVE_PX = 12;
 export const TOUCH_ECHO_MS = 900;
 /** Max gap between the two taps of a double tap (MapLibre uses 500 ms). */
 export const DOUBLE_TAP_GAP_MS = 500;
-/** After a double tap, wait this long for a third before zooming. */
-export const ZOOM_DEFER_MS = 300;
+/** After a double tap, wait this long for a third before zooming. Any new
+ *  touch or mousedown in that time cancels the zoom outright, so a slow
+ *  third tap only has to START within it, not finish. */
+export const ZOOM_DEFER_MS = 350;
 
 export interface MapInspectorOptions {
   /** Top first: the first source with a hit answers. */
@@ -114,6 +116,22 @@ export interface MapInspectorOptions {
    *  pin). Such taps neither count nor open anything. */
   suspended?: () => boolean;
   now?: () => number;
+}
+
+/** Fingers on the MAP: targetTouches (touches that started on the map), not
+ *  every touch on the screen — a thumb resting on a panel is not a pinch. */
+function mapTouches(e: MapTouchEvent): number {
+  return e.originalEvent?.targetTouches?.length ?? e.points.length;
+}
+function remainingMapTouches(e: MapTouchEvent): number {
+  return e.originalEvent?.targetTouches?.length ?? e.originalEvent?.touches?.length ?? 0;
+}
+function stampOf(e: { originalEvent?: Event }): number {
+  return e.originalEvent?.timeStamp ?? Number.NaN;
+}
+/** Event-stamp duration when both stamps exist, else handler-clock time. */
+function elapsed(stamp0: number, stamp1: number, at0: number, at1: number): number {
+  return Number.isFinite(stamp0) && Number.isFinite(stamp1) ? stamp1 - stamp0 : at1 - at0;
 }
 
 export class MapInspector {
@@ -130,10 +148,18 @@ export class MapInspector {
    *  does if the map had it on). */
   private ownsZoom = false;
 
-  /** `stamp` is the DOM event's own timeStamp: when the finger actually
-   *  went down, not when a busy main thread got round to the handler. */
-  private touchStart: { pt: InspectPoint; at: number; stamp: number } | null = null;
+  /** The one-finger touch in progress. `stamp` is the DOM event's own
+   *  timeStamp: when the finger actually went down, not when a busy main
+   *  thread got round to the handler. `moved` latches if it ever strays
+   *  past TAP_MAX_MOVE_PX, so an out-and-back wiggle is not a tap. */
+  private touchStart: { pt: InspectPoint; at: number; stamp: number; moved: boolean } | null =
+    null;
+  /** A two-finger touch in progress: a quick two-finger tap zooms OUT, as
+   *  MapLibre's tap-zoom did before this module took it over. */
+  private twoFinger: { mid: InspectPoint; stamp: number; at: number; moved: boolean } | null =
+    null;
   private lastTouchTapAt = Number.NEGATIVE_INFINITY;
+  private lastTouchTapStamp = Number.NaN;
 
   constructor(
     private readonly map: MLMap,
@@ -149,44 +175,74 @@ export class MapInspector {
       this.ownsZoom = true;
     }
     this.map.on("touchstart", (e: MapTouchEvent) => {
-      this.touchStart =
-        e.points.length === 1
-          ? {
-              pt: { x: e.point.x, y: e.point.y },
-              at: this.now(),
-              stamp: e.originalEvent?.timeStamp ?? Number.NaN,
-            }
-          : null;
+      // Any new touch means the double tap was not the end of the gesture:
+      // the start of a third tap, a drag, a pinch. Never zoom under it.
+      this.cancelPendingZoom();
+      const fingers = mapTouches(e);
+      if (fingers === 1) {
+        this.touchStart = {
+          pt: { x: e.point.x, y: e.point.y },
+          at: this.now(),
+          stamp: stampOf(e),
+          moved: false,
+        };
+        this.twoFinger = null;
+      } else {
+        this.touchStart = null;
+        this.twoFinger =
+          fingers === 2
+            ? { mid: { x: e.point.x, y: e.point.y }, stamp: stampOf(e), at: this.now(), moved: false }
+            : null;
+      }
     });
     this.map.on("touchmove", (e: MapTouchEvent) => {
-      // A second finger makes it a pinch, not a tap.
-      if (e.points.length > 1) this.touchStart = null;
+      const fingers = mapTouches(e);
+      const s = this.touchStart;
+      if (s) {
+        if (fingers > 1) this.touchStart = null; // became a pinch
+        else if (Math.hypot(e.point.x - s.pt.x, e.point.y - s.pt.y) > TAP_MAX_MOVE_PX) s.moved = true;
+      }
+      const t = this.twoFinger;
+      if (t && Math.hypot(e.point.x - t.mid.x, e.point.y - t.mid.y) > TAP_MAX_MOVE_PX) t.moved = true;
     });
     this.map.on("touchend", (e: MapTouchEvent) => {
-      const start = this.touchStart;
-      this.touchStart = null;
-      if (!start || (e.originalEvent?.touches?.length ?? 0) > 0) return;
-      const endStamp = e.originalEvent?.timeStamp ?? Number.NaN;
-      const held =
-        Number.isFinite(start.stamp) && Number.isFinite(endStamp)
-          ? endStamp - start.stamp
-          : this.now() - start.at;
-      if (held > TAP_MAX_MS) return;
-      if (Math.hypot(e.point.x - start.pt.x, e.point.y - start.pt.y) > TAP_MAX_MOVE_PX) {
+      if (remainingMapTouches(e) > 0) return; // wait for the last finger
+      const two = this.twoFinger;
+      this.twoFinger = null;
+      if (two) {
+        if (!two.moved && elapsed(two.stamp, stampOf(e), two.at, this.now()) <= TAP_MAX_MS) {
+          this.zoomBy(-1, this.map.unproject([two.mid.x, two.mid.y]));
+        }
         return;
       }
+      const start = this.touchStart;
+      this.touchStart = null;
+      if (!start || start.moved) return;
+      if (elapsed(start.stamp, stampOf(e), start.at, this.now()) > TAP_MAX_MS) return;
+      if (Math.hypot(e.point.x - start.pt.x, e.point.y - start.pt.y) > TAP_MAX_MOVE_PX) return;
       this.lastTouchTapAt = this.now();
+      this.lastTouchTapStamp = stampOf(e);
       this.tap(e.point, e.lngLat);
     });
+    this.map.on("mousedown", () => this.cancelPendingZoom());
     this.map.on("click", (e: MapMouseEvent) => {
-      if (this.now() - this.lastTouchTapAt < TOUCH_ECHO_MS) return; // touch echo
-      this.tap(e.point, e.lngLat);
+      // The browser's late click for a touch tap we already counted. Judged
+      // by the events' own timestamps (~400 ms apart however busy the main
+      // thread is), falling back to handler time.
+      const stamp = stampOf(e);
+      const sinceTouch =
+        Number.isFinite(stamp) && Number.isFinite(this.lastTouchTapStamp)
+          ? stamp - this.lastTouchTapStamp
+          : this.now() - this.lastTouchTapAt;
+      if (sinceTouch >= 0 && sinceTouch < TOUCH_ECHO_MS) return;
+      this.tap(e.point, e.lngLat, e.originalEvent?.shiftKey === true);
     });
   }
 
-  /** One recognized tap, from either input path. */
-  tap(point: InspectPoint, lngLat: InspectLngLat): void {
-    this.trackZoomGesture(point, lngLat);
+  /** One recognized tap, from either input path. `zoomOut` is a
+   *  shift-click: shift+double-click zooms out, as MapLibre's did. */
+  tap(point: InspectPoint, lngLat: InspectLngLat, zoomOut = false): void {
+    this.trackZoomGesture(point, lngLat, zoomOut);
     this.handleTap(point, lngLat);
   }
 
@@ -234,7 +290,11 @@ export class MapInspector {
 
   /** The double-tap-zoom half (see the header): zoom on a double tap, but
    *  only once it is clear it is not the start of a triple. */
-  private trackZoomGesture(point: InspectPoint, lngLat: InspectLngLat): void {
+  private trackZoomGesture(
+    point: InspectPoint,
+    lngLat: InspectLngLat,
+    zoomOut = false,
+  ): void {
     if (!this.ownsZoom) return;
     const t = this.now();
     const prev = this.gestureLast;
@@ -248,11 +308,7 @@ export class MapInspector {
       this.cancelPendingZoom();
       this.pendingZoom = setTimeout(() => {
         this.pendingZoom = undefined;
-        this.map.easeTo({
-          zoom: Math.min(this.map.getZoom() + 1, this.map.getMaxZoom()),
-          around: [lngLat.lng, lngLat.lat],
-          duration: 300,
-        });
+        this.zoomBy(zoomOut ? -1 : 1, lngLat);
       }, ZOOM_DEFER_MS);
     } else if (this.gestureCount >= 3) {
       // A triple: never a zoom.
@@ -260,6 +316,15 @@ export class MapInspector {
       this.gestureCount = 0;
       this.gestureLast = null;
     }
+  }
+
+  private zoomBy(delta: number, around: InspectLngLat): void {
+    const z = this.map.getZoom() + delta;
+    this.map.easeTo({
+      zoom: Math.max(this.map.getMinZoom?.() ?? 0, Math.min(z, this.map.getMaxZoom())),
+      around: [around.lng, around.lat],
+      duration: 300,
+    });
   }
 
   private cancelPendingZoom(): void {

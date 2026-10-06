@@ -160,6 +160,8 @@ function liveMap(above = false) {
     zoom: 14,
     getZoom: () => map.zoom,
     getMaxZoom: () => 22,
+    getMinZoom: () => 0,
+    unproject: ([x, y]: [number, number]) => ({ lng: x, lat: y }),
     easeTo: vi.fn((o: { zoom: number }) => (map.zoom = o.zoom)),
     on: (type: string, fn: (e: unknown) => void) =>
       handlers.set(type, [...(handlers.get(type) ?? []), fn]),
@@ -183,18 +185,37 @@ function harness(key = "equity:EQ_001", above = false) {
   insp.attach();
   const at = { x: 100, y: 100 };
   const ll = { lng: -104.9, lat: 39.7 };
-  const touchTap = (move = 0, hold = 60) => {
-    map.fire("touchstart", { points: [at], point: at, lngLat: ll });
-    t += hold;
-    const end = { x: at.x + move, y: at.y };
-    map.fire("touchend", { points: [end], point: end, lngLat: ll, originalEvent: { touches: [] } });
-  };
-  const click = () => map.fire("click", { point: at, lngLat: ll });
   const wait = (ms: number) => {
     t += ms;
     vi.advanceTimersByTime(ms);
   };
-  return { map, target, touchTap, click, wait };
+  // `hold` advances the fake timers too: a pending zoom must see the same
+  // clock the taps do.
+  const touchTap = (move = 0, hold = 60, wiggle = 0) => {
+    map.fire("touchstart", { points: [at], point: at, lngLat: ll });
+    if (wiggle) {
+      wait(hold / 2);
+      const far = { x: at.x + wiggle, y: at.y };
+      map.fire("touchmove", { points: [far], point: far, lngLat: ll });
+      wait(hold / 2);
+    } else {
+      wait(hold);
+    }
+    const end = { x: at.x + move, y: at.y };
+    map.fire("touchend", { points: [end], point: end, lngLat: ll, originalEvent: { touches: [] } });
+  };
+  const click = (shiftKey = false) =>
+    map.fire("click", { point: at, lngLat: ll, originalEvent: { shiftKey } });
+  const twoFingerTap = (hold = 80) => {
+    const a = { x: 90, y: 100 };
+    const b = { x: 110, y: 100 };
+    map.fire("touchstart", { points: [a], point: a, lngLat: ll });
+    map.fire("touchstart", { points: [a, b], point: at, lngLat: ll });
+    wait(hold);
+    map.fire("touchend", { points: [b], point: b, lngLat: ll, originalEvent: { touches: [{}] } });
+    map.fire("touchend", { points: [a], point: a, lngLat: ll, originalEvent: { touches: [] } });
+  };
+  return { map, target, touchTap, click, wait, twoFingerTap, fire: map.fire };
 }
 
 describe("MapInspector input", () => {
@@ -220,6 +241,57 @@ describe("MapInspector input", () => {
     const { target, touchTap, wait } = harness();
     touchTap(8); wait(120); touchTap(6); wait(120); touchTap(9);
     expect(target.opened).toBe(1);
+  });
+
+  it("a SLOW third tap still beats the zoom: any new touch cancels it", () => {
+    const { map, target, touchTap, wait } = harness();
+    // tap, 150 ms, tap, then the third finger lands ~340 ms after the second
+    // lifts (400 ms end-to-end with a 60 ms hold).
+    touchTap(); wait(150); touchTap(); wait(340); touchTap();
+    wait(2000);
+    expect(target.opened).toBe(1);
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("a drag right after a double tap drops the zoom instead of lurching", () => {
+    const { map, touchTap, wait, fire } = harness();
+    touchTap(); wait(150); touchTap(); wait(100);
+    fire("touchstart", { points: [{ x: 100, y: 100 }], point: { x: 100, y: 100 }, lngLat: { lng: 0, lat: 0 } });
+    wait(1000);
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("an out-and-back wiggle is not a tap", () => {
+    const { target, touchTap, wait } = harness();
+    touchTap(0, 100, 80); wait(100); touchTap(0, 100, 80); wait(100); touchTap(0, 100, 80);
+    expect(target.opened).toBe(0);
+  });
+
+  it("a thumb resting on a panel elsewhere does not turn map taps into a pinch", () => {
+    const { target, wait, fire } = harness();
+    const at = { x: 100, y: 100 };
+    const ll = { lng: -104.9, lat: 39.7 };
+    for (let i = 0; i < 3; i++) {
+      // Two touches on the screen, one of them on the map.
+      fire("touchstart", { points: [at, { x: 5, y: 700 }], point: at, lngLat: ll, originalEvent: { targetTouches: [{}], touches: [{}, {}] } });
+      wait(60);
+      fire("touchend", { points: [at], point: at, lngLat: ll, originalEvent: { targetTouches: [], touches: [{}] } });
+      wait(120);
+    }
+    expect(target.opened).toBe(1);
+  });
+
+  it("a two-finger tap zooms OUT, as MapLibre's tap zoom did", () => {
+    const { map, twoFingerTap } = harness();
+    twoFingerTap();
+    expect(map.easeTo).toHaveBeenCalledTimes(1);
+    expect(map.zoom).toBe(13);
+  });
+
+  it("shift+double-click zooms out", () => {
+    const { map, click, wait } = harness();
+    click(true); wait(150); click(true); wait(ZOOM_DEFER_MS + 10);
+    expect(map.zoom).toBe(13);
   });
 
   it("a drag or a long press is not a tap", () => {
