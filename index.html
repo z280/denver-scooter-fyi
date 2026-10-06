@@ -1223,20 +1223,6 @@
          the mount point. -->
     <div id="home-bar" class="home-bar"></div>
 
-    <!-- The old mode bar, now HIDDEN and kept only as the seam the home bar
-         drives. Every mode preset (filters, iconography, choropleth, drawer,
-         the wizard's snapshot/restore, leanFetch, the live-ride guard) is
-         wired to these two buttons by wireModes() in main.ts, and the home
-         bar switches surfaces by clicking them — the same synthetic-event
-         technique wireModes already uses on checkboxes, selects and drawer
-         tabs. `hidden` keeps them out of the tab order and the a11y tree
-         while leaving .click() working, so a rider can never reach them and
-         no behaviour had to be re-derived to move the entry point. -->
-    <div id="mode-switch" class="mode-switch" role="group" aria-label="Mode presets" hidden>
-      <button class="mode-btn" type="button" data-mode="ride" aria-pressed="false">🛴 Find wheels</button>
-      <button class="mode-btn" type="button" id="ride-open" data-mode="riding" aria-pressed="false">🧭 Ride</button>
-    </div>
-
     <!-- Find-a-ride wizard (consent → interview → ranked options). Content
          built by ride-wizard.ts; floats over the map on desktop, docks as a
          right-side panel on small screens. -->

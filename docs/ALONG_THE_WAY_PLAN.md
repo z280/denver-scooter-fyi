@@ -1072,6 +1072,30 @@ displayed nothing since the bar went `hidden`.
   before". With no bar, that has to become explicit state, or the rider lands
   nowhere.
 
+**Shipped.** `#mode-switch` is gone from `index.html`, its CSS with it, and a
+source-level test asserts that no module queries it — the trap here is somebody
+reintroducing the selector, which no behavioural test can express.
+
+Three findings worth keeping:
+
+- **The second trap needed no state at all.** `hudReturnMode` was captured by
+  reading `is-active` off the hidden buttons and written back on the way out —
+  the DOM used as storage for a selection that was never rendered. But closing
+  the HUD reveals the map the rider already had (ONE MAP: entering a ride never
+  rearranged it), so there is no mode to restore. The hook now only re-reads the
+  top bar, which is §6.3.2's business.
+- **One of the two branches had no caller.** `data-mode="riding"` lived on
+  `#ride-open`, nothing referenced that id, and the one helper that clicked
+  modes by name was only ever passed `"ride"`. Its behaviour is not lost —
+  that is the `isLiveRideEntry` decision, which `beforeOpen` reaches via
+  `isRideLive(doc)` — so it was deleted rather than lifted into a second named
+  function with nothing to call it. `isLiveRideEntry` itself is now
+  production-unreferenced and says so in its own doc comment, with what
+  replaced it.
+- **The first trap was left exactly as written.** `void resetIconography` and
+  `void setSelect` stay, comment untouched. Untangling that knot is still its
+  own change.
+
 ### 6.3 Seam 2 — ONE FILTER SYSTEM, not two that agree by coincidence
 
 `devices.ts` holds `rideModelFilter` (HUD "Show" pills) alongside the Filters

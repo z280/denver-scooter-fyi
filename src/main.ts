@@ -68,7 +68,7 @@ import {
   type ZoneGroup,
 } from "./micromobility-zones.ts";
 import { requestLocationOnLoad } from "./locate-on-load.ts";
-import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
+import { RideHud, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
 import { equityAreaFeatures, isInEquityArea } from "./equity-areas.ts";
@@ -843,9 +843,6 @@ function equityZones(): Promise<IndexedFeature[]> {
   return equityAreaFeatures();
 }
 
-// The 🧭 Ride button (data-mode="riding") is bound in wireModes() alongside
-// the other two modes — a separate binding here would double-fire once the
-// mode-bar query matches it.
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
     session: rideSession,
@@ -1383,12 +1380,12 @@ map.on("load", async () => {
   }
 
   // ---------- Ride wizard (F1 shell + F2 screens + F3 wiring) ----------
-  // F3 flips the 🧭 Ride button on by default (frontend plan, "Entry") — see
-  // wireModes()'s `case "riding"` (ride-hud.ts's `isLiveRideEntry` guard) —
-  // so this wizard wiring is now unconditional: the button calls
-  // `openRideModal()` whenever no ride is live, which needs a real, registered
-  // screen behind it rather than the `scooter-fyi-ride-modal` dev flag's old
-  // placeholder. `isRideModalEnabled`/`RIDE_MODAL_FLAG_KEY` (ride-modal.ts)
+  // F3 flipped the ride entry on by default (frontend plan, "Entry"), so this
+  // wizard wiring is unconditional: an entry calls `openRideModal()` whenever
+  // no ride is live, which needs a real, registered screen behind it rather
+  // than the `scooter-fyi-ride-modal` dev flag's old placeholder. The 🧭 mode
+  // button that used to be that entry is gone (§6.2); the top bar's ride
+  // button and the home bar are the entries now. `isRideModalEnabled`/`RIDE_MODAL_FLAG_KEY` (ride-modal.ts)
   // are dead code now — left for ride-modal.ts's own owner to prune.
   //
   // Wired after the first device response because a `?ride=plate:` link
@@ -1835,11 +1832,7 @@ const ONBOARDING_AUTOSHOW = false;
 function wireOnboarding(): void {
   const hooks: OnboardingHooks = {
     onStartExploring: () => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '#mode-switch .mode-btn[data-mode="ride"]',
-        )
-        ?.click();
+      enterFindWheels();
       const legend = document.getElementById(
         "legend-toggle",
       ) as HTMLInputElement | null;
@@ -3128,20 +3121,12 @@ function wireAreaFilter(): AreaFilter {
 let resumeLiveRide: () => void = () => {};
 
 function wireModes(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(
-      "#mode-switch .mode-btn[data-mode]",
-    ),
-  );
+  // NO MODE BAR (§6.2). `#mode-switch` is gone from `index.html`, and with it
+  // `setActive` and the `is-active`/`aria-pressed` bookkeeping it kept on two
+  // buttons that had been `hidden` since the home bar took over — state nobody
+  // could see, on elements nobody could press.
   let rideActive = false;
 
-  const setActive = (mode: string | null): void => {
-    for (const b of btns) {
-      const on = b.dataset.mode === mode;
-      b.classList.toggle("is-active", on);
-      b.setAttribute("aria-pressed", String(on));
-    }
-  };
   const setSelect = (id: string, value: string): void => {
     const sel = need<HTMLSelectElement>(id);
     if (sel.value !== value) {
@@ -3305,23 +3290,21 @@ function wireModes(): void {
     if (!rideActive) rideEntrySummary = filterSummary();
     setDrawer(null);
     setRideSurface(true);
-    setActive("ride");
     wizard.start();
     setWizardDocked(true);
   };
 
-  // Which mode the bar returns to when the HUD closes (End Ride, summary
-  // Done, or BRB) — captured when the HUD opens, since the HUD covers the
-  // bar and a "selected" Ride button is never actually seen.
-  let hudReturnMode: string | null = "analysis";
-  rideHud.setOnHidden(() => {
-    setActive(hudReturnMode);
-    // The HUD just left the screen, which is the exact moment the top bar's
-    // ride button becomes the only way back to a live ride (§6.3.2). Re-read
-    // it now: BRB does not dispatch, so the session subscription alone would
-    // not fire here.
-    refreshRideButton();
-  });
+  // WHERE THE RIDER LANDS WHEN THE HUD CLOSES. There used to be a
+  // `hudReturnMode` here, captured by reading `is-active` off the hidden mode
+  // buttons on the way in and written back to them on the way out — the DOM
+  // used as storage for a selection that was never rendered. §6.2 asked for
+  // that to become explicit state; it turned out to need no state at all.
+  // Closing the HUD reveals the map the rider already had (ONE MAP: entering a
+  // ride never rearranged it), so there is no mode to restore — only the top
+  // bar to re-read, because this is the moment its ride button becomes the
+  // only way back to a live ride (§6.3.2). BRB does not dispatch, so the
+  // session subscription alone would not fire here.
+  rideHud.setOnHidden(() => refreshRideButton());
 
   // Back into the live ride, from anywhere. The ribbon's 🧭 tap was the only
   // way in, which made every OTHER route to a live ride — a scooter popup, a
@@ -3330,50 +3313,28 @@ function wireModes(): void {
   // rider is actually on. See that hook for the failure this closes.
   resumeLiveRide = () => {
     closeAllPopups();
-    hudReturnMode =
-      btns.find(
-        (b) => b.classList.contains("is-active") && b.dataset.mode !== "riding",
-      )?.dataset.mode ?? null;
-    setActive("riding");
     rideHud.open();
   };
 
-  for (const btn of btns) {
-    btn.addEventListener("click", () => {
-      track("mode_switch", { mode: btn.dataset.mode ?? "?" });
-      switch (btn.dataset.mode) {
-        case "riding":
-          // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
-          // "Entry" — F3 flips this on unconditionally; no dev-flag gate
-          // here) UNLESS a tracked ride is already live, in which case a
-          // second tap must resume the HUD (whose paused path resumes
-          // correctly) instead of opening a fresh wizard over a running ride
-          // — `ride-session.ts`'s own `open` reducer guard rejects exactly
-          // that anyway, but the button should never even attempt it.
-          // "Live" (`isLiveRideEntry`) covers both a same-tab BRB'd ride
-          // (the HUD's own `paused` flag) and the session doc still reading
-          // `riding`/`countdown` (e.g. right after a reload, before the
-          // tracking-integration lane's resume flow has re-attached the HUD).
-          closeAllPopups();
-          if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
-            resumeLiveRide();
-          } else {
-            openRideModal();
-          }
-          break;
-        case "ride":
-          enterRide();
-          break;
-        // NO `default`. It was the Analysis button's branch, and being a
-        // catch-all meant any button reaching this switch with an unexpected
-        // `data-mode` — or none at all — silently applied a whole map preset.
-        // A switch over a closed set of modes should name them.
-      }
-    });
-  }
-
-  // No `[data-mode-preset]` forwarding: the Analysis tab it existed for is
-  // gone from the ribbon.
+  // THE TWO BRANCHES THE MODE BAR USED TO CARRY, as the plan asked — except
+  // only one of them still had a caller.
+  //
+  // `data-mode="ride"` is this, called directly by the onboarding card and the
+  // home bar instead of through a synthetic click:
+  enterFindWheels = () => {
+    track("mode_switch", { mode: "ride" });
+    enterRide();
+  };
+  //
+  // `data-mode="riding"` had NO reachable caller left. Its button carried
+  // `id="ride-open"` and nothing referenced it; the one helper that clicked
+  // modes by name was only ever passed "ride". Its behaviour — resume a live
+  // ride, else open the wizard — is not lost: that is precisely the
+  // `isLiveRideEntry` decision, which the top bar's ride button reaches
+  // through `beforeOpen` (§6.3.2), and `resumeLiveRide` above is the same
+  // resume. Lifting it into a second named function with no caller would have
+  // preserved the shape of the seam while deleting the bar, which is the one
+  // outcome this section is against.
 }
 
 // ---------- Home bar ("Where are you going?") ----------
@@ -3717,10 +3678,6 @@ function wireHomeBar(): HomeBarHandle {
     pickOnMap: (hint) => mapPick.pick({ hint }),
     onPlanTrip: ({ dest, wheels, start }) => {
       closeAllPopups();
-      const click = (mode: string): void =>
-        document
-          .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
-          ?.click();
       // "I've already started one" is the only answer that needs something
       // from the rider before it can be acted on, so it is the only one that
       // can come back refused. Handled first, and it is the ONLY branch that
@@ -3736,7 +3693,7 @@ function wireHomeBar(): HomeBarHandle {
       // 🧭 Use in Ride Mode hands them to the walk flow rather than the
       // wizard (see beginWalkToVehicle).
       if (wheels === "need") {
-        click("ride");
+        enterFindWheels();
         return;
       }
       // "Got my own" has no vehicle to choose and nowhere to walk to. The
@@ -3877,6 +3834,12 @@ let deviceWatch: DeviceWatchHandle | null = null;
  *  and the drawer, and the walk flow is the only other thing that needs to
  *  put them away. */
 let exitFindWheels: () => void = () => {};
+/** Enter the find-a-ride flow. Named, and called directly (Phase 6 §6.2).
+ *  Every caller used to synthesise a click on a `hidden` button in
+ *  `#mode-switch` — right for the move that put the home bar in charge, wrong
+ *  to leave, and two modules had already had to learn about the seam. Assigned
+ *  by `wireModes`; a no-op before it runs. */
+let enterFindWheels: () => void = () => {};
 
 function endWalkFlow(): void {
   deviceWatch?.stop();
@@ -4392,9 +4355,10 @@ function wireDrawers(): void {
 // can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
-  // The home bar, not the mode bar: #mode-switch is `hidden` now (it survives
-  // only as the seam the home bar clicks), so lifting it would move nothing.
-  const modeSwitch = need("home-bar");
+  // The home bar — named for what it is. It was called `modeSwitch` back when
+  // `#mode-switch` was the thing lifted here, which was already the wrong
+  // element before §6.2 deleted it outright.
+  const homeBarEl = need("home-bar");
   const mq = window.matchMedia("(max-width: 640px)");
   let expanded = false;
   let idleTimer: number | undefined;
@@ -4409,7 +4373,7 @@ function wireFreshnessCollapse(): void {
     // or collapsed size exactly, including whatever the actual device
     // counts/timestamp text needs.
     const lifted = mq.matches && expanded;
-    modeSwitch.style.setProperty(
+    homeBarEl.style.setProperty(
       "--freshness-lift",
       lifted ? `${Math.ceil(root.getBoundingClientRect().height) + 10}px` : "0px",
     );

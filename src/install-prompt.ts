@@ -103,9 +103,10 @@ function openInstructions(steps: string[]): void {
  *  (narrow-width wrap, short-landscape lift, opening into a sheet) and this
  *  tracks all of them.
  *
- *  #home-bar, not #mode-switch: the mode bar is still in the DOM as the seam
- *  the home bar drives, but it is `hidden`, so its rect is permanently zero.
- *  Reading it would have silently frozen the banner at its CSS fallback.
+ *  #home-bar is the bar that owns the bottom of the screen. It used to be
+ *  tempting to read `#mode-switch` instead, which was `hidden` and so had a
+ *  permanently zero rect — reading it would have silently frozen the banner at
+ *  its CSS fallback. That element is gone (§6.2), so the trap is too.
  *
  *  If the bar is currently hidden (`display: none`, e.g. mid-ride) its rect
  *  collapses to all-zero — skip the update rather than shove the banner

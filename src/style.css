@@ -1958,13 +1958,12 @@ body.ride-active .arrival {
       var(--float-inset)
   );
   left: 50%;
-  /* --freshness-lift: same variable, same reason, as the old mode bar — the
-     freshness pill's tap-expanded text must not be sat on. main.ts sets it on
-     #mode-switch; the rule below mirrors it onto whichever of the two is
-     actually visible. */
+  /* --freshness-lift: the freshness pill's tap-expanded text must not be sat
+     on. main.ts sets it on #home-bar, which is the only bar left to lift —
+     the mode bar this variable was first written for is gone (§6.2). */
   transform: translate(-50%, calc(-1 * var(--freshness-lift, 0px)));
   transition: transform 0.15s ease;
-  /* Same stacking decision the mode bar carried (PR #37): under the wizard
+  /* Same stacking decision the old mode bar carried (PR #37): under the wizard
      (28) and drawers (30/31), above chips and the legend. Any open panel wins
      the overlap and you close it to get back here. */
   z-index: 27;
@@ -2297,76 +2296,6 @@ body.ride-active .arrival {
 body.ride-active .home-bar,
 body.is-map-picking .home-bar {
   display: none;
-}
-
-/* ---------- Intent-mode presets (bottom center) ---------- */
-.mode-switch {
-  position: fixed;
-  bottom: calc(env(safe-area-inset-bottom) + var(--float-inset));
-  left: 50%;
-  /* --freshness-lift (set from main.ts's wireFreshnessCollapse, measured
-     against the freshness pill's own live rect) pushes the pill up while
-     the freshness status pill is tap-expanded on a narrow screen — at rest
-     it's unset, and the var() fallback keeps this identical to a plain
-     translateX(-50%). Higher z-index than the freshness pill (30) means
-     it would otherwise sit on top of — not beside — the expanded text. */
-  transform: translate(-50%, calc(-1 * var(--freshness-lift, 0px)));
-  transition: transform 0.15s ease;
-  /* UNDER the wizard (28) and the drawers (30/31), above chips and the
-     icon legend (25/26). Flipped from the original above-everything choice
-     by maintainer direction on PR #37: any open panel — Find wheels,
-     Filters, Account — wins the overlap, and you close it to get back to
-     the mode bar. The known cost (accepted): on a short viewport a
-     nearly-full-height drawer can cover the bar until it's closed. */
-  z-index: 27;
-  display: flex;
-  /* Explicit shrink-to-fit: this is a fixed-position flex row with no
-     intrinsic width constraint from a parent, which some engines size more
-     generously than "just what the three buttons need" without this. */
-  width: max-content;
-  gap: 4px;
-  padding: 5px;
-  background: var(--metal-bg);
-  border: 1px solid var(--border);
-  /* Pill shape kept: the MODE: folder-tab notch was cut (plan §7 — it
-     labelled the UI, not the content), which removed the reason to fight
-     border-radius: 999px. */
-  border-radius: 999px;
-  box-shadow: var(--shadow);
-}
-.mode-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  padding: 7px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--metal-fg);
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mode-btn:hover {
-  background: var(--accent-soft);
-  color: var(--fg);
-}
-.mode-btn.is-active {
-  background: var(--accent);
-  color: var(--accent-ink);
-  /* The "clear border" on the selected item — drawn as an outer ring so
-     selection doesn't shift layout. Token kept >=3:1 vs the gradient. */
-  box-shadow: 0 0 0 2px var(--metal-active-border);
-}
-/* Bigger and more prominent where there's room; near current size below. */
-@media (min-width: 900px) {
-  .mode-switch {
-    padding: 7px;
-    gap: 6px;
-  }
-  .mode-btn {
-    padding: 10px 20px;
-    font-size: 14.5px;
-  }
 }
 
 /* ---------- Inline hint text under control labels ---------- */
@@ -5798,7 +5727,6 @@ body.ride-active .legal-links {
 body.ride-active .topbar,
 body.ride-active .drawer-tabs,
 body.ride-active .drawer,
-body.ride-active .mode-switch,
 body.ride-active .filter-chips,
 body.ride-active .freshness,
 body.ride-active .brand-link,
@@ -5902,48 +5830,9 @@ body.landscape-hint-dismissed .hud-note--landscape {
     justify-content: flex-start;
     max-width: none;
   }
-  /* Lift the mode pill clear of the bottom-right freshness pill, which
-     would otherwise overlap it and swallow taps on narrow screens. */
-  .mode-switch {
-    bottom: max(58px, env(safe-area-inset-bottom));
-  }
-  .mode-btn {
-    padding: 7px 10px;
-    font-size: 12.5px;
-  }
 }
 
-/* Full-text mode buttons can overflow the pill below ~400px, clipping off
-   both edges. Wrap into centered rows if they truly don't fit. max-width
-   is the cap that makes wrapping kick in when needed — width itself stays
-   max-content (from the base rule), so the pill only grows to that cap
-   when the buttons actually require it. An unconditional 100vw-based
-   width (the previous approach) forced the pill to that width even when
-   the three buttons comfortably fit on one row well short of it — on a
-   portrait phone that's most of the screen, with the pill's own rounded
-   background stretching far past its buttons. (min(max-content, ...) on
-   its own width looks equivalent but isn't: a flex-wrap container's
-   max-content contribution is measured pre-wrap, and combining it with
-   min() collapsed to a narrower, incorrectly-wrapped result — max-width
-   as a separate clamp on top of width:max-content avoids that.) */
-@media (max-width: 480px) {
-  .mode-switch {
-    max-width: calc(
-      100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
-    );
-    flex-wrap: wrap;
-    justify-content: center;
-    border-radius: 22px;
-  }
-}
-
-/* Short viewports (landscape phones): the bottom-center mode pill would sit
-   under the bottom-right freshness pill and swallow taps on the Ride button.
-   Lift it clear regardless of width. */
 @media (max-height: 480px) {
-  .mode-switch {
-    bottom: max(52px, env(safe-area-inset-bottom));
-  }
   /* Short viewport: the bar gives up its band so the map runs to the top
      edge, and the hamburger, GPS/theme cluster and profile button float as
      individual chips. Vertical room is the scarce thing here, so the one
@@ -7348,15 +7237,15 @@ body.landscape-hint-dismissed .hud-note--landscape {
 }
 
 /* ---------- Install-app banner (mobile Home Screen nudge) ---------- */
-/* `bottom` is set from JS (install-prompt.ts) to clear the mode-switch
-   pill's live position — it moves for several independent responsive
-   reasons, so tracking its real rect beats duplicating each breakpoint. */
+/* `bottom` is set from JS (install-prompt.ts) to clear the home bar's live
+   position — it moves for several independent responsive reasons, so tracking
+   its real rect beats duplicating each breakpoint. */
 .install-banner {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  /* JS (install-prompt.ts) overrides this with the live gap above the
-     mode-switch pill; this is only the pre-JS/no-rect fallback. */
+  /* JS (install-prompt.ts) overrides this with the live gap above the home
+     bar; this is only the pre-JS/no-rect fallback. */
   bottom: max(76px, env(safe-area-inset-bottom));
   z-index: 40; /* above the tab strip (32) and drawers (30); below modals (70) */
   display: flex;

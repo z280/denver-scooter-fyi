@@ -192,9 +192,19 @@ export function minimalEndReport(endedAtMs: number, pos: LngLat): EndRideIn {
  *  ride (the HUD's own `paused` flag — `RideHud.isPaused()`) and the
  *  persisted session doc still reading `riding`/`countdown` (e.g. immediately
  *  after a reload, before the tracking-integration lane's resume flow has
- *  re-attached the HUD via `beginHandoff`). Exported so main.ts's entry-point
- *  guard is a one-line call, and so the condition is unit-testable without
- *  constructing a `RideHud` or a `RideSessionStore`. */
+ *  re-attached the HUD via `beginHandoff`).
+ *
+ *  NO PRODUCTION CALLER SINCE §6.2. Its one caller was the mode bar's 🧭
+ *  branch, and that bar is deleted — nothing clicked the button it lived on.
+ *  The decision now sits in `main.ts`'s `beforeOpen`, which asks
+ *  `isRideLive(doc)`; that subsumes the `paused` half of this condition,
+ *  because `pauseRide` moves only the HUD's own state and never dispatches, so
+ *  a BRB'd ride's doc still reads `riding`.
+ *
+ *  Kept rather than deleted because it states the condition more completely
+ *  than its replacement does: if an entry point ever has to ask without a
+ *  session doc in hand, this is the answer, and its tests are the record of
+ *  what it means. Delete it if that never happens. */
 export function isLiveRideEntry(
   hudPaused: boolean,
   sessionDocState: RideSessionState | null | undefined,
