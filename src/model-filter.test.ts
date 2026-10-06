@@ -5,6 +5,7 @@ import {
   NONE_SELECTED,
   admits,
   admitsEverything,
+  isNarrowed,
   modelsOf,
   sameSelection,
   selectionOf,
@@ -146,6 +147,28 @@ describe("toggleModel", () => {
     expect(admits(sel, "trike")).toBe(false);
     expect(admits(sel, "apollo")).toBe(true);
     expect(admits(sel, null)).toBe(true);
+  });
+});
+
+describe("isNarrowed", () => {
+  it("is false only for `all`", () => {
+    // For a surface whose rule is "say this only when the rider deliberately
+    // picked something" — NOT the same question as `admits`, which is true
+    // under `all` for every model.
+    expect(isNarrowed(ALL_SELECTED)).toBe(false);
+    expect(isNarrowed(NONE_SELECTED)).toBe(true);
+    expect(isNarrowed(selectionOf(["trike"]))).toBe(true);
+  });
+
+  it("is what separates the Rover caveat from a blanket warning", () => {
+    // The drawer's rule is `has("trike") && size < ALL_MODELS.length`. Pairing
+    // `admits` with this reproduces it; `admits` alone showed a service-area
+    // warning to every rider on the default selection.
+    const rule = (sel: ModelSelection) => isNarrowed(sel) && admits(sel, "trike");
+    expect(rule(ALL_SELECTED)).toBe(false);
+    expect(rule(selectionOf(["trike"]))).toBe(true);
+    expect(rule(selectionOf(["astro"]))).toBe(false);
+    expect(rule(NONE_SELECTED)).toBe(false);
   });
 });
 

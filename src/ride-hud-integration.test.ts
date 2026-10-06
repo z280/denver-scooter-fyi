@@ -782,6 +782,31 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(note?.textContent).toBe("");
   });
 
+  it("does not warn about Rover service areas on the default selection", () => {
+    // THE REGRESSION the pills' move onto the shared filter introduced. The old
+    // check read a selection that started EMPTY, so `has("trike")` was false and
+    // the note was hidden; the new one starts `all`, where `admits` is true for
+    // every model — so a service-area warning rendered for every rider who had
+    // never asked about Rovers. The drawer's own rule is "selected AND narrowed".
+    const ctl = statefulDeviceCtl({ kind: "all" });
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    const note = container.querySelector<HTMLElement>("#hud-rover-note");
+    expect(note).not.toBeNull();
+    expect(note?.hidden).toBe(true);
+  });
+
+  it("warns once the rider narrows TO the Rover", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["trike"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.querySelector<HTMLElement>("#hud-rover-note")?.hidden).toBe(false);
+  });
+
+  it("stays quiet when the rider narrows to something else", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["astro"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.querySelector<HTMLElement>("#hud-rover-note")?.hidden).toBe(true);
+  });
+
   it("tapping a pill writes the one shared filter", () => {
     const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
     const { container } = mountWith(ownDeviceDoc(), ctl);

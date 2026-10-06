@@ -689,3 +689,68 @@ describe("rankPlans — purity and labelling", () => {
     expect([...all].sort((x, y) => x - y)).toEqual(all);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The free balance is NET, and must not be debited twice
+// ---------------------------------------------------------------------------
+
+describe("freeMinutesLeft against a ride already running", () => {
+  const twoVehicles = [
+    feature(at(100), { device_id: "cur", vehicle_identifier: "cur" }),
+    feature(at(2000), { device_id: "b", vehicle_identifier: "b" }),
+  ];
+
+  /** 10 minutes into a ride, 20 free minutes spent before it. §2.2's estimate
+   *  counts the live ride up to `now`, so the rider arrives here with 30 left —
+   *  `60 - (20 + 10)` — already net. */
+  const midRide = {
+    inRide: {
+      vehicleIdentifier: "cur",
+      rangeMeters: 20_000,
+      unlockPaid: true as const,
+      freeMinutesUsedBeforeRide: 20,
+      rideStartedAt: "2026-10-02T11:50:00Z",
+    },
+    freeMinutesLeft: 30,
+  };
+
+  it("still has free minutes to spend mid-ride", () => {
+    // THE REGRESSION. `freeBudget` used to subtract `freeMinutesUsedNow` from
+    // `freeMinutesLeft`, which double-counts: 30 net minus 30 used is 0, so an
+    // equity rider was quoted a paid trip while half their hour remained —
+    // the exact error §2.2 exists to correct, one layer down. Nothing caught it
+    // because no test combined the equity tier with a live ride.
+    const res = rankPlans(twoVehicles, ctx({ rate: rate("equity"), ...midRide }));
+    const free = res.plans
+      .concat(res.backups)
+      .flatMap((p) => p.legs)
+      .reduce((n, l) => n + l.freeMinutesUsed, 0);
+    expect(free).toBeGreaterThan(0);
+  });
+
+  it("prices a mid-ride plan the same as a standing-still rider with the same balance", () => {
+    // The balance is the balance. Being mid-ride is not a second debit — it is
+    // already inside the figure the caller resolved.
+    const riding = rankPlans(twoVehicles, ctx({ rate: rate("equity"), ...midRide }));
+    const standing = rankPlans(
+      twoVehicles,
+      ctx({ rate: rate("equity"), freeMinutesLeft: 30 }),
+    );
+    const freeOf = (r: { plans: TripPlan[]; backups: TripPlan[] }) =>
+      r.plans.concat(r.backups).flatMap((p) => p.legs)
+        .reduce((n, l) => n + l.freeMinutesUsed, 0);
+    expect(freeOf(riding)).toBeGreaterThan(0);
+    expect(freeOf(standing)).toBeGreaterThan(0);
+  });
+
+  it("still charges when the balance really is spent", () => {
+    // The fix must not become "free minutes forever": a rider whose caller
+    // resolved 0 gets no free budget, mid-ride or not.
+    const res = rankPlans(
+      twoVehicles,
+      ctx({ rate: rate("equity"), ...midRide, freeMinutesLeft: 0 }),
+    );
+    const ridden = res.plans.concat(res.backups).find((p) => rideLegs(p).length > 0)!;
+    expect(ridden.legs.every((l) => l.freeMinutesUsed === 0)).toBe(true);
+  });
+});

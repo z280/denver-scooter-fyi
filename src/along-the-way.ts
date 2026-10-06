@@ -332,6 +332,14 @@ export function legRate(
 /** Today's free-minute usage on a re-solve, as a count of whole minutes.
  *
  *  Through `billableMinutes`, never a raw subtraction — see `InRideState`. */
+/** Today's free minutes spent, as of `now`, from an `InRideState` baseline.
+ *
+ *  FOR WHOEVER COMPUTES `freeMinutesLeft`, not for the search. The search takes
+ *  the net balance and must not subtract this from it — see `freeBudget`. This
+ *  is the `InRideState` counterpart of `free-minutes.ts`'s estimate (which works
+ *  from `/tracked-rides` spans instead), so a caller re-solving mid-ride with an
+ *  `InRideState` in hand can get the same figure: `FREE_MINUTE_BUDGET -
+ *  freeMinutesUsedNow(...)`. */
 export function freeMinutesUsedNow(inRide: InRideState, now: number): number {
   const startedAt = Date.parse(inRide.rideStartedAt);
   if (!Number.isFinite(startedAt)) return inRide.freeMinutesUsedBeforeRide;
@@ -377,6 +385,14 @@ function toCandidates(
     if (!props) continue;
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) continue;
+    // `=== true`, not `devices.ts`'s `asBool`, and deliberately. That helper
+    // exists because "MapLibre sometimes flattens booleans to strings when
+    // properties pass through tile encoding" — and this function is documented
+    // to take `devices.allFeatures()`, which is the API response straight from
+    // `fetch`, never through a tile. A caller that ever feeds tile-encoded
+    // features must coerce before calling, because the fix cannot live here:
+    // importing from `devices.ts` would drag maplibre into a module whose whole
+    // job is to be pure, the same reason `ride-spec.ts` refuses that import.
     if (props.is_disabled === true || props.is_reserved === true) continue;
     const key = vehicleKey(props);
     if (ctx.exclude?.has(key)) continue;
@@ -586,10 +602,19 @@ function searchOnce(
   // It collapses to a single layer for every rider without a free balance,
   // which is four of the five tiers and any Access rider who has spent the
   // hour — so the exact answer is free for most riders.
-  const alreadyUsed = ctx.inRide ? freeMinutesUsedNow(ctx.inRide, ctx.now) : 0;
+  // `freeMinutesLeft` IS THE NET BALANCE, so nothing is subtracted from it
+  // here. An earlier version took `freeMinutesUsedNow(ctx.inRide)` off it,
+  // which double-counted: §2.2's control owns that figure (this field's own
+  // doc says so) and its `remainingMinutes` already counts the running ride —
+  // `minutesSpentBy` deliberately counts a live ride up to `now`, "because a
+  // rider planning their next leg mid-trip is spending the hour while they
+  // read the screen". A rider who had spent 20 minutes and was 10 into a ride
+  // therefore arrived with 30 left and got a budget of 0, pricing a free trip
+  // as a paid one — the exact error §2.2 exists to correct, reintroduced one
+  // layer down.
   const freeBudget =
     ctx.rate.key === "equity"
-      ? Math.max(0, Math.min(FREE_MINUTE_BUDGET, ctx.freeMinutesLeft) - alreadyUsed)
+      ? Math.max(0, Math.min(FREE_MINUTE_BUDGET, ctx.freeMinutesLeft))
       : 0;
 
   // WHICH LEGS THE SPEC BINDS ON. Neither plan stated it; the rule is:

@@ -52,6 +52,7 @@ import { closeAllPopups } from "./chrome.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
 import {
   admits,
+  isNarrowed,
   toggleModel,
   type ModelSelection,
 } from "./model-filter.ts";
@@ -818,7 +819,7 @@ export class RideHud {
         // Rover service-area caveat, mirroring the Filters drawer's note:
         // visible whenever the Show selection includes the Rover.
         const note = this.root.querySelector<HTMLElement>("#hud-rover-note");
-        if (note) note.hidden = !admits(next, "trike");
+        if (note) note.hidden = !this.roverNoteVisible(next);
         // This tap is what detaches an attached spec (§6.4). The host's
         // detach runs off the device layer's own filter-change signal, so by
         // now `attachedSpecName()` already answers "none" — re-read it rather
@@ -924,6 +925,19 @@ export class RideHud {
     // textContent, not innerHTML: a spec name is rider-typed.
     note.textContent = `Showing your ${name} spec. Changing these detaches it.`;
     note.hidden = false;
+  }
+
+  /** Whether the Rover service-area caveat belongs on screen.
+   *
+   *  MIRRORS THE FILTERS DRAWER'S RULE, which is "Rover is selected AND the
+   *  selection is narrowed" — `has("trike") && size < ALL_MODELS.length`. The
+   *  narrowing half matters: under the default every model is admitted, so an
+   *  `admits(selection, "trike")` test alone is true for everybody and shows a
+   *  service-area warning to riders who never asked about Rovers. That is what
+   *  this did when the pills moved onto the shared filter, because the old
+   *  check read a selection that started EMPTY and the new one starts `all`. */
+  private roverNoteVisible(selection = this.rideSelection()): boolean {
+    return isNarrowed(selection) && admits(selection, "trike");
   }
 
   /** The one model filter, read from the device layer rather than mirrored
@@ -1507,7 +1521,7 @@ export class RideHud {
             ${this.deviceChipsMarkup()}
           </div>
           ${this.specNoteMarkup()}
-          <p id="hud-rover-note" class="control-hint control-hint--warning"${admits(this.rideSelection(), "trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
+          <p id="hud-rover-note" class="control-hint control-hint--warning"${this.roverNoteVisible() ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>

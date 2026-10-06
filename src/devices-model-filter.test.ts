@@ -11,6 +11,8 @@
 // unrecognized-hardware rule inline, fails here rather than in a unit test of
 // a helper nobody calls any more.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Devices } from "./devices.ts";
 import type { DeviceProperties, DevicesResponse } from "./api.ts";
 import type { Map as MLMap } from "maplibre-gl";
@@ -142,6 +144,26 @@ describe("the one model filter, through the device layer", () => {
     expect(seen).toEqual([5, 2, 2]);
     devices.setModelSelection(NONE_SELECTED);
     expect(seen).toEqual([5, 2, 2, 0]);
+  });
+
+  it("has its one change signal wired to BOTH chip row and spec detach", () => {
+    // Structural, because this is `main.ts` glue with no DOM harness, and the
+    // fact being asserted is structural: `onCountsChange` is "the one signal
+    // that fires for all of them", so every consumer of a filter change has to
+    // hang off it rather than off one writer's handler. `refreshChips` hung off
+    // the drawer's handlers only, which was enough while the drawer was the one
+    // writer — then the ride HUD's pills started writing the same filter and the
+    // chips went stale, visibly so AFTER the ride, when the chip row comes back.
+    const main = readFileSync(
+      join(import.meta.dirname, "main.ts"),
+      "utf8",
+    );
+    const hook = main.slice(
+      main.indexOf("devices.onCountsChange("),
+      main.indexOf("map.on(\"moveend\""),
+    );
+    expect(hook).toContain("rideSpecPanel?.onFiltersChanged()");
+    expect(hook).toContain("refreshChips()");
   });
 
   it("defaults to showing everything", () => {

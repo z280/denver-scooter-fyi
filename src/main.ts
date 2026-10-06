@@ -1339,6 +1339,14 @@ map.on("load", async () => {
     // spec it claims to be showing. Reusing this rather than adding a second
     // change signal keeps "the filters changed" a single fact.
     rideSpecPanel?.onFiltersChanged();
+    // ...and the chip row, for the same reason. The drawer's own handlers call
+    // `refreshChips` directly, which was enough while the drawer was the only
+    // writer — but the ride HUD's "Show" pills now write the same filter, and a
+    // pill tap left the chips describing the pre-ride selection. The chips are
+    // hidden during a ride, so the damage showed up AFTER it: a rider who set
+    // Show to `none` came back to an empty map with no chip and no ✕ to clear
+    // it until they opened the drawer. One signal, every writer.
+    refreshChips();
   });
   map.on("moveend", () => {
     freshness.setViewportCount(countDevicesInViewport());

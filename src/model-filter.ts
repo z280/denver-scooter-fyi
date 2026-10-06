@@ -101,6 +101,17 @@ export function admits(
   }
 }
 
+/** TRUE when the rider has narrowed the selection at all — `only` or `none`.
+ *
+ *  For a surface whose rule is "say this only when the rider deliberately
+ *  picked something", which is not the same as `admits`. The Filters drawer's
+ *  Rover service-area note is the case: its rule is
+ *  `has("trike") && size < ALL_MODELS.length`, so it stays hidden under the
+ *  default. `admits` alone is true under `all` and would show it to everybody. */
+export function isNarrowed(selection: ModelSelection): boolean {
+  return selection.kind !== "all";
+}
+
 /** TRUE when the selection excludes nothing, so a caller can skip the filter
  *  pass entirely. Named rather than open-coded as `kind === "all"` because
  *  that comparison appearing in a filter loop is how the old

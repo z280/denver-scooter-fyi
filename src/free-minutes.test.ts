@@ -182,3 +182,32 @@ describe("freeMinutesForPlanning", () => {
     expect(freeMinutesForPlanning(est)).toBe(0);
   });
 });
+
+describe("a malformed instant", () => {
+  it("belongs to no billing day instead of throwing", () => {
+    // `Intl.DateTimeFormat.format` throws RangeError on a non-finite instant,
+    // and this is reached from `ridesOnDay`, which maps over whatever
+    // /tracked-rides served. One bad `started_at` used to throw straight out of
+    // `estimateFreeMinutes` and take the planner's whole estimate with it.
+    expect(billingDayOf(NaN)).toBe("");
+    expect(billingDayOf(Infinity)).toBe("");
+  });
+
+  it("drops the unreadable ride and still counts the good ones", () => {
+    const rides: RideSpan[] = [
+      { startedAtMs: NaN, endedAtMs: NaN },
+      ride("2026-10-06T16:00:00Z", 12),
+    ];
+    expect(() => ridesOnDay(rides, NOW)).not.toThrow();
+    expect(ridesOnDay(rides, NOW)).toHaveLength(1);
+    const est = estimateFreeMinutes({ rides, nowMs: NOW });
+    expect(est.usedMinutes).toBe(12);
+    expect(est.remainingMinutes).toBe(48);
+  });
+
+  it("agrees with minutesSpentBy, which already guarded the same input", () => {
+    // The inconsistency was the tell: one helper returned 0 for a nonsense
+    // span while the other threw on it.
+    expect(minutesSpentBy({ startedAtMs: NaN, endedAtMs: NaN }, NOW)).toBe(0);
+  });
+});

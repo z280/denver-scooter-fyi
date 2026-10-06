@@ -69,6 +69,15 @@ export interface FreeMinuteEstimate {
  *  of hours after the last one. On the two days a year that are 23 or 25 hours
  *  long, offset arithmetic puts rides on the wrong side of the reset. */
 export function billingDayOf(instantMs: number): string {
+  // `Intl.DateTimeFormat.format` THROWS `RangeError` on a non-finite instant,
+  // and this is reached from `ridesOnDay`, which maps over whatever
+  // `/tracked-rides` served. One malformed `started_at` would therefore throw
+  // out of `estimateFreeMinutes` and take the planner's whole free-minute
+  // estimate with it — while `minutesSpentBy` guards the same bad input and
+  // returns 0. Guarding here keeps the two consistent: an unreadable instant
+  // belongs to no billing day, so "" matches nothing in `ridesOnDay` and the
+  // ride is simply not counted.
+  if (!Number.isFinite(instantMs)) return "";
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: BILLING_TIME_ZONE,
     year: "numeric",
