@@ -5,7 +5,7 @@ side lives on `claude/analytics-tier2`.
 
 ## What already exists, and where
 
-Built and **unmerged**, on `claude/scooter-app-sticky-usage-wqcq9z`:
+All on **main** (denver-scooter-fyi #96, keepdenverfair #76):
 
 - `src/rider-story.ts` — the rules, pure: prompts, consent, the WSYV v1
   payload, the disclosure built from the draft.
@@ -15,7 +15,7 @@ Built and **unmerged**, on `claude/scooter-app-sticky-usage-wqcq9z`:
 - In `keepdenverfair`: the v1 `story` section, the `source` field, scoped CORS,
   and `GET /api/survey-options` serving the neighbourhood list.
 
-`docs/RIDER_VOICE_PLAN.md` (same branch) is the governing plan. **Start by
+`docs/RIDER_VOICE_PLAN.md` is the governing plan. **Start by
 reading its §5 and §7** — the consent rules and the must-nots are not style
 preferences and every item below inherits them.
 
