@@ -1150,16 +1150,27 @@ not moving a map the rider is reading for something else (`onFix`'s
 `following` gate), trail and route-line visibility, theme restore, immersive
 fullscreen — are all solved and commented.
 
-**The work is promotion, not construction:**
+**BRB STAYS AS IT IS.** An earlier draft of this section proposed renaming it
+to a 2D/3D toggle; that is withdrawn. BRB is a rider saying *"I am stepping
+away from this ride for a moment"*, and it reads correctly as that. A view
+toggle is a different intent that happens to share a mechanism, and collapsing
+the two would cost the clearer of the two names.
 
-- surface it as **2D ⇄ 3D**, because "BRB" and "pause" describe leaving a ride
-  and the rider is doing nothing of the kind — they are looking at the map;
-- make the 3D framing reachable **without** a tracked ride, so a rider can use
+**What is left is a way back IN, and it belongs in the top bar.** The gap is
+not the leaving, it is the returning: once the HUD is down, a live session has
+no persistent affordance anywhere on the map. The rider is still on a ride —
+clock anchored, watcher running, track recording — and the app shows them
+nothing that says so or takes them back.
+
+- a **live session is visible in the top bar** whenever the HUD is not up, and
+  tapping it returns to the ride exactly where it was;
+- it is an **in-and-out** control, not a one-way door: leaving again is the
+  same gesture, and neither direction touches the clock, the watcher or the
+  recording — the guarantee `brbStrategyFor(...) === "continue_tracking"`
+  already makes, and the reason this is cheap to build on;
+- the 3D framing stays reachable **without** a tracked ride, so a rider can use
   the view the app is proudest of while they are deciding, not only after
-  committing. The follow-cam needs a GPS fix, not a ride id;
-- keep the one guarantee that makes it safe: popping out must leave the ride's
-  clock, watcher and recording exactly as they were — which is what
-  `brbStrategyFor(...) === "continue_tracking"` already promises.
+  committing. The follow-cam needs a GPS fix, not a ride id.
 
 **What must not happen** is a third framing or a second entry point. If this
 grows a "tilt slider" or a map that remembers a 40° pitch, both tables above
