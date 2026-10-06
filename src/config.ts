@@ -165,6 +165,29 @@ export function veoDeepLink(vehicleNumber: string): string {
   return `https://gmjc.adj.st/?adj_t=${VEO_ADJUST_TOKEN}&number=${encodeURIComponent(vehicleNumber)}`;
 }
 
+// ---------- The governing documents ----------
+//
+// ONE LIST, because there are three places that must agree about these URLs:
+// the map's own footer (`legal-links.ts`), the About drawer's prose, and
+// anywhere a sign-in flow has to say what the rider is agreeing to. Three
+// hand-maintained copies of the same two links is the drift this file already
+// carries a complaint about elsewhere (the dibs rules, in three places).
+//
+// They are served by the API, not bundled: `data.scooter.fyi/legal/*` renders
+// `src/templates/legal/*.html` over there, which is also what
+// `GET /api/v1/meta/privacy` is generated from — so the policy a rider reads
+// and the retention statement the API makes cannot disagree.
+export const LEGAL_LINKS: readonly { label: string; href: string }[] = [
+  {
+    label: "Privacy",
+    href: "https://data.scooter.fyi/legal/privacy-policy",
+  },
+  {
+    label: "Terms",
+    href: "https://data.scooter.fyi/legal/terms-of-service",
+  },
+];
+
 // ---------- Report improperly-parked vehicle to Veo ----------
 // A rider who spots a badly-parked Veo (blocking a sidewalk, ADA ramp,
 // transit stop…) can file it with Veo directly. Veo takes those reports

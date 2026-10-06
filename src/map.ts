@@ -5,6 +5,7 @@ import maplibregl, {
 import { Protocol } from "pmtiles";
 import { layers, namedFlavor } from "@protomaps/basemaps";
 import { DENVER_BOUNDS, BASEMAP_PMTILES_URL } from "./config.ts";
+import { createLegalLinks } from "./legal-links.ts";
 
 const BASEMAP_SOURCE = "protomaps";
 
@@ -140,6 +141,14 @@ export function createMap(container: string, flavor: Flavor = "light"): MapHandl
   // Registered top-left: chrome.ts adopts this corner's container into the
   // top bar's left cluster, beside the hamburger.
   map.addControl(geolocate, "top-left");
+
+  // The governing documents, as the bottom-left corner's LAST row — i.e.
+  // directly under the attribution pill, which is where a reader already looks
+  // for "who made this and under what terms". Added after the attribution for
+  // exactly that ordering: MapLibre stacks a corner's controls in the order
+  // they are registered. See legal-links.ts for why they are on the map at all
+  // rather than in a drawer.
+  map.addControl(createLegalLinks() as unknown as maplibregl.IControl, "bottom-left");
 
   // Hosts that lay the page out only after scripts run (embedded webviews,
   // headless previews) hand MapLibre a 0×0 container, so it falls back to a
