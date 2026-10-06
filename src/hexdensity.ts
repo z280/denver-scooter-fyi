@@ -19,14 +19,12 @@
 // of the map instead of taking the map over.
 //
 // Triple-clicking any shaded cell opens its exact value; see
-// `triple-click.ts` for why that gesture and not a plainer one.
+// `triple-click.ts` for why that gesture and not a plainer one. The gesture
+// itself is recognized map-wide by `map-inspect.ts`, which asks this module
+// (`hitAt`) only when nothing stacked above the hexes claims the tap.
 
 import { cellToBoundary } from "h3-js";
-import type {
-  Map as MLMap,
-  GeoJSONSource,
-  MapLayerMouseEvent,
-} from "maplibre-gl";
+import type { Map as MLMap, GeoJSONSource } from "maplibre-gl";
 import {
   fetchH3Aggregates,
   fetchLeaderboardMap,
@@ -34,7 +32,8 @@ import {
   type H3Resolution,
   type LeaderboardMapResponse,
 } from "./api.ts";
-import { FIRST_DEVICE_LAYER, formatDwellHours, openFloatingModal } from "./devices.ts";
+import { formatDwellHours, openFloatingModal } from "./devices.ts";
+import { bandBefore } from "./map-bands.ts";
 import {
   LEADERBOARD_DETAIL_TITLE,
   buildLeaderboardDetailHtml,
@@ -43,10 +42,7 @@ import {
   leaderboardMapToFeatureCollection,
 } from "./leaderboard.ts";
 import { isAuthenticated as defaultIsAuthenticated } from "./map-auth.js";
-import {
-  TRIPLE_CLICK_WINDOW_MS,
-  createTripleClickDetector,
-} from "./triple-click.ts";
+import type { InspectHit, InspectPoint, InspectSource } from "./map-inspect.ts";
 import { commas, emptyFC, h3ToHex } from "./util.ts";
 
 export type HexSize = "small" | "medium" | "large";
@@ -91,6 +87,19 @@ const RAMP_LINE_COLOR = "#2171b5";
 const RAMP_LINE_WIDTH = 0.8;
 const RAMP_LINE_OPACITY = 0.45;
 const TERRITORY_LINE_WIDTH = 1.2;
+
+/** What "muted display" multiplies the territory opacities by.
+ *
+ *  Territory colors are per-feature — each hexagon carries its holder's
+ *  `fillOpacity`/`lineOpacity` — so muting cannot be a flat number without
+ *  throwing away the ranking those values encode. It is a factor applied in
+ *  the paint expression instead, which keeps a strong holder stronger than a
+ *  weak one while bringing the whole layer down under the scooters.
+ *
+ *  0.35 rather than something smaller because the territory fill IS the
+ *  readout here: muted has to stay legible as a color, where the equity
+ *  overlay's muted fill only has to say which side of a line you are on. */
+const TERRITORY_MUTE_FACTOR = 0.35;
 
 /** One sequential ColorBrewer ramp per metric so switching "shade by" is
  *  visually unmistakable even without reading the legend. */
@@ -227,7 +236,7 @@ export interface HexDensityDeps {
   ) => Promise<H3AggregatesResponse>;
 }
 
-export class HexDensity {
+export class HexDensity implements InspectSource {
   private size: HexSize | null = null;
   private metric: HexMetric = "device_count";
   /** Latest H3 aggregates fetch for the active size — every ramp metric
@@ -236,15 +245,16 @@ export class HexDensity {
   /** Latest `/leaderboard/map` fetch, backing both the territory fills and
    *  the triple-click detail panel (one payload, no second request). */
   private territory: LeaderboardMapResponse | null = null;
+  /** Muted by default, to match the equity overlay: both are now drawn for
+   *  everybody on arrival, and two full-strength layers over the same city
+   *  would leave nothing readable underneath either. */
+  private territoryMuted = true;
   /** ONE controller for whichever fetch is in flight, aggregates or
    *  territory alike: switching between the two kinds mid-flight has to
    *  cancel the other, and two independent controllers couldn't. */
   private dataController: AbortController | null = null;
   /** cell id → GeoJSON ring, memoized (boundaries never change). */
   private ringCache = new Map<string, GeoJSON.Position[]>();
-  private tripleClick = createTripleClickDetector<string>();
-  private dczSuppressTimer: number | undefined;
-  private dczWasEnabled = false;
 
   constructor(
     private readonly map: MLMap,
@@ -273,7 +283,6 @@ export class HexDensity {
     if (!sizeChanged && !metricChanged) return;
     this.size = size;
     this.metric = metric;
-    this.tripleClick.reset();
     // Switching among the six aggregate metrics at an unchanged size is
     // free — they are all fields on the payload already loaded. Changing
     // size, or crossing into or out of territory control (a different
@@ -349,9 +358,9 @@ export class HexDensity {
   private ensureLayers(): void {
     if (this.map.getSource(SRC)) return;
     this.map.addSource(SRC, { type: "geojson", data: emptyFC() });
-    const before = this.map.getLayer(FIRST_DEVICE_LAYER)
-      ? FIRST_DEVICE_LAYER
-      : undefined;
+    // Bottom band: territory and hex metrics sit under the equity areas and
+    // the city's zones (map-bands.ts).
+    const before = bandBefore(this.map, "shading");
     this.map.addLayer(
       {
         id: FILL,
@@ -374,7 +383,6 @@ export class HexDensity {
       },
       before,
     );
-    this.map.on("click", FILL, (e) => this.handleClick(e));
   }
 
   private render(): void {
@@ -447,12 +455,35 @@ export class HexDensity {
         ? leaderboardMapToFeatureCollection(this.territory)
         : emptyFC(),
     );
+    const dim = this.territoryMuted ? TERRITORY_MUTE_FACTOR : 1;
     this.map.setPaintProperty(FILL, "fill-color", ["get", "fillColor"]);
-    this.map.setPaintProperty(FILL, "fill-opacity", ["get", "fillOpacity"]);
+    this.map.setPaintProperty(FILL, "fill-opacity", [
+      "*",
+      ["get", "fillOpacity"],
+      dim,
+    ]);
     this.map.setPaintProperty(LINE, "line-color", ["get", "lineColor"]);
-    this.map.setPaintProperty(LINE, "line-opacity", ["get", "lineOpacity"]);
+    this.map.setPaintProperty(LINE, "line-opacity", [
+      "*",
+      ["get", "lineOpacity"],
+      dim,
+    ]);
     this.map.setPaintProperty(LINE, "line-width", TERRITORY_LINE_WIDTH);
     this.renderTerritoryLegend();
+  }
+
+  /** Turn the territory shading down (or back up). Re-renders only when the
+   *  territory layer is what is actually showing — the mute is remembered
+   *  either way, so switching to territory later arrives at the right
+   *  strength rather than flashing full and then dimming. */
+  setTerritoryMuted(muted: boolean): void {
+    if (this.territoryMuted === muted) return;
+    this.territoryMuted = muted;
+    if (this.size && this.metric === TERRITORY_METRIC) this.renderTerritory();
+  }
+
+  isTerritoryMuted(): boolean {
+    return this.territoryMuted;
   }
 
   /** Read one metric field per cell from the last aggregates fetch,
@@ -489,8 +520,6 @@ export class HexDensity {
     const src = this.map.getSource(SRC) as GeoJSONSource | undefined;
     src?.setData(emptyFC());
     this.legendEl.hidden = true;
-    this.tripleClick.reset();
-    this.restoreDoubleClickZoom();
   }
 
   private renderLegend(max: number): void {
@@ -534,23 +563,34 @@ export class HexDensity {
   // Triple-click readout.
   // -------------------------------------------------------------------------
 
-  private handleClick(e: MapLayerMouseEvent): void {
-    const f = e.features?.[0];
-    if (!f) return;
-    const props = f.properties as { cell?: unknown; value?: unknown } | null;
+  /** `InspectSource`: the shaded cell under `point`, if shading is on.
+   *  The key carries size and metric, so changing either abandons a
+   *  half-finished run rather than letting it resolve to the new view. */
+  hitAt(point: InspectPoint): InspectHit | null {
+    if (!this.size || !this.map.getLayer?.(FILL)) return null;
+    const f = this.map.queryRenderedFeatures([point.x, point.y], {
+      layers: [FILL],
+    })[0];
+    return f ? this.hitForFeature(f.properties) : null;
+  }
+
+  /** The hit for one rendered cell's properties. Split out of `hitAt` so
+   *  the content is testable without rendering. */
+  hitForFeature(
+    props: { cell?: unknown; value?: unknown } | null | undefined,
+  ): InspectHit | null {
     const cellId = String(props?.cell ?? "");
-    if (!cellId) return;
-    if (!this.tripleClick.register(cellId)) {
-      // A run is under way. The map's own double-click zoom would fire on
-      // the way to the third click and yank the target out from under the
-      // pointer, so it's held off for the length of the window — narrowly,
-      // and only once a click has actually landed on a hexagon.
-      this.suppressDoubleClickZoom();
-      return;
-    }
-    this.restoreDoubleClickZoom();
-    if (this.metric === TERRITORY_METRIC) this.openTerritoryDetail(cellId);
-    else this.openMetricDetail(cellId, Number(props?.value));
+    if (!cellId || !this.size) return null;
+    const value = Number(props?.value);
+    const territory = this.metric === TERRITORY_METRIC;
+    return {
+      key: `hex:${this.size}:${this.metric}:${cellId}`,
+      holdsDoubleClickZoom: true,
+      open: () =>
+        territory
+          ? this.openTerritoryDetail(cellId)
+          : this.openMetricDetail(cellId, value),
+    };
   }
 
   private openTerritoryDetail(cellId: string): void {
@@ -590,35 +630,5 @@ export class HexDensity {
         size: this.size,
       }),
     );
-  }
-
-  /** Hold the map's double-click/double-tap zoom for one triple-click
-   *  window. Deliberately not a permanent disable while shading is on:
-   *  double-click zoom is how people navigate, and it stays available
-   *  everywhere except the fraction of a second after a click has landed on
-   *  a hexagon. Restores only what it turned off — if the map had double-
-   *  click zoom disabled already, it stays that way. */
-  private suppressDoubleClickZoom(): void {
-    const dcz = this.map.doubleClickZoom;
-    if (this.dczSuppressTimer !== undefined) {
-      clearTimeout(this.dczSuppressTimer);
-    } else if (dcz?.isEnabled()) {
-      this.dczWasEnabled = true;
-      dcz.disable();
-    }
-    this.dczSuppressTimer = setTimeout(() => {
-      this.dczSuppressTimer = undefined;
-      this.restoreDoubleClickZoom();
-    }, TRIPLE_CLICK_WINDOW_MS) as unknown as number;
-  }
-
-  private restoreDoubleClickZoom(): void {
-    if (this.dczSuppressTimer !== undefined) {
-      clearTimeout(this.dczSuppressTimer);
-      this.dczSuppressTimer = undefined;
-    }
-    if (!this.dczWasEnabled) return;
-    this.dczWasEnabled = false;
-    this.map.doubleClickZoom?.enable();
   }
 }

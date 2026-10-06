@@ -66,6 +66,31 @@ sessions. The authoritative, machine-readable retention policy is
   a swap mid-walk. High-risk "ghost" devices render faded; the popup explains the
   verdict in plain language and, when it's risky, points at the nearest
   likely-rideable alternative with a one-tap jump.
+- **🚫 It won't start**, at the moment it happens. The failed-start count on
+  the feed is *inferred*, never reported: the API's ingest reads it off a GBFS
+  id rotation with no movement, which needs Veo to rotate the id at all and
+  needs two of them before a device is downgraded. A rider standing over a
+  scooter that will not turn on knows more than that inference ever will, so
+  the ride flow now has somewhere for them to say it — on the Open-in-Veo
+  screen, mid-countdown (the second they find out), and on the walk flow's
+  arrival panel. One tap files a `not_rideable` report, which overrides the
+  reliability tier outright for 24 hours, and sends the rider to the picker
+  rather than offering another go at a scooter they have just told us is dead.
+- **🔔 Notify me if moved**: watch a specific scooter and hear about it when
+  somebody rides it away. Needs no account and no QR scan — a watch is a thing
+  your browser is doing for the next few hours, kept locally — and the alert
+  carries no location: it says the scooter went, and you open the app to see
+  where. In-app always, plus a lock-screen notification where you have allowed
+  one (asked for when you turn a watch on, never at page load). Up to six at a
+  time, listed in the Tools drawer, and the watch ends with the answer. It
+  works while the app is open; the backgrounded half needs a server-side
+  watcher that does not exist yet, and the copy says so.
+
+  This **replaced "Keep this one"** (the ⭐). That feature cost a sign-in, a QR
+  scan and a fix within 75 m, and in exchange told you where a scooter you
+  liked was parked — which this map already does, for every scooter, to
+  anybody. The question a map cannot answer by sitting there is whether it has
+  gone.
 - **Walk economics** (opt-in location): straight-line walk time to any
   device, a dashed guide line on the map, and a Directions handoff to
   Apple/Google Maps in walking mode.
@@ -85,6 +110,14 @@ sessions. The authoritative, machine-readable retention policy is
   ride mode. Cost HUD off is a real branch — the Veo question disappears
   entirely, the rate plan is not re-confirmed (that lives in your profile),
   and ride mode starts with the cost readout hidden.
+- **📷 Scan** (the ribbon's QR tool): one scanner with a rotatable dial in
+  front of it choosing what the scan does — **Confirm features**, or **Ride
+  mode**, which starts a ride on the scanned scooter, picks up a ride you were
+  half-way through setting up, or tells a ride you already started which
+  scooter it is on. That last one is the gap: a ride recorded without a vehicle
+  (the free-ride path) had no way to gain one, so it went into the record as
+  having been on nothing in particular. A ride whose vehicle the server already
+  stamped is left alone, and says so — that was settled when it started.
 - **☑️ Confirm Features**: Veo's feed says nothing about what is bolted to a
   given scooter, so riders standing next to one tell us — a bell, a cup
   holder, a phone holder, a basket, and whether they're all in good
@@ -110,11 +143,22 @@ sessions. The authoritative, machine-readable retention policy is
   basemap carries them — and only tiny corner cutouts float on top:
   - top-left: live cost at your chosen rate (contract-locked Denver pricing),
   - top-right: a digital mph readout,
-  - bottom-left: the ride clock with a red stop button (end ride) and a
+  - bottom-left: the ride clock with a red stop button (end ride), a
     wrench button (a panel for the countdown-start clock ±15s/±1m nudges,
-    rate, and day/night theme),
+    rate, which models the map draws, and day/night theme), an **On screen**
+    button (per-readout toggles for the clock, the cost and either
+    speedometer — these used to be buried inside the wrench panel, filed
+    under the controls for time and rate), and a **re-center** button,
   - bottom-right: a car-style analog speedometer with an animated needle,
     0–18 mph and a caution band past Denver's ~15 mph cap.
+
+  **The map is yours to move.** A deliberate pan, pinch or rotate stops the
+  follow-cam chasing you — the camera holds still so you can look at what is
+  coming, and the re-center button lights up to say why the map went quiet.
+  Your position marker keeps tracking throughout. Re-center is also the
+  reset: one tap restores position, zoom, pitch and bearing together, because
+  a rider who has pinched the map flat and spun it round wants one thing
+  undone, not three.
 
   Ride start goes fullscreen with a best-effort landscape lock; the summary
   prices the trip under Lime's typical rates — what competition would have
@@ -311,6 +355,18 @@ src/
                    ride flow's fields apply their own edits (which registers
                    nothing to undo), and entering the riding view empties the
                    queue for whatever was typed elsewhere
+  qr-utility.ts    the ribbon's QR tool: one camera, a mode dial in front of
+                   it, and the two jobs a scanned sticker can do
+  qr-ride-scan.ts  what a scan MEANS to a ride — start, resume, associate, or
+                   already-tied — kept pure and apart from the doing
+  ride-failed-start.ts  "it won't start": the report, its four outcomes and
+                   their words, plus why the fleet cannot infer this one
+  device-notify.ts  "Notify me if moved": the local watch store, the
+                   moved/in-use/gone verdict, and the one alert per scooter
+  device-notify-panel.ts  its Tools-drawer list and the in-app toast
+  emoji-scale.ts   the five-face rating control, and the two mappings that keep
+                   the API's 1-10 and 0-10 columns unchanged
+  survey-cadence.ts  how often the post-ride survey may ask the long question
   device-features.ts crowdsourced equipment: the "Confirm Features" survey,
                    the three-status vocabulary, and reading the map
                    payload's device_features object

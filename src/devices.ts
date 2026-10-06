@@ -45,7 +45,14 @@ import {
   type Locate,
   type LngLat,
 } from "./locate.ts";
-import { callDibs, canCallDibs, dibsOn, dropDibs, saveDibs } from "./dibs.ts";
+import {
+  callDibs,
+  canCallDibs,
+  dibsOn,
+  dropDibs,
+  saveDibs,
+  type Dibs,
+} from "./dibs.ts";
 import { requestDibsNotifications } from "./dibs-notify.ts";
 import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
@@ -91,7 +98,6 @@ import {
   type RideType,
 } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
-import { KEEP_SIGNIN_HINT } from "./my-scooters.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 export type QualityFilter = "any" | "no-risk" | "ok-only";
@@ -492,9 +498,34 @@ export class Devices {
     this.apply();
   }
 
-  private refreshOpenPopup(): void {
+  /** Re-render the open popup against the current state.
+   *
+   *  Public because the watch store lives outside this class (see
+   *  `setNotifyMovedHandler`): the bell's label says which way the next tap
+   *  goes, so a watch dropped from the Tools panel has to un-press a bell this
+   *  class has no other way of hearing about. No-op with nothing open.
+   *
+   *  `hint` SURVIVES THE RE-RENDER, which is the only reason it is a parameter.
+   *  A caller that wrote to the old popup's hint line and then asked for a
+   *  refresh lost its sentence: `openDevicePopup` builds a fresh element with a
+   *  fresh, empty hint line, and the `report` callback the caller was handed is
+   *  closed over the detached one. So the sentence has to be handed in and
+   *  shown after the rebuild, not written before it. */
+  refreshOpenPopup(hint?: string): void {
     const open = this.openPopupFor;
-    if (open) this.openDevicePopup(open.props, open.coords);
+    if (!open) return;
+    this.openDevicePopup(open.props, open.coords);
+    if (hint === undefined) return;
+    // Same access shape as every other reader of the live popup in this file:
+    // `getElement()` is undefined until MapLibre has mounted it.
+    const popupEl = this.popup?.getElement();
+    const line = popupEl?.querySelector<HTMLElement>(
+      ".device-popup__actionhint",
+    );
+    if (line) {
+      line.textContent = hint;
+      line.hidden = false;
+    }
   }
 
   /** Intercept 🛴 I'll ride this one. Returns true when something else has
@@ -542,22 +573,27 @@ export class Devices {
     this.rideInterceptor = fn;
   }
 
-  /** "Keep this one" — the popup's star. Injected the same way the ride
-   *  interceptor is, so this file stays free of the favourites API, the QR
-   *  scanner and the rules around both: it renders a button and forwards a
-   *  tap. Absent means no star, which is what a page without the Tools
-   *  drawer gets. `report` writes to this popup's hint line: the handler's
-   *  outcome belongs where the rider tapped, not in a closed drawer. */
-  private keepHandler:
-    | ((info: {
-        vehicleIdentifier: string;
-        name: string;
-        report(text: string): void;
-      }) => void)
-    | null = null;
+  /** Arm the move-watch that rides along with a dibs claim, and hand back the
+   *  sentence to show (or null when nothing was armed).
+   *
+   *  THERE IS NO BELL ON THIS POPUP ANY MORE, and this hook is the shape that
+   *  replaced it. The old one let a rider arm a watch on any scooter on the
+   *  map from here, which is an "alert me when this address's occupant
+   *  leaves" tool — see `device-notify.ts`'s header for why that cannot
+   *  exist. A watch now has to ride along with a connection the rider already
+   *  has to the specific vehicle, and this popup owns exactly one of those:
+   *  claiming it while building a route.
+   *
+   *  So it is not a button. It is part of what "I'll ride this one" does, and
+   *  the confirmation says so — the same argument the claim itself makes
+   *  about not being a second button to know about.
+   *
+   *  Injected rather than imported because the store, the cap, the permission
+   *  prompt and the Tools list all live outside this class. */
+  private claimWatchHook: ((claim: Dibs) => string | null) | null = null;
 
-  setKeepHandler(fn: typeof Devices.prototype.keepHandler): void {
-    this.keepHandler = fn;
+  setClaimWatchHook(fn: (claim: Dibs) => string | null): void {
+    this.claimWatchHook = fn;
   }
 
   constructor(
@@ -1578,14 +1614,65 @@ export class Devices {
       const vid = props.vehicle_identifier
         ? String(props.vehicle_identifier)
         : "";
+
+      // WHY THESE CHIPS ARE GATED NOW, AND WHY THEY ARE STILL DRAWN.
+      //
+      // This is the most consequential thing a rider can do from this card. A
+      // `not_rideable` report flips `has_negative_report`, which overrides the
+      // vehicle's reliability tier for everybody — and since the API's
+      // signed-in rule landed, an accountable report holds until the scooter
+      // MOVES or comes back at a full charge rather than expiring after 24
+      // hours. A report filed from across the city now outlives the day it was
+      // made. Until this change it could be filed from anywhere on earth, while
+      // "report bad parking" — a complaint about something you can see — was
+      // correctly gated at 100 m. The cheap action was gated and the expensive
+      // one was not.
+      //
+      // So the chips are GATED but NOT HIDDEN. Hiding them teaches a visitor
+      // nothing about what the app does, and a feature nobody knows exists is
+      // a feature nobody uses when they are standing in front of a broken
+      // scooter. They render, they say plainly why they cannot be used from
+      // here, and the tap repeats it — the same "blocked is a sentence, not a
+      // dead grey button" rule the rest of this card follows, which matters
+      // doubly on a phone where `title` tooltips never appear at all.
+      //
+      // ONE RADIUS FOR EVERY REPORT. This deliberately reuses the parking
+      // report's `PARKING_REPORT_PROXIMITY_M` rather than the unlock's tighter
+      // 75 m: both are the same kind of claim — "I can see this vehicle and
+      // here is what is wrong with it" — and a second radius for the same claim
+      // is a distinction no rider can perceive and nobody will maintain.
+      //
+      // ADMINS ARE EXEMPT, as they are for the parking report and for the same
+      // reason: the gate is a CREDIBILITY check, not a data dependency. The
+      // report is built from the DEVICE's coordinates, never the reporter's, so
+      // a distant admin files exactly the same report, and an admin working a
+      // reliability queue from a desk is doing the job.
+      const reportDistance = user === null ? null : distanceMeters(user, here);
+      const reportBlockedReason: string | null = this.adminSession
+        ? null
+        : reportDistance === null
+          ? "Turn on your location to report this one — reports carry weight because they come from somebody who was there."
+          : reportDistance <= PARKING_REPORT_PROXIMITY_M
+            ? null
+            : `You're too far away to report this one (${formatWalk(reportDistance)}). Reports come from riders at the scooter.`;
+      // `aria-disabled`, never `disabled`: the chip has to stay focusable and
+      // tappable so it can deliver its own reason. `is-blocked` is the same
+      // class the other gated actions on this card use.
+      const reportBlockedAttr = reportBlockedReason
+        ? ` data-blocked="${escapeHtml(reportBlockedReason)}" aria-disabled="true"`
+        : "";
+      const reportGateNote = reportBlockedReason
+        ? `<p class="device-popup__report-gate">⚠️ ${escapeHtml(reportBlockedReason)}</p>`
+        : "";
       const reportProblemBlock =
         vid.length >= 16
           ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
                <span class="device-popup__report-device-label">Report a problem</span>
+               ${reportGateNote}
                <div class="device-popup__report-chips">
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="not_rideable">🚫 Not rideable</button>
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="dead_battery">🪫 Dead battery</button>
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="damaged">🛴 Damaged</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="not_rideable"${reportBlockedAttr}>🚫 Not rideable</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="dead_battery"${reportBlockedAttr}>🪫 Dead battery</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="damaged"${reportBlockedAttr}>🛴 Damaged</button>
                </div>
                <p class="device-popup__report-device-status" role="status" aria-live="polite"></p>
              </div>`
@@ -1629,12 +1716,6 @@ export class Devices {
             : model
               ? model.name
               : null,
-          vehicleId: props.vehicle_identifier
-            ? String(props.vehicle_identifier)
-            : null,
-          dwellText: props.first_observed_at_location
-            ? formatDwell(props.first_observed_at_location)
-            : null,
           address: null, // upgraded async after render (reverseGeocode)
         };
         const parkingReportUrl = veoParkingReportUrl(parkingInput);
@@ -1729,23 +1810,11 @@ export class Devices {
       // same rule the pinned Home/Work row follows. Either one can be absent:
       // Open in Veo needs a plate and proximity, Confirm Features disappears
       // once the features are confirmed.
-      // ⭐ Keep this one. Offered only where it could work: a 16-hex
-      // identifier to keep, and a handler wired up. NOT gated on proximity
-      // here even though keeping needs it — the server owns that rule, and a
-      // second copy of the 75 m check in the client is one deploy away from
-      // disagreeing with it. A rider who taps this too far away gets the
-      // server's own sentence back, which names the distance — in this
-      // popup's hint line, since that is where they are looking.
-      //
-      // Session IS checked here, the way the photo row does it: signed out,
-      // the star renders blocked and a tap says to sign in, rather than
-      // opening a flow whose only possible answer is the same sentence.
-      const keepBtn =
-        vid.length >= 16 && this.keepHandler
-          ? signedIn
-            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep" data-action="keep-scooter" aria-haspopup="dialog">⭐ Keep this one</button>`
-            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--keep is-blocked" data-action="keep-blocked" aria-disabled="true" title="${escapeHtml(KEEP_SIGNIN_HINT)}">⭐ Keep this one</button>`
-          : "";
+      // NO 🔔 HERE. A "tell me when this one moves" button on every scooter
+      // on the map is a tracking tool — `device-notify.ts`'s header has the
+      // argument in full. The capability still exists, behind the two doors
+      // that require the rider to be connected to the vehicle already: the
+      // claim this popup's "I'll ride this one" makes, and the end of a ride.
       const pairCount = [startBtn, featuresBtn].filter(Boolean).length;
       const startFeatureRow = pairCount
         ? `<div class="device-popup__pair ${pairCount === 1 ? "is-single" : "is-pair"}">
@@ -1760,7 +1829,6 @@ export class Devices {
           ${rideBtn}
           ${certBtn}
           ${startFeatureRow}
-          ${keepBtn}
           <button type="button" class="device-popup__actbtn" data-action="open-report" aria-haspopup="dialog">⚠️ Report</button>
           <button type="button" class="device-popup__actbtn" data-action="full-details" aria-haspopup="dialog">ℹ️ Details</button>
           ${photoRow}
@@ -2029,7 +2097,13 @@ export class Devices {
               lat: at.lat,
               lon: at.lon,
             });
-            showDibsConfirmation(claim);
+            // The watch rides along with the claim — see `setClaimWatchHook`.
+            // Armed BEFORE the confirmation so its sentence can go in the
+            // confirmation rather than arriving as a second notice: a rider
+            // being told they have dibs is the same breath in which to say
+            // we will warn them if it goes.
+            const watchLine = this.claimWatchHook?.(claim) ?? null;
+            showDibsConfirmation(claim, watchLine);
             // ASK NOW, NOT AT LOAD. Somebody who has just tapped "call dibs"
             // has a reason to be interrupted and knows what about; the same
             // prompt on arrival at the map is the one everybody denies
@@ -2126,21 +2200,6 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
-      // ⭐ Keep this one — Favorite Scooters (API sql/081). Everything about what
-      // that means lives behind the handler.
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
-        ?.addEventListener("click", () => {
-          this.keepHandler?.({
-            vehicleIdentifier: vid,
-            name: headerName,
-            report: showHint,
-          });
-        });
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="keep-blocked"]')
-        ?.addEventListener("click", () => showHint(KEEP_SIGNIN_HINT));
-
       // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
       popupEl
         ?.querySelector<HTMLButtonElement>('[data-action="confirm-features"]')
@@ -2342,6 +2401,17 @@ export class Devices {
       };
       reportChips.forEach((chip) => {
         chip.addEventListener("click", () => {
+          // Blocked chips stay TAPPABLE on purpose — `aria-disabled`, never
+          // `disabled` — because a button that cannot be pressed can never
+          // deliver its own reason, and on a phone there is no tooltip to fall
+          // back to. The sentence is already on screen above the chips; this
+          // repeats it into the live region so a screen reader hears it at the
+          // moment of the tap rather than only on the way past.
+          const blocked = chip.dataset.blocked;
+          if (blocked) {
+            setDeviceStatus(blocked, "error");
+            return;
+          }
           reportChips.forEach((c) => (c.disabled = true));
           setDeviceStatus("Sending…");
           submitDeviceReport({
@@ -3114,6 +3184,8 @@ interface PopupProps {
   battery_percent?: number | string | null;
   reliability_tier?: string | null;
   reliability_reasons?: string | null;
+  // public since the API's sql/087: failed starts among the last 3 rentals
+  recent_rentals_no_go?: number | string | null;
   // admin-only extras (ride along on /user/devices/current for
   // ADMIN_EMAILS sessions)
   vehicle_plate?: string;

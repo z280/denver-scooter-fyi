@@ -45,7 +45,7 @@ import {
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
-import { dropNativeUndoHistory } from "./ios-shake-undo.ts";
+import { dropNativeUndoHistory, setRideLive } from "./ios-shake-undo.ts";
 // F4: `endTrackedRide` itself is no longer called from this module — Screen 8
 // (`ride-post-s8.ts`) owns the ride's single `PATCH /end` now (see
 // `handOffTrackedRideEnd` below). `EndRideIn` stays imported for
@@ -163,6 +163,18 @@ export function brbStrategyFor(rideId: string | null): BrbStrategy {
   return rideId !== null ? "continue_tracking" : "freeze_and_stop";
 }
 
+/** Funnel telemetry over the window CustomEvent channel, the `ride-modal.ts`
+ *  pattern — this module has never imported `telemetry.ts` and a single event
+ *  is not a reason to start. `telemetry.ts` validates the name against its
+ *  allowlist and drops everything when the rider has opted out. */
+function emitHudTrack(n: string, p?: Record<string, string | number | boolean>): void {
+  try {
+    window.dispatchEvent(new CustomEvent("scooter:track", { detail: { n, p } }));
+  } catch {
+    /* telemetry must never break a ride */
+  }
+}
+
 /** The F3 interim End Ride report's field set (frontend plan, Phase F3 "ride
  *  end" note): `endTrackedRide`'s REQUIRED fields only — `ended_at`,
  *  `end_lat`, `end_lon`. The §10 fields (`reported_minutes`,
@@ -256,6 +268,22 @@ export class RideHud {
   private needleEl: SVGElement | null = null;
   /** Map camera state captured on ride start, restored on exit. */
   private savedView: { center: LngLat; zoom: number; pitch: number; bearing: number } | null = null;
+
+  /** The rider has taken the map off us and we are leaving it alone.
+   *
+   *  The follow-cam used to re-center on every fix unconditionally, so a rider
+   *  who dragged the map to look at what was coming had it yanked back within
+   *  the second — there was no way to look ahead, and no way to put it back
+   *  except by waiting. A deliberate pan is now read as "I am driving this",
+   *  the camera stops moving, and the re-center control lights up to say so.
+   *
+   *  The marker keeps tracking throughout. Suspending the CAMERA is not the
+   *  same as losing the rider's position, and a dot frozen at the last place
+   *  we happened to be looking would be a lie. */
+  private followSuspended = false;
+  /** Teardown for the map-gesture listeners that set the flag above, held so
+   *  they come off with the follow-cam rather than outliving the ride. */
+  private mapGestureOff: (() => void) | null = null;
   /** Which models the follow-cam shows (HUD "Show" pills). Reset to EMPTY at
    *  the start of each ride (F3: hide every scooter by default) — the rider
    *  re-shows models on demand via the wrench panel's chips. All-selected
@@ -598,6 +626,15 @@ export class RideHud {
     // ios-shake-undo.ts — the wizard's fields avoid filling it in the first
     // place; this catches anything typed before that guard applied).
     if (riding && !wasRiding) dropNativeUndoHistory();
+    // ...and keep that module informed, because the clear above is no longer
+    // the only one. A rider can long-press a scooter mid-ride and reach the
+    // popup's report textarea or its plate field, both of which refill the
+    // queue behind this one shot — see `ios-shake-undo.ts`'s regression note.
+    //
+    // Set on BOTH edges off `riding`, not just on the way in: BRB hands the map
+    // and all its chrome back with the ride still running, and a rider typing in
+    // a drawer then should keep their undo history like anyone else.
+    setRideLive(riding);
     if (state === "hidden" && !wasHidden) this.onHidden?.();
   }
 
@@ -671,9 +708,24 @@ export class RideHud {
         applyTheme(currentTheme() === "dark" ? "light" : "dark");
         break;
       case "adjust":
+        // One panel at a time: two stacked sheets over a moving map is how a
+        // rider loses track of which one they are pressing.
+        this.root
+          .querySelector(".hud-display-panel")
+          ?.setAttribute("hidden", "");
         this.root
           .querySelector(".hud-adjust-panel")
           ?.toggleAttribute("hidden");
+        break;
+      case "display-panel":
+        this.root.querySelector(".hud-adjust-panel")?.setAttribute("hidden", "");
+        this.root
+          .querySelector(".hud-display-panel")
+          ?.toggleAttribute("hidden");
+        break;
+      case "recenter":
+        this.recenterFollowCam();
+        emitHudTrack("hud_recenter");
         break;
       case "nudge":
         // Shift the *start* time: +15s on the clock means the ride started
@@ -1141,14 +1193,89 @@ export class RideHud {
     this.addBuildings3D();
     this.userMarker ??= new maplibregl.Marker({ element: makeUserDot() });
     this.following = true;
+    this.followSuspended = false;
+    this.watchMapGestures();
+    this.syncRecenterButton();
     this.trail?.setVisible(true);
     this.routeLine?.setVisible(true);
+  }
+
+  /** Notice when the rider moves the map themselves.
+   *
+   *  `originalEvent` is the discriminator: MapLibre fires the same `*start`
+   *  events for our own `easeTo` calls as for a finger, and only a real gesture
+   *  carries the DOM event that caused it. Without that test the follow-cam
+   *  would suspend itself on its own first camera move and never recover. */
+  private watchMapGestures(): void {
+    this.mapGestureOff?.();
+    const onGesture = (e: { originalEvent?: unknown }): void => {
+      if (!e?.originalEvent) return;
+      this.suspendFollow();
+    };
+    const events = ["dragstart", "zoomstart", "rotatestart", "pitchstart"] as const;
+    for (const name of events) this.map.on(name, onGesture);
+    this.mapGestureOff = () => {
+      for (const name of events) this.map.off(name, onGesture);
+      this.mapGestureOff = null;
+    };
+  }
+
+  private suspendFollow(): void {
+    if (this.followSuspended || !this.following) return;
+    this.followSuspended = true;
+    this.syncRecenterButton();
+  }
+
+  /** Put the camera back — the re-center AND the reset, deliberately one
+   *  control.
+   *
+   *  A rider who has pinched the map flat, spun it around and scrolled two
+   *  blocks away wants one button that undoes all of it, not three that each
+   *  undo a third. So this restores the whole framing (position, zoom, pitch,
+   *  bearing) rather than only the center, and resumes following.
+   *
+   *  With no fix yet there is nothing to center ON, so it still fixes the
+   *  framing and resumes — the next fix will bring the position. */
+  private recenterFollowCam(): void {
+    if (!this.following) return;
+    this.followSuspended = false;
+    this.syncRecenterButton();
+    const pos = this.lastFix?.pos ?? null;
+    this.map.easeTo({
+      ...(pos ? { center: [pos.lng, pos.lat] as [number, number] } : {}),
+      offset: [0, this.map.getContainer().clientHeight * RIDE_FOCUS_OFFSET_FRAC],
+      bearing: this.lastBearing,
+      pitch: RIDE_PITCH,
+      zoom: RIDE_ZOOM,
+      duration: 500,
+    });
+  }
+
+  /** Say which of its two jobs the control is currently doing. It is always
+   *  pressable — "put the view back where it belongs" is useful even when we
+   *  never stopped following, because zoom and pitch drift is exactly what it
+   *  resets — but when following IS suspended it also has to announce that
+   *  the map has stopped tracking, which a rider cannot otherwise tell apart
+   *  from a GPS that has gone quiet. */
+  private syncRecenterButton(): void {
+    const btn = this.root.querySelector<HTMLElement>('[data-hud="recenter"]');
+    if (!btn) return;
+    btn.classList.toggle("is-off-center", this.followSuspended);
+    btn.setAttribute(
+      "aria-label",
+      this.followSuspended
+        ? "Follow paused — re-center the map on you"
+        : "Re-center the map on you",
+    );
+    btn.title = this.followSuspended ? "Follow paused — tap to re-center" : "Re-center";
   }
 
   /** Restore the pre-ride 2D view and remove ride-only map decorations. */
   private exitFollowCam(): void {
     if (!this.following) return;
     this.following = false;
+    this.followSuspended = false;
+    this.mapGestureOff?.();
     this.userMarker?.remove();
     this.removeBuildings3D();
     // Hidden, not cleared: BRB hands the map back to Analysis / Find wheels
@@ -1266,6 +1393,30 @@ export class RideHud {
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.121 2.121 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
               </svg>
             </button>
+            <!-- WHICH READOUTS ARE ON SCREEN, one tap from the ride.
+                 These chips used to live only inside the wrench panel, three
+                 taps deep behind a tool whose own label is about time and
+                 rate — so the controls for what the rider is LOOKING AT were
+                 filed under the controls for what they are being charged.
+                 They moved out here into their own panel; the wrench keeps
+                 the clock, the rate, the model pills and Stop tracking. -->
+            <button type="button" class="hud-round-btn" data-hud="display-panel" aria-label="Choose what's on screen">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2.5" y="4.5" width="19" height="13" rx="2"/><line x1="8" y1="20.5" x2="16" y2="20.5"/><line x1="12" y1="17.5" x2="12" y2="20.5"/>
+              </svg>
+            </button>
+            <!-- RE-CENTER, which is also the reset: it puts position, zoom,
+                 pitch and bearing all back at once. One button, because a
+                 rider who has pinched the map flat and spun it round wants
+                 one thing undone, not three. Always pressable; it gains a
+                 marked state while following is suspended. -->
+            <button type="button" class="hud-round-btn hud-round-btn--recenter" data-hud="recenter" aria-label="Re-center the map on you" title="Re-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3.25"/><circle cx="12" cy="12" r="7.75"/>
+                <line x1="12" y1="1.5" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22.5"/>
+                <line x1="1.5" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22.5" y2="12"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div class="hud-corner hud-corner--br">${speedoMarkup()}</div>
@@ -1288,14 +1439,23 @@ export class RideHud {
             ${this.deviceChipsMarkup()}
           </div>
           <p id="hud-rover-note" class="control-hint control-hint--warning"${this.rideModels.has("trike") ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
-          <div class="hud-adjust-row hud-devrow">
-            <span class="hud-devrow__label">Display</span>
-            ${this.displayChipsMarkup()}
-          </div>
           ${this.stopTrackingRowMarkup()}
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
             <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>
+          </div>
+        </div>
+
+        <!-- Its own panel, not a row inside the wrench's. See the
+             display-panel button for why it left. -->
+        <div class="hud-display-panel" hidden>
+          <p class="hud-display-panel__title">On screen</p>
+          <div class="hud-adjust-row hud-devrow">
+            ${this.displayChipsMarkup()}
+          </div>
+          <div class="hud-adjust-row">
+            <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
+            <button type="button" class="hud-btn hud-btn--primary" data-hud="display-panel">Done</button>
           </div>
         </div>
       </div>`;
@@ -1314,6 +1474,9 @@ export class RideHud {
     // The rebuilt corners come back visible — re-assert the display flags so
     // a BRB resume (or theme flip) keeps whatever the rider toggled off.
     this.syncDisplayVisibility();
+    // Same reason: the re-center button in that fresh DOM knows nothing about
+    // a follow that was already suspended when the render happened.
+    this.syncRecenterButton();
     window.clearInterval(this.tickTimer);
     this.tickTimer = window.setInterval(() => this.renderTick(), 1000);
     this.renderTick();
@@ -1545,11 +1708,20 @@ export class RideHud {
       ) {
         this.lastBearing = fix.coords.heading;
       }
+      // The marker tracks whatever the camera is doing. A dot left behind at
+      // the last place we happened to be looking would misreport where the
+      // rider is, which is worse than a map that is not centered on them.
       this.userMarker?.setLngLat([pos.lng, pos.lat]).addTo(this.map);
       // Hold the camera still while a device popup is open, so it doesn't
       // slide out from under the rider mid-read. The marker still tracks;
       // recentering resumes on the next fix after the popup closes.
-      if (!this.deviceCtl.hasOpenPopup()) {
+      //
+      // ...and while the rider is driving the map themselves (`followSuspended`
+      // — see its own doc comment). That one does NOT resume on its own: it
+      // waits for the re-center control, because the whole point of a
+      // deliberate pan is that the rider wants to look somewhere else until
+      // they say otherwise.
+      if (!this.followSuspended && !this.deviceCtl.hasOpenPopup()) {
         this.map.easeTo({
           center: [pos.lng, pos.lat],
           // Push the focal point down so the rider sits low on screen and

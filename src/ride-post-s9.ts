@@ -68,6 +68,18 @@ import {
   type ResolvedRideModePoints,
 } from "./ride-settings.ts";
 import {
+  buildEmojiScale,
+  npsToStep,
+  stepToNps,
+  stepToTenScale,
+  tenScaleToStep,
+} from "./emoji-scale.ts";
+import {
+  recordSurveySubmitted,
+  shouldAskNps,
+  surveysSubmitted,
+} from "./survey-cadence.ts";
+import {
   selectedDevice,
   shouldShowSurvey,
   surveyPanes,
@@ -270,6 +282,16 @@ export function describeQualitativeProgress(
 // ---------------------------------------------------------------------------
 
 export interface RidePostS9FormState {
+  /** The scooter, on the five-face scale (1–5), or null unanswered.
+   *
+   *  ONE QUESTION WHERE THERE WERE TWO. "Would you ride this device again?"
+   *  and "Was it absolutely perfect?" are not independent — nobody rides a
+   *  perfect scooter and says they would not ride it again — so asking both
+   *  spent two taps collecting one opinion, and left three of the four answer
+   *  combinations meaning nothing. The face is the opinion; the two booleans
+   *  the API stores are derived from it (`scooterRatingToFlags`), so nothing
+   *  downstream changes. */
+  scooterRating: number | null;
   wouldRideAgain: boolean | null;
   wasPerfect: boolean | null;
   /** Only meaningful (and only ever populated by the UI) when
@@ -288,8 +310,25 @@ export interface RidePostS9FormState {
   navQualitative: string;
 }
 
+/** The two booleans the API stores, derived from one face.
+ *
+ *  `would_ride_again` is "Okay" or better: a rider who calls the scooter okay
+ *  would get on it again, and one who calls it poor would not. `was_perfect` is
+ *  the top face alone — it is the word "absolutely perfect" in the original
+ *  question, and the issues checklist exists precisely for everything below it.
+ *
+ *  Exported because this is the whole of the compatibility story between the
+ *  new control and the old columns, and it should be assertable on its own. */
+export function scooterRatingToFlags(
+  rating: number | null,
+): { wouldRideAgain: boolean | null; wasPerfect: boolean | null } {
+  if (rating === null) return { wouldRideAgain: null, wasPerfect: null };
+  return { wouldRideAgain: rating >= 3, wasPerfect: rating === 5 };
+}
+
 export function blankSurveyFormState(): RidePostS9FormState {
   return {
+    scooterRating: null,
     wouldRideAgain: null,
     wasPerfect: null,
     issues: [],
@@ -439,6 +478,16 @@ export interface RidePostS9Deps {
   points?: ResolvedRideModePoints;
   onSubmitted?(response: RideSurveyResponse): void;
   onSkipped?(): void;
+  /** Override the recommendation question's cadence (`survey-cadence.ts`'s
+   *  `shouldAskNps` over the locally stored count). Injected for tests so the
+   *  rule is exercised without writing to `localStorage`; production leaves it
+   *  alone and lets the cadence decide. */
+  askNps?: boolean;
+  /** Count this submission toward the cadence. Defaults to
+   *  `recordSurveySubmitted`. A SKIP never calls it — a skipped survey asked
+   *  its questions and got nothing, so counting it would spend the rider's turn
+   *  in the cadence on an answer we never received. */
+  recordSubmitted?(): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -484,25 +533,12 @@ function yesNoField(
   return wrap;
 }
 
-function scaleField(
-  question: string,
-  min: number,
-  max: number,
-  value: number | null,
-  onSelect: (v: number) => void,
-): HTMLElement {
-  const wrap = el("div", "ride-post-s9__field");
-  wrap.append(el("p", "ride-post-s9__question", question));
-  const group = el("div", "segmented ride-post-s9__scale");
-  group.style.flexWrap = "wrap";
-  group.setAttribute("role", "radiogroup");
-  group.setAttribute("aria-label", question);
-  for (let n = min; n <= max; n += 1) {
-    group.append(makeSegBtn(String(n), value === n, () => onSelect(n)));
-  }
-  wrap.append(group);
-  return wrap;
-}
+// `scaleField` — the ten-button segmented row both scales used to render —
+// is gone. Ten targets across a phone's width is about 30 px each, under every
+// touch-target guideline and well under what a thumb manages while standing on
+// a pavement, so the row collected mis-taps and stored them as opinions. Both
+// questions now use `emoji-scale.ts`'s five faces, which still submit the
+// API's 1–10 and 0–10 values. Nothing else in this file ever called it.
 
 /** Build Screen 9. Callers MUST check `shouldShowRidePostS9(doc)` first —
  *  see that function's doc — but this still degrades to a minimal, closable
@@ -529,6 +565,17 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
   const isPrivate = doc ? doc.private || doc.rideId === null : false;
 
   const state: RidePostS9FormState = blankSurveyFormState();
+
+  /** Has the rider asked for the sixteen-item checklist? Only consulted for a
+   *  rating that does not open it by itself — see `renderLeft`. */
+  let issuesOpen = false;
+  /** Has the rider asked for the free-text box? */
+  let qualitativeOpen = false;
+  /** Is this one of the surveys that asks the recommendation question? Decided
+   *  ONCE, at build time: re-reading the count mid-render would make the
+   *  question appear or vanish underneath the rider if anything else bumped it.
+   *  Injectable so the cadence is testable without touching storage. */
+  const askNps = deps.askNps ?? shouldAskNps(surveysSubmitted());
 
   const root = el("div", "ride-post-s9");
   const panesWrap = el("div", "ride-post-s9__panes");
@@ -579,28 +626,59 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
       ),
     );
     pane.append(
-      yesNoField(
-        "Would you ride this device again?",
-        state.wouldRideAgain,
-        (v) => {
-          state.wouldRideAgain = v;
+      buildEmojiScale({
+        question: "How was this scooter?",
+        value: state.scooterRating,
+        fieldClass: "ride-post-s9__field",
+        questionClass: "ride-post-s9__question",
+        onSelect: (step) => {
+          state.scooterRating = step;
+          const flags = scooterRatingToFlags(step);
+          state.wouldRideAgain = flags.wouldRideAgain;
+          state.wasPerfect = flags.wasPerfect;
+          // The top face says nothing was wrong, so anything ticked on the
+          // checklist is now a contradiction rather than a detail.
+          if (flags.wasPerfect) state.issues = [];
+          // Coming down from 😍 reopens the checklist; coming UP to 🙂 must
+          // not force it open on a rider who never asked for it.
+          if (step >= 4) issuesOpen = state.issues.length > 0;
           renderLeft();
         },
-      ),
-    );
-    pane.append(
-      yesNoField("Was it absolutely perfect?", state.wasPerfect, (v) => {
-        state.wasPerfect = v;
-        if (v) state.issues = [];
-        renderLeft();
       }),
     );
-    if (state.wasPerfect === false) {
-      pane.append(issuesField());
+    // WHO GETS THE SIXTEEN-ITEM CHECKLIST. A rider who said Okay or worse has
+    // told us something went wrong and the list is the follow-up. A rider who
+    // said Good has not, so for them it is sixteen chips of homework in front
+    // of a Submit button — offered behind one line instead, which is also how
+    // a rider who liked the ride but noticed a broken bell still reports it.
+    if (state.scooterRating !== null && !state.wasPerfect) {
+      if (state.scooterRating <= 3 || issuesOpen) {
+        pane.append(issuesField());
+      } else {
+        pane.append(issuesDisclosure());
+      }
     }
     const question = modelBonusQuestionFor(model);
     if (question) pane.append(modelBonusField(question));
     leftSlot.append(pane);
+  }
+
+  /** The one-line way into the checklist for a rider who liked the ride. */
+  function issuesDisclosure(): HTMLElement {
+    const wrap = el("div", "ride-post-s9__field");
+    const btn = el(
+      "button",
+      "ride-post-s9__disclosure",
+      "Something was off →",
+    );
+    btn.type = "button";
+    btn.setAttribute("aria-expanded", "false");
+    btn.addEventListener("click", () => {
+      issuesOpen = true;
+      renderLeft();
+    });
+    wrap.append(btn);
+    return wrap;
   }
 
   function issuesField(): HTMLElement {
@@ -690,16 +768,18 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
     );
     const routeLabel = routeProfile ? routeProfileLabel(routeProfile) : "route";
     pane.append(
-      scaleField(
-        `How was the ${routeLabel}?`,
-        1,
-        10,
-        state.navRouteRating,
-        (v) => {
-          state.navRouteRating = v;
+      buildEmojiScale({
+        question: `How was the ${routeLabel}?`,
+        value: tenScaleToStep(state.navRouteRating),
+        fieldClass: "ride-post-s9__field",
+        questionClass: "ride-post-s9__question",
+        onSelect: (step) => {
+          // Stored as the API's 1–10 so every existing reader of this column
+          // keeps working — see `emoji-scale.ts` for the arithmetic.
+          state.navRouteRating = stepToTenScale(step);
           renderRight();
         },
-      ),
+      }),
     );
     pane.append(
       yesNoField(
@@ -724,23 +804,54 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
         ),
       );
     }
-    pane.append(
-      scaleField(
-        `How likely are you to recommend navigating via Scooter.fyi to other ${RIDE_PROVIDER_NAME} users?`,
-        0,
-        10,
-        state.navNps,
-        (v) => {
-          state.navNps = v;
-          renderRight();
-        },
-      ),
-    );
+    // NOT EVERY RIDE. This is a question about the product, not the trip: the
+    // answer barely moves between consecutive rides, and asked after every one
+    // it is the most likely reason a rider starts tapping Skip — losing the
+    // per-ride answers along with it. It earns no points and gates no award
+    // server-side, so asking it on the first survey and every tenth after costs
+    // the rider nothing. See `survey-cadence.ts`.
+    if (askNps) {
+      pane.append(
+        buildEmojiScale({
+          question: `Would you recommend navigating via Scooter.fyi to other ${RIDE_PROVIDER_NAME} riders?`,
+          value: npsToStep(state.navNps),
+          fieldClass: "ride-post-s9__field",
+        questionClass: "ride-post-s9__question",
+          onSelect: (step) => {
+            state.navNps = stepToNps(step);
+            renderRight();
+          },
+        }),
+      );
+    }
     pane.append(qualitativeField());
     rightSlot.append(pane);
   }
 
+  /** Free text, collapsed until asked for.
+   *
+   *  A four-row textarea standing open under everything else reads as a field
+   *  that has to be filled in, and on a phone it pushes Submit off the screen.
+   *  A rider with something to say will tap one line to say it; a rider
+   *  without one should not have to scroll past the place they would have. The
+   *  hint about the qualitative bonus moves onto that line, so the offer is
+   *  still visible without the box being. */
   function qualitativeField(): HTMLElement {
+    if (!qualitativeOpen && state.navQualitative.trim().length === 0) {
+      const wrap = el("div", "ride-post-s9__field");
+      const btn = el("button", "ride-post-s9__disclosure");
+      btn.type = "button";
+      btn.setAttribute("aria-expanded", "false");
+      btn.textContent = isPrivate
+        ? "Add a note about the route →"
+        : `Add a note about the route (+${points.navQualitativeFeedback} pts) →`;
+      btn.addEventListener("click", () => {
+        qualitativeOpen = true;
+        renderRight();
+      });
+      wrap.append(btn);
+      return wrap;
+    }
     const wrap = el("div", "ride-post-s9__field");
     wrap.append(
       el(
@@ -836,6 +947,7 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
         if (destroyed) return;
         const facts = await Promise.resolve(deps.getGateFacts());
         if (destroyed) return;
+        countSubmission();
         finish(facts);
         setStatus(null);
         // The host's response handling reads only `points`, and a private
@@ -861,6 +973,7 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
       if (destroyed) return;
       const facts = await Promise.resolve(deps.getGateFacts());
       if (destroyed) return;
+      countSubmission();
       finish(facts);
       setStatus(null);
       deps.onSubmitted?.(response);
@@ -868,6 +981,19 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
       if (destroyed) return;
       setStatus(describeSurveySubmitError(err));
       setBusy(false);
+    }
+  }
+
+  /** One tick of the recommendation question's cadence, counted only once the
+   *  server has the answers. A failed submit must not spend the rider's turn:
+   *  they would be asked again next ride, which is the right direction for the
+   *  mistake to fall. Never throws — a cadence that cannot be written down is
+   *  not a reason to lose a survey that succeeded. */
+  function countSubmission(): void {
+    try {
+      (deps.recordSubmitted ?? recordSurveySubmitted)();
+    } catch {
+      /* storage refused; the cadence degrades to "ask" */
     }
   }
 

@@ -165,6 +165,29 @@ export function veoDeepLink(vehicleNumber: string): string {
   return `https://gmjc.adj.st/?adj_t=${VEO_ADJUST_TOKEN}&number=${encodeURIComponent(vehicleNumber)}`;
 }
 
+// ---------- The governing documents ----------
+//
+// ONE LIST, because there are three places that must agree about these URLs:
+// the map's own footer (`legal-links.ts`), the About drawer's prose, and
+// anywhere a sign-in flow has to say what the rider is agreeing to. Three
+// hand-maintained copies of the same two links is the drift this file already
+// carries a complaint about elsewhere (the dibs rules, in three places).
+//
+// They are served by the API, not bundled: `data.scooter.fyi/legal/*` renders
+// `src/templates/legal/*.html` over there, which is also what
+// `GET /api/v1/meta/privacy` is generated from — so the policy a rider reads
+// and the retention statement the API makes cannot disagree.
+export const LEGAL_LINKS: readonly { label: string; href: string }[] = [
+  {
+    label: "Privacy",
+    href: "https://data.scooter.fyi/legal/privacy-policy",
+  },
+  {
+    label: "Terms",
+    href: "https://data.scooter.fyi/legal/terms-of-service",
+  },
+];
+
 // ---------- Report improperly-parked vehicle to Veo ----------
 // A rider who spots a badly-parked Veo (blocking a sidewalk, ADA ramp,
 // transit stop…) can file it with Veo directly. Veo takes those reports
@@ -183,10 +206,12 @@ export interface ParkingReportInput {
   plate?: string | null;
   /** Friendly model name (e.g. "Astro"). */
   modelName?: string | null;
-  /** Stable vehicle identifier from the feed. */
-  vehicleId?: string | null;
-  /** Human dwell string (e.g. "3d 4h") for "parked here for at least…". */
-  dwellText?: string | null;
+  // NO `vehicleId` AND NO `dwellText`. Both used to be here and both used to
+  // go into the report body; see `veoParkingReportUrl` for why they came out.
+  // They are deleted rather than left unused, because a field sitting on this
+  // interface is an invitation to put it back in the body — and the next
+  // person to do that would be restoring a privacy decision's opposite
+  // without ever reading the reason.
   /** Reverse-geocoded street address for the coordinates, when resolved
    *  (see geocode.ts). Populated asynchronously; null falls back to coords. */
   address?: string | null;
@@ -278,20 +303,41 @@ export function veoParkingReportUrl(r: ParkingReportInput): string {
   ].filter((b): b is string => !!b);
   const subject = `Improperly parked Veo${idBits.length ? " — " + idBits.join(", ") : ""}`;
 
+  // WHAT THIS REPORT MAY CONTAIN, AND WHY IT IS SO SHORT.
+  //
+  // Everything in here is something the RIDER can see standing in front of
+  // the vehicle, or something VEO already knows. Nothing from our own
+  // observation of the fleet goes in, and the report does not say where it
+  // was composed. Three things were removed for that reason, and each would
+  // be easy to put back by accident:
+  //
+  //   * "Parked here for at least 3d 4h" — that is OUR dwell measurement,
+  //     derived from a two-minute ingest cycle the rider never saw. It reads
+  //     as the rider's own observation and it is not; it is a claim from a
+  //     monitoring system, filed under a rider's name and their identity.
+  //   * "Vehicle ID: …" — a salted HMAC of the plate (`identity.hash_plate`).
+  //     Veo cannot resolve it, so it carries no information to the recipient
+  //     and advertises an identifier scheme of ours for nothing.
+  //   * "Reported via …" — the report is the rider's, filed under their
+  //     identity on Veo's own form. Attaching our name to it makes a single
+  //     rider's complaint look like an organised campaign, which is both
+  //     untrue and the easiest way for Veo to dismiss the whole class of
+  //     them.
+  //
+  // Anything added here later gets the same test: could the person sending
+  // this have seen it themselves? If not, it does not belong in their words.
   const body = [
     "Reporting a Veo vehicle that appears to be improperly parked.",
     "",
     r.plate ? `Vehicle number: ${r.plate}` : null,
     r.modelName ? `Model: ${r.modelName}` : null,
-    r.vehicleId ? `Vehicle ID: ${r.vehicleId}` : null,
     r.address
       ? `Location: ${r.address} (${r.lat.toFixed(6)}, ${r.lng.toFixed(6)})`
       : `Location: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`,
     `Map: ${mapsPointUrl(r.lat, r.lng)}`,
-    r.dwellText ? `Parked here for at least: ${r.dwellText}` : null,
     "",
-    "Reported via denver.scooter.fyi. Please describe the specific problem " +
-      "(blocking sidewalk, ADA ramp, transit stop, driveway, etc.) before sending.",
+    "Please describe the specific problem (blocking sidewalk, ADA ramp, " +
+      "transit stop, driveway, etc.) before sending.",
   ].filter((l): l is string => l !== null);
 
   const params = new URLSearchParams();

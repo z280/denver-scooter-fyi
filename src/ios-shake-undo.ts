@@ -33,7 +33,8 @@
 //      typing in those fields, which is exactly what we want here. Probed: a
 //      field typed into this way draws no alert, focused or blurred.
 //
-//   2. CLEARING (`dropNativeUndoHistory`), run when the HUD goes live.
+//   2. CLEARING (`dropNativeUndoHistory`), run when the HUD goes live AND
+//      again whenever an unguarded field is left while a ride is running.
 //      Anything typed before the guard was installed, or via an edit we
 //      deliberately left to WebKit (see `planEdit`'s bail cases), or in a
 //      field nowhere near ride mode — the area-filter search, an address in
@@ -45,6 +46,20 @@
 //      failure-tolerant — but it is what makes the fix hold for typing the
 //      ride flow never sees, which is why those other fields are left
 //      unguarded and keep their autocorrect.
+//
+// WHY THE ONE-SHOT AT RIDE START WAS NOT ENOUGH (the regression this note was
+// written for). The cause analysis above says "the HUD has no text inputs at
+// all" — true of the HUD, and false of what can be opened OVER it. During a
+// ride `devices.ts` keeps the device popup reachable on a long press, and from
+// it a rider reaches two unguarded text fields: the model-report textarea
+// (which is even `.focus()`ed on open) and ☑️ Confirm Features' plate input. Both
+// fill the queue AFTER the single clear at ride start has taken its one shot,
+// and from then on every bump in the road produces "Undo Typing" again for the
+// rest of the ride. So clearing is no longer a one-shot: `setRideLive` tells
+// this module when a ride is up, and the guard below takes another shot every
+// time focus leaves a field whose edits it did not own. Delegated, like the
+// `beforeinput` guard and for the same reason — a field added to that popup next
+// year is covered without anyone remembering this note exists.
 //
 // Deliberately not UA-gated. The behaviour is harmless everywhere else (a
 // plate field does not need an undo history on any platform), and a
@@ -75,6 +90,23 @@ export function isUndoFree(field: Element): boolean {
   return field.getAttribute(UNDO_FREE_ATTR) === "on";
 }
 
+/** Is a ride running right now? Set by `ride-hud.ts` as it enters and leaves
+ *  the riding view.
+ *
+ *  It gates the extra clearing below, which only matters while the deck is
+ *  shaking: off the scooter an undo entry is a feature, and emptying the queue
+ *  behind a rider who is typing an address in Account would take away a ⌘Z they
+ *  might want. */
+let rideLive = false;
+
+export function setRideLive(on: boolean): void {
+  rideLive = on;
+}
+
+export function isRideLive(): boolean {
+  return rideLive;
+}
+
 /** Install the guard. One delegated capture-phase listener covers every
  *  marked field, including ones mounted later — the wizard rebuilds its
  *  screens constantly, so per-field wiring would have to be re-run on every
@@ -95,6 +127,16 @@ export function installUndoFreeTyping(
     if (!isTextField(field)) return;
     const state = focusState.get(field);
     focusState.delete(field);
+    // SECOND SHOT AT THE QUEUE. Anything typed into a field this module does
+    // not own has just landed in WebKit's undo history, and if a ride is
+    // running the single clear at ride start is already spent — see the
+    // regression note in the module header. `state` is absent exactly when the
+    // field was unguarded (nothing was recorded at focus), and `sawNativeEdit`
+    // marks a guarded field whose edit we handed back; both mean WebKit holds
+    // an entry we cannot pop any other way.
+    if (rideLive && (!state || state.sawNativeEdit)) {
+      dropNativeUndoHistory({ keepFocus: true });
+    }
     if (!state || state.sawNativeEdit) return; // WebKit will fire its own
     // Every edit went through us, and a script-written value does not make
     // the control "dirty" in WebKit's eyes — so its change-on-blur never
@@ -360,13 +402,31 @@ function isTextField(node: EventTarget | null): node is TextField {
  *  every step stays guarded: if a future iOS stops behaving this way the cost
  *  is one empty iframe that lived for a frame or two, and the marked fields
  *  still keep the ride flow's own typing out of the queue. */
-export function dropNativeUndoHistory(): void {
-  try {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && active !== document.body) active.blur();
-  } catch {
-    /* nothing focusable — fine */
+export function dropNativeUndoHistory(
+  opts: {
+    /** Leave focus where it is. The ride-start call blurs on purpose (the HUD
+     *  is taking the screen and nothing behind it should still be editable),
+     *  but the mid-ride call fires FROM a `focusout` — the rider is on their
+     *  way to the next field, and blurring whatever they just reached would
+     *  fight them for the caret. */
+    keepFocus?: boolean;
+  } = {},
+): void {
+  if (!opts.keepFocus) {
+    try {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) active.blur();
+    } catch {
+      /* nothing focusable — fine */
+    }
   }
+
+  // One teardown in flight is enough. The mid-ride clear fires on every blur of
+  // an unguarded field, so a rider tabbing through a form would otherwise stack
+  // a frame per field — and they would all clear the same queue. The pending one
+  // has not been torn down yet, so it still catches everything registered up to
+  // the moment it goes.
+  if (teardownPending) return;
 
   try {
     const frame = document.createElement("iframe");
@@ -379,10 +439,45 @@ export function dropNativeUndoHistory(): void {
     document.body.append(frame);
     // Let the about:blank load commit before tearing it down — the teardown
     // is the part that clears the edit commands.
-    const drop = (): void => frame.remove();
+    // A TOKEN, not just a boolean. Both schedulers below can fire for the same
+    // frame, and a LATE one from an earlier call can arrive after a newer clear
+    // has started — if it cleared the flag it does not own, that newer clear's
+    // own teardown would then see the flag already down, bail, and leave its
+    // frame on the page for good. So a drop only stands its call down.
+    const token = ++teardownToken;
+    teardownPending = true;
+    const drop = (): void => {
+      frame.remove(); // idempotent: removing a detached node is a no-op
+      if (teardownToken === token) teardownPending = false;
+    };
+    // rAF is the natural beat to let `about:blank` commit on — but a
+    // BACKGROUNDED tab does not run it, and a flag left set there would block
+    // every later clear for the rest of the ride (BRB plus a switch away is all
+    // it takes). So a timer backs it up, and `drop` is idempotent.
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(drop);
-    else setTimeout(drop, 0);
+    setTimeout(drop, TEARDOWN_BACKSTOP_MS);
   } catch {
-    /* no DOM to work with (SSR/tests) — the prevention path carries it */
+    // No DOM to work with (SSR/tests) — the prevention path carries it. The
+    // flag must not be left set by a throw, or every later clear is a no-op.
+    teardownPending = false;
   }
+}
+
+/** Is a throwaway frame already on its way out? See `dropNativeUndoHistory`. */
+let teardownPending = false;
+/** Which call that frame belongs to — see the token note in
+ *  `dropNativeUndoHistory`. */
+let teardownToken = 0;
+
+/** How long to wait before dropping the frame if `requestAnimationFrame` never
+ *  fires — long enough to be a real second chance in a backgrounded tab, short
+ *  enough that the frame is not a fixture of the page. */
+const TEARDOWN_BACKSTOP_MS = 50;
+
+/** Forget that a teardown is in flight. For tests and HMR: a case that ends
+ *  before its frame is dropped would otherwise leave the flag set and make
+ *  every later clear a no-op. Production never needs it — the frame is always
+ *  dropped by `requestAnimationFrame` or by the backstop above. */
+export function resetUndoClearing(): void {
+  teardownPending = false;
 }

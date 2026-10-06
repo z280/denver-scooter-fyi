@@ -66,6 +66,21 @@ export interface ArrivalPanelDeps {
   onChooseRoute(): void;
   /** Dismiss the whole thing — changed my mind. */
   onCancel(): void;
+  /** The rider walked to it and it will not ride.
+   *
+   *  The most certain anyone is ever going to be about a scooter's
+   *  rideability: they are standing over it, having gone out of their way to
+   *  get there. `ride-failed-start.ts` explains what the fleet infers without
+   *  being told — in short, `number_failed_starts` is a guess made from GBFS
+   *  id rotations and it takes two of them to downgrade a device, which is how
+   *  a rider walks to three "likely rideable" scooters in a row and finds all
+   *  three broken.
+   *
+   *  Resolves with the sentence to show. The panel then hands them back to
+   *  the map, because a different scooter is the only thing left to want.
+   *  Optional: a caller that does not wire it simply does not offer the
+   *  button, rather than offering one that goes nowhere. */
+  onNotRideable?(): Promise<string>;
   /** The rider's claim on this vehicle, if they called dibs. Re-read on each
    *  update so the panel reflects progress rather than a stale copy. */
   dibs?(): Dibs | null;
@@ -90,6 +105,9 @@ export function createArrivalPanel(
   let arrived = false;
   let destroyed = false;
   let gone = false;
+  /** A report in flight. Guards the button against a second tap, which would
+   *  send a second identical report for the API to dedupe. */
+  let reporting = false;
 
   const panel = el("div", "arrival");
   const head = el("div", "arrival__head");
@@ -226,6 +244,93 @@ export function createArrivalPanel(
           ? `Pick your route first — you'll unlock ${deps.vehicle.name} in Veo on the next step, so the meter doesn't run while you decide.`
           : "Pick your route first — unlocking comes next, so the meter doesn't run while you decide."),
     );
+
+    // Quiet, last, and never competing with the route button — but present,
+    // because this is the one surface in the app where a rider is standing
+    // over a scooter and has been told to do something other than start it.
+    // See `onNotRideable`.
+    if (deps.onNotRideable) body.append(notRideableButton());
+  }
+
+  /** "It won't start", on the arrived face. Reports, says what became of the
+   *  report, then returns the rider to the map after a beat long enough to
+   *  read it — the answer is always "pick another one", and making them tap
+   *  again to learn that would be a second step for no decision. */
+  function notRideableButton(): HTMLButtonElement {
+    const btn = el(
+      "button",
+      "arrival__action arrival__action--quiet",
+      "🚫 It won't start",
+    );
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      if (reporting || !deps.onNotRideable) return;
+      reporting = true;
+      btn.disabled = true;
+      btn.textContent = "Telling the fleet…";
+      track("arrival_panel", { action: "not_rideable" });
+      void deps.onNotRideable().then(
+        (message) => {
+          if (destroyed || gone) return;
+          reporting = false;
+          // The same takeover `reportGone` uses: the panel's whole subject —
+          // this scooter — is settled, so nothing else on it is still true.
+          reportNotRideable(message);
+        },
+        () => {
+          // `onNotRideable` is documented as resolving rather than rejecting,
+          // but a rider mid-pavement is not who should discover otherwise.
+          if (destroyed || gone) return;
+          reporting = false;
+          reportNotRideable(
+            "Couldn't send the report just now — the scooter still isn't rideable, so pick another.",
+          );
+        },
+      );
+    });
+    return btn;
+  }
+
+  /** The after-the-report face. Deliberately shaped like `reportGone`'s: from
+   *  the rider's side the two are the same event — this scooter is not the one
+   *  — and only the reason differs. */
+  function reportNotRideable(message: string): void {
+    gone = true;
+    panel.classList.add("is-gone");
+    title.textContent = "🚫 Not rideable";
+    sub.textContent = message;
+    body.replaceChildren();
+    const back = el("button", "arrival__action arrival__action--primary");
+    back.type = "button";
+    back.append(
+      el("span", "arrival__action-glyph", "🗺️"),
+      el("span", "", "Find another scooter"),
+    );
+    back.addEventListener("click", () => {
+      track("arrival_panel", { action: "find_another" });
+      deps.onCancel();
+    });
+    body.append(back);
+
+    // The report button the rider just pressed was in `body`, and the line
+    // above deleted it — so focus is sitting on <body> and a screen reader has
+    // been told nothing at all: not that the report went through, and not that
+    // the only action left is a different scooter.
+    //
+    // Focus the OUTCOME rather than the button after it. The announcement is
+    // "🚫 Not rideable" plus the sentence under it; landing on [Find another
+    // scooter] alone reads as a bare command with no account of why it is the
+    // only one on offer, and the button is next in reading order anyway.
+    //
+    // `head` is deliberately NOT a live region: the walking face rewrites
+    // `title` and `sub` on every countdown tick, and a polite region there
+    // would narrate the clock for the whole walk.
+    head.tabIndex = -1;
+    try {
+      head.focus();
+    } catch {
+      /* detached — the panel went away while the report was in flight */
+    }
   }
 
   function setArrived(): void {

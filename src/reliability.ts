@@ -40,6 +40,9 @@ export interface ReliabilitySignals {
   has_negative_report?: boolean | string | null;
   quality_designation?: string | null;
   number_failed_starts?: number | string | null;
+  /** Failed starts among the vehicle's last 3 completed rentals (API
+   *  sql/087). Two or more is high risk on its own. */
+  recent_rentals_no_go?: number | string | null;
   first_observed_at_location?: string | null;
   dwell_percentile_hood?: number | string | null;
   dwell_peer_median_hours?: number | string | null;
@@ -59,13 +62,20 @@ export function worstTier(a: ReliabilityTier, b: ReliabilityTier): ReliabilityTi
 }
 
 /** Clean dwell beyond this is the API's "ghost scooter" rule — recalibrated
- *  server-side from 96h to 72h (48h is already the citywide p90). Dwell and
- *  failed-start counters reset when a device moves, so every signal is
- *  scoped to its current parking spot. */
+ *  server-side from 96h to 72h (48h is already the citywide p90). Dwell
+ *  resets when a device really moves (a ride, or a > 50-100 m move without one). Since
+ *  the API's sql/087 the failed-start count is cleared only by a relocation
+ *  of ≥ 500 m and carried across shorter ones, so it means "since it last
+ *  proved it works" rather than "at this exact spot". */
 const GHOST_HOURS = 72;
 /** One failed start is ambiguous alone (could be a rebalancer scan) but
  *  becomes damning combined with a day of nobody riding it. */
 const CORROBORATION_HOURS = 24;
+/** Failed starts among the last 3 rentals that alone mean risk. Mirror of
+ *  `_RELIABILITY_RECENT_NO_GO` in the API's src/quality.py: fail, one good
+ *  long ride (which clears `number_failed_starts`), fail again is still a
+ *  risky vehicle. */
+const RECENT_NO_GO_RISK = 2;
 /** Peer-relative dwell outlier (see `dwell_percentile_hood` in the
  *  backend's API.md): dwell
  *  percentile ≥90 among the H3-neighborhood peers AND ≥3× the peer median
@@ -111,7 +121,8 @@ function unknownDwellFloorHours(peerMedian: number): number {
 /** Mirror of the API's recalibrated reliability formula (scooter-fyi-api
  *  src/quality.py, compute_reliability_tier) — first-match-wins:
  *
- *  high_risk: live negative report; ≥2 failed starts; 1 failed start
+ *  high_risk: live negative report; ≥2 failed starts; ≥2 of the last 3
+ *  rentals were failed starts (`recent_rentals_no_go`); 1 failed start
  *  combined with ≥24h dwell; ≥72h dwell with no failures (ghost); or a
  *  peer-relative dwell outlier (≥48h dwell, ≥p90 among H3 r9-kRing(1)
  *  neighbors, ≥3× the peer median).
@@ -145,6 +156,13 @@ export function assessReliability(
   }
   if (failed !== null && failed >= 2) {
     return { tier: "risk", reasons: [`${failed} failed starts logged`] };
+  }
+  const recentNoGo = num(p.recent_rentals_no_go);
+  if (recentNoGo !== null && recentNoGo >= RECENT_NO_GO_RISK) {
+    return {
+      tier: "risk",
+      reasons: [`${recentNoGo} of its last 3 rentals went nowhere`],
+    };
   }
   if (
     failed === 1 &&

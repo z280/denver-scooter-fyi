@@ -153,15 +153,43 @@ async function genSigning(rideId: string): Promise<TrackSigning> {
 // more), the device layer control, and a captured geolocation watcher.
 // ---------------------------------------------------------------------------
 
+interface MapGestureHandler {
+  (e: { originalEvent?: unknown }): void;
+}
+
 function fakeMap() {
   const container = document.createElement("div");
   Object.defineProperty(container, "clientHeight", { value: 600 });
+  /** The gesture listeners the follow-cam's pan detection registers, so a test
+   *  can fire one the way MapLibre would. */
+  const handlers = new Map<string, Set<MapGestureHandler>>();
+  const eases: Record<string, unknown>[] = [];
   return {
     getCenter: () => ({ lng: ROUTE_LNG0, lat: ROUTE_LAT }),
     getZoom: () => 14,
     getPitch: () => 0,
     getBearing: () => 0,
-    easeTo: () => {},
+    easeTo: (opts: Record<string, unknown>) => {
+      eases.push(opts);
+    },
+    on: (name: string, cb: MapGestureHandler) => {
+      let set = handlers.get(name);
+      if (!set) handlers.set(name, (set = new Set()));
+      set.add(cb);
+    },
+    off: (name: string, cb: MapGestureHandler) => {
+      handlers.get(name)?.delete(cb);
+    },
+    /** Test-only. `originalEvent` is what tells a real finger apart from one
+     *  of our own `easeTo` calls — see `watchMapGestures`. */
+    emitGesture: (name: string, userDriven = true) => {
+      for (const cb of [...(handlers.get(name) ?? [])]) {
+        cb(userDriven ? { originalEvent: new Event(name) } : {});
+      }
+    },
+    gestureListenerCount: () =>
+      [...handlers.values()].reduce((n, s) => n + s.size, 0),
+    eases: () => eases,
     getLayer: () => undefined,
     setPaintProperty: () => {},
     // No "buildings" source-layer → addBuildings3D() returns early and
@@ -843,5 +871,222 @@ describe("RideHud own-device cost fix + Display chips", () => {
     expect(chipFor(container, "classic")?.getAttribute("aria-pressed")).toBe("false");
     expect(chipFor(container, "digital")?.getAttribute("aria-pressed")).toBe("true");
     expect(chipFor(container, "cost")?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The follow-cam's two missing controls: re-center, and a reachable "On
+// screen".
+//
+// The camera used to re-center on every single fix, so a rider who dragged the
+// map to see what was coming had it taken back within the second — there was
+// no way to look ahead and no way to put the view back. And the readout
+// toggles lived three taps deep inside the wrench panel, filed under the
+// controls for time and rate.
+// ---------------------------------------------------------------------------
+
+describe("RideHud follow-cam: re-center and the display panel", () => {
+  let hud: RideHud | null = null;
+
+  afterEach(() => {
+    hud = null;
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  function mount() {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const { geo, captured } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const map = fakeMap();
+    const doc: RideSessionDoc = {
+      ...buildDoc("ride-recenter-1", Date.now() - 5000),
+      options: { ...OPTIONS, speedometer: "classic" },
+      route: null,
+    };
+    hud = new RideHud(
+      container,
+      async () => [],
+      map as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session: { current: () => doc, dispatch: vi.fn() } },
+    );
+    hud.beginHandoff({
+      rideId: doc.rideId,
+      startedAtMs: doc.startedAtMs as number,
+      recorder: null,
+    });
+    return { hud, container, map, captured };
+  }
+
+  const recenterBtn = (c: HTMLElement) =>
+    c.querySelector<HTMLButtonElement>('[data-hud="recenter"]');
+  /** Camera moves that actually re-frame on a position — the follow-cam's own
+   *  per-fix easeTo and the re-center, as opposed to a pitch-only call. */
+  const centeringEases = (map: ReturnType<typeof fakeMap>) =>
+    map.eases().filter((e) => "center" in e);
+
+  it("offers a re-center button on the live HUD", () => {
+    const { container } = mount();
+    expect(recenterBtn(container)).toBeTruthy();
+    // Unmarked while nothing is wrong: it is only a tidy-up until following
+    // actually stops.
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(false);
+  });
+
+  it("stops chasing the rider once they pan the map themselves", () => {
+    const { container, map, captured } = mount();
+    const onFix = captured();
+
+    onFix(fix(0, Date.now()));
+    const before = centeringEases(map).length;
+    expect(before).toBeGreaterThan(0);
+
+    map.emitGesture("dragstart");
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(true);
+
+    // Every later fix leaves the camera alone — this is the whole point.
+    onFix(fix(1, Date.now() + 1000));
+    onFix(fix(2, Date.now() + 2000));
+    expect(centeringEases(map)).toHaveLength(before);
+  });
+
+  it("keeps the position marker tracking while the camera is parked", () => {
+    const { map, captured } = mount();
+    const onFix = captured();
+    map.emitGesture("dragstart");
+    // A frozen dot would misreport where the rider is, which is worse than a
+    // map that simply is not centered on them. The marker is MapLibre's, so
+    // what is asserted here is that feeding fixes stays safe and silent.
+    expect(() => {
+      onFix(fix(1, Date.now()));
+      onFix(fix(2, Date.now() + 1000));
+    }).not.toThrow();
+    expect(centeringEases(map)).toHaveLength(0);
+  });
+
+  it("never suspends on its own camera moves", () => {
+    const { container, map, captured } = mount();
+    // MapLibre fires the same *start events for an easeTo as for a finger;
+    // only a real gesture carries originalEvent. Without that test the
+    // follow-cam would switch itself off on its very first camera move.
+    captured()(fix(0, Date.now()));
+    map.emitGesture("dragstart", false);
+    map.emitGesture("zoomstart", false);
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(false);
+  });
+
+  it("suspends on a zoom, a rotate and a pitch too — not just a drag", () => {
+    for (const gesture of ["zoomstart", "rotatestart", "pitchstart"] as const) {
+      const { container, map } = mount();
+      map.emitGesture(gesture);
+      expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(true);
+      document.body.replaceChildren();
+    }
+  });
+
+  it("re-center restores the whole framing, not just the position", () => {
+    const { container, map, captured } = mount();
+    captured()(fix(0, Date.now()));
+    map.emitGesture("dragstart");
+
+    recenterBtn(container)!.click();
+    const last = map.eases().at(-1)!;
+    // One button for all of it: a rider who pinched the map flat and spun it
+    // round wants one thing undone, not three.
+    expect(last).toMatchObject({ pitch: 60, zoom: 17 });
+    expect(last).toHaveProperty("center");
+    expect(last).toHaveProperty("bearing");
+  });
+
+  it("re-center resumes following, so later fixes move the camera again", () => {
+    const { container, map, captured } = mount();
+    const onFix = captured();
+    onFix(fix(0, Date.now()));
+    map.emitGesture("dragstart");
+    recenterBtn(container)!.click();
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(false);
+
+    const before = centeringEases(map).length;
+    onFix(fix(1, Date.now() + 1000));
+    expect(centeringEases(map).length).toBeGreaterThan(before);
+  });
+
+  it("re-center works before any fix has arrived", () => {
+    const { container, map } = mount();
+    map.emitGesture("dragstart");
+    expect(() => recenterBtn(container)!.click()).not.toThrow();
+    // Nothing to center ON yet, so it fixes the framing and resumes; the next
+    // fix brings the position.
+    expect(map.eases().at(-1)).toMatchObject({ pitch: 60, zoom: 17 });
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(false);
+  });
+
+  it("a suspended follow survives a BRB resume's DOM rebuild as resumed", () => {
+    const { container, map, captured } = mount();
+    captured()(fix(0, Date.now()));
+    map.emitGesture("dragstart");
+
+    container.querySelector<HTMLButtonElement>('[data-hud="exit"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="brb"]')?.click();
+    hud!.open();
+
+    // BRB tears the follow-cam down and resuming builds a fresh one, so the
+    // rider gets a map that is following again — and a button that says so.
+    expect(recenterBtn(container)?.classList.contains("is-off-center")).toBe(false);
+  });
+
+  it("takes its gesture listeners off the map when the ride view goes", () => {
+    const { container, map } = mount();
+    expect(map.gestureListenerCount()).toBeGreaterThan(0);
+    container.querySelector<HTMLButtonElement>('[data-hud="exit"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="brb"]')?.click();
+    expect(map.gestureListenerCount()).toBe(0);
+  });
+
+  it("puts the readout toggles in their own panel, one tap from the ride", () => {
+    const { container } = mount();
+    const panel = () => container.querySelector<HTMLElement>(".hud-display-panel");
+    const wrench = () => container.querySelector<HTMLElement>(".hud-adjust-panel");
+    expect(panel()?.hidden).toBe(true);
+
+    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
+    expect(panel()?.hidden).toBe(false);
+    // The chips moved OUT of the wrench panel; they must not be in both, or
+    // the two copies drift.
+    expect(
+      wrench()?.querySelectorAll('[data-hud="display"]').length,
+    ).toBe(0);
+    expect(
+      panel()!.querySelectorAll('[data-hud="display"]').length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("never stacks the two panels over a moving map", () => {
+    const { container } = mount();
+    const panel = () => container.querySelector<HTMLElement>(".hud-display-panel");
+    const wrench = () => container.querySelector<HTMLElement>(".hud-adjust-panel");
+
+    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')!.click();
+    expect(wrench()?.hidden).toBe(false);
+    expect(panel()?.hidden).toBe(true);
+
+    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
+    expect(panel()?.hidden).toBe(false);
+    expect(wrench()?.hidden).toBe(true);
+  });
+
+  it("the chips still work from their new home", () => {
+    const { container } = mount();
+    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
+    const timer = container.querySelector<HTMLButtonElement>(
+      '.hud-display-panel [data-hud="display"][data-display="timer"]',
+    )!;
+    timer.click();
+    expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(true);
+    timer.click();
+    expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(false);
   });
 });

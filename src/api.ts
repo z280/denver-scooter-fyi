@@ -97,8 +97,12 @@ export interface DeviceProperties {
   // local assessment, then attaches a human-readable `reliability_reasons`.
   reliability_tier?: "ok" | "unknown" | "risk" | "high_risk";
   reliability_reasons?: string;
-  /** Recent failed unlock/start attempts. Public. */
+  /** Failed unlock/start attempts since the vehicle last proved it works
+   *  (a relocation of ≥ 500 m clears it). Public. */
   number_failed_starts?: number;
+  /** Failed starts among the last 3 completed rentals, 0–3; ≥ 2 is
+   *  high risk on its own. Public (API sql/087). */
+  recent_rentals_no_go?: number | null;
   /** When the device first appeared at its current spot (dwell start). Public. */
   first_observed_at_location?: string;
   /** Peer-relative dwell: this device's dwell percentile among its H3
@@ -2112,103 +2116,18 @@ export async function removeAdmin(email: string): Promise<AdminWriteResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Favorite Scooters (sql/081) — vehicles a rider kept after proving at the kerb.
+// Favorite Scooters (sql/081) — REMOVED from the client.
 //
-// TWO SERVER RULES THE CLIENT MUST NOT SECOND-GUESS:
+// `listFavoriteDevices`, `keepFavoriteDevice`, `updateFavoriteDevice` and
+// `forgetFavoriteDevice` are gone, along with the `FavoriteDevice` type and the
+// two server rules this comment used to spell out (the QR + 75 m gate, and the
+// position withholding for a vehicle in use). Nothing in the app calls them any
+// more: "Keep this one" has been replaced by "Notify me if moved", which is
+// local, needs no account and no scan, and answers the question that feature
+// was reaching for — see `device-notify.ts`'s header for the full argument.
 //
-//   The GATE. Keeping one needs a QR payload AND a fix within 75 m of the
-//   vehicle. The client validates NEITHER — it sends the raw payload, exactly
-//   as `qr-scan.ts`'s header says it should, and lets the server resolve and
-//   judge. `vehicle_identifier` is optional: the scan is the identity.
-//
-//   The WITHHOLDING. `lat`/`lon`/`battery_percent`/`current_range_meters` are
-//   ABSENT — not null — whenever `position_withheld` is true, which it is for
-//   any vehicle somebody is riding. The optional fields below are optional
-//   because of that rule, and a renderer must key off the FLAG rather than
-//   off the absence: reading a missing lat as "loading" and falling back to a
-//   cached one is precisely the accident the flag exists to prevent.
+// The ENDPOINTS still exist and still work; this is a client deletion, not a
+// deprecation. Anything that wants them back can take them out of git history
+// rather than out of a shim nobody calls.
 // ---------------------------------------------------------------------------
 
-export type FavoriteState = "available" | "unavailable" | "in_use" | "gone";
-
-export interface FavoriteDevice {
-  vehicle_identifier: string;
-  nickname: string | null;
-  state: FavoriteState;
-  /** True ⇒ the position and charge fields below are absent, on purpose. */
-  position_withheld: boolean;
-  notify_on_available: boolean;
-  verified_at: string | null;
-  created_at: string | null;
-  last_seen_at: string | null;
-  vehicle_model_name: string | null;
-  vehicle_use_type: string | null;
-  lat?: number | null;
-  lon?: number | null;
-  battery_percent?: number | null;
-  current_range_meters?: number | null;
-}
-
-export interface FavoriteDevicesResponse {
-  favorite_devices: FavoriteDevice[];
-  /** Served rather than hardcoded, so the panel's "you have N of M" cannot
-   *  disagree with the cap the server actually enforces. */
-  max_favorites: number;
-}
-
-export function listFavoriteDevices(
-  signal?: AbortSignal,
-): Promise<FavoriteDevicesResponse> {
-  return authedFetchJSON<FavoriteDevicesResponse>(
-    "/api/v1/profile/favorite-devices",
-    { signal },
-  );
-}
-
-export interface KeepDeviceIn {
-  qr_raw_value: string;
-  lat: number;
-  lng: number;
-  vehicle_identifier?: string;
-  nickname?: string;
-}
-
-export interface KeepDeviceResult {
-  favorite: FavoriteDevice | null;
-  already_favorited: boolean;
-  points_awarded: number;
-}
-
-/** Keep a vehicle. `ApiError.status` carries the refusal:
- *  400 `qr_mismatch` / `unknown_device`, 403 `too_far_from_device`,
- *  409 `favorite_limit_reached`. */
-export function keepFavoriteDevice(
-  body: KeepDeviceIn,
-  signal?: AbortSignal,
-): Promise<KeepDeviceResult> {
-  return authedFetchJSON<KeepDeviceResult>(
-    "/api/v1/profile/favorite-devices",
-    { method: "POST", body, signal },
-  );
-}
-
-export function updateFavoriteDevice(
-  vehicleIdentifier: string,
-  body: { nickname?: string; notify_on_available?: boolean },
-  signal?: AbortSignal,
-): Promise<{ favorite: FavoriteDevice | null }> {
-  return authedFetchJSON<{ favorite: FavoriteDevice | null }>(
-    `/api/v1/profile/favorite-devices/${encodeURIComponent(vehicleIdentifier)}`,
-    { method: "PATCH", body, signal },
-  );
-}
-
-export async function forgetFavoriteDevice(
-  vehicleIdentifier: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  await authedFetchJSON<unknown>(
-    `/api/v1/profile/favorite-devices/${encodeURIComponent(vehicleIdentifier)}`,
-    { method: "DELETE", signal },
-  );
-}

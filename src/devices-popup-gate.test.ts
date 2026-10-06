@@ -774,52 +774,176 @@ describe("device popup — reporting bad parking from a distance", () => {
   });
 });
 
-describe("device popup — the ⭐ keep star", () => {
-  function openWithKeep(): { devices: Devices; handler: ReturnType<typeof vi.fn> } {
+describe("device popup — there is no bell, and that is the feature", () => {
+  // A "tell me when this one moves" button on every scooter on the map is an
+  // "alert me when this address's occupant leaves" tool. `device-notify.ts`'s
+  // header carries the argument; this pins the absence, because the button is
+  // cheap to re-add and the harm is not visible from the diff that adds it.
+  //
+  // The capability is not gone. It has two doors, both requiring a connection
+  // the rider already has to the specific vehicle: the dibs claim this popup's
+  // own "I'll ride this one" makes (`setClaimWatchHook`), and the end of a
+  // ride (`ride-post-s8.ts`). Those are tested where they live.
+
+  function open(): Devices {
     const devices = new Devices(
       fakeMap() as unknown as MLMap,
       fakeLocate(NEAR),
     );
-    const handler = vi.fn();
-    devices.setKeepHandler(handler);
     devices.setData(response([feature({ vehicle_identifier: PHOTO_VID })]));
     devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
-    return { devices, handler };
+    return devices;
   }
-  const hint = () =>
-    lastPopupEl?.querySelector<HTMLElement>(".device-popup__actionhint");
 
-  it("forwards a signed-in tap with a way to answer in this popup", () => {
-    const { handler } = openWithKeep();
-    lastPopupEl
-      ?.querySelector<HTMLButtonElement>('[data-action="keep-scooter"]')
-      ?.click();
-    expect(handler).toHaveBeenCalledOnce();
-    const info = handler.mock.calls[0][0] as {
-      vehicleIdentifier: string;
-      report(t: string): void;
-    };
-    expect(info.vehicleIdentifier).toBe(PHOTO_VID);
-    // Whatever the keep flow says lands in the hint line under the row.
-    info.report("You'll need to be standing at this one. It was last seen about 212 m away.");
-    expect(hint()?.hidden).toBe(false);
-    expect(hint()?.textContent).toContain("212 m");
+  it("renders no notify-if-moved control, near or far", () => {
+    open();
+    expect(lastPopupHtml).not.toContain('data-action="notify-moved"');
+    expect(lastPopupHtml).not.toContain("Notify me if moved");
+    expect(lastPopupHtml).not.toContain("🔔");
   });
 
-  it("renders blocked when signed out, and a tap says to sign in", () => {
-    signedIn = false;
-    const { handler } = openWithKeep();
-    expect(lastPopupHtml).not.toContain('data-action="keep-scooter"');
-    const btn = lastPopupEl?.querySelector<HTMLButtonElement>(
-      '[data-action="keep-blocked"]',
+  it("offers no way to arm a watch even with the claim hook wired", () => {
+    // The hook exists for the CLAIM path. Wiring it must not resurrect a
+    // button here.
+    const devices = new Devices(
+      fakeMap() as unknown as MLMap,
+      fakeLocate(NEAR),
     );
-    // Visible, not removed — "sign in and you get this" is the message.
-    expect(btn).not.toBeNull();
-    expect(btn?.getAttribute("aria-disabled")).toBe("true");
-    expect(hint()?.hidden).toBe(true);
-    btn?.click();
-    expect(handler).not.toHaveBeenCalled();
-    expect(hint()?.hidden).toBe(false);
-    expect(hint()?.textContent).toContain("Sign in");
+    const hook = vi.fn(() => "armed");
+    devices.setClaimWatchHook(hook);
+    devices.setData(response([feature({ vehicle_identifier: PHOTO_VID })]));
+    devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
+    expect(lastPopupHtml).not.toContain('data-action="notify-moved"');
+    expect(hook).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The failure-report chips: gated, but still drawn.
+//
+// This is the most consequential thing a rider can do from this card — a
+// `not_rideable` report overrides the vehicle's reliability tier for everybody,
+// and since the API's signed-in rule landed it holds until the scooter moves or
+// comes back charged rather than expiring in 24 hours. It used to be filable
+// from anywhere on earth while "report bad parking" was correctly gated at
+// 100 m: the cheap action gated, the expensive one not.
+//
+// The fix is a gate, NOT a disappearance. Hiding the chips teaches a visitor
+// nothing about what the app does, and a feature nobody knows exists is one
+// nobody uses while standing in front of a broken scooter.
+// ---------------------------------------------------------------------------
+
+describe("device popup — reporting a problem needs you to be there", () => {
+  // The chips only render for a 16-hex vehicle_identifier — the API refuses
+  // anything else — so every case here has to carry one.
+  const WITH_VID = { vehicle_identifier: PHOTO_VID };
+
+  /** Same lesson as the parking block above, and the same helper: these chips
+   *  live inside the ⚠️ Report modal, not the popup body. The first version of
+   *  these tests read `lastPopupHtml` and found nothing at all. */
+  const openReportModal = (
+    opts: Omit<Parameters<typeof openPopup>[0], "props">,
+  ): string => {
+    openPopup({ ...opts, props: WITH_VID });
+    lastPopupEl
+      ?.querySelector<HTMLButtonElement>('[data-action="open-report"]')
+      ?.click();
+    return document.body.innerHTML;
+  };
+
+  const chips = (html: string): string[] =>
+    [...html.matchAll(/<button[^>]*data-action="report-device"[^>]*>/g)].map(
+      (m) => m[0],
+    );
+  const gateNote = (html: string): string | null => {
+    const m = /<p class="device-popup__report-gate">([\s\S]*?)<\/p>/.exec(html);
+    return m ? m[1] : null;
+  };
+
+  it("offers all three chips, ungated, to a rider standing at the scooter", () => {
+    const html = openReportModal({ fix: NEAR });
+    expect(chips(html)).toHaveLength(3);
+    for (const c of chips(html)) expect(c).not.toContain("data-blocked");
+    expect(gateNote(html)).toBeNull();
+  });
+
+  it("still draws all three from across town — the feature has to be visible", () => {
+    // The whole point of gating rather than hiding, and the one place this
+    // deliberately differs from the parking block directly above it (which
+    // disappears): somebody who learns the button exists is somebody who uses
+    // it while standing in front of a broken scooter.
+    const html = openReportModal({ fix: FAR });
+    expect(chips(html)).toHaveLength(3);
+  });
+
+  it("warns, in words and before the tap, when the rider is too far", () => {
+    const html = openReportModal({ fix: FAR });
+    expect(gateNote(html)).toContain("too far away");
+    // How far, not just "too far": a refusal the rider cannot act on is a
+    // refusal they will read as the app being broken.
+    expect(gateNote(html)).toMatch(/mi\)/);
+    for (const c of chips(html)) expect(c).toContain("data-blocked");
+  });
+
+  it("names the OTHER reason separately when there is no fix at all", () => {
+    // "You're too far away" is wrong, and confusing, for somebody whose GPS
+    // is simply off — they may be standing right next to it.
+    const html = openReportModal({ fix: null });
+    expect(gateNote(html)).toContain("Turn on your location");
+    expect(gateNote(html)).not.toContain("too far");
+  });
+
+  it("keeps blocked chips tappable, so they can deliver their own reason", () => {
+    // `aria-disabled`, never `disabled`: a button that cannot be pressed can
+    // never explain itself, and on a phone there is no tooltip to fall back
+    // on. Same rule the rest of the card's gated actions follow.
+    const html = openReportModal({ fix: FAR });
+    for (const c of chips(html)) {
+      expect(c).toContain('aria-disabled="true"');
+      expect(c).not.toMatch(/\sdisabled[\s>]/);
+    }
+  });
+
+  it("refuses the tap, in the live region, rather than sending", () => {
+    // The gate has to hold at the HANDLER too. A warning the rider can tap
+    // straight through is decoration, and this report overrides a vehicle's
+    // reliability tier for everybody.
+    openReportModal({ fix: FAR });
+    const chip = document.querySelector<HTMLButtonElement>(
+      '[data-action="report-device"]',
+    )!;
+    chip.click();
+    const status = document.querySelector<HTMLElement>(
+      ".device-popup__report-device-status",
+    );
+    expect(status?.textContent).toContain("too far away");
+  });
+
+  it("exempts admins at any distance, and with no fix", () => {
+    // The gate is a credibility check, not a data dependency: the report is
+    // built from the DEVICE's coordinates, so a distant admin files exactly
+    // the same report. Same exemption the parking report already grants.
+    for (const fix of [FAR, null]) {
+      const html = openReportModal({ fix });
+      void html;
+      const adminHtml = openReportModal({ fix, admin: true });
+      expect(gateNote(adminHtml)).toBeNull();
+      for (const c of chips(adminHtml)) expect(c).not.toContain("data-blocked");
+    }
+  });
+
+  it("gates on the same distance as the parking report, not a second one", () => {
+    // Both are the same kind of claim — "I can see this vehicle and here is
+    // what is wrong with it". A second radius is a distinction no rider can
+    // perceive and nobody will maintain. (They PRESENT differently on
+    // purpose — parking disappears, these stay and explain — so this compares
+    // the gate, not the rendering.)
+    const far = openReportModal({ fix: FAR });
+    expect(gateNote(far)).not.toBeNull();
+    expect(far.includes('data-action="report-parking"')).toBe(false);
+
+    const near = openReportModal({ fix: NEAR });
+    expect(gateNote(near)).toBeNull();
+    expect(near.includes('data-action="report-parking"')).toBe(true);
   });
 });

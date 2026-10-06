@@ -64,8 +64,24 @@ export interface HomeBarDeps {
   /** Tap the map to drop a pin — for a destination or a start point with no
    *  address. Absent means the row is not offered. */
   pickOnMap?(hint?: string): Promise<{ lat: number; lng: number } | null>;
-  /** The rider answered both questions. */
-  onPlanTrip(trip: { dest: TripPlace; wheels: TripWheels; start: TripPlace | null }): void;
+  /** The rider answered both questions.
+   *
+   *  MAY REFUSE THE TRIP. Returning `false` — or a promise of it — means the
+   *  host did not take it, and the bar stays exactly where it is with the
+   *  destination and the start point intact. Anything else, including the
+   *  `void` every existing caller returns, means taken, and the bar folds away.
+   *
+   *  It exists for "started", the one answer that needs something from the
+   *  rider before it can be acted on: a QR scan naming the scooter they are
+   *  sitting on. A rider who backs out of that camera has not changed their
+   *  mind about the trip, so losing the destination they just typed would be
+   *  the app punishing them for looking. The bar deliberately does not know
+   *  that a scan is what happened — only that the host declined. */
+  onPlanTrip(trip: {
+    dest: TripPlace;
+    wheels: TripWheels;
+    start: TripPlace | null;
+  }): void | boolean | Promise<void | boolean>;
   /** Every change to the chosen points, so the map can draw them.
    *
    *  Picking a point used to do nothing visible: you tapped the map, the app
@@ -151,6 +167,10 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   let status: SearchStatus = "idle";
   let liveQuery = "";
   let destroyed = false;
+  /** A trip is with the host, waiting to be taken or refused. Holds every
+   *  wheels button so a bounced thumb cannot start two — see the click
+   *  handler, and `onPlanTrip`'s own note on refusing. */
+  let planning = false;
 
   // -- resting state: one wide tap target, and nothing else ------------------
   const pill = el("button", "home-bar__pill");
@@ -525,8 +545,9 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     footEl.append(line);
   }
 
-  /** The second question. Two buttons, equal weight, neither preselected —
-   *  see this module's header. */
+  /** The second question. Three buttons, equal weight, none preselected — see
+   *  this module's header, whose no-default rule is the point and survived the
+   *  third option being added. */
   function renderWheels(): void {
     const to = el("div", "home-bar__to");
     to.append(el("span", "home-bar__to-label", "To"), el("strong", "", dest!.label));
@@ -556,12 +577,52 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
       );
       btn.append(head, el("span", "home-bar__wheel-desc", choice.desc));
       btn.addEventListener("click", () => {
-        if (!dest) return;
+        if (!dest || planning) return;
         track("home_bar", { action: "plan", wheels: choice.value });
-        deps.onPlanTrip({ dest, wheels: choice.value, start });
-        // The chosen flow owns the screen now — but the pins stay, because
-        // that flow is about to route to them.
-        collapse({ keepPlaces: true });
+        // Locked while the host decides. "Started" opens a camera, and two
+        // scanners racing because a thumb bounced is a worse bug than a slow
+        // button — so every choice is held, not just that one.
+        planning = true;
+        for (const b of choices.querySelectorAll("button")) b.disabled = true;
+        btn.classList.add("is-working");
+
+        const release = (): void => {
+          planning = false;
+          if (phase !== "wheels") return; // taken; the bar is on its way out
+          for (const b of choices.querySelectorAll("button")) b.disabled = false;
+          btn.classList.remove("is-working");
+        };
+
+        let outcome: void | boolean | Promise<void | boolean>;
+        try {
+          outcome = deps.onPlanTrip({ dest, wheels: choice.value, start });
+        } catch {
+          // A host that throws has certainly not taken the trip. Stay put
+          // rather than folding away over a destination nothing received.
+          release();
+          return;
+        }
+        const settle = (taken: void | boolean): void => {
+          if (taken === false) {
+            release();
+            return;
+          }
+          // The chosen flow owns the screen now — but the pins stay, because
+          // that flow is about to route to them.
+          collapse({ keepPlaces: true });
+          planning = false;
+        };
+
+        // A SYNCHRONOUS HOST COLLAPSES IN THE SAME TICK, exactly as it always
+        // did. Routing every answer through `Promise.resolve().then` would
+        // defer all three by a microtask — which is a frame of the bar still
+        // sitting over a wizard that has already opened, and is the kind of
+        // "harmless" change that turns up later as a flicker nobody can place.
+        if (typeof (outcome as Promise<unknown> | undefined)?.then !== "function") {
+          settle(outcome as void | boolean);
+          return;
+        }
+        void Promise.resolve(outcome).then(settle, () => release());
       });
       choices.append(btn);
     }
@@ -683,6 +744,16 @@ const WHEELS: readonly {
     glyph: "🛴",
     name: "Need wheels",
     desc: "Find me one nearby",
+  },
+  // BETWEEN the other two, because that is where it sits in the rider's day:
+  // past needing one, short of owning one. It is also the one whose blurb has
+  // to carry a cost — the scan is a real extra step and a rider who taps this
+  // expecting to just go would rather have known.
+  {
+    value: "started",
+    glyph: "🔓",
+    name: "Already started one",
+    desc: "I've unlocked a Veo — scan it",
   },
   {
     value: "own",

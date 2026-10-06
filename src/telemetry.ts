@@ -71,15 +71,11 @@ export const TELEMETRY_EVENTS = [
   "spec_saved_from_map",
   // Whether specs actually reach accounts, or stop at the device.
   "spec_saved",
-  // Favorite Scooters. `favorite_added` carries WHICH entry point (the panel's
-  // button or the device popup's star) and whether it was already kept —
-  // the ratio of those answers is what says whether the popup star is
-  // pulling its weight. `favorite_removed` carries why. Never a
-  // vehicle_identifier: attaching a device to a session is the one thing
-  // this system is built not to do.
-  "favorite_added",
-  "favorite_removed",
-  "favorite_notify",
+  // Favorite Scooters' three events are gone with the feature — "Keep this
+  // one" has been replaced by "Notify me if moved" (`device-notify.ts`), whose
+  // single event is `device_notify_moved` below. The server's own allowlist may
+  // still carry the old names; it drops what it does not know and keeps what
+  // nobody sends, so there is nothing to coordinate.
   "area_filter",
   "geocode_search",
   "hex_tool",
@@ -89,9 +85,23 @@ export const TELEMETRY_EVENTS = [
   "popup_action",
   // ride wizard funnel
   "ride_open",
+  // An entry that was turned away because a ride was already live — the
+  // BRB-then-tap-a-scooter path. Counted rather than silent: if this ever
+  // climbs, riders are reaching for the wizard when they wanted the HUD,
+  // and the answer is a clearer way back, not a quieter deflection.
+  "ride_open_deflected",
   "ride_screen",
   "ride_complete",
   "ride_abandon",
+  // A rider told us, at the moment it happened, that the scooter would not
+  // ride. The one signal the fleet's reliability scoring cannot infer.
+  "ride_failed_start",
+  // In-ride HUD: the follow-cam was re-engaged after a pan.
+  "hud_recenter",
+  // The main menu's QR dial, by the mode it was turned to.
+  "qr_utility",
+  // "Notify me if moved" was switched on or off for a device.
+  "device_notify_moved",
   // auth funnel
   "auth_start",
   "auth_success",

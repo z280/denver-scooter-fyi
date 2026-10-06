@@ -384,7 +384,13 @@ body:not(.ribbon-open) .drawer-tabs {
   transform: translateX(calc(-100% - 48px - env(safe-area-inset-left)));
   visibility: hidden;
 }
-.drawer-tab {
+/* The ribbon's one non-drawer control (the QR tool). Visually a tab, and
+   deliberately NOT `.drawer-tab` — see the markup's own note: wireDrawers()
+   queries that class document-wide, so wearing it would make this a tab for a
+   drawer that does not exist. Every rule below is shared with the tabs rather
+   than redeclared, so the strip cannot drift into two looks. */
+.drawer-tab,
+.ribbon-action {
   width: 40px;
   height: 40px;
   border: 0;
@@ -397,6 +403,22 @@ body:not(.ribbon-open) .drawer-tabs {
   color: var(--fg-muted);
   transition: background 0.12s ease, color 0.12s ease;
 }
+.ribbon-action:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+@media (min-width: 900px) {
+  .drawer-tabs .ribbon-action {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 0 9px;
+  }
+  .drawer-tabs .ribbon-action svg {
+    flex: none;
+  }
+}
+
 /* `hidden` has to actually hide. `.drawer-tab` sets display: inline-flex,
    which outranks the attribute's UA `display: none` — so the Compliance tab
    carried `hidden` in the markup and showed anyway. It was only ever
@@ -1072,6 +1094,16 @@ body:not(.ribbon-open) .drawer-tabs {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The move-watch sentence that rides along with a claim. Deliberately allowed
+   to wrap where `__what` is not: this one is telling the rider something was
+   armed on their behalf, and a truncated disclosure is not a disclosure. */
+.dibs-toast__watch {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
 .dibs-toast__view {
   flex: 0 0 auto;
   padding: 9px 14px;
@@ -1690,6 +1722,23 @@ body.ride-active .dibs-toast {
   color: var(--accent-ink);
   box-shadow: 0 0 0 2px var(--metal-active-border);
 }
+/* "It won't start". A real exit, and never a rival to the route button above
+   it: borderless, muted, and smaller, so it reads as the thing you press when
+   the main thing turned out to be impossible. */
+.arrival__action--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 38px;
+}
+.arrival__action--quiet:hover,
+.arrival__action--quiet:focus-visible {
+  background: var(--hover-neutral);
+  color: var(--fg);
+  box-shadow: none;
+}
 .arrival__action-glyph {
   font-size: 18px;
   line-height: 1;
@@ -2099,6 +2148,26 @@ body.ride-active .arrival {
   display: flex;
   gap: 8px;
 }
+/* Three choices, not two. At phone width three side by side leaves each one
+   about a third of a narrow sheet, which is not enough for a two-line blurb —
+   so they stack, which also puts them in the reading order of the question. */
+@media (max-width: 560px) {
+  .home-bar__wheels {
+    flex-direction: column;
+  }
+}
+/* Held while the host decides whether to take the trip. "Already started one"
+   opens a camera, and the gap between the tap and the viewfinder is long enough
+   that an unmarked button reads as a dead one. */
+.home-bar__wheel[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.home-bar__wheel.is-working {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .home-bar__wheel {
   appearance: none;
   flex: 1 1 0;
@@ -2414,6 +2483,115 @@ body.is-map-picking .home-bar {
     padding: 7px 12px;
   }
 }
+
+/* ---------- triple-tap-nudge.ts: "tap tap tap" chip ---------- */
+/* A cousin of the equity chip: same pill, same centred-by-auto-margins
+   placement (see .equity-indicator for why not translateX), but at the TOP,
+   just under the bar: bottom centre is already the equity chip's and the
+   destination search's. Friendlier colour, since this one is an invitation
+   rather than money owed. */
+.triple-tap-nudge {
+  position: fixed;
+  top: calc(var(--topbar-h) + 10px);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: min(92vw, 360px);
+  z-index: 27;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fff;
+  background: linear-gradient(115deg, #ec4899, #f97316);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  animation: triple-tap-nudge-in 360ms cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+}
+.triple-tap-nudge__taps {
+  display: inline-flex;
+  gap: 1px;
+  font-size: 15px;
+}
+/* The three fingers tap in turn — tap, tap, tap, pause — on a 1.8 s loop. */
+.triple-tap-nudge__tap {
+  display: inline-block;
+  transform-origin: 50% 90%;
+  animation: triple-tap-press 1.8s ease-in-out infinite;
+}
+.triple-tap-nudge__tap:nth-child(2) { animation-delay: 0.18s; }
+.triple-tap-nudge__tap:nth-child(3) { animation-delay: 0.36s; }
+.triple-tap-nudge__close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.triple-tap-nudge__close:hover,
+.triple-tap-nudge__close:focus-visible {
+  background: rgba(255, 255, 255, 0.38);
+}
+@keyframes triple-tap-press {
+  0%, 30%, 100% { transform: translateY(0) scale(1); }
+  10% { transform: translateY(3px) scale(0.86); }
+}
+@keyframes triple-tap-nudge-in {
+  from { opacity: 0; transform: translateY(-12px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .triple-tap-nudge,
+  .triple-tap-nudge__tap {
+    animation: none;
+  }
+}
+
+/* ---------- map-inspect.ts / micromobility-zones.ts: triple-tap cards ---------- */
+.zone-inspect__list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.zone-inspect__item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border-left: 4px solid #8a8f98;
+  border-radius: 0 10px 10px 0;
+}
+.zone-inspect__item--no_ride { border-left-color: #c1121f; }
+.zone-inspect__item--no_parking,
+.zone-inspect__item--slow_no_parking { border-left-color: #e07a00; }
+.zone-inspect__item--slow { border-left-color: #eab308; }
+.zone-inspect__icon { font-size: 20px; line-height: 1.2; }
+.zone-inspect__name { margin: 0 0 2px; font-weight: 700; color: var(--fg); }
+.zone-inspect__meaning,
+.zone-inspect__advice { margin: 0; font-size: 14px; line-height: 1.4; }
+.zone-inspect__advice { margin-top: 4px; color: var(--fg-muted); }
+.zone-inspect__source,
+.spot-inspect__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+.spot-inspect p { margin: 0 0 10px; }
+.spot-inspect p:last-child { margin-bottom: 0; }
 
 .equity-explainer__where {
   margin: 0 0 10px;
@@ -2883,6 +3061,20 @@ body.is-map-picking .home-bar {
 }
 .login-btn--secondary:hover:not([disabled]) {
   background: var(--hover-neutral);
+}
+/* Quieter than --secondary: a borderless row for the action that is neither
+   what the screen is for nor a mistake to prevent. Screen 6's "It won't
+   start" is the case — a real, needed exit that must not compete with the
+   buttons that begin a ride. */
+.login-btn--ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  border-color: transparent;
+  font-weight: 500;
+}
+.login-btn--ghost:hover:not([disabled]) {
+  background: var(--hover-neutral);
+  color: var(--fg);
 }
 
 .account-intro {
@@ -4101,6 +4293,116 @@ body.is-map-picking .ride-modal {
     line-height: 1.35;
   }
 }
+/* The city-rules key: a dot per class, coloured from the same values
+   micromobility-zones.ts paints with. Hand-mirrored, which is a hazard — so
+   `micromobility-zones.test.ts` asserts the two agree rather than trusting
+   that somebody checked. */
+.zone-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+.zone-key__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+.zone-key__dot[data-zone="no_ride"] {
+  background: #c1121f;
+}
+.zone-key__dot[data-zone="no_parking"] {
+  background: #e07a00;
+}
+.zone-key__dot[data-zone="slow"] {
+  background: #eab308;
+}
+.zone-key__dot[data-zone="school"] {
+  background: #8a8f98;
+}
+
+/* ---------- The governing documents, in the attribution corner ---------- */
+/* Registered last in bottom-left, so this is that stack's bottom row: zoom,
+   then the attribution pill, then this. One footer group.
+
+   A CHIP THAT OPENS, for a measured reason. Inline links did not fit: at
+   390×844 the pill ran x 22–121 against a home bar starting at x 78. The chip
+   is sized to clear that edge and the panel opens upward over the map, the
+   same shape as the attribution's own collapsed ⓘ. */
+.legal-links {
+  border-radius: 999px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+.legal-links__summary {
+  /* The default triangle costs ~12px of the width this is budgeting. */
+  list-style: none;
+  cursor: pointer;
+  color: var(--fg-muted);
+  padding: 5px 10px;
+  border-radius: 999px;
+  user-select: none;
+  /* Keeps the chip under the home bar's left edge (x 78 at 390px wide, with
+     the corner's own 12px inset leaving 66px of room). */
+  max-width: 56px;
+}
+.legal-links__summary::-webkit-details-marker {
+  display: none;
+}
+.legal-links__summary:hover,
+.legal-links[open] .legal-links__summary {
+  color: var(--fg);
+}
+.legal-links__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Opens UPWARD. Down is off the bottom of the screen, and up is the only
+   direction with map in it — the same reason the attribution lifts rather
+   than expanding into the corner it is already in. */
+.legal-links__panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.legal-links[open] {
+  /* The panel is positioned against this, so it has to be the containing
+     block — only while open, so the closed chip stays a plain pill. */
+  position: relative;
+}
+.legal-links__link {
+  color: var(--fg-muted);
+  text-decoration: none;
+  /* 10.5px text in a 2px-gapped column is well under a 44px target; the
+     padding buys height without making each link look like a button. */
+  padding: 5px 0;
+  font-size: 11.5px;
+}
+.legal-links__link:hover,
+.legal-links__link:focus-visible {
+  color: var(--fg);
+  text-decoration: underline;
+}
+/* The two states that own this corner outright. Same rule, and the same
+   reasoning, as the attribution and zoom control directly above: two surfaces
+   claiming one corner, and the one underneath is unusable anyway. A rider
+   mid-ride is not reading the terms of service. */
+body.arrival-open .legal-links,
+body.ride-active .legal-links {
+  display: none;
+}
 .maplibregl-ctrl-attrib a {
   color: var(--fg-muted);
 }
@@ -4425,6 +4727,20 @@ body.is-map-picking .ride-modal {
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 6px;
+}
+/* The proximity warning above the report chips. Shown BEFORE the tap, not
+   only after it: a rider who cannot file a report should learn that from
+   looking, and the tap repeats it for anybody who tapped anyway. */
+.device-popup__report-gate {
+  margin: 2px 0 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+/* Dimmed, but NOT `disabled` — see devices.ts. A button that cannot be
+   pressed cannot explain itself, and on a phone there is no tooltip. */
+.device-popup__report-chip.is-blocked {
+  opacity: 0.55;
 }
 .device-popup__report-chip {
   appearance: none;
@@ -4896,6 +5212,24 @@ body.is-map-picking .ride-modal {
   color: #fff;
 }
 .hud-round-btn--stop svg { fill: currentColor; }
+/* Re-center. Quiet while the map is still following, because then it is only
+   a tidy-up; marked while following is suspended, because then it is the
+   answer to a question the rider is actively asking ("why has the map stopped
+   moving?"). The ring is drawn OUTSIDE the button so it reads at a glance on
+   a moving map without changing the button's footprint. */
+.hud-round-btn--recenter.is-off-center {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 0 3px var(--accent-soft);
+}
+:root[data-theme="dark"] .ride-hud .hud-round-btn--recenter.is-off-center {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+/* Nothing flashes on a HUD at 15 mph. The state change is colour, not motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .hud-round-btn--recenter { transition: background 160ms ease, color 160ms ease; }
+}
 
 /* ride-hud.ts — F3 corner re-layout: the ride clock moves BL -> TL with the
    cost readout stacked just below it, plus the wrench panel's live clock. */
@@ -5216,6 +5550,33 @@ body.is-map-picking .ride-modal {
   border-radius: 14px;
   box-shadow: var(--shadow);
   color: var(--fg);
+}
+/* "On screen" — which readouts the rider wants, in its own sheet rather than
+   buried in the wrench panel's time-and-rate controls. Same geometry as that
+   panel (only one of the two is ever open), so the rider's thumb lands in the
+   same place whichever they opened. */
+.hud-display-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  width: min(420px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  color: var(--fg);
+}
+.hud-display-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.75;
 }
 .hud-adjust-row { display: flex; gap: 6px; }
 .hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
@@ -7742,6 +8103,94 @@ input[data-ride-keypad="on"] {
   font-weight: 600;
   color: var(--fg);
 }
+/* One line that opens something longer — the sixteen-item issue checklist for a
+   rider who liked the ride, and the free-text box. Looks like a link rather
+   than a button, because pressing it commits to nothing. */
+.ride-post-s9__disclosure {
+  appearance: none;
+  align-self: flex-start;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--accent-fg, var(--accent));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ride-post-s9__disclosure:hover,
+.ride-post-s9__disclosure:focus-visible {
+  text-decoration: underline;
+}
+
+/* ---------- The five-face scale (emoji-scale.ts) ----------
+   Replaces the ten-button segmented rows. Ten targets across a phone's width
+   is about 30 px each, under every touch-target guideline there is and well
+   under what a thumb manages on a pavement; five are roughly double that and
+   each carries its own word, because an emoji's meaning is not stable across
+   platforms and a face alone is not an accessible control. */
+.emoji-scale-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.emoji-scale {
+  display: flex;
+  gap: 6px;
+}
+.emoji-scale__btn {
+  appearance: none;
+  flex: 1 1 0;
+  /* The floor this control exists for. */
+  min-width: 52px;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  /* Unchosen faces sit back rather than all shouting at once; the chosen one
+     comes fully forward below. */
+  opacity: 0.6;
+}
+.emoji-scale__btn:hover,
+.emoji-scale__btn:focus-visible {
+  opacity: 1;
+}
+.emoji-scale__btn.is-active {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.emoji-scale__glyph {
+  font-size: 24px;
+  line-height: 1.1;
+}
+.emoji-scale__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg-muted);
+}
+.emoji-scale__btn.is-active .emoji-scale__label {
+  color: var(--fg);
+}
+/* Narrow phones: the words are what makes the faces unambiguous, so they stay —
+   the glyph gives up size before the label does. */
+@media (max-width: 360px) {
+  .emoji-scale { gap: 4px; }
+  .emoji-scale__btn { min-width: 44px; padding: 6px 0; }
+  .emoji-scale__glyph { font-size: 20px; }
+  .emoji-scale__label { font-size: 9.5px; }
+}
 /* Overrides .ride-options' vertical full-width stack (built for the device
    picker's larger rows) with a wrapped tag-chip layout, more legible for a
    16-item "choose any" checklist. */
@@ -8889,66 +9338,228 @@ input[data-ride-keypad="on"] {
   color: var(--fg-muted);
 }
 
-/* ---------- my-scooters-panel.ts: the Tools drawer list ----------
-   Deliberately the .my-dibs treatment with a different accent: the two
-   sit one above the other and are the same kind of object (a short list
-   of specific vehicles), so a rider should not have to learn two
-   layouts to read them. */
-.my-scooters {
+/* ---------- device-notify-panel.ts: the Tools drawer list ----------
+   Replaced the Favorite Scooters list, and keeps its treatment — the .my-dibs
+   shape with a different accent: the two sit one above the other and are the
+   same kind of object (a short list of specific vehicles), so a rider should not
+   have to learn two layouts to read them.
+
+   One row rather than that list's three-part card, because there is far less to
+   say: a watch has a name, roughly how far away it is, and two buttons. The
+   state line is gone with the feature that needed it — a watched scooter is
+   simply on the map like every other, and its one interesting state change is
+   the thing that fires the alert and ends the watch. */
+.notify-moved {
   list-style: none;
   margin: 0 0 8px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.my-scooters__item {
+.notify-moved__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: 7px 10px;
   background: var(--bg-elev);
 }
-.my-scooters__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.my-scooters__name {
+.notify-moved__name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
+  /* A long nickname must push the buttons off the row rather than wrap into
+     three lines in a drawer this narrow. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.my-scooters__state {
+.notify-moved__where {
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--fg-muted);
   white-space: nowrap;
 }
-.my-scooters__state.is-available {
-  color: var(--ok, #2e7d32);
+.notify-moved__show,
+.notify-moved__stop {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
 }
-.my-scooters__state.is-in_use,
-.my-scooters__state.is-gone {
-  font-style: italic;
+.notify-moved__show:hover,
+.notify-moved__stop:hover {
+  background: var(--hover-neutral);
 }
-.my-scooters__where,
-.my-scooters__withheld {
-  margin: 4px 0 0;
+/* The empty state is where the feature explains itself, so it reads as a
+   sentence rather than as a missing list. */
+.notify-moved__empty {
   font-size: 13px;
   color: var(--fg-muted);
+  line-height: 1.4;
 }
-/* The withheld sentence is the feature explaining itself, not an error —
-   it must not read as a failure state, so it gets the same weight as a
-   position would. */
-.my-scooters__withheld {
-  font-style: italic;
+
+/* The bell on the device popup, pressed. Same affordance as the other action
+   buttons; the "on" state has to be visible at a glance because the label is
+   what tells the rider which way the next tap goes. */
+.device-popup__actbtn--notify.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
-.my-scooters__actions {
+
+/* ---------- qr-utility.ts: the ribbon's QR tool ----------
+   Same shell as the Confirm Features modal (and the same z-index band), because
+   this is the surface that HANDS OFF to it: two different-looking dialogs one
+   tap apart would read as two different features. */
+.qr-utility {
+  position: fixed;
+  inset: 0;
+  /* Above .device-features (72), because the dial opens that one and whichever
+     the rider opened last has to be on top. */
+  z-index: 73;
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.qr-utility__card {
+  width: min(380px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.qr-utility__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 6px;
+  margin-bottom: 10px;
 }
-.my-scooters__actions .switch {
+.qr-utility__head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.qr-utility__close {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.qr-utility__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The dial. A ring with one notch per mode, and a pointer that turns to the
+   chosen one — so the pointer's direction IS the readout, which is the only
+   reason a dial beats a list.
+
+   The notches are positioned by rotating out from the centre and then
+   counter-rotating the glyph, so the emoji stays upright whatever angle its
+   seat is at. `--notch-angle` is set per button in TS from `modeAngle()`, so the
+   geometry has exactly one source. */
+/* The mode switch: a segmented control, not a dial.
+   Two unordered jobs, one of them applied to whatever the camera reads next —
+   which is exactly what a phone's segmented control means, and it reads as an
+   answer in words rather than as a pointer angle to decode. Tokens are the
+   same ones `.segmented` uses, so it sits in the app's chrome rather than
+   beside it. */
+.qr-utility__mode-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qr-utility__modes {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-subtle);
+  border-radius: 12px;
+}
+.qr-utility__mode {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  border-radius: 9px;
+  padding: 10px 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.qr-utility__mode-glyph {
+  font-size: 20px;
+  line-height: 1;
+}
+.qr-utility__mode-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+}
+.qr-utility__mode.is-active {
+  background: var(--bg-elev);
+  color: var(--fg);
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.18);
+}
+.qr-utility__mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .qr-utility__mode {
+    transition:
+      background 140ms ease,
+      color 140ms ease;
+  }
+}
+.qr-utility__mode-detail {
   margin: 0;
   font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  text-align: center;
+  /* Both mode descriptions run to about three lines at this width. Reserving
+     them stops the Scan button hopping while a rider reads one then the
+     other, which is the moment they are most likely to mis-tap it. */
+  min-height: calc(1.4em * 3);
+}
+.qr-utility__status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.qr-utility__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
 }
