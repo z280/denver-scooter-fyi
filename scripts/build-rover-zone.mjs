@@ -1,137 +1,138 @@
 // Build `public/rover-zone.geojson` — the area a Rover trip may start or end in.
 //
-// READ THIS BEFORE CHANGING THE GEOMETRY. THIS IS NOT VEO'S GEOFENCE.
-//
-// Veo restricts the Rover (the three-wheeled seated trike) to a downtown
-// service area: a Rover trip can only begin or end inside it. That restriction
-// is a fact — it is drawn in Veo's own app, and `devices.ts`'s
-// ROVER_AREA_WARNING has stated it in words since before this file existed.
-//
-// What we do NOT have is the line. Veo publishes no `geofencing_zones` feed
+// WHERE THE BOUNDARY COMES FROM. Veo publishes no `geofencing_zones` feed
 // (re-checked 2026-10-06: `system_information` 200, `geofencing_zones` 404,
-// `system_regions` 404), and every non-GBFS path on their API answers "No
-// Token specified" — the polygon lives behind a rider's account and is not
-// ours to take. A Colorado Open Records Act request to DOTI is the route that
-// produced `micromobility-zones.geojson`, and it is the route that would
-// produce this one properly.
+// `system_regions` 404) and every non-GBFS path on their API answers "No Token
+// specified", so the polygon is not available to read. It was instead SPECIFIED
+// as a sequence of street intersections, read off Veo's own in-app map:
 //
-// So this file draws DENVER'S OWN DOWNTOWN instead, and says so everywhere a
-// rider can see it. The geometry is the union of two official city
-// neighbourhood polygons — Central Business District and Union Station — taken
-// from the same `NB.geojson` the API serves its neighbourhood boundaries from.
-// Those two were chosen because their edges ARE the edges in Veo's app: the
-// CBD polygon's east side is Broadway and its south side is Colfax, which is
-// exactly where the operator's zone stops, and Union Station covers the LoDo
-// side.
+//     Broadway & Blake  ->  Broadway & Colfax  ->  Colfax & 14th
+//     ->  14th & Wynkoop  ->  Wynkoop & 19th  ->  19th & Blake  ->  close
 //
-// IT IS A STAND-IN, AND THE APP NEVER PRETENDS OTHERWISE. `rover-zone.ts`
-// labels it approximate, warns on a margin either side of the line rather than
-// at the line, and never tells a rider they may or may not end a trip
-// somewhere — it tells them to check the Veo app when they are anywhere near
-// the edge. `micromobility-zones.ts`'s header states the standing rule this
-// obeys: "a boundary we cannot source is exactly the confident wrong claim
-// this codebase refuses elsewhere." The boundary here IS sourced — to the
-// city's downtown, which is a different thing from Veo's zone, and the
-// difference is published rather than hidden.
+// So the zone is six streets: Broadway on the east, Colfax across the south,
+// 14th up the south-west, Wynkoop along the north-west, a short hop down 19th,
+// and Blake all the way north-east back to Broadway. That last pair is what
+// puts Coors Field OUTSIDE — the field sits north-west of Blake, in the notch
+// 19th cuts out — and it is the detail that most distinguishes this from
+// "downtown" as a human would draw it.
 //
-// WHEN THE REAL POLYGON ARRIVES, replace this script's INPUT and delete the
-// approximation copy. Nothing else has to change: the app reads one file.
+// HOW THE COORDINATES WERE DERIVED, because "Broadway & Blake" is not a number.
+// Each street was fitted as a line through intersection POIs returned by the
+// app's own geocoder (Photon, via /api/v1/geocode/search), and the corners are
+// where those lines cross:
 //
-// RE-RUN: node scripts/build-rover-zone.mjs <path-to-NB.geojson>
+//   Blake      4 points: & 14th, & 19th, & 22nd, & Park Ave West
+//   14th       2 points: & Blake, & Court Place
+//   Broadway   2 points: & Colfax, 1670 Broadway (& 17th Ave)
+//   Wynkoop    1 point:  & 15th, held parallel to Blake
+//   19th       1 point:  & Blake, held parallel to 14th
+//   Colfax     due east-west through Broadway & Colfax
+//
+// The two fitted bearings come out 89.4 degrees apart, which is the check that
+// matters: downtown Denver's grid is square, so a fit that was not would mean a
+// bad anchor. One anchor WAS bad and is not used — the geocoder's "Larimer
+// Street & 14th Street" POI sits ~20 degrees off the line through the other
+// two, so it was discarded rather than averaged in.
+//
+// WHAT IS LEFT UNCERTAIN: which side of each street the operator's line runs,
+// and the ~20-30 m width of the streets themselves. `src/rover-zone.ts` carries
+// that as a margin and stops short of ruling on a trip either way.
+//
+// RE-RUN: node scripts/build-rover-zone.mjs
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 
-import polygonClipping from "polygon-clipping";
-
-/** 6 dp is ~11 cm here — far finer than an approximation deserves, but it is
- *  the city's own geometry and rounding it would be inventing a second
- *  inaccuracy on top of the one we have already declared. */
-const PRECISION = 6;
-
-/** The two official neighbourhoods whose union stands in for the zone.
+/** The six corners, in order, each the crossing of two named streets.
  *
- *  Named rather than computed: which neighbourhoods approximate an operator's
- *  service area is a judgement, and it belongs in the open where somebody can
- *  disagree with it. */
-const NEIGHBORHOODS = ["CBD", "Union Station"];
+ *  Kept as a labelled list rather than a bare ring so the file reads as the
+ *  specification it is: anybody checking this is checking street names, not
+ *  decimals. */
+const CORNERS = [
+  { at: "Broadway & Blake",  lon: -104.986392, lat: 39.759874 },
+  { at: "Broadway & Colfax", lon: -104.986770, lat: 39.739946 },
+  { at: "Colfax & 14th",     lon: -104.989670, lat: 39.739946 },
+  { at: "14th & Wynkoop",    lon: -105.003129, lat: 39.750510 },
+  { at: "Wynkoop & 19th",    lon: -104.997414, lat: 39.754699 },
+  { at: "19th & Blake",      lon: -104.995500, lat: 39.753197 },
+];
 
-function round(coords) {
-  if (typeof coords[0] === "number") {
-    return coords.map((n) => Number(n.toFixed(PRECISION)));
+const M_PER_DEG_LAT = 111320;
+const M_PER_DEG_LNG = 85300;
+
+const ring = [...CORNERS.map((c) => [c.lon, c.lat]), [CORNERS[0].lon, CORNERS[0].lat]];
+
+/** Shoelace, in local metres. */
+function areaKm2(r) {
+  let s = 0;
+  for (let i = 0; i < r.length - 1; i += 1) {
+    s += r[i][0] * M_PER_DEG_LNG * (r[i + 1][1] * M_PER_DEG_LAT)
+       - r[i + 1][0] * M_PER_DEG_LNG * (r[i][1] * M_PER_DEG_LAT);
   }
-  return coords.map(round);
+  return Math.abs(s) / 2 / 1e6;
 }
 
-const src = process.argv[2];
-if (!src) {
-  console.error("usage: node scripts/build-rover-zone.mjs <path-to-NB.geojson>");
+/** Do any two non-adjacent edges cross?
+ *
+ *  The ring doubles back on itself at 19th — Wynkoop north-east, 19th
+ *  south-east, then Blake north-east again — which is a legitimate notch and
+ *  also exactly the shape a transcription slip turns into a bow-tie. A
+ *  self-intersecting ring renders as nonsense and makes point-in-polygon
+ *  answer at random, so it fails the build rather than shipping. */
+function selfIntersects(r) {
+  const sign = (x) => (x > 0 ? 1 : x < 0 ? -1 : 0);
+  const orient = (p, q, s) =>
+    sign((q[1] - p[1]) * (s[0] - q[0]) - (q[0] - p[0]) * (s[1] - q[1]));
+  const n = r.length - 1;
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 2; j < n; j += 1) {
+      if (i === 0 && j === n - 1) continue; // adjacent through the closing point
+      const [a, b, c, d] = [r[i], r[i + 1], r[j], r[j + 1]];
+      if (orient(a, b, c) !== orient(a, b, d) && orient(c, d, a) !== orient(c, d, b)) {
+        return [i, j];
+      }
+    }
+  }
+  return null;
+}
+
+const bad = selfIntersects(ring);
+if (bad) {
+  console.error(`ring self-intersects between edges ${bad[0]} and ${bad[1]} — check CORNERS order`);
   process.exit(1);
 }
 
-const nb = JSON.parse(readFileSync(src, "utf8"));
-const rings = [];
-for (const name of NEIGHBORHOODS) {
-  const found = nb.features.filter((f) => f.properties?.NBHD_NAME === name);
-  // A rename upstream must fail the build rather than silently shrink the
-  // zone. A zone that quietly loses half its area would tell riders their
-  // trip cannot end somewhere it can.
-  if (found.length !== 1) {
-    console.error(
-      `expected exactly one "${name}" in ${src}, found ${found.length}`,
-    );
-    process.exit(1);
-  }
-  const f = found[0];
-  if (f.geometry.type !== "Polygon") {
-    console.error(`"${name}" is a ${f.geometry.type}; expected Polygon`);
-    process.exit(1);
-  }
-  rings.push(f.geometry.coordinates);
-}
-
-// DISSOLVE THE SHARED BORDER. The two neighbourhoods meet along Market/Larimer,
-// and drawing them as separate polygons put a dashed line straight through the
-// middle of the zone — which reads as two areas with a boundary between them,
-// when the whole point is that it is one area a Rover may move around inside.
-// Caught by looking at the rendered map; no unit test would have noticed,
-// because both polygons were individually correct.
-const unioned = polygonClipping.union(...rings.map((r) => [r]));
-const features = unioned.map((poly) => ({
-  type: "Feature",
-  properties: {
-    zone: "rover_service_area",
-    approximate: true,
-    source: "denver_neighborhoods",
-    neighborhoods: NEIGHBORHOODS.join(" + "),
-  },
-  geometry: { type: "Polygon", coordinates: round(poly) },
-}));
-
-// One piece. Two would mean the neighbourhoods do not actually touch, which
-// would make the whole stand-in the wrong shape and must not ship quietly.
-if (features.length !== 1) {
-  console.error(
-    `expected the union to be one polygon, got ${features.length} — ` +
-      `do ${NEIGHBORHOODS.join(" and ")} still share a border?`,
-  );
+const area = areaKm2(ring);
+// A sanity band, not a measurement. The specified zone is ~1.7 km2; an order of
+// magnitude either way means a sign flip or a transposed lon/lat, which is the
+// kind of mistake that still draws a plausible-looking polygon somewhere else.
+if (area < 0.5 || area > 6) {
+  console.error(`area ${area.toFixed(2)} km2 is outside the sane band — check CORNERS`);
   process.exit(1);
 }
 
-const out = {
-  type: "FeatureCollection",
-  // Carried in the file itself so anybody who opens it standalone — a
-  // reviewer, a future contributor, somebody who found it in a browser's
-  // network tab — reads the caveat before they read the coordinates.
-  note:
-    "APPROXIMATE. Denver's official CBD + Union Station neighbourhood polygons, " +
-    "used as a stand-in for Veo's Rover service area, which Veo does not publish. " +
-    "Not Veo's geofence. See scripts/build-rover-zone.mjs.",
-  features,
-};
-
-writeFileSync("public/rover-zone.geojson", JSON.stringify(out));
-const pts = features.reduce(
-  (n, f) => n + f.geometry.coordinates.reduce((m, r) => m + r.length, 0),
-  0,
+writeFileSync(
+  "public/rover-zone.geojson",
+  JSON.stringify({
+    type: "FeatureCollection",
+    // Carried in the file so anybody who opens it standalone reads where the
+    // boundary came from before they read the coordinates.
+    note:
+      "Veo Rover service area. Specified as street intersections read off Veo's " +
+      "in-app map: Broadway & Blake, Broadway & Colfax, Colfax & 14th, 14th & " +
+      "Wynkoop, Wynkoop & 19th, 19th & Blake. Corners solved from geocoded " +
+      "intersections; see scripts/build-rover-zone.mjs.",
+    features: [
+      {
+        type: "Feature",
+        properties: {
+          zone: "rover_service_area",
+          source: "veo_app_map",
+          corners: CORNERS.map((c) => c.at).join(" -> "),
+        },
+        geometry: { type: "Polygon", coordinates: [ring] },
+      },
+    ],
+  }),
 );
-console.log(`wrote public/rover-zone.geojson — ${features.length} polygons, ${pts} points`);
+console.log(`wrote public/rover-zone.geojson — ${CORNERS.length} corners, ${area.toFixed(2)} km2`);
+for (const c of CORNERS) console.log(`  ${c.at.padEnd(20)} ${c.lat.toFixed(6)}, ${c.lon.toFixed(6)}`);

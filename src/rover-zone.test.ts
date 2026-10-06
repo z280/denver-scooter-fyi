@@ -56,26 +56,27 @@ describe("where a point falls", () => {
     // this close gets "ask Veo" rather than a verdict — and it must behave
     // the same just inside as just outside, because we cannot tell which side
     // of VEO's line it is on either way.
-    const justInside = { lng: -104.9852, lat: 39.748 };
-    const justOutside = { lng: -104.9848, lat: 39.748 };
+    const justInside = { lng: -104.98503, lat: 39.748 };
+    const justOutside = { lng: -104.98497, lat: 39.748 };
     expect(roverVerdict(justInside)).toBe("near_edge");
     expect(roverVerdict(justOutside)).toBe("near_edge");
   });
 
-  it("leaves most of downtown a clean yes", () => {
-    // The margin is a hedge against our line and Veo's disagreeing, and the
-    // temptation is to make it wide. Measured against the shipped polygon, a
-    // 250 m margin leaves only 39% of the zone reading as a confident
-    // "inside" — a caution that fires over most of downtown is one riders
-    // learn to swipe past. This pins the trade: the middle of the zone is
-    // quiet, the edge is not.
-    expect(UNCERTAIN_MARGIN_M).toBeLessThanOrEqual(150);
-    expect(UNCERTAIN_MARGIN_M).toBeGreaterThanOrEqual(100);
+  it("leaves most of the zone a clean yes", () => {
+    // The margin covers the one thing the street-name specification does not
+    // pin down: which side of a 20-30 m wide street the line runs. The
+    // temptation is to make it wide anyway. Measured against the shipped
+    // polygon, 150 m leaves only 52% of the zone reading as a confident
+    // "inside" and 40 m leaves 86% — a caution that fires over half of
+    // downtown is one riders learn to swipe past. This pins the trade: the
+    // middle of the zone is quiet, the kerb is not.
+    expect(UNCERTAIN_MARGIN_M).toBeLessThanOrEqual(50);
+    expect(UNCERTAIN_MARGIN_M).toBeGreaterThanOrEqual(25);
   });
 
   it("measures the margin in real metres", () => {
-    // ~0.001° of longitude is ~85 m at this latitude: inside the margin.
-    expect(metersToZoneEdge({ lng: -104.986, lat: 39.748 })).toBeLessThan(
+    // ~0.0003° of longitude is ~26 m at this latitude: inside the margin.
+    expect(metersToZoneEdge({ lng: -104.9853, lat: 39.748 })).toBeLessThan(
       UNCERTAIN_MARGIN_M,
     );
     // ~0.006° is ~510 m: outside it.
@@ -139,9 +140,13 @@ describe("what we are willing to say", () => {
     }
   });
 
-  it("admits the outline is ours and approximate at the edge", () => {
-    expect(roverZoneMessage("near_edge", "destination")).toMatch(/approximate/i);
-    expect(roverZoneMessage("near_edge", "vehicle")).toMatch(/approximate/i);
+  it("says plainly that the edge is the edge, and who settles it", () => {
+    // The streets are named; which side of each one Veo's line runs is not,
+    // and that is a question only their app can answer.
+    for (const where of ["destination", "vehicle"] as const) {
+      expect(roverZoneMessage("near_edge", where)).toMatch(/edge/i);
+      expect(roverZoneMessage("near_edge", where)).toMatch(/veo/i);
+    }
   });
 
   it("hedges the outside case rather than asserting it", () => {
@@ -163,47 +168,86 @@ import { readFileSync } from "node:fs";
 describe("public/rover-zone.geojson", () => {
   const gj = JSON.parse(readFileSync("public/rover-zone.geojson", "utf8")) as {
     note?: string;
-    features: { properties: Record<string, unknown>; geometry: { type: string; coordinates: number[][][] } }[];
+    features: {
+      properties: Record<string, unknown>;
+      geometry: { type: string; coordinates: number[][][] };
+    }[];
   };
+  const ring = gj.features[0].geometry.coordinates[0];
 
-  it("is one dissolved polygon, not two neighbourhoods", () => {
-    // Drawn as two, the shared border down Market St rendered as a dashed
-    // line through the middle of the zone — which reads as two areas with a
-    // boundary between them, when it is one area a Rover moves around inside.
-    // Found by looking at the map; both polygons were individually correct.
+  it("is the six specified corners, closed", () => {
     expect(gj.features).toHaveLength(1);
-    expect(gj.features[0].geometry.type).toBe("Polygon");
     expect(gj.features[0].geometry.coordinates).toHaveLength(1); // no holes
+    expect(ring).toHaveLength(7); // 6 corners + the closing repeat
+    expect(ring[0]).toEqual(ring[6]);
   });
 
-  it("carries its own caveat, for anyone who opens it standalone", () => {
-    // A reviewer, a contributor, somebody who found it in a network tab: the
-    // file says what it is before it says where it is.
-    expect(gj.note).toMatch(/approximate/i);
-    expect(gj.note).toMatch(/not veo's geofence/i);
-    expect(gj.features[0].properties.approximate).toBe(true);
+  it("names the streets it was specified from", () => {
+    // The file says where the boundary came from before it says where it is —
+    // for a reviewer, a contributor, or anybody who finds it in a network tab.
+    expect(gj.note).toMatch(/Veo/i);
+    expect(String(gj.features[0].properties.corners)).toContain("Broadway & Blake");
+    expect(String(gj.features[0].properties.corners)).toContain("19th & Blake");
   });
 
-  it("covers downtown and stops at Broadway and Colfax", () => {
-    // The two edges that are Veo's too, and the reason these neighbourhoods
-    // were chosen as the stand-in. Loose bounds — this asserts the zone is
-    // where downtown is, not that Denver's survey is correct.
-    const ring = gj.features[0].geometry.coordinates[0];
-    const lngs = ring.map((c) => c[0]);
-    const lats = ring.map((c) => c[1]);
-    expect(Math.max(...lngs)).toBeGreaterThan(-104.99); // east to Broadway
-    expect(Math.max(...lngs)).toBeLessThan(-104.98);
-    expect(Math.min(...lats)).toBeGreaterThan(39.735); // south to Colfax
-    expect(Math.min(...lats)).toBeLessThan(39.745);
-    expect(Math.max(...lats)).toBeGreaterThan(39.755); // north past Union Station
+  it("does not double back on itself", () => {
+    // The ring genuinely doubles back at 19th — Wynkoop north-east, 19th
+    // south-east, Blake north-east again. That notch is correct and is also
+    // exactly what a transposed corner turns into a bow-tie, which would make
+    // point-in-polygon answer at random.
+    const sign = (x: number) => (x > 0 ? 1 : x < 0 ? -1 : 0);
+    const orient = (p: number[], q: number[], r: number[]) =>
+      sign((q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1]));
+    const n = ring.length - 1;
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 2; j < n; j += 1) {
+        if (i === 0 && j === n - 1) continue;
+        const crosses =
+          orient(ring[i], ring[i + 1], ring[j]) !== orient(ring[i], ring[i + 1], ring[j + 1]) &&
+          orient(ring[j], ring[j + 1], ring[i]) !== orient(ring[j], ring[j + 1], ring[i + 1]);
+        expect(crosses, `edges ${i} and ${j}`).toBe(false);
+      }
+    }
   });
 
-  it("agrees with the module about where downtown is", () => {
-    // End to end: the shipped ring, through the real point-in-polygon.
+  it("puts the right landmarks on the right side", () => {
+    // End to end, through the real point-in-polygon. Coors Field is the one
+    // that matters: it sits north-west of Blake, in the notch 19th cuts out,
+    // and it is what a freehand "downtown" would wrongly include.
     __setRoverZoneForTests([gj.features[0].geometry.coordinates]);
-    // 16th & Champa — the middle of the mall, unambiguously downtown.
-    expect(roverVerdict({ lng: -104.9903, lat: 39.7446 })).toBe("inside");
-    // Park Hill, kilometres out.
-    expect(roverVerdict({ lng: -104.93, lat: 39.755 })).toBe("outside");
+    // Picked well clear of the boundary on purpose. Union Station and Larimer
+    // Square are NOT in this list: they sit 8 m and 7 m from the line, because
+    // the station is on Wynkoop and the square is on 14th. Both come back
+    // "near_edge", which is the right answer for a building straddling the
+    // boundary and is asserted separately below.
+    const inside = [
+      ["16th & Champa", -104.9903, 39.7446],
+      ["17th & Larimer", -104.9972, 39.7489],
+      ["16th & Market", -104.997, 39.7495],
+      ["Dairy Block, 18th & Wazee", -104.9988, 39.752],
+    ] as const;
+    const outside = [
+      ["Coors Field", -104.9942, 39.7559],
+      ["Ball Arena", -105.0077, 39.7487],
+      ["Civic Center Park", -104.9886, 39.7392],
+      ["State Capitol", -104.9848, 39.7393],
+      ["RiNo", -104.9826, 39.7604],
+    ] as const;
+    for (const [name, lng, lat] of inside) {
+      expect(roverVerdict({ lng, lat }), name).toBe("inside");
+    }
+    for (const [name, lng, lat] of outside) {
+      expect(roverVerdict({ lng, lat }), name).toBe("outside");
+    }
+  });
+
+  it("hedges on the landmarks that literally sit on the boundary", () => {
+    // Union Station fronts Wynkoop and Larimer Square fronts 14th — both are
+    // boundary streets. Claiming either is comfortably inside would be the
+    // app being confident about the exact thing it cannot know: which side of
+    // the kerb Veo drew the line.
+    __setRoverZoneForTests([gj.features[0].geometry.coordinates]);
+    expect(roverVerdict({ lng: -105.0, lat: 39.7527 })).toBe("near_edge");
+    expect(roverVerdict({ lng: -104.9993, lat: 39.7476 })).toBe("near_edge");
   });
 });

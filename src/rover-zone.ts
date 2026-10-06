@@ -1,39 +1,34 @@
 // Where a Rover trip is allowed to begin and end.
 //
-// THE RULE IS CERTAIN. THE LINE IS NOT. Keep those apart, because the whole
-// design of this module turns on the difference.
-//
 // Veo restricts the Rover — the three-wheeled seated trike — to a downtown
-// service area, and a Rover trip can only start or end inside it. That is a
-// fact: it is drawn in Veo's own app, and `devices.ts`'s ROVER_AREA_WARNING
-// has said so in words since before this file existed. A rider who walks to a
-// Rover intending to ride it to Park Hill is going to have a bad afternoon,
-// and nothing in the app was showing them that.
+// service area, and a Rover trip can only start or end inside it. A rider who
+// walks to a Rover intending to ride it to Park Hill is going to have a bad
+// afternoon, and until this existed nothing in the app showed them where the
+// area was.
 //
-// What we do not have is Veo's polygon. They publish no `geofencing_zones`
-// feed (re-checked 2026-10-06: `system_information` 200, `geofencing_zones`
-// 404, `system_regions` 404), and every non-GBFS path on their API answers
-// "No Token specified" — their geofence sits behind a rider's own account and
-// is not ours to take. `scripts/build-rover-zone.mjs` draws Denver's official
-// downtown (CBD + Union Station) as a stand-in and documents that choice.
+// THE BOUNDARY. Veo publishes no `geofencing_zones` feed (re-checked
+// 2026-10-06: `system_information` 200, `geofencing_zones` 404,
+// `system_regions` 404) and every non-GBFS path on their API answers "No Token
+// specified", so their polygon cannot be read. It was instead specified as six
+// street intersections off Veo's own in-app map — Broadway & Blake, Broadway &
+// Colfax, Colfax & 14th, 14th & Wynkoop, Wynkoop & 19th, 19th & Blake — and
+// `scripts/build-rover-zone.mjs` records how those names became coordinates.
 //
-// SO THIS MODULE IS BUILT AROUND NOT KNOWING, and that is not hedging — it is
-// the only honest shape for the feature:
+// So the zone is six streets: Broadway east, Colfax south, 14th up the
+// south-west, Wynkoop north-west, a short hop down 19th, and Blake north-east
+// back to Broadway. The 19th/Blake pair cuts a notch that puts Coors Field
+// outside, which is the bit a human drawing "downtown" freehand gets wrong.
 //
-//   * It never says "you can end your trip here" or "you cannot". It says
-//     where downtown is, that Rovers are downtown-only, and — when the answer
-//     could plausibly go either way — that the Veo app is the thing that
-//     decides.
-//   * It warns on a MARGIN either side of the line rather than at the line.
-//     Our stand-in and Veo's real edge can differ by a block or two, so a
-//     verdict within that distance is reported as uncertain rather than
-//     guessed. `UNCERTAIN_MARGIN_M` is where that is written down.
-//   * The map layer is labelled approximate wherever it is drawn.
+// WHAT IS STILL UNCERTAIN, AND WHY THERE IS A MARGIN AT ALL. The streets are
+// named; which side of each one the operator's line runs is not, and a street
+// is 20-30 m wide. `UNCERTAIN_MARGIN_M` is that doubt, and near the line this
+// module still points at the Veo app rather than ruling — because the app that
+// charges somebody is not this one, and the cost of being wrong is a rider
+// stranded on a vehicle they cannot end a trip on.
 //
-// The alternative — drawing a traced line and routing off it as though it were
-// the operator's — is the confident wrong claim `micromobility-zones.ts`'s
-// header refuses. The cost of being wrong here is somebody stranded with a
-// vehicle they cannot end a trip on.
+// So it never says "you can end your trip here" or "you cannot". It says where
+// the area is, that Rovers are downtown-only, and — close to the edge — that
+// Veo decides.
 
 import type { Map as MLMap } from "maplibre-gl";
 
@@ -41,23 +36,20 @@ const SRC = "rover-zone";
 const FILL = "rover-zone-fill";
 const LINE = "rover-zone-line";
 
-/** How far either side of our drawn line the answer is "ask Veo".
+/** How far either side of the line the answer is "ask Veo".
  *
- *  About one Denver downtown block. It is not a measurement — nothing could
- *  measure the gap between a line we have and a line we have never seen — it
- *  is a deliberate hedge, and the instinct is to make it generous, because a
- *  rider wrongly told to double-check loses ten seconds while a rider wrongly
- *  told they are fine loses their ride home.
+ *  About half a block — enough to cover the one thing the specification does
+ *  not pin down: a street has two sides and is 20-30 m wide, so a point within
+ *  spitting distance of Blake could be either side of wherever Veo actually
+ *  drew it.
  *
- *  BUT IT IS SIZED AGAINST THE ZONE, NOT PICKED. The zone is small, so a
- *  generous margin eats it: measured against the shipped polygon, 250 m
- *  leaves only 39% of downtown reading as a confident "inside", and 300 m
- *  leaves 29%. A caution that fires over most of downtown is one riders learn
- *  to swipe past, and then it is not protecting anybody — which is a worse
- *  failure than the one the wide margin was guarding against. At 150 m, 61%
- *  of the zone is a clean yes and the warning belongs to the edge, where the
- *  doubt actually is. */
-export const UNCERTAIN_MARGIN_M = 150;
+ *  SIZED AGAINST THE ZONE, NOT PICKED. It was 150 m while the boundary was a
+ *  guess at downtown; against this zone that would leave only 52% of it
+ *  reading as a confident "inside", and a caution that fires over half of
+ *  downtown is one riders learn to swipe past. At 40 m it is 86%, so the
+ *  warning belongs to the kerb where the doubt actually lives. Measured, not
+ *  estimated — see the test. */
+export const UNCERTAIN_MARGIN_M = 40;
 
 /** What we are willing to say about a point.
  *
@@ -198,12 +190,12 @@ export function roverZoneMessage(
       return null;
     case "outside":
       return where === "destination"
-        ? "Rovers are downtown-only — this destination looks outside the area, so you probably can't end a Rover trip here. Check the Veo app before you ride."
-        : "Rovers are downtown-only, and this one looks outside the area we have drawn. Veo's app is what decides.";
+        ? "Rovers are downtown-only — this destination is outside the area, so you probably can't end a Rover trip here. Check the Veo app before you ride."
+        : "Rovers are downtown-only, and this one is parked outside the area. Veo's app is what decides.";
     case "near_edge":
       return where === "destination"
-        ? "This is right on the edge of the downtown Rover area. Our outline is approximate — check the Veo app before you ride one here."
-        : "This is right on the edge of the downtown Rover area, and our outline is approximate. Check the Veo app.";
+        ? "This is right on the edge of the downtown Rover area — within a few metres of the boundary. Check the Veo app before you ride one here."
+        : "This is right on the edge of the downtown Rover area. Check the Veo app.";
     case "unknown":
       return where === "destination"
         ? "Rovers can only start and end downtown. We couldn't load the area outline — check the Veo app."
@@ -284,11 +276,12 @@ export async function ensureRoverZoneLayers(
         paint: {
           "line-color": "#7e57c2",
           "line-width": 2,
-          // Dashed, deliberately. A solid boundary reads as authoritative, and
-          // this one is our approximation of somebody else's line — the
-          // dashes are the one piece of this that says so without copy.
-          "line-dasharray": [2, 2],
-          "line-opacity": 0.75,
+          // Solid now. It was dashed while the outline was our own guess at
+          // downtown; the boundary is specified from Veo's map these days, so
+          // drawing it tentatively would understate what we know. The residual
+          // doubt — which side of each street — lives in the margin and the
+          // copy, which is where a 20 m question belongs.
+          "line-opacity": 0.85,
         },
       },
       before,
