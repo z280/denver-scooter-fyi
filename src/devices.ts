@@ -5,6 +5,7 @@ import maplibregl, {
   type Popup,
 } from "maplibre-gl";
 import { isAuthenticated } from "./map-auth.js";
+import { roverVerdict, roverZoneMessage } from "./rover-zone.ts";
 import type {
   DeviceProperties,
   DevicesResponse,
@@ -1488,6 +1489,30 @@ export class Devices {
             ? `${escapeHtml(String(props.vehicle_model_name))}${use}`
             : `${escapeHtml(props.form_factor === "bicycle" ? "E-bike" : "Scooter")}${use}`;
         statRows.push(`<dt>Type</dt><dd>${typeDd}</dd>`);
+        // THE ROVER'S ONE DISQUALIFYING CONSTRAINT, next to the type that
+        // carries it. A Rover trip cannot start OR end outside Veo's downtown
+        // area, so a rider who walks to this one meaning to ride it home has
+        // already lost the afternoon — and the type row above is exactly where
+        // they learn what they are looking at.
+        //
+        // Stated on every Rover, wherever it is parked, because the binding
+        // half of the rule is about the DESTINATION, which the popup cannot
+        // know. `rover-zone.ts` adds the where-you-are nuance on top when it
+        // has something to add, and says nothing when the answer is a
+        // comfortable yes.
+        if (headerModelKey === "trike") {
+          const verdict = roverVerdict(here);
+          // One sentence, not two. Every `roverZoneMessage` already states the
+          // downtown rule in its own words, so appending ROVER_AREA_WARNING to
+          // it said "downtown only" twice in one line. The bare warning is for
+          // the case the zone module stays quiet about — a Rover comfortably
+          // inside, where the rule still binds the DESTINATION and so still
+          // needs saying.
+          const note = roverZoneMessage(verdict, "vehicle") ?? ROVER_AREA_WARNING;
+          statRows.push(
+            `<dt>Ride area</dt><dd class="device-popup__warn">${escapeHtml(note)}</dd>`,
+          );
+        }
       }
       {
         // Equipment. Shows what we know when we know it, and the status

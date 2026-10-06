@@ -9500,3 +9500,22 @@ input[data-ride-keypad="on"] {
   line-height: 1.45;
   min-height: 1em;
 }
+
+/* The Rover's ride-area note, in the popup's stat list and on the route
+   screen. Warning-coloured rather than error-coloured on purpose: the rider is
+   not doing anything wrong, and the boundary we are drawing is an
+   approximation of somebody else's — see src/rover-zone.ts. */
+.device-popup__warn {
+  color: var(--warn-fg);
+  background: var(--warn-soft);
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+.ride-route-rover {
+  color: var(--warn-fg);
+  background: var(--warn-soft);
+  padding: 8px 10px;
+  border-radius: 8px;
+  line-height: 1.45;
+}

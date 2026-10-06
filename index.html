@@ -769,6 +769,30 @@
           </p>
         </section>
 
+        <!-- Veo's Rover service area, approximately. The Rover is the only
+             vehicle in the fleet whose trip cannot START OR END outside a
+             downtown box, and a rider who walks to one meaning to ride it
+             home to Park Hill has already lost the afternoon.
+
+             ON by default, and the only operator-specific layer in here, for
+             that reason. It is drawn dashed because it is OUR approximation
+             of somebody else's line — see src/rover-zone.ts. -->
+        <section class="control-group" aria-labelledby="rover-zone-label">
+          <h3 id="rover-zone-label" class="control-label">Rover area (downtown only)</h3>
+          <p class="control-hint">
+            Veo only lets a <strong>Rover</strong> &mdash; the three-wheeled
+            seated trike &mdash; start or end a trip downtown. Veo does not
+            publish that boundary, so the dashed outline is Denver&rsquo;s own
+            downtown (Central Business District and Union Station) standing in
+            for it. Treat it as a guide, not a ruling: near the edge, the Veo
+            app is what decides.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="rover-zone-toggle" checked />
+            <span>Show the Rover area</span>
+          </label>
+        </section>
+
         <section class="control-group" aria-labelledby="layers-label">
           <h3 id="layers-label" class="control-label">Boundary outlines</h3>
           <ul class="layer-list" id="layer-list">

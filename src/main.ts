@@ -38,11 +38,13 @@ import {
   type GaugeThickness,
   type GaugePlacement,
   openFloatingModal,
+  FIRST_DEVICE_LAYER,
 } from "./devices.ts";
 import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { renderFleetStats } from "./fleet-stats.ts";
+import { ensureRoverZoneLayers, setRoverZoneVisible } from "./rover-zone.ts";
 import { fetchSurveyOptions, submitRiderStory } from "./api.ts";
 import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 import { openComplianceCalendar } from "./compliance-calendar.ts";
@@ -1196,6 +1198,7 @@ map.on("load", async () => {
   });
   wireEquityAreas();
   wireMicromobilityZones();
+  wireRoverZone(map);
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
@@ -3989,6 +3992,44 @@ function beginWalkToVehicle(info: {
  *  comes from the city rather than from us; school grounds and Glendale stay
  *  off because both are drawn from land, not from a stated restriction (see
  *  `micromobility-zones.ts`). */
+/** The Areas drawer's Rover-area switch.
+ *
+ *  Separate from the city-rules block next door, and deliberately so: those
+ *  polygons are Denver's law, this one is our approximation of one operator's
+ *  commercial boundary. Mixing them would let a rider read the dashed outline
+ *  as having the same standing as a no-ride zone, which it does not.
+ *
+ *  A failure to load unchecks the box rather than leaving a switch claiming a
+ *  layer that is not there — the same posture as the rules block. The words-only
+ *  warning (`ROVER_AREA_WARNING`) survives either way, because the RULE never
+ *  depended on having the line. */
+function wireRoverZone(map: maplibregl.Map): void {
+  const box = need<HTMLInputElement>("rover-zone-toggle");
+
+  const apply = async (on: boolean): Promise<void> => {
+    await ensureRoverZoneLayers(map, FIRST_DEVICE_LAYER);
+    setRoverZoneVisible(map, on);
+  };
+
+  box.addEventListener("change", () => {
+    const was = box.checked;
+    box.disabled = true;
+    void apply(box.checked)
+      .catch((e: unknown) => {
+        console.error("rover zone toggle failed", e);
+        box.checked = !was;
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  });
+
+  void apply(box.checked).catch((e: unknown) => {
+    console.error("rover zone load failed", e);
+    box.checked = false;
+  });
+}
+
 function wireMicromobilityZones(): void {
   const groups: [ZoneGroup, HTMLInputElement][] = [
     ["rules", need<HTMLInputElement>("zones-rules-toggle")],
