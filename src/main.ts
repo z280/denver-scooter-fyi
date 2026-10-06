@@ -43,6 +43,8 @@ import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { renderFleetStats } from "./fleet-stats.ts";
+import { fetchSurveyOptions, submitRiderStory } from "./api.ts";
+import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 import { openComplianceCalendar } from "./compliance-calendar.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
@@ -4210,6 +4212,46 @@ function wireFreeRide(): void {
   });
 }
 
+/** The story offer under the stats figures.
+ *
+ *  The third of `docs/RIDER_VOICE_PLAN.md`'s asking moments, and the only one
+ *  where the rider came to read rather than to ride — so it is the only one
+ *  that can ask without standing between somebody and their trip.
+ *
+ *  It carries no ride context: nobody here just had a scooter fail, and
+ *  inventing a vehicle or a time for a general account would be the app
+ *  putting facts into somebody's story that they did not give it.
+ */
+let statsStoryPanel: StoryPanel | null = null;
+let statsNeighborhoods: readonly string[] | null = null;
+let statsNeighborhoodsTried = false;
+
+function mountStatsStory(host: HTMLElement): void {
+  statsStoryPanel?.destroy();
+  statsStoryPanel = mountStoryPanel(host, {
+    origin: "stats",
+    context: { happenedAt: new Date().toISOString() },
+    neighborhoods: statsNeighborhoods,
+    submit: (draftId, payload) => submitRiderStory(draftId, payload),
+  });
+
+  // Fetched once per page load, in the background. Without it the box still
+  // works and the send is simply not offered — see `rider-story-sheet.ts`.
+  if (!statsNeighborhoodsTried) {
+    statsNeighborhoodsTried = true;
+    void fetchSurveyOptions()
+      .then((opts) => {
+        statsNeighborhoods = opts.neighborhoods;
+        // Re-mount in place so the lane appears without disturbing the
+        // figures above it.
+        if (statsStoryPanel) mountStatsStory(host);
+      })
+      .catch(() => {
+        /* no send option this session; a story is still kept locally */
+      });
+  }
+}
+
 function wireDrawers(): void {
   const tabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".drawer-tab"),
@@ -4251,9 +4293,14 @@ function wireDrawers(): void {
     // so a repeat open is a 304 and the panel is never stale after a rental
     // is counted.
     if (id === "stats") {
-      void renderFleetStats(need("fleet-stats")).catch((e) => {
+      void renderFleetStats(need("fleet-stats"), "rider", {
+        mountStory: mountStatsStory,
+      }).catch((e) => {
         console.error("fleet stats render failed", e);
       });
+    } else {
+      statsStoryPanel?.destroy();
+      statsStoryPanel = null;
     }
   };
 

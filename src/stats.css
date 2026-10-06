@@ -130,3 +130,12 @@
 .stats-promo a {
   color: var(--stats-accent);
 }
+
+/* The story slot, between the figures and the cross-promotion. Separated by a
+   rule because it is a change of mode — the reader stops reading and is asked
+   something — and empty in the embed, where it collapses to nothing. */
+.stats-story:not(:empty) {
+  margin: 16px 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--stats-border);
+}

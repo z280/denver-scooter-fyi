@@ -16,12 +16,13 @@
 //     them gets quoted back at you naked, and this one is cumulative — an
 //     unlabelled rate reads as "today" when it is every rental we have seen.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FleetOutcomesResponse } from "./api.ts";
 import {
   VOICES,
   buildFleetStats,
+  renderFleetStats,
   formatOdds,
   formatRate,
   provenanceText,
@@ -251,5 +252,70 @@ describe("cross-promotion", () => {
     expect(a?.target).toBe("_blank");
     expect(a?.rel).toContain("noopener");
     expect(a?.rel).toContain("noreferrer");
+  });
+});
+
+
+describe("the story slot", () => {
+  it("sits between the figures and the cross-promotion", () => {
+    // A reader who has just seen what the fleet did is primed, and this is
+    // the only asking moment where they came to read rather than to ride.
+    const host = render();
+    const slot = host.querySelector('[data-role="story-host"]');
+    expect(slot).not.toBeNull();
+    const promo = host.querySelector(".stats-promo")!;
+    expect(slot!.compareDocumentPosition(promo) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+    const models = host.querySelector(".stat-list")!;
+    expect(models.compareDocumentPosition(slot!) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it("is left empty by the renderer itself", () => {
+    // The panel is mounted by the host. Keeping it out of this module is what
+    // lets the figures render identically in the embed, which must NOT carry
+    // a consent UI inside somebody else's page frame.
+    expect(render().querySelector('[data-role="story-host"]')?.childNodes.length)
+      .toBe(0);
+  });
+
+  it("is not offered at all when there is nothing to report yet", () => {
+    // No figures, no primed reader — just an empty panel.
+    const host = render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] });
+    expect(host.querySelector('[data-role="story-host"]')).toBeNull();
+  });
+
+  it("hands the slot to the host only after the figures are on screen", async () => {
+    const mountStory = vi.fn();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(payload()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    try {
+      await renderFleetStats(host, "rider", { mountStory });
+      expect(mountStory).toHaveBeenCalledTimes(1);
+      const slot = mountStory.mock.calls[0][0] as HTMLElement;
+      expect(slot.isConnected).toBe(true);
+      expect(host.textContent).toContain("9.1%");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("asks for no slot when the feed could not be read", async () => {
+    const mountStory = vi.fn();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("offline"));
+    try {
+      await renderFleetStats(host, "rider", { mountStory });
+      expect(mountStory).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

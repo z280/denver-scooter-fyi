@@ -228,6 +228,18 @@ export function buildFleetStats(
     frag.append(list);
   }
 
+  // The story offer goes here, between the figures and the cross-promotion:
+  // a reader who has just seen what the fleet did is primed, and this is the
+  // only one of the three asking moments where they came to READ rather than
+  // to ride — the one place the question can be asked without standing
+  // between somebody and their trip. `docs/RIDER_VOICE_PLAN.md` §3.3.
+  //
+  // Mounted by the host rather than built here, so this module stays a pure
+  // renderer and the panel keeps its one implementation.
+  const storyHost = el("div", "stats-story");
+  storyHost.dataset.role = "story-host";
+  frag.append(storyHost);
+
   // Cross-promotion, one line, at the bottom. The two properties point at
   // each other because they serve different questions, not because they are
   // the same project wearing two hats.
@@ -251,15 +263,26 @@ const STATS_FETCH_TIMEOUT_MS = 12_000;
 /** Fetch and render. Every throw lands in the catch — a drawer stuck on
  *  "Loading…" is the failure mode this guards, because the placeholder is
  *  static markup and only a successful replaceChildren clears it. */
+export interface FleetStatsHooks {
+  /** Fill the story slot, once the figures are on screen. Optional: the
+   *  embed does not mount one, because a panel that posts a rider's words to
+   *  a third party has no business running inside somebody else\'s page
+   *  frame, where the consent UI is not in the reader\'s own context. */
+  mountStory?(host: HTMLElement): void;
+}
+
 export async function renderFleetStats(
   root: HTMLElement,
   voice: StatsVoice = "rider",
+  hooks: FleetStatsHooks = {},
 ): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), STATS_FETCH_TIMEOUT_MS);
   try {
     const data = await fetchFleetOutcomes(controller.signal);
     root.replaceChildren(buildFleetStats(data, voice));
+    const storyHost = root.querySelector<HTMLElement>('[data-role="story-host"]');
+    if (storyHost) hooks.mountStory?.(storyHost);
   } catch (err) {
     const copy = VOICES[voice];
     const frag = document.createDocumentFragment();
