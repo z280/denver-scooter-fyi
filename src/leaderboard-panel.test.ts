@@ -385,3 +385,24 @@ describe("the territory switches", () => {
     expect(setTerritory).not.toHaveBeenCalled();
   });
 });
+
+describe("points table: tiered entries and growth awards (2026-10-06)", () => {
+  it("renders written feedback and stand-down with both tiers", () => {
+    const schedule = {
+      nav_qualitative_feedback: { points: 6, upper_points: 12, upper_min_chars: 60 },
+      stand_down: { points: 50, new_rider_points: 300 },
+      referral: { points: 100 },
+    };
+    expect(formatScheduleValue(schedule, "nav_qualitative_feedback")).toBe("6 pts (12 for 60+ characters)");
+    expect(formatScheduleValue(schedule, "stand_down")).toBe("50 pts (300 for a new rider)");
+    const html = buildPointsScheduleHtml(schedule);
+    expect(html).toContain("Bringing people in");
+    expect(html).toContain("Someone signs up from your dibs certificate, then rides");
+    expect(html).toContain("100 pts");
+    expect(html).not.toContain(">More<");
+  });
+
+  it("never advertises qr_scan, even from an older API", () => {
+    expect(buildPointsScheduleHtml({ qr_scan: { points: 100 }, referral: { points: 100 } })).not.toMatch(/qr/i);
+  });
+});

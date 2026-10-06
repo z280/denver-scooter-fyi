@@ -1920,6 +1920,12 @@ export interface PointsScheduleEntry {
   base?: number;
   per_step?: number;
   step_km?: number;
+  /** Tiered entries (2026-10-06). Written route feedback: `points`, or
+   *  `upper_points` once it reaches `upper_min_chars`. */
+  upper_points?: number;
+  upper_min_chars?: number;
+  /** Dibs stand-down: `points` for an existing rider, this for a new one. */
+  new_rider_points?: number;
 }
 
 /** The five ride-mode actions whose values are interpolated into the Screen 2

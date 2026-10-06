@@ -262,17 +262,34 @@ export interface QualitativeProgress {
   message: string;
 }
 
+/** Two tiers since 2026-10-06: `awardPoints` past `minChars`, and
+ *  `detailedPoints` once the note reaches `detailedMinChars` — a real
+ *  explanation is worth more than "it was fine". */
 export function describeQualitativeProgress(
   text: string,
   awardPoints: number = FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback,
   minChars: number = NAV_QUALITATIVE_MIN_CHARS,
+  detailedPoints: number = FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailed,
+  detailedMinChars: number = FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailedMinChars,
 ): QualitativeProgress {
-  const trimmedLength = text.trim().length;
+  // Code points, not UTF-16 units: the server counts len(text.strip()) in
+  // Python, where an emoji is one character. Counting units here showed
+  // "+12" for a note the server paid 6.
+  const trimmedLength = [...text.trim()].length;
   const remaining = Math.max(0, minChars - trimmedLength);
   const earned = trimmedLength >= minChars;
-  const message = earned
-    ? `${trimmedLength} characters — that earns the +${awardPoints} pt qualitative bonus.`
-    : `${trimmedLength}/${minChars} characters — ${remaining} more to earn the +${awardPoints} pt qualitative bonus.`;
+  // Untiered when the API publishes no detailed tier (see ride-settings).
+  const tiered = Number.isFinite(detailedMinChars) && detailedPoints > awardPoints;
+  const detailed = tiered && trimmedLength >= detailedMinChars;
+  const message = !tiered
+    ? earned
+      ? `${trimmedLength} characters — that earns the +${awardPoints} pt qualitative bonus.`
+      : `${trimmedLength}/${minChars} characters — ${remaining} more to earn the +${awardPoints} pt qualitative bonus.`
+    : detailed
+    ? `${trimmedLength} characters — that earns the +${detailedPoints} pt detailed-feedback bonus.`
+    : earned
+      ? `${trimmedLength} characters — that earns +${awardPoints} pts; ${detailedMinChars - trimmedLength} more for +${detailedPoints}.`
+      : `${trimmedLength}/${minChars} characters — ${remaining} more to earn the +${awardPoints} pt qualitative bonus (+${detailedPoints} at ${detailedMinChars}).`;
   return { trimmedLength, remaining, earned, message };
 }
 
@@ -753,7 +770,7 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
     rightSlot.replaceChildren();
     if (!gates.navigation) return;
     const pane = el("div", "ride-post-s9__pane ride-post-s9__pane--nav");
-    const upToPts = points.navRouteFeedback + points.navQualitativeFeedback;
+    const upToPts = points.navRouteFeedback + points.navQualitativeDetailed;
     pane.append(
       el(
         "h4",
@@ -844,7 +861,9 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
       btn.setAttribute("aria-expanded", "false");
       btn.textContent = isPrivate
         ? "Add a note about the route →"
-        : `Add a note about the route (+${points.navQualitativeFeedback} pts) →`;
+        : points.navQualitativeDetailed > points.navQualitativeFeedback
+          ? `Add a note about the route (up to +${points.navQualitativeDetailed} pts) →`
+          : `Add a note about the route (+${points.navQualitativeFeedback} pts) →`;
       btn.addEventListener("click", () => {
         qualitativeOpen = true;
         renderRight();
@@ -876,6 +895,9 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
         : describeQualitativeProgress(
             state.navQualitative,
             points.navQualitativeFeedback,
+            NAV_QUALITATIVE_MIN_CHARS,
+            points.navQualitativeDetailed,
+            points.navQualitativeDetailedMinChars,
           ).message;
     }
     textarea.addEventListener("input", () => {

@@ -247,10 +247,12 @@ describe("resolveRideModePoints", () => {
   });
 
   it("resolves the complete live schedule exactly", () => {
+    // As published since the 2026-10-06 points rationalisation (API #111):
+    // written feedback carries its detailed tier.
     const schedule: PointsScheduleResponse = {
       battery_contribution: { base: 8, per_step: 2, step_km: 2 },
       nav_route_feedback: 4,
-      nav_qualitative_feedback: 6,
+      nav_qualitative_feedback: { points: 6, upper_points: 12, upper_min_chars: 60 },
       nav_distance_bonus: { per_step: 2, step_km: 3 },
       ride_survey: 4,
     };

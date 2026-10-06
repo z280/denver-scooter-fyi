@@ -273,6 +273,10 @@ export interface ResolvedRideModePoints {
   batteryStepKm: number;
   navRouteFeedback: number;
   navQualitativeFeedback: number;
+  /** The detailed tier (2026-10-06): written feedback of at least
+   *  `navQualitativeDetailedMinChars` earns this instead. */
+  navQualitativeDetailed: number;
+  navQualitativeDetailedMinChars: number;
   navDistancePerStep: number;
   navDistanceStepKm: number;
   surveyPoints: number;
@@ -288,6 +292,8 @@ export const FALLBACK_RIDE_MODE_POINTS: ResolvedRideModePoints = {
   batteryStepKm: 2,
   navRouteFeedback: 4,
   navQualitativeFeedback: 6,
+  navQualitativeDetailed: 12,
+  navQualitativeDetailedMinChars: 60,
   navDistancePerStep: 2,
   navDistanceStepKm: 3,
   surveyPoints: 4,
@@ -318,6 +324,17 @@ export function resolveRideModePoints(
     navRouteFeedback: navRoute?.points ?? FALLBACK_RIDE_MODE_POINTS.navRouteFeedback,
     navQualitativeFeedback:
       navQual?.points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback,
+    // The detailed tier is promised only when the API publishes it. If the
+    // entry is there WITHOUT upper fields (an API older than the tier, or a
+    // rollback), that API pays the base value for any length, so "detailed"
+    // collapses onto it rather than promising 12 nobody will pay. Only a
+    // missing entry (offline) falls back to the baked-in tier.
+    navQualitativeDetailed: navQual
+      ? (navQual.upper_points ?? navQual.points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback)
+      : FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailed,
+    navQualitativeDetailedMinChars: navQual
+      ? (navQual.upper_min_chars ?? Number.POSITIVE_INFINITY)
+      : FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailedMinChars,
     navDistancePerStep:
       navDistance?.per_step ?? FALLBACK_RIDE_MODE_POINTS.navDistancePerStep,
     navDistanceStepKm:
