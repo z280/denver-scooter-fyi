@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rider stats — Scooter.fyi</title>
+    <!-- Not indexed on its own. The canonical home of these numbers is the
+         Stats drawer on the map and the page that frames this one; a bare
+         embed ranking separately would split the audience for one figure. -->
+    <meta name="robots" content="noindex" />
+    <!-- Dark mode follows the FRAMING page where it can't be read directly:
+         an iframe cannot see its parent's theme, so this honours the OS
+         setting and accepts ?theme=dark|light from the host that knows
+         better. Set before paint to avoid a flash of the wrong surface. -->
+    <script>
+      (function () {
+        try {
+          var p = new URLSearchParams(location.search).get("theme");
+          var dark =
+            p === "dark" ||
+            (p !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute(
+            "data-theme",
+            dark ? "dark" : "light",
+          );
+        } catch (e) {
+          /* a blocked matchMedia or a hostile URL must not cost the page */
+        }
+      })();
+    </script>
+  </head>
+  <body class="embed-body">
+    <!-- The panel. Everything inside is built by fleet-stats.ts, exactly as
+         it is in the map's drawer — same module, same payload, same numbers.
+         ?voice= selects which copy table wraps them and nothing else. -->
+    <main
+      id="fleet-stats"
+      class="fleet-stats"
+      role="status"
+      aria-live="polite"
+      aria-label="Rental outcome statistics"
+    >
+      <div class="compliance-loading">Loading stats…</div>
+    </main>
+    <script type="module" src="/src/embed-stats.ts"></script>
+  </body>
+</html>

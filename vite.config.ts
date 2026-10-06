@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -8,6 +10,14 @@ export default defineConfig({
     assetsInlineLimit: 4096,
     chunkSizeWarningLimit: 1200,
     rollupOptions: {
+      // Two pages. `index.html` is the app; `embed/stats.html` is the
+      // standalone rider-stats panel that weseeyouveo.com frames — once an
+      // explicit input list exists, the default entry has to be named too or
+      // the app stops building.
+      input: {
+        main: resolve(__dirname, "index.html"),
+        embedStats: resolve(__dirname, "embed/stats.html"),
+      },
       output: {
         manualChunks: {
           maplibre: ["maplibre-gl"],
