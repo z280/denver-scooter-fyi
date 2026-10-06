@@ -1,11 +1,41 @@
 # The State of Veo — Frontend Plan (denver-scooter-fyi)
 
-A fifth drawer, behind a chart icon, that tells Denver how Veo is doing: day by
-day, week by week, in one number a person can repeat to a council member.
+A fifth drawer, behind a chart icon: how the fleet is actually performing, day
+by day and week by week.
 
-This is the app's thesis made legible. The map answers *which scooter should I
-take right now*. This answers *is this service actually working*, and it is the
-half a rider cannot see from one trip.
+The map answers *which scooter should I take right now*. This answers *what
+should I expect from this service*, and it is the half a rider cannot see from
+one trip.
+
+---
+
+## THE VOICE, BEFORE ANYTHING ELSE
+
+**scooter.fyi is pro-rider. It is not anti-Veo and it is not a political
+platform.** This drawer exists because a rider planning a trip deserves to know
+that 1 in 11 rentals goes nowhere, the same way they deserve to know a scooter's
+battery. It is consumer information, like a reliability column in a car
+magazine. Nobody is being campaigned at.
+
+**We See You Veo is the advocacy voice** — pro-Denver, pro-citizen,
+anti-monopoly. It can take these same numbers and make an argument with them.
+That is its job and it is not this one.
+
+So the rule for everything below, and the one a reviewer should hold this
+drawer to:
+
+> **Same numbers, different verbs.** scooter.fyi reports. WSYV argues.
+
+In practice that means the copy here says *what happened*, never *what somebody
+should do about it*; it never uses the operator's name as a subject of blame
+("9% of rentals went nowhere", not "Veo failed 9% of riders"); and it carries no
+call to action beyond "here is how to plan around it" and one quiet link to the
+other property for a reader who wants the argument.
+
+It also means this drawer is genuinely useful to Veo. A fleet operator who
+reads it and fixes their worst 10% of vehicles has made the app's own job
+easier. That is the correct relationship and the copy should never make it
+awkward.
 
 ---
 
@@ -16,10 +46,12 @@ half a rider cannot see from one trip.
 Everything else on this screen is that number cut by time, place, or model.
 Pick one sentence and build the drawer around it:
 
-> **9 in every 100 Veo rentals never get more than 50 metres from the kerb.**
+> **9 in every 100 rentals never get more than 50 metres from the kerb.**
 
 That is not an estimate and it is not a survey. It is counted, at the source,
-every two minutes, over the whole fleet.
+every two minutes, over the whole fleet. Note the sentence has no subject doing
+anything to anyone — that is deliberate, and it is the house style for this
+whole drawer (see THE VOICE above).
 
 ### 0.1 It already exists, and it is already validated
 
@@ -164,16 +196,19 @@ because it is an argument and arguments have an order:
   it in the response.
 - **Date everything.** Each panel says what window it covers and when the data
   was last computed, from the response, never from the client's clock.
-- **No y-axis truncation on the headline series.** This is advocacy; the chart
-  must survive being screenshotted by somebody hostile.
+- **No y-axis truncation on the headline series.** A chart that exaggerates a
+  trend is one somebody can discredit, and being discreditable is the one thing
+  a reference source cannot afford.
 - **Greyscale-legible.** The `dataviz` skill's rules apply, and the existing
   reliability colours already encode shape as well as hue.
 
 ### 2.2 What this must never claim
 
-- Not "Veo broke 1,840 scooters". A no-go is an attempt that went nowhere; the
-  cause might be the vehicle, the app, or the rider giving up. Say what was
-  counted.
+- **Not "Veo broke 1,840 scooters".** A no-go is an attempt that went nowhere;
+  the cause might be the vehicle, the app, the weather or the rider changing
+  their mind. Say what was counted and let the reader draw the line. This is
+  the single most important rule on the page and the easiest to break by
+  accident in a headline.
 - Not a repair time, when what was measured is a vehicle moving again (§1 tier 3).
 - Not a comparison to other cities. We have one city's feed.
 - Not Veo's own numbers. Everything here is derived from a public feed by a
@@ -184,27 +219,61 @@ because it is an argument and arguments have an order:
 ## 3. Sharing, because a chart nobody can send is not advocacy
 
 Every panel gets a **share** action producing a PNG with the number, the
-window, the date and `scooter.fyi` on it. A council member gets sent a picture,
-not a URL with query parameters.
+window, the date and `scooter.fyi` on it — because the thing that actually
+travels is a picture, not a URL with query parameters.
+
+The image is the neutral version. What a reader does with it is theirs.
 
 Deep links too: `?analytics=nogo&window=28d&cell=…` so a panel can be linked to
 exactly as the map's `?ride=` does.
 
 ---
 
-## 4. The hand-off to We See You Veo
+## 4. Two properties, one dashboard
 
-The analytics drawer makes a reader angry on purpose. The next thing they see
-must be somewhere to put it — this is the whole reason the two projects exist
-beside each other.
+The same dashboard appears on **scooter.fyi** and on a page at
+**weseeyouveo.com**, and the separation of voice in THE VOICE above is what
+makes that safe rather than confusing.
 
-At the foot of the headline panel: **"This is the fleet. What happened to
-you?"** → the story capture in `docs/RIDER_VOICE_PLAN.md`.
+### 4.1 One implementation, embedded twice
+
+Do not build it twice. The repos are different stacks and a second
+implementation is a second set of numbers that will disagree with the first
+within a month.
+
+**Serve an embeddable view from this app**: `/embed/stats`, the same bundle,
+rendering the same figures from the same endpoints, with a `?voice=` parameter
+selecting the copy layer and nothing else.
+
+| | `voice=rider` (default, scooter.fyi) | `voice=civic` (WSYV) |
+|---|---|---|
+| headline | "9 in 100 rentals went nowhere this week" | same number, WSYV's own framing |
+| subtitle | how to plan around it | the argument WSYV wants to make |
+| call to action | none | theirs |
+| figures, windows, denominators | **identical** | **identical** |
+
+The parameter picks a copy table. It must never pick a different filter, window
+or threshold — if the two properties can show different numbers for the same
+day, the whole exercise is worthless. One test asserts exactly that.
+
+### 4.2 Cross-promotion, lightly
+
+Each property carries one quiet link to the other: scooter.fyi's drawer ends
+with a line pointing at WSYV for readers who want the argument; the WSYV embed
+carries a "live data from scooter.fyi" credit that is also the link back.
+
+One link each, in the footer of the panel. Not a banner, not an interstitial.
+
+### 4.3 The story hand-off
+
+At the foot of the headline panel: **"Riding in Denver? Tell us how it's
+going."** → the story capture in `docs/RIDER_VOICE_PLAN.md`.
 
 The rule from Phase 10 applies unchanged and is restated here because this is
 where it will be forgotten: **sending a story to WSYV is a disclosure to a
 third party, and it is its own opt-in, per story, defaulted off, with a plain
-statement of what the recipient sees.** Reading the charts discloses nothing.
+statement of what the recipient sees.** Reading the charts discloses nothing,
+and a rider who never sends anything is a complete user of this drawer.
 
 ---
 
@@ -213,7 +282,8 @@ statement of what the recipient sees.** Reading the charts discloses nothing.
 | Module | Responsibility |
 |---|---|
 | `analytics-panel.ts` *(new)* | The drawer: four screens, the window control, the share action. Renders; decides nothing. |
-| `analytics-figures.ts` *(new)* | Pure. Takes API rows, returns the sentences and the series. Every claim the drawer makes is a function here, so the wording is assertable without a DOM — the same discipline `ride-failed-start.ts` follows. |
+| `analytics-figures.ts` *(new)* | Pure. Takes API rows, returns the series and the figures. Every claim the drawer makes is a function here, so the wording is assertable without a DOM — the same discipline `ride-failed-start.ts` follows. |
+| `analytics-copy.ts` *(new)* | The two voices, as data. One table per voice, same keys. The ONLY thing `?voice=` selects. |
 | `hexdensity.ts` *(existing)* | Gains `no_go_rate` as a `HexMetric`. No new map. |
 | `api.ts` *(existing)* | `fetchFleetOutcomes`, `fetchOutcomeSeries`, `fetchOutcomeCells`. |
 | `main.ts` *(existing)* | One `wireAnalyticsPanel()` call. |
@@ -243,6 +313,12 @@ statement of what the recipient sees.** Reading the charts discloses nothing.
   same regression `hexdensity.test.ts` already guards for territory.
 - The headline count and the series agree for an overlapping window. Two
   renderings of one signal, as with `has_negative_report`.
+- **Both voices render the same figures.** Asserted by rendering the panel
+  twice and comparing every number on it — the copy may differ, the data may
+  not. This is what keeps the two properties from disagreeing in public.
+- No copy string in the `rider` voice names the operator as the subject of a
+  verb. Asserted over the copy table, because this is a house rule that a
+  future contributor will break while being helpful.
 
 ---
 
