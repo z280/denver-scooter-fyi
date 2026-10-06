@@ -9381,3 +9381,122 @@ input[data-ride-keypad="on"] {
   color: var(--fg-muted);
 }
 
+
+/* ---------- The rider story panel ----------
+   Sits under the failed-start report. It has to read as an OFFER, not as the
+   next step of a form the rider is trapped in: hence the rule above it, the
+   modest type, and a prompt that is a question rather than a field label. */
+.story-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.ride-screen-start__story {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.story-panel__lede {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+.story-panel__prompt {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.story-panel__text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.story-panel__text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.story-panel__switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.story-panel__switch input {
+  margin-top: 2px;
+  flex: none;
+}
+.story-panel__hint {
+  margin: 4px 0 0 24px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+/* The third-party block is visually inset, because everything inside it is a
+   consequence of one tick and should read as belonging to it. */
+.story-panel__wsyv {
+  margin: 10px 0 0 24px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--border);
+}
+.story-panel__field {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.story-panel__select,
+.story-panel__input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.story-panel__disclose-head {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+/* Not small print. A person deciding whether to hand their words to somebody
+   else reads this, so it is the same size as the rest of the block. */
+.story-panel__disclose {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.story-panel__disclose li {
+  margin-bottom: 3px;
+}
+.story-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.story-panel__status {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  min-height: 1em;
+}

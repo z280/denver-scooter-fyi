@@ -3,6 +3,7 @@
 
 import { clearStoredSessionIfToken } from "./auth-storage.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
+import { WSYV_BASE } from "./config.ts";
 import { trackApiError } from "./telemetry.ts";
 
 // In production, the browser calls the API directly (CORS allows denver.scooter.fyi).
@@ -870,6 +871,75 @@ export function fetchH3Aggregates(
   signal?: AbortSignal,
 ): Promise<H3AggregatesResponse> {
   return getJSON<H3AggregatesResponse>(`/api/v1/h3/aggregates?res=${res}`, signal);
+}
+
+// ---------------------------------------------------------------------------
+// Rider stories → We See You Veo
+// ---------------------------------------------------------------------------
+//
+// The only calls in this file that leave our own infrastructure. They go to a
+// second property, and they go there because a rider ticked a box naming it —
+// see `rider-story.ts` for the consent rules these two functions serve.
+
+/** The instrument's own value sets, fetched rather than copied.
+ *
+ *  The neighbourhood list is 80 entries and the survey REQUIRES a value from
+ *  it exactly; a second hand-maintained copy in this repo would eventually
+ *  offer a renamed neighbourhood and lose a real story at submit, after
+ *  telling the rider it sent. So the list comes from the validator that
+ *  enforces it.
+ *
+ *  A failure here is not fatal to the feature: the caller keeps the story
+ *  locally and hides the send option, which is honest — we cannot file it
+ *  correctly, so we do not pretend we can. */
+export interface SurveyOptionsResponse {
+  ok: boolean;
+  version: string;
+  neighborhoods: string[];
+}
+
+export async function fetchSurveyOptions(
+  signal?: AbortSignal,
+): Promise<SurveyOptionsResponse> {
+  const res = await fetch(`${WSYV_BASE}/api/survey-options`, {
+    signal,
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) throw await apiErrorFrom(res, `survey options unavailable (${res.status})`);
+  const body = (await res.json()) as SurveyOptionsResponse;
+  if (!Array.isArray(body?.neighborhoods) || body.neighborhoods.length === 0) {
+    throw new ApiError("survey options came back empty", "HTTP_ERROR", { status: res.status });
+  }
+  return body;
+}
+
+/** Send one story.
+ *
+ *  `PUT` with the draft's own id, which is what the receiving store is keyed
+ *  on: a retry after a flaky network updates the same row rather than filing
+ *  the rider's words twice.
+ *
+ *  Deliberately NOT `authedFetchJSON`. A story carries whatever identity the
+ *  rider chose inside its payload — an anonymous one carries none — and
+ *  attaching this app's credentials to a third-party disclosure would
+ *  undo that choice without telling them. No cookies either: the receiving
+ *  route's CORS never allows credentials. */
+export async function submitRiderStory(
+  draftId: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(
+    `${WSYV_BASE}/api/survey-responses/${encodeURIComponent(draftId)}`,
+    {
+      method: "PUT",
+      signal,
+      credentials: "omit",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) throw await apiErrorFrom(res, `Story submission failed (${res.status})`);
 }
 
 export interface FleetOutcomeModel {

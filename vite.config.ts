@@ -37,6 +37,18 @@ export default defineConfig({
         secure: true,
         headers: { Origin: "https://denver.scooter.fyi" },
       },
+      // Rider stories go to a different property entirely. Proxied for the
+      // same reason as /api — and additionally because weseeyouveo.com's CORS
+      // allowlist names the production origins only, so a browser on
+      // localhost could not reach it directly. A server-side hop needs no
+      // CORS, which keeps that allowlist honest.
+      "/wsyv": {
+        target: "https://weseeyouveo.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/wsyv/, ""),
+        headers: { Origin: "https://denver.scooter.fyi" },
+      },
     },
   },
 });
