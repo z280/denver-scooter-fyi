@@ -1094,6 +1094,16 @@ body:not(.ribbon-open) .drawer-tabs {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The move-watch sentence that rides along with a claim. Deliberately allowed
+   to wrap where `__what` is not: this one is telling the rider something was
+   armed on their behalf, and a truncated disclosure is not a disclosure. */
+.dibs-toast__watch {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
 .dibs-toast__view {
   flex: 0 0 auto;
   padding: 9px 14px;

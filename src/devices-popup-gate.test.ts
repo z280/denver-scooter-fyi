@@ -774,82 +774,46 @@ describe("device popup — reporting bad parking from a distance", () => {
   });
 });
 
-describe("device popup — the 🔔 notify-if-moved bell", () => {
-  function openWithBell(watched = false): {
-    devices: Devices;
-    handler: ReturnType<typeof vi.fn>;
-  } {
+describe("device popup — there is no bell, and that is the feature", () => {
+  // A "tell me when this one moves" button on every scooter on the map is an
+  // "alert me when this address's occupant leaves" tool. `device-notify.ts`'s
+  // header carries the argument; this pins the absence, because the button is
+  // cheap to re-add and the harm is not visible from the diff that adds it.
+  //
+  // The capability is not gone. It has two doors, both requiring a connection
+  // the rider already has to the specific vehicle: the dibs claim this popup's
+  // own "I'll ride this one" makes (`setClaimWatchHook`), and the end of a
+  // ride (`ride-post-s8.ts`). Those are tested where they live.
+
+  function open(): Devices {
     const devices = new Devices(
       fakeMap() as unknown as MLMap,
       fakeLocate(NEAR),
     );
-    const handler = vi.fn();
-    devices.setNotifyMovedHandler(handler);
-    devices.setIsWatchedMoved(() => watched);
     devices.setData(response([feature({ vehicle_identifier: PHOTO_VID })]));
     devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
-    return { devices, handler };
+    return devices;
   }
-  const hint = () =>
-    lastPopupEl?.querySelector<HTMLElement>(".device-popup__actionhint");
-  const bell = () =>
-    lastPopupEl?.querySelector<HTMLButtonElement>('[data-action="notify-moved"]');
 
-  it("forwards the tap with the vehicle, its name and where it is now", () => {
-    // The watch is a comparison against where the scooter is NOW, and now is
-    // what this popup is showing — so the coordinates travel with the tap
-    // rather than being looked up again a beat later.
-    const { handler } = openWithBell();
-    bell()?.click();
-    expect(handler).toHaveBeenCalledOnce();
-    const info = handler.mock.calls[0][0] as {
-      vehicleIdentifier: string;
-      name: string;
-      lat: number;
-      lon: number;
-      report(t: string): void;
-    };
-    expect(info.vehicleIdentifier).toBe(PHOTO_VID);
-    expect(info.name.length).toBeGreaterThan(0);
-    expect(info.lat).toBeCloseTo(DEVICE[1], 6);
-    expect(info.lon).toBeCloseTo(DEVICE[0], 6);
-    // Whatever the watch store says lands in the hint line under the row.
-    info.report("We'll tell you if it moves, while the app is open.");
-    expect(hint()?.hidden).toBe(false);
-    expect(hint()?.textContent).toContain("while the app is open");
+  it("renders no notify-if-moved control, near or far", () => {
+    open();
+    expect(lastPopupHtml).not.toContain('data-action="notify-moved"');
+    expect(lastPopupHtml).not.toContain("Notify me if moved");
+    expect(lastPopupHtml).not.toContain("🔔");
   });
 
-  it("is offered to a signed-out rider, because watching needs no account", () => {
-    // This is the whole difference from the ⭐ it replaced: that button demanded
-    // a sign-in, a QR scan and a fix within 75 m, in exchange for telling the
-    // rider where a scooter was parked — which this map already does, for every
-    // scooter, to anybody.
-    signedIn = false;
-    const { handler } = openWithBell();
-    expect(bell()).not.toBeNull();
-    expect(bell()?.hasAttribute("aria-disabled")).toBe(false);
-    bell()?.click();
-    expect(handler).toHaveBeenCalledOnce();
-  });
-
-  it("says which way the next tap goes", () => {
-    openWithBell(false);
-    expect(bell()?.getAttribute("aria-pressed")).toBe("false");
-    expect(bell()?.textContent).toContain("Notify me if moved");
-
-    openWithBell(true);
-    expect(bell()?.getAttribute("aria-pressed")).toBe("true");
-    // A toggle whose two states look the same is a button riders press twice.
-    expect(bell()?.textContent).toContain("tap to stop");
-  });
-
-  it("is absent when nothing is wired to answer it", () => {
+  it("offers no way to arm a watch even with the claim hook wired", () => {
+    // The hook exists for the CLAIM path. Wiring it must not resurrect a
+    // button here.
     const devices = new Devices(
       fakeMap() as unknown as MLMap,
       fakeLocate(NEAR),
     );
+    const hook = vi.fn(() => "armed");
+    devices.setClaimWatchHook(hook);
     devices.setData(response([feature({ vehicle_identifier: PHOTO_VID })]));
     devices.jumpToDevice("d1", DEVICE[0], DEVICE[1]);
     expect(lastPopupHtml).not.toContain('data-action="notify-moved"');
+    expect(hook).not.toHaveBeenCalled();
   });
 });

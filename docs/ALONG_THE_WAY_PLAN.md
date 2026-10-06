@@ -95,9 +95,9 @@ New unless marked. Phase numbers refer to the master plan §4.
 | `backups-sheet.ts` | 3 | The *overrule* face: the plans the search already computed, offered after an automatic re-solve. There is no "do you accept this swap?" card any more — every re-solve is applied and reversible (§3.1), and **announced only when it changes something actionable** — §3.4's two cases, which this row used to flatten into "announced". |
 | ~~`my-scooters.ts`~~ | 4 | **Built, then deleted.** Favourite vehicles — `locationOf` keyed off the `position_withheld` FLAG, the title, the sentence for every refusal. It worked, and it was the wrong feature: a sign-in, a QR scan and a fix within 75 m, in exchange for telling the rider where a scooter was parked, which the map already does for every scooter to anybody. §4.1's reasoning about why it is not `favorites.ts` still stands and is still worth reading; its payoff did not. Replaced by `device-notify.ts` below. |
 | ~~`my-scooters-panel.ts`~~ | 4 | **Built, then deleted** with the module above. Its Tools-drawer slot is now the watch list. |
-| `device-notify.ts` | 4, 9 | "Notify me if moved" — what replaced keeping a scooter. The local watch store, the moved / in-use / gone verdict against a 50 m anchor (§9.7.4), the message, and the one-alert-per-scooter rule. **Pure apart from its `localStorage` adapter.** The question a map cannot answer by sitting there is whether a scooter has gone, which is what this asks. |
-| `device-notify-panel.ts` | 4, 9 | The Tools-drawer list and the in-app toast. Renders; decides nothing. §9.7.6: rows learn a tier, because "while the app is open" is the wrong promise for a row that will text. |
-| `qr-utility.ts` | 4, 9 | The ribbon's QR tool: one scanner behind a rotatable mode dial. Confirm features, Ride mode, and — §9.7.2 — Notify if moved, which is the scan-anchored, SMS-eligible tier. A third job is a label on the dial, not a third camera flow. |
+| `device-notify.ts` | 4, 9 | The gated move-watch — what replaced keeping a scooter, twice over. The local watch store, the two permitted origins and their caps and expiries (`WATCH_RULES`), the moved / in-use / gone verdict against a 50 m anchor (§9.7.4), the message, and the one-alert-per-scooter rule. **Pure apart from its `localStorage` adapter.** Its header is the normative statement of why this capability is gated; read it before adding an entry point. |
+| `device-notify-panel.ts` | 4, 9 | The Tools-drawer list and the in-app toast. Renders; decides nothing; **starts nothing** — it exists to show what is watched and to stop it. §9.7.6: rows learn a tier, because "while the app is open" is the wrong promise for a row that will text. |
+| `qr-utility.ts` | 4, 6 | The ribbon's QR tool: one scanner behind a two-position segmented mode switch (Confirm features, Ride mode). A third job would be a third segment, not a third camera flow — but see §9.7.2 for the one that was planned and deliberately dropped. |
 | `qr-ride-scan.ts` | 4 | What a scanned sticker MEANS to a ride — start, resume, associate, or already-tied — and the two ways a scan names nothing. **Pure.** It exists because tying a scooter to a ride used to depend on which of five doors the rider came through, and none of them worked once the ride was running. |
 | `equity-savings.ts` | 5 | Cost terms, not a second optimizer: the start-in-area bonus and `equityLegRate` for the Phase 2 planner's money term. Pure; imports `ride-cost.ts` for money and `equity-areas.ts` for geometry, and owns neither. |
 | `arrival-panel.ts` *(existing)* | 3 | Gains a **re-solved** face and a `reportResolve()` beside its `reportGone()`. |
@@ -1627,10 +1627,23 @@ fiddly part — and it is `plan-resume.ts`'s whole job.
 
 ### 9.7 Texting a watched scooter's departure
 
-Master plan §13.8. The in-app half of this already ships — `device-notify.ts`
-and the Tools-drawer list that replaced Favorite Scooters — and its copy is
-careful to promise only "while the app is open", because a closed tab detects
-nothing. This is the other half.
+Master plan §13.8. The in-app half of this ships — `device-notify.ts` and the
+Tools-drawer list that replaced Favorite Scooters — and its copy is careful to
+promise only "while the app is open", because a closed tab detects nothing.
+This is the other half.
+
+> **REVISED, AND THE REVISION IS THE IMPORTANT PART.** This section was first
+> written against a version of the in-app watch that could be armed from the
+> 🔔 bell on **any** device popup. That bell has been deleted. "Tell me when
+> this vehicle leaves this address" is a tracking tool — the scooter parked
+> outside a house is a proxy for the person inside it, and an ex's, a
+> partner's or a shelter's address is the use case nobody writes in a feature
+> request. The capability now requires a present, demonstrated connection to
+> the specific vehicle, it expires with that connection, and there are exactly
+> two origins: a **dibs claim** made while building a route (max 2, dies with
+> the claim, so ≤25 minutes and within a 15-minute walk), and the **end of a
+> ride** on that scooter (1, two hours, offered once). `device-notify.ts`'s
+> header is the normative statement; everything below is downstream of it.
 
 **One text, and its exact words:**
 
@@ -1638,57 +1651,74 @@ nothing. This is the other half.
 Astral Osprey 123 is no longer within 50m of where you scanned. This move was first observed at 2:32pm.
 ```
 
-#### 9.7.1 Two tiers, and the scan is the line between them
+#### 9.7.1 Two origins, and proximity is NOT what separates them
 
-This is the decision the rest of the section follows from.
+This is the decision the rest of the section follows from, and it is the one
+that changed.
 
 | Armed from | Where it lives | In-app notice | SMS |
 |---|---|---|---|
-| the device popup's 🔔 bell | `localStorage` | yes | **no** |
-| a QR scan (the ribbon's dial) | a row on the server | yes | **yes, on opt-in** |
+| a **dibs claim** while building a route (max 2) | `localStorage`, expiring with the claim | yes | **yes, on opt-in** |
+| the **end of a ride** on that scooter (max 1, 2 h) | `localStorage` | yes | **yes, on opt-in** |
+| anything else — a bell, a tap on the map, a bare scan | **nowhere. It cannot be armed.** | — | — |
 
-A watch armed off the map is a watch on a scooter the rider may never have been
-near, and master §13.8.1 is unambiguous about what an SMS-capable version of
-that would be: the following tool §8.4 refuses to build, delivered to a lock
-screen. The scan is what makes the anchor point somewhere the rider physically
-stood — the same thing §8.2's 75 m gate proves — and it is why the copy says
-"where you scanned" rather than "where it was".
+**The first draft of this section got the line in the wrong place.** It
+proposed that a QR scan — proof the rider stood within 75 m — was what earned
+the SMS tier, with the map's bell staying local-only. Both halves of that are
+wrong now:
 
-So the bell does not grow an SMS switch. The local tier stays exactly as
-shipped: no account, no scan, no network, in-app only, and the honest sentence
-it already carries. Nothing about it changes.
+* **A bell on the map had to go entirely**, not be held back from SMS. An
+  in-app-only tracker is still a tracker; the rider watching an address does
+  not mind opening the app.
+* **A scan is not a meaningful barrier.** Standing beside a scooter for ten
+  seconds is something anyone outside the building can do. Proof of presence
+  at a VEHICLE is not proof of a relationship to it, and §8.4's rule — you
+  may know where a vehicle is standing, you may not follow it — is not
+  satisfied by having been there once.
 
-#### 9.7.2 The dial gains its third position
+What the two surviving origins have in common is not proximity but
+**commitment that expires**: a claim is a vehicle this rider is walking to
+right now, and a finished ride is one they were just on. Both are states the
+rider cannot manufacture about a stranger's address, and both end on their own.
+That, rather than metres, is what makes an SMS defensible — and it is why the
+texted tier inherits exactly the same two doors and the same expiries.
 
-`qr-utility.ts` was built for this — its header says a third job "is a label on
-the dial, not a third flow", and this is the first one to arrive. A new position
-beside Confirm features and Ride mode:
+#### 9.7.2 The dial does NOT gain a third position
 
-| | | |
-|---|---|---|
-| 🔔 | **Notify if moved** | Watch this scooter and tell me when somebody rides it away. |
+`qr-utility.ts`'s header says a third job "is a third segment, not a third
+flow", and this was going to be the first one to arrive: a 🔔 Notify-if-moved
+position, scan a sticker, watch that scooter. **It is not being built**, for
+§9.7.1's reason — a standalone scan is an arming path with no expiring
+commitment behind it, which is the bell again with an extra step.
 
-One scanner, three outcomes, and the geometry is already a pure function of the
-mode count (`modeAngle`) so the ring re-spaces itself with no layout work.
+(The dial is also a segmented control now rather than a dial: two unordered
+jobs, one applied to whatever the camera reads next. `modeAngle` and the
+pointer geometry this section used to lean on are gone with it.)
 
-The scan posts to `POST /profile/device-move-watches` with the **raw payload**,
-unparsed, exactly as the Confirm Features position does — the server extracts
-the plate, resolves the vehicle and judges the 75 m. The client's local
-`plateFromQr` is for the Ride-mode position's own lookup and has no business
-deciding this.
+So the texted tier is armed from the two origins in §9.7.1 and nowhere else:
 
-A refusal is a sentence, not a code, and `too_far_from_device` is the one an
-honest rider will actually hit: *"You'll need to be standing at this one"* plus
-the distance, which is the shape `my-scooters.ts`'s `keepErrorMessage` landed on
-before it was deleted and is worth taking back out of git history rather than
-re-deriving.
+* **With a claim.** `registerDibs` already posts the claim to the server with
+  the vehicle, the position and the claimant. The move-watch is one more field
+  on that request — `notify_sms: true` — not a second endpoint, and the
+  server already holds everything the watch needs. It expires when the claim
+  does, which the server also already computes.
+* **At the end of a ride.** `PATCH /tracked-rides/{id}/end` is the one call
+  Screen 8 makes. Same shape: one field, and the server has the vehicle and
+  the end position in the request it is already handling.
+
+**This deletes `POST /profile/device-move-watches` from the plan**, and with it
+the `qr_raw_value` / 75 m-gate machinery master §13.8.7 specified for it. The
+watch stops being a thing a rider can create directly and becomes a property of
+a claim or a completed ride — which is a smaller API, a smaller table, and a
+capability with no door that can be pointed at an address.
 
 #### 9.7.3 The opt-in, asked once, at the moment it is useful
 
 §9.2's rule, unchanged: a number typed for a sign-in code is not consent to be
-texted about scooters. So the scan sheet carries the trip-alert opt-in — the
-same one grant Phase 9's other texts use, not a second switch — asked at the
-moment the watch is armed, and never as a wall in front of it.
+texted about scooters. So the opt-in rides with whichever origin armed the
+watch — the claim confirmation, or Screen 8's offer — using the same one grant
+Phase 9's other texts use, not a second switch, asked at the moment the watch
+is armed and never as a wall in front of it.
 
 **Declining is a first-class answer.** The watch is still armed; it is simply
 the local tier, with the in-app notice and no text. Nothing about this feature
@@ -1733,27 +1763,36 @@ client-side string for someone to interpolate a coordinate into.
 
 | Module | Responsibility |
 |---|---|
-| `device-notify.ts` *(existing)* | `MOVED_METERS` 25 → 50 with the citation. Gains nothing else: the verdict, the message and the one-alert rule are the local tier's and stay pure. |
-| `device-notify-panel.ts` *(existing)* | Rows learn a tier: a scan-anchored watch says so and says whether a text is coming, because "we'll tell you while the app is open" is the wrong promise for a row that will text. The status line stops being one sentence for every row. |
-| `qr-utility.ts` *(existing)* | The third dial position, and the opt-in + phone-verification states on its sheet. Still one scanner. |
-| `api.ts` *(existing)* | `createDeviceMoveWatch`, `listDeviceMoveWatches`, `deleteDeviceMoveWatch`. House rule: the calls live here, not in the feature module. |
+| `device-notify.ts` *(existing)* | Already carries the gated policy: `WatchOrigin`, `WATCH_RULES` (the per-origin caps and TTLs), `expiresAt` on every watch, and `liveWatches`/`watchSlotsLeft`. The texted tier adds a per-watch `sms` flag and nothing else — the verdict, the message and the one-alert rule stay pure and stay local. |
+| `device-notify-panel.ts` *(existing)* | Rows learn a tier: a row that will text says so, because "we'll tell you while the app is open" is the wrong promise for one that will. The status line stops being one sentence for every row. It still STARTS nothing. |
+| `dibs-certificate.ts` *(existing)* | The claim confirmation already discloses that a watch was armed; it gains the SMS opt-in when the rider has no grant yet. |
+| `ride-post-s8.ts` *(existing)* | The post-ride offer already exists and already arms the local watch; it gains the same opt-in. |
+| `api.ts` *(existing)* | `notify_sms` on `registerDibs` and on the ride-end `PATCH`. **No `device-move-watches` endpoints** — see §9.7.2 for why they are deleted rather than deferred. |
 | `trip-alerts.ts` *(§9.1)* | Gains nothing. Its opt-in is the grant this reuses — which is the point of it being one grant. |
-| `main.ts` *(existing)* | The dial's third position wires through the existing `openQrUtility` call; the panel's refresh already exists. No new `wireX()`. |
+| `qr-utility.ts` *(existing)* | Gains nothing, and that is the change: the third segment is not being built. |
+| `main.ts` *(existing)* | Gains nothing. Both arming paths already route through `armDibsWatch` / `armRideEndWatch`. |
 
 #### 9.7.7 Tests
 
-- The bell's watch is never SMS-eligible — asserted at the store boundary, not
-  just absent from the UI.
-- A scan-anchored watch posts the **raw** payload and no parsed plate.
-- `too_far_from_device` renders the distance, in a sentence.
-- Declining the opt-in still arms the watch, locally, and says so.
+- **A watch cannot be created from any origin but the two.** Asserted at the
+  store boundary, not just by the absence of a button: a stored watch whose
+  `origin` is anything else is treated as corrupt and dropped.
+- **Every watch has an expiry, and an expired one is invisible to every
+  reader.** This is the half of the design that makes the feature not a
+  standing subscription, so it is tested at the store rather than in the UI.
+- A dibs watch inherits the CLAIM's expiry, not a duration of this feature's
+  choosing — so releasing or losing the claim cannot leave a watch behind.
+- The caps are per origin: a third claimed scooter cannot evict the watch on
+  the one the rider just rode.
+- The ride-end offer is made once and never returns, including after a refusal.
+- Declining the SMS opt-in still arms the watch, locally, and says so.
 - A watch row that will text says so; a local one promises only "while the app
   is open". The two rows do not share a sentence.
 - `MOVED_METERS` is 50, asserted against the constant rather than a literal, so
   the in-app verdict and the server's cannot drift.
-- The dial re-spaces to three positions and every one is reachable by arrow key
-  — `modeAngle`'s existing property test covers the geometry; this is the
-  regression guard for the count changing.
+- **The device popup renders no arming control at all** — asserted on the
+  popup HTML, because the button is cheap to re-add and the harm is not
+  visible in the diff that adds it.
 
 ---
 
@@ -1858,7 +1897,7 @@ the wrong call and the envelope should come back.
 | `trip-plan.ts` | `replaces` on `POST /dibs` | **no, for a claim-moving re-solve — hard dependency** (§3.3). Two calls cannot do it: release-then-claim can lose the claim with nothing to restore, and claim-then-release is refused by the server's one-claim invariant. What ships first is a re-solve that changes the route and leaves the new pickup **unclaimed**, said plainly. The migration is **the next free one** adding `replaces_dibs_id` — check `sql/` for its number rather than trusting one written here, as the master plan dropped its own for having already drifted. **Also on this row: the server-enforced time-to-arrival claim bound.** `registerDibs` sends no ETA today and the old gate is a walk-minute rule, so a *ridden* pickup — the thing this phase exists for — fails a gate written for walking. Without the bound, Phase 3 can look ready while every hand-off is refused |
 | ~~`my-scooters.ts`~~ | ~~`sql/081` + `/profile/favorite-devices`~~ | **moot** — built, shipped, then deleted as the wrong feature (see the module map). The endpoints still exist and still work; nothing calls them |
 | `device-notify.ts` (the local tier) | **nothing at all** | yes, and it shipped that way — a watch in `localStorage`, an in-app notice on the device refresh the map already does |
-| **the texted tier** (§9.7) | `device_move_watches` + its three endpoints + the per-cycle watcher (master §13.8.7–8) | **no, and it cannot be faked here** — same shape as background loss detection above: a closed tab detects nothing, so "it moved while my phone was in my pocket" is satisfied by that watcher or not at all. The dial position and the opt-in UI can be built against a stub; the text cannot |
+| **the texted tier** (§9.7) | a `notify_sms` flag on the dibs claim and on the ride-end PATCH, plus the per-cycle watcher (master §13.8.8). **Not** `device_move_watches` and its endpoints — §9.7.2 deletes those | **no, and it cannot be faked here** — same shape as background loss detection above: a closed tab detects nothing, so "it moved while my phone was in my pocket" is satisfied by that watcher or not at all. The dial position and the opt-in UI can be built against a stub; the text cannot |
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
 | Phase 7 (the walkthrough) | **nothing at all** | yes, but *after* Phase 6 — see below |

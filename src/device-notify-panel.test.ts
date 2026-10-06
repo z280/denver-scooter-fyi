@@ -24,6 +24,10 @@ function watch(over: Partial<WatchedDevice> = {}): WatchedDevice {
     lat: 39.74,
     lon: -104.99,
     since: 1_700_000_000_000,
+    // A dibs-origin watch, far-future expiry: the default fixture is a LIVE
+    // watch, so a case that cares about expiry or origin says so explicitly.
+    origin: "dibs",
+    expiresAt: 4_000_000_000_000,
     ...over,
   };
 }
@@ -71,13 +75,17 @@ afterEach(() => {
 });
 
 describe("the list", () => {
-  it("is shown even with nothing in it, and says where the switch is", () => {
+  it("is shown even with nothing in it, and says where watches come from", () => {
     // Unlike its Favorite Scooters predecessor, which hid itself while signed
     // out: watching needs no account, so there is no state in which this
     // heading is a reminder of something the visitor cannot have.
     mount([]);
     expect(section.hidden).toBe(false);
-    expect(list.textContent).toContain("Notify me if moved");
+    // Says where they come from, and sends the rider to no button — there is
+    // no control anywhere that starts one on its own.
+    expect(list.textContent).toContain("Claiming a scooter");
+    expect(list.textContent).toContain("finishing a ride");
+    expect(list.textContent).not.toContain("🔔");
   });
 
   it("names each watched scooter", () => {

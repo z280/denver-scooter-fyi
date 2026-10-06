@@ -1,5 +1,11 @@
-// The "Notify me if moved" list — the Tools drawer section that replaced
-// Favorite Scooters.
+// The watched-scooters list — the Tools drawer section that replaced Favorite
+// Scooters.
+//
+// IT STARTS NOTHING. There is no control in here that arms a watch, and there
+// must not be: a watch requires a present connection to the specific vehicle
+// (a claim, or a ride just finished) and is armed as part of that, never from
+// a list. `device-notify.ts`'s header has the argument. What this panel is
+// FOR is the other direction — seeing what is being watched and stopping it.
 //
 // It renders; it decides nothing. Every judgement it shows comes from
 // `device-notify.ts`, which is pure for exactly that reason.
@@ -133,7 +139,11 @@ export function wireDeviceNotifyPanel(
       const empty = el(
         "li",
         "notify-moved__empty",
-        "Nothing watched yet. Open a scooter on the map and tap 🔔 Notify me if moved.",
+        // No "go and do X" instruction, because there is no X: a watch comes
+        // with a claim or with the end of a ride. Saying where watches come
+        // from is honest; sending the rider to a button that does not exist
+        // would not be.
+        "Nothing watched. Claiming a scooter for a route, or finishing a ride on one, offers to watch it.",
       );
       deps.list.append(empty);
       setStatus(null);

@@ -1,6 +1,39 @@
-// "Notify me if moved" — tell me when that scooter stops being there.
+// "Tell me if it moves" — for a scooter the rider is already connected to.
 //
-// WHAT THIS REPLACES, AND WHY IT IS NOT THE SAME FEATURE.
+// READ THIS BEFORE ADDING AN ENTRY POINT. This feature shipped once with a
+// bell on every device popup: tap any scooter on the map, get told when it
+// moves. That version is GONE, and not because it did not work.
+//
+// "Notify me when this vehicle leaves this address" is a tracking tool with a
+// mobility skin on it. The scooter parked outside a house is a proxy for the
+// person in the house: an ex's place, a partner's, a shelter's. Armed from the
+// map, with no account and no proximity, it told a stranger the moment
+// somebody left — which is a thing this app must not be able to do, however
+// many riders would have used it for "can I get that one after dinner".
+//
+// So the capability now requires a PRESENT, DEMONSTRATED CONNECTION to the
+// specific vehicle, and it dies when that connection does. There are exactly
+// two origins, and `WATCH_RULES` below is the whole of the policy:
+//
+//   * `dibs` — a scooter the rider has CLAIMED while building a route. Dibs
+//     already requires the vehicle to be within a 15-minute walk and expires
+//     in at most 25 minutes (`dibs.ts`), so a watch inherits both: you cannot
+//     arm one for a scooter across town, and it cannot outlive the trip.
+//     Capped at TWO, tighter than dibs' own ceiling of three.
+//   * `ride_end` — the scooter the rider has just finished riding. One, for a
+//     few hours, offered once at the end of the ride.
+//
+// Both origins answer "is this vehicle still available to ME", which is the
+// question the feature was for. Neither can be pointed at a vehicle the rider
+// has never been to, because arming one requires having claimed it (and walked
+// toward it) or ridden it.
+//
+// EXPIRY IS PART OF THE SAFETY ARGUMENT, not housekeeping. A watch with no end
+// is a standing subscription to one address's comings and goings. Every watch
+// carries `expiresAt`, `loadWatches` drops the expired, and the two lifetimes
+// above are deliberately short.
+//
+// WHAT THIS REPLACED BEFORE THAT, AND WHY IT IS NOT THE SAME FEATURE.
 //
 // The old feature was "keep this one": a server-side list of favourite
 // vehicles. It cost a sign-in, a QR scan and a fix within 75 m of the scooter,
@@ -20,7 +53,9 @@
 // ("the rider opens the app to see where, which they were going to do
 // anyway"). §9.3's table says the same thing about the event that matters:
 // "your pickup is gone" is the one worth interrupting somebody for. This is
-// that, generalized off the walk flow and onto any scooter on the map.
+// that — and note that §9.3's phrasing is already the gated version: YOUR
+// pickup. The generalisation onto any scooter on the map was the mistake, and
+// walking it back lands exactly where the plan started.
 //
 // AND WHY IT IS LOCAL. A watch is a thing this browser is doing for the next
 // few hours, not a fact about a person. Keeping it client-side means it works
@@ -40,11 +75,38 @@ import { distanceMeters, type LngLat } from "./locate.ts";
 
 export const NOTIFY_MOVED_KEY = "scooter-fyi-notify-moved";
 
-/** How many at once. Past a handful this stops being "that scooter" and starts
- *  being a feed, and a phone that buzzes about ten scooters is one whose
- *  notifications get turned off — which costs the rider the alert they wanted.
- *  Also the natural cap on a list that has to stay readable in a drawer. */
-export const MAX_WATCHED_DEVICES = 6;
+/** Where a watch is allowed to come from. See the header: these two are the
+ *  whole list, and adding a third is a policy change, not a feature. */
+export type WatchOrigin = "dibs" | "ride_end";
+
+/** The policy, as data, so every caller is held to the same numbers and the
+ *  tests can read them rather than restate them.
+ *
+ *  `max` is per origin rather than overall on purpose: the two are different
+ *  capabilities with different justifications, and letting a rider spend their
+ *  ride-end watch on a third claimed scooter would quietly merge them. */
+export const WATCH_RULES: Record<
+  WatchOrigin,
+  { max: number; ttlMs: number }
+> = {
+  // Two, against dibs' own ceiling of three. The third claim in a group is
+  // the one a rider is least committed to, and the alert is worth most for
+  // the pickup they are actually walking to. The TTL is a backstop only —
+  // the caller passes the claim's real `dibsExpiresAt`, which is sooner.
+  dibs: { max: 2, ttlMs: 25 * 60_000 },
+  // One scooter, because there is one scooter you just got off. Two would
+  // mean one from an earlier ride, which is the "a vehicle I am no longer
+  // connected to" case this whole design exists to refuse.
+  //
+  // Two hours: long enough for "can I get it again after dinner", short
+  // enough that it is not a subscription to wherever it ends up overnight.
+  ride_end: { max: 1, ttlMs: 2 * 60 * 60_000 },
+};
+
+/** Total ceiling, derived rather than declared so it cannot drift from the
+ *  rules above. Used for the storage read's own sanity slice. */
+export const MAX_WATCHED_DEVICES =
+  WATCH_RULES.dibs.max + WATCH_RULES.ride_end.max;
 
 /** How far a scooter has to be from where we started watching before we call it
  *  moved.
@@ -96,6 +158,15 @@ export interface WatchedDevice {
   /** When the rider asked, ms since epoch. Shown in the list, and what the cap
    *  evicts on. */
   since: number;
+  /** Which of the two permitted connections to the vehicle this watch rests
+   *  on. Not decoration: it picks the cap, it is what the list shows the rider
+   *  about why they are watching, and a stored watch with an unrecognised
+   *  origin is treated as corrupt and dropped. */
+  origin: WatchOrigin;
+  /** When this watch stops existing, ms since epoch. Absolute rather than a
+   *  duration so a tab left open overnight expires it on the next read instead
+   *  of restarting its clock. A dibs watch gets the claim's own expiry. */
+  expiresAt: number;
 }
 
 interface StoredWatches {
@@ -116,7 +187,10 @@ function isValidWatch(w: unknown): w is WatchedDevice {
     typeof r.lon === "number" &&
     Number.isFinite(r.lon) &&
     typeof r.since === "number" &&
-    Number.isFinite(r.since)
+    Number.isFinite(r.since) &&
+    (r.origin === "dibs" || r.origin === "ride_end") &&
+    typeof r.expiresAt === "number" &&
+    Number.isFinite(r.expiresAt)
   );
 }
 
@@ -127,14 +201,29 @@ function isValidWatch(w: unknown): w is WatchedDevice {
  *  works, so there is one source of truth in the normal case. */
 let sessionWatches: WatchedDevice[] | null = null;
 
-export function loadWatches(): WatchedDevice[] {
-  if (sessionWatches !== null) return sessionWatches.slice();
+/** Drop what has run out. Applied on every read rather than on a timer: a
+ *  phone that slept through an expiry still has to come back to a list with
+ *  nothing stale in it, and there is no background anything here to tick. */
+export function liveWatches(
+  watches: readonly WatchedDevice[],
+  now: number = Date.now(),
+): WatchedDevice[] {
+  return watches.filter((w) => w.expiresAt > now);
+}
+
+export function loadWatches(now: number = Date.now()): WatchedDevice[] {
+  if (sessionWatches !== null) return liveWatches(sessionWatches, now);
   try {
     const raw = localStorage.getItem(NOTIFY_MOVED_KEY);
     if (!raw) return [];
     const blob = JSON.parse(raw) as StoredWatches;
     if (blob?.v !== 1 || !Array.isArray(blob.watches)) return [];
-    return blob.watches.filter(isValidWatch).slice(0, MAX_WATCHED_DEVICES);
+    // Validate, expire, then cap — in that order, so a corrupt or stale row
+    // cannot occupy one of the handful of slots a valid one needs.
+    return liveWatches(blob.watches.filter(isValidWatch), now).slice(
+      0,
+      MAX_WATCHED_DEVICES,
+    );
   } catch {
     return [];
   }
@@ -157,11 +246,14 @@ function persist(watches: WatchedDevice[]): boolean {
 /** Pure list logic, exported so the replace-and-cap rules are testable without
  *  touching storage.
  *
- *  Watching the same vehicle twice REPLACES rather than appends — re-tapping
- *  the bell on a scooter that has since been moved is how a rider re-arms the
- *  watch from its new position, and two rows for one scooter would alert twice.
- *  Newest first, and the cap drops the OLDEST: the one the rider has stopped
- *  thinking about. */
+ *  Watching the same vehicle twice REPLACES rather than appends — re-claiming a
+ *  scooter that has since been moved is how a rider re-arms the watch from its
+ *  new position, and two rows for one scooter would alert twice. Newest first.
+ *
+ *  THE CAP IS PER ORIGIN and it drops the OLDEST of that origin — the claim
+ *  the rider set off for first, or the earlier ride. A shared cap would let a
+ *  third claimed scooter evict the watch on the one the rider just rode, which
+ *  is two different capabilities spending each other's budget. */
 export function addWatch(
   existing: readonly WatchedDevice[],
   watch: WatchedDevice,
@@ -169,7 +261,27 @@ export function addWatch(
   const kept = existing.filter(
     (w) => w.vehicleIdentifier !== watch.vehicleIdentifier,
   );
-  return [watch, ...kept].slice(0, MAX_WATCHED_DEVICES);
+  const sameOrigin = [watch, ...kept.filter((w) => w.origin === watch.origin)]
+    .slice(0, WATCH_RULES[watch.origin].max)
+    .map((w) => w.vehicleIdentifier);
+  const keptSet = new Set(sameOrigin);
+  return [watch, ...kept].filter(
+    (w) => w.origin !== watch.origin || keptSet.has(w.vehicleIdentifier),
+  );
+}
+
+/** Whether a new watch of this origin would be refused, and why.
+ *
+ *  Exported because the UI has to be able to say "you are already watching two"
+ *  rather than silently dropping the rider's oldest claim — and because the
+ *  ride-end offer should not appear at all when it cannot be taken. */
+export function watchSlotsLeft(
+  existing: readonly WatchedDevice[],
+  origin: WatchOrigin,
+  now: number = Date.now(),
+): number {
+  const live = liveWatches(existing, now).filter((w) => w.origin === origin);
+  return Math.max(0, WATCH_RULES[origin].max - live.length);
 }
 
 export function removeWatch(

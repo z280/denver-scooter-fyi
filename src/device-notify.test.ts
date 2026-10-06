@@ -6,10 +6,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  MAX_WATCHED_DEVICES,
   MISSING_TICKS_BEFORE_GONE,
   MOVED_METERS,
   NOTIFY_MOVED_KEY,
+  WATCH_RULES,
   addWatch,
   createDeviceNotifier,
   isAlertable,
@@ -21,6 +21,7 @@ import {
   resetWatchSession,
   unwatchMoved,
   watchMoved,
+  watchSlotsLeft,
   type DeviceNow,
   type WatchedDevice,
 } from "./device-notify.ts";
@@ -35,6 +36,10 @@ function watch(over: Partial<WatchedDevice> = {}): WatchedDevice {
     lat: LAT,
     lon: LON,
     since: 1_700_000_000_000,
+    // A dibs-origin watch, far-future expiry: the default fixture is a LIVE
+    // watch, so a case that cares about expiry or origin says so explicitly.
+    origin: "dibs",
+    expiresAt: 4_000_000_000_000,
     ...over,
   };
 }
@@ -159,18 +164,106 @@ describe("the list rules", () => {
     expect(list[0].lat).toBe(again.lat);
   });
 
-  it("caps the list, dropping the oldest", () => {
+  it("caps each origin separately, dropping that origin's oldest", () => {
+    // PER ORIGIN, not overall. The two are different capabilities with
+    // different justifications (`device-notify.ts`'s header), and a shared cap
+    // would let a third claimed scooter evict the watch on the one the rider
+    // just rode.
     let list: WatchedDevice[] = [];
-    for (let i = 0; i < MAX_WATCHED_DEVICES + 3; i += 1) {
+    for (let i = 0; i < WATCH_RULES.dibs.max + 2; i += 1) {
       list = addWatch(list, watch({
         vehicleIdentifier: String(i).padStart(16, "0"),
-        name: `v${i}`,
+        name: `claim${i}`,
+        origin: "dibs",
       }));
     }
-    expect(list).toHaveLength(MAX_WATCHED_DEVICES);
-    // Newest kept, oldest gone.
-    expect(list[0].name).toBe(`v${MAX_WATCHED_DEVICES + 2}`);
-    expect(list.some((w) => w.name === "v0")).toBe(false);
+    expect(list).toHaveLength(WATCH_RULES.dibs.max);
+    // Newest kept, oldest gone — the claim they set off for first.
+    expect(list[0].name).toBe(`claim${WATCH_RULES.dibs.max + 1}`);
+    expect(list.some((w) => w.name === "claim0")).toBe(false);
+
+    // The ride-end slot is untouched by any of that, and has its own ceiling.
+    list = addWatch(list, watch({
+      vehicleIdentifier: "e".repeat(16),
+      name: "ridden",
+      origin: "ride_end",
+    }));
+    expect(list).toHaveLength(WATCH_RULES.dibs.max + 1);
+    expect(list.filter((w) => w.origin === "dibs")).toHaveLength(
+      WATCH_RULES.dibs.max,
+    );
+    list = addWatch(list, watch({
+      vehicleIdentifier: "f".repeat(16),
+      name: "ridden-again",
+      origin: "ride_end",
+    }));
+    const rideEnd = list.filter((w) => w.origin === "ride_end");
+    expect(rideEnd).toHaveLength(WATCH_RULES.ride_end.max);
+    expect(rideEnd[0].name).toBe("ridden-again");
+  });
+
+  it("reports the slots left, per origin, ignoring the expired", () => {
+    const now = 1_000_000;
+    const live = watch({ origin: "dibs", expiresAt: now + 1000 });
+    const dead = watch({
+      vehicleIdentifier: "b".repeat(16),
+      origin: "dibs",
+      expiresAt: now - 1,
+    });
+    expect(watchSlotsLeft([], "dibs", now)).toBe(WATCH_RULES.dibs.max);
+    // An expired watch is not occupying anything.
+    expect(watchSlotsLeft([live, dead], "dibs", now)).toBe(
+      WATCH_RULES.dibs.max - 1,
+    );
+    expect(watchSlotsLeft([live, dead], "ride_end", now)).toBe(
+      WATCH_RULES.ride_end.max,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Expiry. This is the half of the design that makes the feature not a
+  // surveillance subscription — see the module header. A watch that outlives
+  // the rider's connection to the vehicle is the thing being prevented.
+  // -------------------------------------------------------------------------
+
+  it("drops expired watches on read", () => {
+    const now = 2_000_000;
+    localStorage.setItem(
+      NOTIFY_MOVED_KEY,
+      JSON.stringify({
+        v: 1,
+        watches: [
+          watch({ vehicleIdentifier: "a".repeat(16), expiresAt: now + 1 }),
+          watch({ vehicleIdentifier: "b".repeat(16), expiresAt: now }),
+          watch({ vehicleIdentifier: "c".repeat(16), expiresAt: now - 60_000 }),
+        ],
+      }),
+    );
+    const live = loadWatches(now);
+    expect(live.map((w) => w.vehicleIdentifier)).toEqual(["a".repeat(16)]);
+  });
+
+  it("treats a watch with no origin or no expiry as corrupt", () => {
+    // Rows written by the version of this feature that had neither. They
+    // described an unbounded watch armable from anywhere, so they are dropped
+    // rather than migrated — there is no expiry to infer that would be honest.
+    localStorage.setItem(
+      NOTIFY_MOVED_KEY,
+      JSON.stringify({
+        v: 1,
+        watches: [
+          {
+            vehicleIdentifier: "a".repeat(16),
+            name: "legacy",
+            lat: LAT,
+            lon: LON,
+            since: 1,
+          },
+          { ...watch({ vehicleIdentifier: "b".repeat(16) }), origin: "map" },
+        ],
+      }),
+    );
+    expect(loadWatches()).toEqual([]);
   });
 
   it("removes by identifier and leaves the rest alone", () => {

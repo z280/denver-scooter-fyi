@@ -135,13 +135,14 @@ import {
   type DeviceNotifyPanelHandle,
 } from "./device-notify-panel.ts";
 import {
-  MAX_WATCHED_DEVICES,
+  WATCH_RULES,
   createDeviceNotifier,
   isWatched,
   loadWatches,
   requestMovedNotifications,
   unwatchMoved,
   watchMoved,
+  watchSlotsLeft,
   type DeviceNow,
 } from "./device-notify.ts";
 import {
@@ -149,6 +150,7 @@ import {
   type RideSpecPanelHandle,
 } from "./ride-spec-panel.ts";
 import {
+  dibsExpiresAt,
   dibsOn,
   dropDibs,
   recordProgress,
@@ -365,6 +367,19 @@ let clearHexDensity: () => void = () => {};
 // rather than the HexDensity instance directly, or the two controls would
 // disagree about what the map is showing.
 let setTerritoryShading: (on: boolean) => void = () => {};
+/** The two gated doors to a move-watch, assigned inside `map.on("load")` once
+ *  the notifier and the Tools panel exist. Module-level for the same reason
+ *  `resumeLiveRide` is: the callers are a device-popup handler and Screen 8,
+ *  neither of which can reach into that closure.
+ *
+ *  Both default to refusing, which is the right default for a capability whose
+ *  whole design is about not being available by accident. */
+let armDibsWatch: (claim: Dibs) => string | null = () => null;
+let armRideEndWatch: (
+  vehicleIdentifier: string,
+  name: string,
+  at: { lat: number; lon: number },
+) => boolean = () => false;
 let leaderboardPanel: LeaderboardPanelHandle | null = null;
 const freshness = new Freshness(
   need("freshness"),
@@ -1195,54 +1210,78 @@ map.on("load", async () => {
     // ...and the bell on an open popup has to un-press.
     onChanged: () => devices.refreshOpenPopup(),
   });
-  devices.setIsWatchedMoved((vid) => isWatched(loadWatches(), vid));
-  // The bell toggles. Both directions are local and instant — no account, no
-  // scan, no network — which is the whole difference from the ⭐ it replaced.
-  devices.setNotifyMovedHandler(({ vehicleIdentifier, name, lat, lon, report }) => {
+  // NO BELL ON THE DEVICE POPUP. There used to be one, and removing it is the
+  // point rather than a side effect — see `device-notify.ts`'s header. A watch
+  // armable from any scooter on the map is a "tell me when this address's
+  // occupant leaves" alert, and no amount of rider convenience pays for that.
+  //
+  // The capability now has exactly two doors, both of which require the rider
+  // to already be connected to the specific vehicle, and both of which arm the
+  // watch as part of something else they were doing:
+  //
+  //   * CLAIMING ONE while building a route — `devices.ts`'s "I'll ride this
+  //     one" calls dibs, and `armDibsWatch` below rides along with the claim.
+  //   * FINISHING A RIDE on it — Screen 8 offers it once, and only then.
+  //
+  // What stays here is the un-arming: Tools lists what is being watched and
+  // stops it, which is the surface a rider needs when they want this OFF.
+
+  /** Arm the move-watch that rides along with a dibs claim.
+   *
+   *  Returns the sentence to show, or null when nothing was armed — the caller
+   *  is mid-confirmation and a silent no-op is better than a second dialog.
+   *  Everything that can refuse does so quietly: the cap, a vehicle that is
+   *  already unavailable (arming would fire on the next refresh and consume
+   *  the watch), and a claim with no expiry to inherit. */
+  armDibsWatch = (claim: Dibs): string | null => {
     const watches = loadWatches();
-    // THE SENTENCE HAS TO OUTLIVE THE RE-RENDER. `report` writes into the popup
-    // that is on screen now, and the `refreshOpenPopup` below replaces it with
-    // a fresh element — so anything written through `report` first is thrown
-    // away unread. Every outcome that is followed by a refresh hands its
-    // sentence to the refresh instead; `report` is kept only for the one that
-    // changes nothing and so does not refresh.
-    let said: string;
-    if (isWatched(watches, vehicleIdentifier)) {
-      track("device_notify_moved", { action: "off" });
-      unwatchMoved(vehicleIdentifier);
-      deviceNotifier.forget(vehicleIdentifier);
-      said = `We'll stop watching ${name}.`;
-    } else {
-      if (watches.length >= MAX_WATCHED_DEVICES) {
-        report(
-          `You're already watching ${MAX_WATCHED_DEVICES} scooters — stop one in Tools to add this.`,
-        );
-        return;
-      }
-      // NOT WORTH WATCHING YET. A scooter that is already rented, or that the
-      // operator has pulled, satisfies the alert's own condition the moment the
-      // next device refresh lands — so arming here would buzz the rider about
-      // something they can already see on the card in front of them, and then
-      // delete the watch. Say what is true instead.
-      const alreadyGone = currentlyUnavailable(vehicleIdentifier);
-      if (alreadyGone) {
-        report(alreadyGone);
-        return;
-      }
-      track("device_notify_moved", { action: "on" });
-      watchMoved({ vehicleIdentifier, name, lat, lon, since: Date.now() });
-      // A re-armed watch must not inherit the previous one's miss count or its
-      // already-fired flag, or it alerts on the first absent tick.
-      deviceNotifier.forget(vehicleIdentifier);
-      // ASK NOW, NOT AT LOAD — the same reasoning dibs uses, in its own words
-      // at the dibs call site. Somebody who has just asked to be told when a
-      // scooter moves knows what they are agreeing to be interrupted about.
-      void requestMovedNotifications();
-      said = `We'll tell you if ${name} moves, while the app is open.`;
-    }
+    if (isWatched(watches, claim.vehicleIdentifier)) return null;
+    if (watchSlotsLeft(watches, "dibs") <= 0) return null;
+    if (currentlyUnavailable(claim.vehicleIdentifier)) return null;
+    track("device_notify_moved", { action: "on", origin: "dibs" });
+    watchMoved({
+      vehicleIdentifier: claim.vehicleIdentifier,
+      name: claim.vehicleName,
+      lat: claim.lat,
+      lon: claim.lon,
+      since: Date.now(),
+      origin: "dibs",
+      // THE CLAIM'S OWN DEATH, not a duration of this feature's choosing. A
+      // watch that outlived the dibs it rests on would be a watch on a
+      // scooter the rider has no remaining connection to, which is the whole
+      // thing being prevented.
+      expiresAt: dibsExpiresAt(claim),
+    });
+    deviceNotifier.forget(claim.vehicleIdentifier);
+    void requestMovedNotifications();
     notifyPanel?.refresh();
-    devices.refreshOpenPopup(said);
-  });
+    return `We'll tell you if ${claim.vehicleName} moves before you get there.`;
+  };
+
+  devices.setClaimWatchHook((claim) => armDibsWatch(claim));
+
+  /** Arm the one-per-ride watch Screen 8 offers. Same refusals, plus its own
+   *  two-hour ceiling from `WATCH_RULES`. */
+  armRideEndWatch = (vehicleIdentifier, name, at) => {
+    const watches = loadWatches();
+    if (watchSlotsLeft(watches, "ride_end") <= 0 && !isWatched(watches, vehicleIdentifier)) {
+      return false;
+    }
+    track("device_notify_moved", { action: "on", origin: "ride_end" });
+    watchMoved({
+      vehicleIdentifier,
+      name,
+      lat: at.lat,
+      lon: at.lon,
+      since: Date.now(),
+      origin: "ride_end",
+      expiresAt: Date.now() + WATCH_RULES.ride_end.ttlMs,
+    });
+    deviceNotifier.forget(vehicleIdentifier);
+    void requestMovedNotifications();
+    notifyPanel?.refresh();
+    return true;
+  };
 
   // My dibs, in Tools. Kept in step with the map: releasing one from here has
   // to un-dim that scooter and rebuild any open popup, which is exactly what
@@ -1356,6 +1395,15 @@ map.on("load", async () => {
           // fresh `Locate.current()` read (see `ride-hud.ts`'s `getLastFix`
           // doc comment for why).
           getLastFix: () => rideHud.getLastFix(),
+          // Screen 8's post-ride move-watch offer — the second of the
+          // capability's two doors. `canOffer` is asked before the control is
+          // drawn so a rider whose one slot is spent is never shown an offer
+          // that would refuse them.
+          canOfferMoveWatch: (vid) =>
+            watchSlotsLeft(loadWatches(), "ride_end") > 0 &&
+            !isWatched(loadWatches(), vid) &&
+            !currentlyUnavailable(vid),
+          armMoveWatch: (vid, name, at) => armRideEndWatch(vid, name, at),
         });
       });
     },

@@ -124,6 +124,7 @@ import {
 } from "./ride-cost.ts";
 import {
   phaseOf,
+  selectedDevice,
   type RideGateFacts,
   type RideRecoveryNote,
   type RideSessionDoc,
@@ -264,6 +265,23 @@ export interface RideScreen8Deps {
   /** Where Screen 8 mounts; defaults to `document.body`. Tests inject a
    *  detached container so nothing here touches the real DOM tree. */
   mountRoot?: HTMLElement;
+  /** The post-ride move-watch offer (`main.ts`'s `armRideEndWatch`).
+   *
+   *  ONE OF ONLY TWO DOORS to that capability — see `device-notify.ts`'s
+   *  header for why it is not a button on the map any more. This one exists
+   *  because a rider who has just got off a scooter has the most legitimate
+   *  version of the question: can I have that one again later?
+   *
+   *  `canOfferMoveWatch` is asked before the offer is drawn, so a rider whose
+   *  single slot is already spent is not shown a control that would refuse
+   *  them. Both default to "no", which is the correct default for a
+   *  capability that must never appear by accident. */
+  canOfferMoveWatch?(vehicleIdentifier: string): boolean;
+  armMoveWatch?(
+    vehicleIdentifier: string,
+    name: string,
+    at: { lat: number; lon: number },
+  ): boolean;
 }
 
 interface ResolvedDeps {
@@ -282,6 +300,12 @@ interface ResolvedDeps {
   ratePlan(): RatePlanKey | null;
   recoveryNote: RideRecoveryNote | null;
   mountRoot: HTMLElement;
+  canOfferMoveWatch(vehicleIdentifier: string): boolean;
+  armMoveWatch(
+    vehicleIdentifier: string,
+    name: string,
+    at: { lat: number; lon: number },
+  ): boolean;
 }
 
 async function defaultGetGateFacts(
@@ -316,6 +340,8 @@ function resolveDeps(deps: RideScreen8Deps): ResolvedDeps {
     ratePlan: deps.ratePlan ?? savedRatePlan,
     recoveryNote: deps.recoveryNote ?? null,
     mountRoot: deps.mountRoot ?? document.body,
+    canOfferMoveWatch: deps.canOfferMoveWatch ?? (() => false),
+    armMoveWatch: deps.armMoveWatch ?? (() => false),
   };
 }
 
@@ -375,6 +401,12 @@ function mountRideScreen8(
   let destroyed = false;
   let busy = false;
   let error: string | null = null;
+  /** The move-watch offer's state. `offered` latches so the ask never returns
+   *  — including after a refusal, because asking twice is the nagging this
+   *  feature is deliberately not. */
+  let moveWatchOffered = false;
+  let moveWatchArmed = false;
+  let moveWatchName = "this scooter";
   let abortController: AbortController | null = null;
 
   // The clock/cost breakdown stay LIVE (the frontend plan: "the clock keeps
@@ -489,6 +521,9 @@ function mountRideScreen8(
       wrap.append(el("p", "ride-modal__hint", "Working…"));
     }
 
+    const offer = moveWatchOffer();
+    if (offer) wrap.append(offer);
+
     const actions = el("div", "ride-wizard__actions ride-post-s8__actions");
     const newDestBtn = actionButton("New Destination", "login-btn--secondary", () =>
       onNewDestination(),
@@ -501,6 +536,61 @@ function mountRideScreen8(
     wrap.append(actions);
 
     return wrap;
+  }
+
+  /** "Keep an eye on this one?" — the post-ride half of the move-watch.
+   *
+   *  Returns null, and draws nothing at all, unless every condition holds: a
+   *  real Veo vehicle (an own-device ride has no scooter to watch), a 16-hex
+   *  identifier the store will accept, a free slot, and a position to compare
+   *  against. A control that appears and then refuses is worse than one that
+   *  never appeared, and this one must never read as nagging — it is offered
+   *  once, at the end of a ride, and never again for that scooter.
+   *
+   *  The copy says what it can actually do. The watch is local and lasts a
+   *  couple of hours (`WATCH_RULES.ride_end`), so it promises that and not
+   *  "we'll keep an eye on it for you" — the thing a rider would reasonably
+   *  read as permanent. */
+  function moveWatchOffer(): HTMLElement | null {
+    if (moveWatchArmed) {
+      const done = el(
+        "p",
+        "ride-post-s8__watch is-on",
+        `🔔 We'll tell you if ${moveWatchName} moves in the next couple of hours, while the app is open. Stop it any time in Tools.`,
+      );
+      done.setAttribute("role", "status");
+      return done;
+    }
+    const vehicle = selectedDevice(deps.session.current()?.device ?? null);
+    const vid = vehicle?.vehicleIdentifier ?? "";
+    if (!/^[0-9a-f]{16}$/.test(vid)) return null;
+    if (!deps.canOfferMoveWatch(vid)) return null;
+    const at = resolveEndFix();
+    // No fix means no anchor, and a watch with no anchor cannot answer
+    // "has it moved" about anywhere in particular.
+    if (!at) return null;
+
+    const name = vehicle?.plate
+      ? `this scooter (#${vehicle.plate})`
+      : "this scooter";
+    const row = el("div", "ride-post-s8__watch");
+    row.append(
+      el(
+        "p",
+        "ride-post-s8__watch-ask",
+        "Might you want this one again later? We can tell you if somebody takes it.",
+      ),
+    );
+    const btn = actionButton("🔔 Tell me if it moves", "login-btn--secondary", () => {
+      moveWatchName = name;
+      moveWatchArmed = deps.armMoveWatch(vid, name, { lat: at.lat, lon: at.lng });
+      // Armed or refused, the offer does not come back: a second ask after a
+      // refusal is the nagging this is meant not to be.
+      moveWatchOffered = true;
+      render();
+    });
+    row.append(btn);
+    return moveWatchOffered ? null : row;
   }
 
   function costBreakdownRows(b: RideCostBreakdown): HTMLElement {

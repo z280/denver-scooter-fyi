@@ -319,7 +319,23 @@ export function showDibsAlertToast(alert: DibsAlert, text: string): void {
   }
 }
 
-export function showDibsConfirmation(dibs: Dibs): void {
+/** The claim confirmation.
+ *
+ *  `watchLine` is the move-watch's sentence, when one was armed with the claim
+ *  (`devices.ts`'s `setClaimWatchHook`). It goes HERE rather than in a notice
+ *  of its own for the same reason the claim has no separate "call dibs"
+ *  button: a rider being told they have dibs is the same breath in which to
+ *  say we will warn them if it goes. Null when nothing was armed — already
+ *  watching, both slots spent, or a scooter that is already unavailable — and
+ *  the toast then reads exactly as it did before the feature existed.
+ *
+ *  It is also the only place the rider is TOLD this happened, which is why it
+ *  is not optional-by-omission: a watch armed silently is a watch they cannot
+ *  decide against. The Tools list is where they stop it. */
+export function showDibsConfirmation(
+  dibs: Dibs,
+  watchLine: string | null = null,
+): void {
   document.querySelector(".dibs-toast")?.remove();
 
   const toast = el("div", "dibs-toast");
@@ -330,6 +346,9 @@ export function showDibsConfirmation(dibs: Dibs): void {
     el("strong", "", "You've got dibs"),
     el("span", "dibs-toast__what", ` on ${dibs.vehicleName}`),
   );
+  if (watchLine) {
+    text.append(el("span", "dibs-toast__watch", watchLine));
+  }
 
   const view = el("button", "dibs-toast__view", "View certificate");
   view.type = "button";

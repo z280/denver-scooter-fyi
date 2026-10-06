@@ -841,22 +841,23 @@
           <ul class="my-dibs" id="my-dibs-list"></ul>
         </section>
 
-        <!-- Notify me if moved. Where Favorite Scooters was, because it answers
-             the question that feature was reaching for and the one a map cannot
-             answer by sitting there: has that scooter gone? Below My dibs for
-             the same reason favourites were — a claim is racing a clock, a watch
-             is waiting on the world.
+        <!-- Watched scooters. Below My dibs because most of this list IS the
+             dibs list: a watch is armed as part of claiming a scooter while
+             building a route, and the only other way to get one is the offer
+             at the end of a ride.
 
-             NOT hidden while signed out. Watching needs no account and no QR
-             scan, which is the whole difference from the ⭐ it replaced, so
-             there is no state in which this heading is a reminder of something
-             the visitor cannot have. Populated by wireDeviceNotifyPanel(). -->
+             THERE IS NO CONTROL HERE THAT STARTS A WATCH, and that is the
+             point rather than an omission — see src/device-notify.ts's
+             header. This section exists to show what is being watched and to
+             STOP it, which is the surface a rider needs when they want this
+             off. Populated by wireDeviceNotifyPanel(). -->
         <section class="control-group" id="tools-notify-moved"
                  aria-labelledby="tools-notify-moved-label">
-          <h3 id="tools-notify-moved-label" class="control-label">Notify me if moved</h3>
+          <h3 id="tools-notify-moved-label" class="control-label">Watched scooters</h3>
           <p class="finder-help">
-            Scooters you&rsquo;re watching. We&rsquo;ll tell you when one is
-            ridden away &mdash; while the app is open.
+            Scooters you&rsquo;ve claimed or just ridden. We&rsquo;ll tell you
+            if one is ridden away &mdash; while the app is open, and only for
+            as long as your claim or your ride is recent.
           </p>
           <ul class="notify-moved" id="notify-moved-list"></ul>
           <p class="finder-help" id="notify-moved-status" role="status" aria-live="polite" hidden></p>
