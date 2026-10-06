@@ -34,7 +34,13 @@
 // map, which is the thing on screen.
 
 import type { Map as MLMap } from "maplibre-gl";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { bandBefore } from "./map-bands.ts";
+import type {
+  InspectHit,
+  InspectLngLat,
+  InspectPoint,
+  InspectSource,
+} from "./map-inspect.ts";
 import {
   EQUITY_AREA_COLOR,
   EQUITY_AREA_UNLOCK_NOTE,
@@ -132,7 +138,7 @@ export function explainerHtml(areaName: string | null): string {
     </div>`;
 }
 
-export class EquityAreaMap {
+export class EquityAreaMap implements InspectSource {
   private layersAdded = false;
   /** Default ON — see the header. */
   private overlayOn = true;
@@ -228,7 +234,7 @@ export class EquityAreaMap {
           "fill-opacity": (this.muted ? PAINT.muted : PAINT.full).fill,
         },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "equity"),
     );
     this.map.addLayer(
       {
@@ -245,7 +251,7 @@ export class EquityAreaMap {
           "line-opacity": (this.muted ? PAINT.muted : PAINT.full).line,
         },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "equity"),
     );
     this.layersAdded = true;
   }
@@ -276,6 +282,37 @@ export class EquityAreaMap {
         ? `${prettyEquityArea(areaName)} — rides that start or end here should cost 13 cents a minute. Tap for details.`
         : "Equity area — rides that start or end here should cost 13 cents a minute. Tap for details.",
     );
+  }
+
+  /** `InspectSource` for the triple-tap inspector, second in its order
+   *  (under the city's zones, over territory). Only while the overlay is
+   *  drawn: with it switched off there is no purple on the map to explain,
+   *  and a territory hex the rider CAN see should win the tap. That case is
+   *  `hiddenAreaSource()`, which answers beneath territory instead. */
+  hitAt(_point: InspectPoint, lngLat: InspectLngLat): InspectHit | null {
+    return this.overlayOn && this.layersAdded ? this.hitForLngLat(lngLat) : null;
+  }
+
+  /** The Equity Area at `lngLat` when the overlay is OFF — asked after
+   *  territory, before the plain-spot card. Being owed a discount is worth
+   *  saying even when the boundary is not drawn; the indicator chip makes
+   *  the same call. */
+  hiddenAreaSource(): InspectSource {
+    return {
+      // Not drawn = overlay off, or on but not rendered yet.
+      hitAt: (_p, lngLat) =>
+        this.overlayOn && this.layersAdded ? null : this.hitForLngLat(lngLat),
+    };
+  }
+
+  hitForLngLat(lngLat: InspectLngLat): InspectHit | null {
+    const area = equityAreaAt(lngLat.lng, lngLat.lat);
+    if (!area) return null;
+    return {
+      key: `equity:${area.region_name}`,
+      open: () =>
+        this.openModal("This is an Equity Area", explainerHtml(area.region_name)),
+    };
   }
 
   /** Open the explainer for whatever the chip is currently showing. */

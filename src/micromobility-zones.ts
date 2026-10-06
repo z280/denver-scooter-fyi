@@ -23,7 +23,8 @@
 // so rather than being drawn as though we knew.
 
 import type { Map as MLMap } from "maplibre-gl";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { bandBefore } from "./map-bands.ts";
+import type { InspectHit, InspectPoint, InspectSource } from "./map-inspect.ts";
 
 const SRC = "micromobility-zones";
 
@@ -156,7 +157,111 @@ export function groupOf(kind: ZoneKind): ZoneGroup | null {
   return null;
 }
 
-export class MicromobilityZones {
+/** Worst first: the order a rider needs to hear about overlapping zones in. */
+const KIND_SEVERITY: ZoneKind[] = [
+  "no_ride",
+  "slow_no_parking",
+  "no_parking",
+  "slow",
+  "school",
+  "outside_denver",
+];
+
+/** Emoji per class for the triple-tap card. Matches the colour logic above:
+ *  stop, no-end, slow, and the two greys. */
+const KIND_ICON: Record<ZoneKind, string> = {
+  no_ride: "⛔",
+  no_parking: "🅿️",
+  slow_no_parking: "🐢",
+  slow: "🐢",
+  school: "🏫",
+  outside_denver: "🧭",
+};
+
+/** What each class means for a rider, for classes whose feature carries no
+ *  `zone_note` of its own. Deliberately no speed figure for slow zones: the
+ *  city's export names the zones but not the limit, and a number we cannot
+ *  source is exactly the confident wrong claim this file refuses. */
+const KIND_MEANING: Record<ZoneKind, string> = {
+  no_ride: "Riding is not permitted here at any time.",
+  no_parking: "You may ride through, but not end a ride here.",
+  slow_no_parking: "Speed is limited here and you may not end a ride.",
+  slow: "Speed is limited here.",
+  school: "School grounds. Restrictions are likely, but the city's export does not say when they apply.",
+  outside_denver: "A separate city. Denver's rules, and this app's numbers, stop at this line.",
+};
+
+/** What to DO about it, where there is a clear answer. */
+const KIND_ADVICE: Partial<Record<ZoneKind, string>> = {
+  no_ride: "Walk the scooter through, and start or end your ride outside the line.",
+  no_parking: "Park outside the shaded area before you end your ride.",
+  slow_no_parking: "Take it easy through here, and park outside the shaded area.",
+  slow: "Ride slowly through here. If the scooter slows down on its own, that may be Veo enforcing a slow zone rather than a fault.",
+};
+
+function escapeZoneHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** One entry per distinct zone, worst first. Overlapping polygons of the same
+ *  zone (a venue drawn in pieces) collapse to one. */
+export function distinctZones(
+  props: readonly ZoneFeatureProps[],
+): ZoneFeatureProps[] {
+  const seen = new Map<string, ZoneFeatureProps>();
+  for (const p of props) {
+    const k = `${p.zone_kind}|${p.zone_label}|${p.zone_venue ?? ""}`;
+    if (!seen.has(k)) seen.set(k, p);
+  }
+  const rank = (k: ZoneKind): number => {
+    const i = KIND_SEVERITY.indexOf(k);
+    return i < 0 ? KIND_SEVERITY.length : i;
+  };
+  return [...seen.values()].sort((a, b) => rank(a.zone_kind) - rank(b.zone_kind));
+}
+
+/** Title for the triple-tap card. Generic on purpose: the rows below name
+ *  each zone, and repeating the first row's name as the title read as a
+ *  stutter. */
+export function zoneInspectTitle(zones: readonly ZoneFeatureProps[]): string {
+  return zones.length > 1 ? "Denver rules here" : "Denver rule here";
+}
+
+/** Body for the triple-tap card. Pure, so the copy is assertable. */
+export function buildZoneInspectHtml(zones: readonly ZoneFeatureProps[]): string {
+  const items = zones
+    .map((z) => {
+      const name = z.zone_venue ? `${z.zone_venue} · ${z.zone_label}` : z.zone_label;
+      const meaning = z.zone_note ?? KIND_MEANING[z.zone_kind] ?? "";
+      const advice = KIND_ADVICE[z.zone_kind];
+      return `
+        <li class="zone-inspect__item zone-inspect__item--${escapeZoneHtml(z.zone_kind)}">
+          <span class="zone-inspect__icon" aria-hidden="true">${KIND_ICON[z.zone_kind] ?? "📍"}</span>
+          <div>
+            <p class="zone-inspect__name">${escapeZoneHtml(name)}</p>
+            <p class="zone-inspect__meaning">${escapeZoneHtml(meaning)}</p>
+            ${advice ? `<p class="zone-inspect__advice">${escapeZoneHtml(advice)}</p>` : ""}
+          </div>
+        </li>`;
+    })
+    .join("");
+  return `
+    <div class="zone-inspect">
+      <ul class="zone-inspect__list">${items}</ul>
+      <p class="zone-inspect__source">
+        These are the City of Denver's rules, from its own zone map (DOTI,
+        released under an open-records request, October 2026). Veo's in-app
+        geofence is what actually slows a scooter or charges a fee, and it may
+        not match these lines exactly.
+      </p>
+    </div>`;
+}
+
+export class MicromobilityZones implements InspectSource {
   private layersAdded = false;
   private muted = true;
   private visible: Record<ZoneGroup, boolean> = {
@@ -168,6 +273,9 @@ export class MicromobilityZones {
   constructor(
     private readonly map: MLMap,
     private readonly fetchImpl: typeof fetch = fetch,
+    /** Opens the triple-tap card. Injected, like the equity overlay's, so
+     *  this module does not pull in devices.ts and the whole popup stack. */
+    private readonly openCard: (title: string, html: string) => void = () => {},
   ) {}
 
   isVisible(group: ZoneGroup): boolean {
@@ -176,6 +284,40 @@ export class MicromobilityZones {
 
   isMuted(): boolean {
     return this.muted;
+  }
+
+  /** Have the zone layers been drawn at all? False until the geometry
+   *  fetch resolves, and for good if it failed. */
+  isLoaded(): boolean {
+    return this.layersAdded;
+  }
+
+  /** `InspectSource`: the city zones drawn under `point`. Only what is
+   *  DRAWN counts: a group switched off in Areas is not on the map, and
+   *  explaining an invisible polygon would answer a question nobody asked.
+   *  Top of the stack (map-bands.ts), so a zone wins over the equity area
+   *  and territory beneath it. */
+  hitAt(point: InspectPoint): InspectHit | null {
+    if (!this.layersAdded || typeof this.map.queryRenderedFeatures !== "function") {
+      return null;
+    }
+    const props = this.map
+      .queryRenderedFeatures([point.x, point.y], { layers: [`${SRC}-fill`] })
+      .map((f) => f.properties as ZoneFeatureProps);
+    return this.hitForZones(props);
+  }
+
+  /** The hit for a set of zone properties. Split out so the content and the
+   *  key are testable without rendering. */
+  hitForZones(props: readonly ZoneFeatureProps[]): InspectHit | null {
+    const zones = distinctZones(props);
+    if (!zones.length) return null;
+    return {
+      key:
+        "zone:" +
+        zones.map((z) => `${z.zone_kind}/${z.zone_label}/${z.zone_venue ?? ""}`).join("+"),
+      open: () => this.openCard(zoneInspectTitle(zones), buildZoneInspectHtml(zones)),
+    };
   }
 
   /** Show or hide one group. Safe before the geometry has loaded — it awaits
@@ -233,7 +375,7 @@ export class MicromobilityZones {
           "fill-opacity": (this.muted ? PAINT.muted : PAINT.full).fill,
         },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "zones"),
     );
     this.map.addLayer(
       {
@@ -247,7 +389,7 @@ export class MicromobilityZones {
           "line-opacity": (this.muted ? PAINT.muted : PAINT.full).line,
         },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "zones"),
     );
     this.layersAdded = true;
     this.applyFilters();

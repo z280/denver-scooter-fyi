@@ -22,6 +22,9 @@ import {
   loadZones,
   resetZonesForTest,
   zoneSentence,
+  buildZoneInspectHtml,
+  distinctZones,
+  zoneInspectTitle,
   type ZoneCollection,
   type ZoneKind,
 } from "./micromobility-zones.ts";
@@ -296,5 +299,57 @@ describe("MicromobilityZones", () => {
     const good = serve();
     await expect(loadZones(good)).resolves.toBeTruthy();
     expect(good).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("triple-tap: zone cards", () => {
+  const slow = { zone_kind: "slow", zone_label: "Slow zone", zone_venue: "Coors Field" } as const;
+  const noPark = {
+    zone_kind: "no_parking",
+    zone_label: "No parking",
+    zone_note: "You may ride through, but not end a ride here.",
+  } as const;
+  const noRide = { zone_kind: "no_ride", zone_label: "No riding" } as const;
+
+  it("orders overlapping zones worst first and collapses duplicates", () => {
+    const z = distinctZones([slow, noPark, slow, noRide]);
+    expect(z.map((p) => p.zone_kind)).toEqual(["no_ride", "no_parking", "slow"]);
+  });
+
+  it("titles the card generically, singular or plural; the rows carry the names", () => {
+    expect(zoneInspectTitle(distinctZones([slow]))).toBe("Denver rule here");
+    expect(zoneInspectTitle(distinctZones([slow, noRide]))).toBe("Denver rules here");
+  });
+
+  it("explains each zone, uses the city's own note when there is one, and credits the source", () => {
+    const html = buildZoneInspectHtml(distinctZones([noPark, slow]));
+    expect(html).toContain("You may ride through, but not end a ride here.");
+    expect(html).toContain("Speed is limited here.");
+    expect(html).toContain("Coors Field · Slow zone");
+    expect(html).toContain("City of Denver");
+    // The export names no limit; the card must not invent one.
+    expect(html).not.toMatch(/\d+\s*mph/i);
+  });
+
+  it("escapes what it prints", () => {
+    const html = buildZoneInspectHtml([{ zone_kind: "slow", zone_label: "<b>x</b>" }]);
+    expect(html).not.toContain("<b>x</b>");
+    expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+  });
+
+  it("hits carry a stable key and open the card", () => {
+    const openCard = vi.fn();
+    const z = new MicromobilityZones(fakeMap() as never, serve(), openCard);
+    const a = z.hitForZones([slow, noPark]);
+    const b = z.hitForZones([noPark, slow, slow]);
+    expect(a?.key).toBe(b?.key);
+    a!.open();
+    expect(openCard).toHaveBeenCalledWith("Denver rules here", expect.stringContaining("zone-inspect"));
+    expect(z.hitForZones([])).toBeNull();
+  });
+
+  it("answers nothing before its layers exist", () => {
+    const z = new MicromobilityZones(fakeMap() as never, serve());
+    expect(z.hitAt({ x: 1, y: 1 })).toBeNull();
   });
 });

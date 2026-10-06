@@ -11,8 +11,10 @@ import {
 } from "./api.ts";
 import { OVERLAY_BY_LAYER } from "./config.ts";
 import { loadEquityAreas } from "./equity-areas.ts";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
-import { commas } from "./util.ts";
+import { bandBefore } from "./map-bands.ts";
+import type { InspectHit, InspectPoint, InspectSource } from "./map-inspect.ts";
+import { TRIPLE_CLICK_WINDOW_MS } from "./triple-click.ts";
+import { commas, prettyRegion } from "./util.ts";
 
 const CHOROPLETH_FILL = "choropleth-fill";
 
@@ -85,8 +87,13 @@ export class Overlays {
   enableRegionClicks(
     handler: (layer: BoundaryLayer, regionName: string) => void,
     blockedBy: string[],
+    now: () => number = () => Date.now(),
   ): void {
     this.regionClickHandler = handler;
+    // A triple tap (map-inspect.ts) is three clicks: without this the region
+    // filter would flip on, off, on. One toggle per region per triple-click
+    // window; a deliberate second tap a moment later still toggles back.
+    let last: { key: string; at: number } | null = null;
     this.map.on("click", (e) => {
       if (!this.regionClickHandler) return;
       const blockers = blockedBy.filter((id) => this.map.getLayer(id));
@@ -96,28 +103,58 @@ export class Overlays {
       ) {
         return;
       }
-      const candidates: string[] = [];
-      if (this.choroplethLayer) candidates.push(CHOROPLETH_FILL);
-      for (const layer of this.loaded) {
-        if (
-          this.map.getLayoutProperty(fillId(layer), "visibility") === "visible"
-        ) {
-          candidates.push(fillId(layer));
-        }
-      }
-      if (!candidates.length) return;
-      const top = this.map.queryRenderedFeatures(e.point, {
-        layers: candidates,
-      })[0];
-      if (!top) return;
-      const layer =
-        top.layer.id === CHOROPLETH_FILL
-          ? this.choroplethLayer
-          : (top.layer.id.replace(/^bnd-/, "").replace(/-fill$/, "") as BoundaryLayer);
-      const regionName = (top.properties as BoundaryProperties).region_name;
-      if (!layer || !regionName) return;
-      this.regionClickHandler(layer, regionName);
+      const hit = this.regionAt(e.point);
+      if (!hit) return;
+      const key = `${hit.layer}|${hit.regionName}`;
+      const t = now();
+      if (last && last.key === key && t - last.at <= TRIPLE_CLICK_WINDOW_MS) return;
+      last = { key, at: t };
+      this.regionClickHandler(hit.layer, hit.regionName);
     });
+  }
+
+  /** The topmost visible region polygon (choropleth or boundary overlay)
+   *  under `point`, or null. Shared by the single-tap area filter and the
+   *  triple-tap inspector so the two can never disagree about "which
+   *  region". */
+  regionAt(point: InspectPoint): { layer: BoundaryLayer; regionName: string } | null {
+    const candidates: string[] = [];
+    if (this.choroplethLayer) candidates.push(CHOROPLETH_FILL);
+    for (const layer of this.loaded) {
+      if (this.map.getLayoutProperty(fillId(layer), "visibility") === "visible") {
+        candidates.push(fillId(layer));
+      }
+    }
+    if (!candidates.length) return null;
+    const top = this.map.queryRenderedFeatures([point.x, point.y], {
+      layers: candidates,
+    })[0];
+    if (!top) return null;
+    const layer =
+      top.layer.id === CHOROPLETH_FILL
+        ? this.choroplethLayer
+        : (top.layer.id.replace(/^bnd-/, "").replace(/-fill$/, "") as BoundaryLayer);
+    const regionName = (top.properties as BoundaryProperties).region_name;
+    if (!layer || !regionName) return null;
+    return { layer, regionName };
+  }
+
+  /** `InspectSource` for the shading band's regions: names the region a
+   *  triple tap landed on rather than letting the plain-spot card claim
+   *  "nothing marked" over a visibly shaded one. */
+  inspectSource(openCard: (title: string, html: string) => void): InspectSource {
+    return {
+      hitAt: (point): InspectHit | null => {
+        const hit = this.regionAt(point);
+        if (!hit) return null;
+        const name = prettyRegion(hit.regionName, hit.layer);
+        const group = OVERLAY_BY_LAYER[hit.layer]?.label ?? "map areas";
+        return {
+          key: `region:${hit.layer}:${hit.regionName}`,
+          open: () => openCard(name, regionInspectHtml(name, group)),
+        };
+      },
+    };
   }
 
   /** Fetch (and cache) a boundary layer's data without touching the map.
@@ -161,7 +198,7 @@ export class Overlays {
           layout: { visibility: "none" },
           paint: { "fill-color": def.color, "fill-opacity": 0.12 },
         },
-        FIRST_DEVICE_LAYER,
+        bandBefore(this.map, "shading"),
       );
       this.map.addLayer(
         {
@@ -171,7 +208,7 @@ export class Overlays {
           layout: { visibility: "none", "line-join": "round" },
           paint: { "line-color": def.color, "line-width": 1.6, "line-opacity": 0.9 },
         },
-        FIRST_DEVICE_LAYER,
+        bandBefore(this.map, "shading"),
       );
       this.loaded.add(layer);
     }
@@ -261,7 +298,7 @@ export class Overlays {
         source,
         paint: { "fill-opacity": 0.72, "fill-color": fillColor },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "shading"),
     );
 
     this.choroplethLayer = layer;
@@ -309,4 +346,21 @@ export class Overlays {
     this.legendEl.hidden = false;
   }
 
+}
+
+function escapeRegionHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Body of the region card. Pure, so the copy is assertable. */
+export function regionInspectHtml(name: string, group: string): string {
+  return `
+    <div class="spot-inspect">
+      <p><strong>${escapeRegionHtml(name)}</strong> is one of the ${escapeRegionHtml(group)} shaded on the map.</p>
+      <p class="spot-inspect__hint">Tap a region once to filter the map to it, and tap it again to clear that filter. No city zone or Equity Area is drawn at this spot.</p>
+    </div>`;
 }
