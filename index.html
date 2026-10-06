@@ -708,6 +708,50 @@
           </p>
         </section>
 
+        <!-- Denver's own micromobility rules (DOTI, via a CORA request —
+             see src/micromobility-zones.ts). FIRST in this drawer, above the
+             equity areas and the boundary outlines, because it is the only
+             thing in here that can stop a rider breaking a rule they did not
+             know about. The other two are context; this one is the law. -->
+        <section class="control-group" aria-labelledby="zones-label">
+          <h3 id="zones-label" class="control-label">City rules for scooters</h3>
+          <p class="control-hint">
+            Denver&rsquo;s own slow-ride, no-parking and no-ride zones, obtained
+            from the city under an open-records request. These are the
+            <em>city&rsquo;s</em> rules &mdash; Veo&rsquo;s own geofence, which
+            is what actually charges you, is not published anywhere we can
+            read.
+          </p>
+          <label class="switch">
+            <input type="checkbox" id="zones-rules-toggle" checked />
+            <span>Slow &amp; no-parking zones</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-schools-toggle" />
+            <span>School grounds</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-outside-toggle" />
+            <span>Outside Denver (Glendale)</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="zones-muted-toggle" checked />
+            <span>Muted display</span>
+          </label>
+          <p class="control-hint">
+            <span class="zone-key"><span class="zone-key__dot" data-zone="no_ride"></span>No riding</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="no_parking"></span>No parking</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="slow"></span>Slow</span>
+            <span class="zone-key"><span class="zone-key__dot" data-zone="school"></span>Unstated rule</span>
+          </p>
+          <p class="control-hint">
+            School grounds and Glendale are drawn grey on purpose: the city
+            gave us the land, not the rule. Treat school grounds as
+            ride-with-care, and note that Denver&rsquo;s rules &mdash; and this
+            app&rsquo;s numbers &mdash; stop at the Glendale line.
+          </p>
+        </section>
+
         <section class="control-group" aria-labelledby="layers-label">
           <h3 id="layers-label" class="control-label">Boundary outlines</h3>
           <ul class="layer-list" id="layer-list">

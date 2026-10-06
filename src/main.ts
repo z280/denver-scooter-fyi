@@ -56,6 +56,10 @@ import {
   type FeatureFilterKey,
 } from "./device-features.ts";
 import { Locate } from "./locate.ts";
+import {
+  MicromobilityZones,
+  type ZoneGroup,
+} from "./micromobility-zones.ts";
 import { requestLocationOnLoad } from "./locate-on-load.ts";
 import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
@@ -344,6 +348,10 @@ const overlays = new Overlays(map, need("choropleth-legend"));
 const equityAreas = new EquityAreaMap(map, need("equity-indicator"), (t, b) =>
   openFloatingModal(t, b),
 );
+/** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
+ *  See `micromobility-zones.ts` for the provenance and for what the city's
+ *  rulebook does and does not tell us. */
+const zones = new MicromobilityZones(map);
 const hexDensity = new HexDensity(map, need("hexbin-legend"), {
   // The territory readout's "claim your colors" hint lands on Community,
   // where the ruling colors it's pointing at actually live.
@@ -1183,6 +1191,7 @@ map.on("load", async () => {
     apply: (s) => applyFilterSnapshot(s),
   });
   wireEquityAreas();
+  wireMicromobilityZones();
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
@@ -3965,6 +3974,66 @@ function beginWalkToVehicle(info: {
 // an equity area, because otherwise the discount stays discoverable only to
 // people already looking for it — the exact asymmetry this app exists to
 // correct.
+/** The Areas drawer's city-rules section.
+ *
+ *  Three group switches and a muted switch, all reading their defaults from
+ *  `index.html` the way the equity controls do — one attribute to change a
+ *  default, rather than two files that have to agree.
+ *
+ *  ON by default for the rules group alone. This is the only overlay in the
+ *  app that can stop somebody breaking a rule they did not know about, and it
+ *  comes from the city rather than from us; school grounds and Glendale stay
+ *  off because both are drawn from land, not from a stated restriction (see
+ *  `micromobility-zones.ts`). */
+function wireMicromobilityZones(): void {
+  const groups: [ZoneGroup, HTMLInputElement][] = [
+    ["rules", need<HTMLInputElement>("zones-rules-toggle")],
+    ["schools", need<HTMLInputElement>("zones-schools-toggle")],
+    ["outside", need<HTMLInputElement>("zones-outside-toggle")],
+  ];
+  const muted = need<HTMLInputElement>("zones-muted-toggle");
+
+  const guard = (box: HTMLInputElement, label: string, apply: () => Promise<void>) => {
+    const was = box.checked;
+    box.disabled = true;
+    void apply()
+      .catch((e: unknown) => {
+        console.error(`${label} failed`, e);
+        box.checked = !was;
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  };
+
+  for (const [group, box] of groups) {
+    box.addEventListener("change", () => {
+      guard(box, `zones ${group}`, () => zones.setVisible(group, box.checked));
+    });
+  }
+  muted.addEventListener("change", () => {
+    guard(muted, "zones muting", () => zones.setMuted(muted.checked));
+  });
+
+  // Draw now, at whatever the markup says. Strength before presence, same as
+  // the equity overlay: the other order paints a frame at full opacity and
+  // then dims it.
+  void zones
+    .setMuted(muted.checked)
+    .then(async () => {
+      for (const [group, box] of groups) {
+        await zones.setVisible(group, box.checked);
+      }
+    })
+    .catch((e: unknown) => {
+      // The app works without the rulebook; it simply cannot warn anybody.
+      // Unchecking says so rather than leaving a switch claiming a layer that
+      // is not there.
+      console.error("micromobility zones failed to load", e);
+      for (const [, box] of groups) box.checked = false;
+    });
+}
+
 /** The Areas drawer's two equity controls: whether the boundary is drawn at
  *  all, and how loudly.
  *

@@ -4184,6 +4184,36 @@ body.is-map-picking .ride-modal {
     line-height: 1.35;
   }
 }
+/* The city-rules key: a dot per class, coloured from the same values
+   micromobility-zones.ts paints with. Hand-mirrored, which is a hazard — so
+   `micromobility-zones.test.ts` asserts the two agree rather than trusting
+   that somebody checked. */
+.zone-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+.zone-key__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+.zone-key__dot[data-zone="no_ride"] {
+  background: #c1121f;
+}
+.zone-key__dot[data-zone="no_parking"] {
+  background: #e07a00;
+}
+.zone-key__dot[data-zone="slow"] {
+  background: #eab308;
+}
+.zone-key__dot[data-zone="school"] {
+  background: #8a8f98;
+}
+
 /* ---------- The governing documents, in the attribution corner ---------- */
 /* Registered last in bottom-left, so this is that stack's bottom row: zoom,
    then the attribution pill, then this. One footer group.
