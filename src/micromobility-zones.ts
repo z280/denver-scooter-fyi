@@ -179,7 +179,13 @@ export class MicromobilityZones {
   }
 
   /** Show or hide one group. Safe before the geometry has loaded — it awaits
-   *  the fetch, like the equity overlay's own setter. */
+   *  the fetch, like the equity overlay's own setter.
+   *
+   *  This and `setMuted` are the ONLY entry points: both materialise the
+   *  layers on first call, so `main.ts` applying the markup's defaults is also
+   *  what draws them. There is deliberately no separate `start()` — a method
+   *  whose doc said "called at wire time" while nothing but the tests called
+   *  it is worse than no method at all. */
   async setVisible(group: ZoneGroup, on: boolean): Promise<void> {
     // State before the await: `ensureLayers` builds the filters from these,
     // and the fetch can outlive the call that asked. (The equity overlay
@@ -268,12 +274,5 @@ export class MicromobilityZones {
     this.map.setPaintProperty(`${SRC}-fill`, "fill-opacity", p.fill);
     this.map.setPaintProperty(`${SRC}-line`, "line-opacity", p.line);
     this.map.setPaintProperty(`${SRC}-line`, "line-width", p.width);
-  }
-
-  /** Draw whatever the defaults say, once. Called at wire time; never awaited
-   *  by the caller, because a boundary overlay has no business holding up the
-   *  rest of the map's startup. */
-  async start(): Promise<void> {
-    await this.ensureLayers();
   }
 }

@@ -216,7 +216,7 @@ describe("MicromobilityZones", () => {
     // group toggles disagree with one another.
     const map = fakeMap();
     const z = new MicromobilityZones(map as never, serve());
-    return z.start().then(() => {
+    return z.setMuted(true).then(() => {
       expect(map.addSource).toHaveBeenCalledTimes(1);
       expect(map._layers).toHaveLength(2);
       const fill = map._layers.find((l) => l.id === "micromobility-zones-fill")!;
@@ -229,7 +229,7 @@ describe("MicromobilityZones", () => {
   it("shows only the groups that are on", async () => {
     const map = fakeMap();
     const z = new MicromobilityZones(map as never, serve());
-    await z.start();
+    await z.setMuted(true);
     expect(visibleKinds(map).sort()).toEqual(
       [...ZONE_GROUPS.rules.kinds].sort(),
     );
@@ -245,7 +245,7 @@ describe("MicromobilityZones", () => {
     // or a crash, from a rider switching three things off.
     const map = fakeMap();
     const z = new MicromobilityZones(map as never, serve());
-    await z.start();
+    await z.setMuted(true);
     await z.setVisible("rules", false);
     const f = map._filters.get("micromobility-zones-fill") as unknown[];
     expect(f[0]).toBe("==");
@@ -275,7 +275,7 @@ describe("MicromobilityZones", () => {
     await Promise.all([
       z.setVisible("rules", true),
       z.setVisible("schools", true),
-      z.start(),
+      z.setMuted(true),
     ]);
     expect(map.addSource).toHaveBeenCalledTimes(1);
   });
