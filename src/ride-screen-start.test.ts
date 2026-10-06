@@ -146,6 +146,16 @@ function wire(
   return wireRideScreenStart({
     session,
     locate: fakeLocate(FIX),
+    // The failure face fetches the survey instrument's neighbourhood list in
+    // the background. Stubbed by default so no test reaches the network — an
+    // un-stubbed default made a real request from every test that reported a
+    // failed start, and happy-dom aborted it at teardown.
+    fetchSurveyOptions: async () => {
+      throw new Error("survey options stubbed out");
+    },
+    submitRiderStory: async () => {
+      throw new Error("story submission stubbed out");
+    },
     ...overrides,
   });
 }
@@ -997,9 +1007,82 @@ describe("failed start", () => {
     // The Veo links and "I already started" are gone: the report we just sent
     // says this scooter does not ride.
     expect(anchors()).toHaveLength(0);
-    expect(
-      [...root().querySelectorAll("button")].map((b) => b.textContent),
-    ).toEqual(["Pick another scooter"]);
+    const labels = [...root().querySelectorAll("button")].map((b) => b.textContent);
+    // The story panel's own two buttons sit above this one; what must not
+    // exist is any way to start THIS scooter again. Asserted as the absence
+    // of a retry rather than as an exact button list, so adding an offer
+    // below the report cannot silently satisfy the test the way an exact
+    // match would have forced us to loosen it.
+    expect(labels).toContain("Pick another scooter");
+    for (const label of labels) {
+      expect(label).not.toMatch(/try|again|anyway|start/i);
+    }
+  });
+
+  it("offers the story only after the report has landed", async () => {
+    // The report is the useful artefact and it must never be held hostage to
+    // a sentence. Before the report resolves there is no box; after it, there
+    // is — and the report's own message is still on screen.
+    let resolveReport: (v: { deduped: boolean }) => void = () => {};
+    const submitDeviceReport = vi.fn(
+      () => new Promise<{ deduped: boolean }>((r) => { resolveReport = r; }),
+    );
+    wire(sessionAt(DEVICE, true), { submitDeviceReport });
+    wireRideModal({});
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+
+    await vi.waitFor(() => expect(root().textContent).toContain("Telling the fleet"));
+    expect(root().querySelector(".story-panel__text")).toBeNull();
+
+    resolveReport({ deduped: false });
+    await vi.waitFor(() => expect(root().textContent).toContain("next rider"));
+    expect(root().querySelector(".story-panel__text")).not.toBeNull();
+    expect(root().textContent).toContain("What happened?");
+  });
+
+  it("asks even when we had nothing to report", async () => {
+    // A rider whose report could not be sent has MORE to say about their
+    // morning, not less.
+    wire(sessionAt(OWN_DEVICE, true));
+    wireRideModal({});
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+    await vi.waitFor(() =>
+      expect(root().querySelector(".story-panel__text")).not.toBeNull(),
+    );
+  });
+
+  it("does not offer to send it onward when the instrument is unreachable", async () => {
+    // The default stub rejects. We could not file it correctly, so the
+    // third-party lane is simply not offered — the box still is.
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    wire(sessionAt(DEVICE, true), { submitDeviceReport });
+    wireRideModal({});
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+    await vi.waitFor(() => expect(root().textContent).toContain("next rider"));
+    expect(root().querySelector(".story-panel__text")).not.toBeNull();
+    expect(root().textContent).not.toContain("We See You Veo");
+  });
+
+  it("offers the third-party lane once the instrument's list arrives", async () => {
+    const submitDeviceReport = vi.fn().mockResolvedValue({ deduped: false });
+    wire(sessionAt(DEVICE, true), {
+      submitDeviceReport,
+      fetchSurveyOptions: async () => ({
+        ok: true,
+        version: "1",
+        neighborhoods: ["Baker", "Five Points"],
+      }),
+    });
+    wireRideModal({});
+    openRideModal({ fastForwardTo: "6" });
+    buttonWithText(FAILED_START_LABEL).click();
+    await vi.waitFor(() => expect(root().textContent).toContain("We See You Veo"));
+    // Off by default, every time.
+    const tick = root().querySelector<HTMLInputElement>(".story-panel__switch input");
+    expect(tick?.checked).toBe(false);
   });
 
   it("carries on when the report is refused — the scooter is still broken", async () => {

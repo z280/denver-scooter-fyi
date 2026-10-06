@@ -1,0 +1,39 @@
+/* Page chrome for the framed stats panel — nothing the drawer needs, and
+   nothing it shares. Kept apart from stats.css so the panel's own rules stay
+   identical in both places. */
+:root {
+  color-scheme: light;
+  --embed-bg: #ffffff;
+  --embed-fg: #1a2230;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --embed-bg: #0d1117;
+  --embed-fg: #e6edf3;
+  /* The panel's own tokens, dark. stats.css falls back to the light values
+     when style.css is absent, which it is here. */
+  --stats-fg: #e6edf3;
+  --stats-fg-muted: #9198a1;
+  --stats-border: #30363d;
+  --stats-accent: #58a6ff;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--embed-bg);
+  color: var(--embed-fg);
+}
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  /* A framed panel has no window margin of its own, so it brings its own
+     gutter — and a modest max width, because a host that drops this into a
+     full-bleed column should still get a readable measure. */
+  padding: 16px;
+  max-width: 560px;
+}
