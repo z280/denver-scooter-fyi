@@ -41,6 +41,7 @@ import {
 import { RecommendedDevices } from "./recommend.ts";
 import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
+import { renderFleetStats } from "./fleet-stats.ts";
 import { openComplianceCalendar } from "./compliance-calendar.ts";
 import { Freshness } from "./freshness.ts";
 import { Clusters } from "./clusters.ts";
@@ -4243,6 +4244,16 @@ function wireDrawers(): void {
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.
     if (id === "tools") notifyPanel?.refresh();
+    // Rendered on open rather than at boot: the map does not need it, and a
+    // rider who never opens the drawer should not pay for the fetch. Every
+    // open re-fetches — the endpoint carries an ETag keyed to the counters,
+    // so a repeat open is a 304 and the panel is never stale after a rental
+    // is counted.
+    if (id === "stats") {
+      void renderFleetStats(need("fleet-stats")).catch((e) => {
+        console.error("fleet stats render failed", e);
+      });
+    }
   };
 
   for (const tab of tabs) {

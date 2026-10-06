@@ -872,6 +872,45 @@ export function fetchH3Aggregates(
   return getJSON<H3AggregatesResponse>(`/api/v1/h3/aggregates?res=${res}`, signal);
 }
 
+export interface FleetOutcomeModel {
+  model: string;
+  rentals: number;
+  no_gos: number;
+  vehicles: number;
+  /** Null under `min_rentals_for_rate` — the counts are still there, and the
+   *  copy for that case is "not enough rides yet", not a hidden row. */
+  no_go_rate: number | null;
+}
+
+export interface FleetOutcomesResponse {
+  /** Always "lifetime" today. Rendered, never assumed: these counters have
+   *  never reset, so this is not today's rate, and an unlabelled percentage
+   *  gets read as "now". */
+  window: string;
+  counted_since: string;
+  /** The circle a no-go was counted against. The app holds three different
+   *  ideas of how far is "moved" (see docs/ANALYTICS_PLAN.md §0.2), so the
+   *  figure travels with the one it was measured at. */
+  radius_meters: number;
+  rentals: number;
+  no_gos: number;
+  no_go_rate: number | null;
+  min_rentals_for_rate: number;
+  vehicles: number;
+  by_model: FleetOutcomeModel[];
+}
+
+/** Share of rentals that never left the kerb, fleet-wide and by model.
+ *
+ *  Degrades rather than throws on the server side: a database failure comes
+ *  back as zeros, which the caller tells apart from a real zero by `rentals`.
+ */
+export function fetchFleetOutcomes(
+  signal?: AbortSignal,
+): Promise<FleetOutcomesResponse> {
+  return getJSON<FleetOutcomesResponse>("/api/v1/fleet/outcomes", signal);
+}
+
 /** Yesterday's 6–9am Denver SLA window. Throws NoDataError when pending. */
 export function fetchCompliance(
   signal?: AbortSignal,
