@@ -1614,14 +1614,65 @@ export class Devices {
       const vid = props.vehicle_identifier
         ? String(props.vehicle_identifier)
         : "";
+
+      // WHY THESE CHIPS ARE GATED NOW, AND WHY THEY ARE STILL DRAWN.
+      //
+      // This is the most consequential thing a rider can do from this card. A
+      // `not_rideable` report flips `has_negative_report`, which overrides the
+      // vehicle's reliability tier for everybody — and since the API's
+      // signed-in rule landed, an accountable report holds until the scooter
+      // MOVES or comes back at a full charge rather than expiring after 24
+      // hours. A report filed from across the city now outlives the day it was
+      // made. Until this change it could be filed from anywhere on earth, while
+      // "report bad parking" — a complaint about something you can see — was
+      // correctly gated at 100 m. The cheap action was gated and the expensive
+      // one was not.
+      //
+      // So the chips are GATED but NOT HIDDEN. Hiding them teaches a visitor
+      // nothing about what the app does, and a feature nobody knows exists is
+      // a feature nobody uses when they are standing in front of a broken
+      // scooter. They render, they say plainly why they cannot be used from
+      // here, and the tap repeats it — the same "blocked is a sentence, not a
+      // dead grey button" rule the rest of this card follows, which matters
+      // doubly on a phone where `title` tooltips never appear at all.
+      //
+      // ONE RADIUS FOR EVERY REPORT. This deliberately reuses the parking
+      // report's `PARKING_REPORT_PROXIMITY_M` rather than the unlock's tighter
+      // 75 m: both are the same kind of claim — "I can see this vehicle and
+      // here is what is wrong with it" — and a second radius for the same claim
+      // is a distinction no rider can perceive and nobody will maintain.
+      //
+      // ADMINS ARE EXEMPT, as they are for the parking report and for the same
+      // reason: the gate is a CREDIBILITY check, not a data dependency. The
+      // report is built from the DEVICE's coordinates, never the reporter's, so
+      // a distant admin files exactly the same report, and an admin working a
+      // reliability queue from a desk is doing the job.
+      const reportDistance = user === null ? null : distanceMeters(user, here);
+      const reportBlockedReason: string | null = this.adminSession
+        ? null
+        : reportDistance === null
+          ? "Turn on your location to report this one — reports carry weight because they come from somebody who was there."
+          : reportDistance <= PARKING_REPORT_PROXIMITY_M
+            ? null
+            : `You're too far away to report this one (${formatWalk(reportDistance)}). Reports come from riders at the scooter.`;
+      // `aria-disabled`, never `disabled`: the chip has to stay focusable and
+      // tappable so it can deliver its own reason. `is-blocked` is the same
+      // class the other gated actions on this card use.
+      const reportBlockedAttr = reportBlockedReason
+        ? ` data-blocked="${escapeHtml(reportBlockedReason)}" aria-disabled="true"`
+        : "";
+      const reportGateNote = reportBlockedReason
+        ? `<p class="device-popup__report-gate">⚠️ ${escapeHtml(reportBlockedReason)}</p>`
+        : "";
       const reportProblemBlock =
         vid.length >= 16
           ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
                <span class="device-popup__report-device-label">Report a problem</span>
+               ${reportGateNote}
                <div class="device-popup__report-chips">
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="not_rideable">🚫 Not rideable</button>
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="dead_battery">🪫 Dead battery</button>
-                 <button type="button" class="device-popup__report-chip" data-action="report-device" data-type="damaged">🛴 Damaged</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="not_rideable"${reportBlockedAttr}>🚫 Not rideable</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="dead_battery"${reportBlockedAttr}>🪫 Dead battery</button>
+                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="damaged"${reportBlockedAttr}>🛴 Damaged</button>
                </div>
                <p class="device-popup__report-device-status" role="status" aria-live="polite"></p>
              </div>`
@@ -2350,6 +2401,17 @@ export class Devices {
       };
       reportChips.forEach((chip) => {
         chip.addEventListener("click", () => {
+          // Blocked chips stay TAPPABLE on purpose — `aria-disabled`, never
+          // `disabled` — because a button that cannot be pressed can never
+          // deliver its own reason, and on a phone there is no tooltip to fall
+          // back to. The sentence is already on screen above the chips; this
+          // repeats it into the live region so a screen reader hears it at the
+          // moment of the tap rather than only on the way past.
+          const blocked = chip.dataset.blocked;
+          if (blocked) {
+            setDeviceStatus(blocked, "error");
+            return;
+          }
           reportChips.forEach((c) => (c.disabled = true));
           setDeviceStatus("Sending…");
           submitDeviceReport({

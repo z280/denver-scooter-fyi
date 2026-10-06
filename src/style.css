@@ -4619,6 +4619,20 @@ body.ride-active .legal-links {
   gap: 5px;
   margin-top: 6px;
 }
+/* The proximity warning above the report chips. Shown BEFORE the tap, not
+   only after it: a rider who cannot file a report should learn that from
+   looking, and the tap repeats it for anybody who tapped anyway. */
+.device-popup__report-gate {
+  margin: 2px 0 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+/* Dimmed, but NOT `disabled` — see devices.ts. A button that cannot be
+   pressed cannot explain itself, and on a phone there is no tooltip. */
+.device-popup__report-chip.is-blocked {
+  opacity: 0.55;
+}
 .device-popup__report-chip {
   appearance: none;
   border: 1px solid var(--border);
