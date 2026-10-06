@@ -273,6 +273,10 @@ export interface ResolvedRideModePoints {
   batteryStepKm: number;
   navRouteFeedback: number;
   navQualitativeFeedback: number;
+  /** The detailed tier (2026-10-06): written feedback of at least
+   *  `navQualitativeDetailedMinChars` earns this instead. */
+  navQualitativeDetailed: number;
+  navQualitativeDetailedMinChars: number;
   navDistancePerStep: number;
   navDistanceStepKm: number;
   surveyPoints: number;
@@ -288,6 +292,8 @@ export const FALLBACK_RIDE_MODE_POINTS: ResolvedRideModePoints = {
   batteryStepKm: 2,
   navRouteFeedback: 4,
   navQualitativeFeedback: 6,
+  navQualitativeDetailed: 12,
+  navQualitativeDetailedMinChars: 60,
   navDistancePerStep: 2,
   navDistanceStepKm: 3,
   surveyPoints: 4,
@@ -318,6 +324,11 @@ export function resolveRideModePoints(
     navRouteFeedback: navRoute?.points ?? FALLBACK_RIDE_MODE_POINTS.navRouteFeedback,
     navQualitativeFeedback:
       navQual?.points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeFeedback,
+    navQualitativeDetailed:
+      navQual?.upper_points ?? FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailed,
+    navQualitativeDetailedMinChars:
+      navQual?.upper_min_chars ??
+      FALLBACK_RIDE_MODE_POINTS.navQualitativeDetailedMinChars,
     navDistancePerStep:
       navDistance?.per_step ?? FALLBACK_RIDE_MODE_POINTS.navDistancePerStep,
     navDistanceStepKm:

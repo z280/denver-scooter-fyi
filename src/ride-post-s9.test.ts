@@ -1122,3 +1122,13 @@ describe("the free-text box stays out of the way until wanted", () => {
     expect(postSurvey.mock.calls[0]![1].nav_qualitative).toBeNull();
   });
 });
+
+describe("qualitative feedback: the detailed tier (2026-10-06)", () => {
+  it("names the next tier until it is reached, then the detailed award", () => {
+    expect(describeQualitativeProgress("a".repeat(5)).message).toContain("+12 at 60");
+    const mid = describeQualitativeProgress("a".repeat(30));
+    expect(mid.earned).toBe(true);
+    expect(mid.message).toContain("+6 pts; 30 more for +12");
+    expect(describeQualitativeProgress("a".repeat(60)).message).toContain("+12 pt detailed-feedback bonus");
+  });
+});

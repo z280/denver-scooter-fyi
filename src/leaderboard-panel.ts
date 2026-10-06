@@ -121,16 +121,22 @@ const SCHEDULE_GROUPS: { title: string; actions: [string, string][] }[] = [
     ],
   },
   {
+    title: "Bringing people in",
+    actions: [
+      ["referral", "Refer a new rider who takes a ride"],
+      ["stand_down", "Stand down when someone has dibs on your scooter"],
+    ],
+  },
+  {
     title: "Your account",
     actions: [["profile_completion", "Complete your profile"]],
   },
 ];
 
 /** Actions deliberately NOT listed, even if the API publishes them.
- *  `qr_scan` never shipped client-side — advertising 100 pts for a flow
- *  that doesn't exist is a promise nobody can collect on. Suppressed here
- *  (not just unnamed) because the humanized "More" pass below would
- *  otherwise resurrect it straight from the server's schedule. */
+ *  `qr_scan` was retired with Keep a Scooter on 2026-10-06 and the API no
+ *  longer publishes it; kept here so an older API deploy cannot advertise a
+ *  100-point award nobody can collect. */
 const HIDDEN_ACTIONS = new Set(["qr_scan"]);
 
 /** Every action this module names, for the "did the API send something we
@@ -158,7 +164,16 @@ export function formatScheduleValue(
 ): string | null {
   const entry = pointsScheduleEntry(schedule, action);
   if (!entry) return null;
-  if (typeof entry.points === "number") return `${commas(entry.points)} pts`;
+  if (typeof entry.points === "number") {
+    const base = `${commas(entry.points)} pts`;
+    if (typeof entry.upper_points === "number" && typeof entry.upper_min_chars === "number") {
+      return `${base} (${commas(entry.upper_points)} for ${entry.upper_min_chars}+ characters)`;
+    }
+    if (typeof entry.new_rider_points === "number") {
+      return `${base} (${commas(entry.new_rider_points)} for a new rider)`;
+    }
+    return base;
+  }
   if (typeof entry.per_step === "number" && typeof entry.step_km === "number") {
     const base = entry.base ?? 0;
     const per = `${commas(entry.per_step)} pts per ${entry.step_km} km`;

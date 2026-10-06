@@ -197,6 +197,8 @@ describe("wireRidePost", () => {
       batteryStepKm: 2,
       navRouteFeedback: 4,
       navQualitativeFeedback: 6,
+      navQualitativeDetailed: 12,
+      navQualitativeDetailedMinChars: 60,
       navDistancePerStep: 2,
       navDistanceStepKm: 3,
       surveyPoints: 77,
