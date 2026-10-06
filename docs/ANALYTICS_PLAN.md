@@ -74,27 +74,33 @@ measurement), so these are **attempts**, not changes of mind. That distinction
 is the whole reason the number is worth publishing: a no-go is a person who
 paid an unlock fee and walked.
 
-### 0.2 THE RADIUS HAS TO BE DECIDED BEFORE ANY OF THIS SHIPS
+### 0.2 THE RADIUS — DECIDED, 2026-10-06
 
-There are three circles in the codebase today and they do not agree:
+**25 m.** `stationary_threshold_meters` was 16 m; sql/088 standardised it on
+the radius sql/072's own validation was computed at, so the ingest and the
+published 9.1% finally describe the same circle.
 
-| | value | where |
-|---|---|---|
-| `stationary_threshold_meters` | **16 m** | `config.json`; what `rentals_no_go` actually counts |
-| the prose in sql/072 | **25 m** | that migration's own header — it disagrees with its own column comment |
-| `IN_PLACE_RADIUS_M` | **50 m** | `device_state.py`'s failed-start rule, the one with the 37.1% repeat-rate validation |
+This section used to say the decision blocked shipping and recommended 50 m.
+Both are superseded. The 50 m in `device_state.py` — `IN_PLACE_RADIUS_M` and
+`JITTER_RADIUS_M` — is deliberately NOT this ring: it answers "did this rental
+go anywhere at all, or is this GPS noise?", and 25 m sits inside the measured
+noise floor there (the old 16 m rule turned 48,429 non-rental position changes
+into MOVED in one day, two thirds in the 16-25 m band). One number per
+question.
 
-A public headline cannot sit on that. **Recommendation: 50 m**, because it is
-the radius the published validation was computed at, it is the one `ride_watch`
-measured GPS jitter against (0.2% of parked-fleet steps exceed it), and it is
-the number a rider recognises — half a block, not a parking space.
+**Two things a published figure still has to say**, both carried by
+`/api/v1/fleet/outcomes` and rendered by the drawer:
 
-Doing that means **`rentals_no_go` is recounted at 50 m**, which changes the
-baseline from 9.1% to something larger and is a real decision, not a migration.
-Until it is made, every figure below is provisional. Fixing sql/072's prose to
-match whatever is chosen is part of the same change.
-
----
+1. **The counters span both definitions.** They accumulated at 16 m until
+   2026-10-06 and at 25 m since, and are not retroactive. Closes when they are
+   reset or stamped — a data decision, open.
+2. **A no-go is END displacement, not maximum.** `device_state.py` compares the
+   unlock point to the drop point, while sql/072's header describes "never get
+   25 m from the kerb", a maximum. A round trip back to the same rack counts as
+   a no-go. Deliberate — sql/087 left `rentals_no_go` alone so
+   `smart_ride_grade` stays calibrated — but it means **"never left the kerb"
+   copy overstates what is counted**, by an unmeasured amount. Measure it
+   before that sentence goes on a public page.
 
 ## 1. What ships from data we already have
 
