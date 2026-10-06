@@ -11,7 +11,7 @@ import {
 } from "./api.ts";
 import { OVERLAY_BY_LAYER } from "./config.ts";
 import { loadEquityAreas } from "./equity-areas.ts";
-import { FIRST_DEVICE_LAYER } from "./devices.ts";
+import { bandBefore } from "./map-bands.ts";
 import { commas } from "./util.ts";
 
 const CHOROPLETH_FILL = "choropleth-fill";
@@ -161,7 +161,7 @@ export class Overlays {
           layout: { visibility: "none" },
           paint: { "fill-color": def.color, "fill-opacity": 0.12 },
         },
-        FIRST_DEVICE_LAYER,
+        bandBefore(this.map, "shading"),
       );
       this.map.addLayer(
         {
@@ -171,7 +171,7 @@ export class Overlays {
           layout: { visibility: "none", "line-join": "round" },
           paint: { "line-color": def.color, "line-width": 1.6, "line-opacity": 0.9 },
         },
-        FIRST_DEVICE_LAYER,
+        bandBefore(this.map, "shading"),
       );
       this.loaded.add(layer);
     }
@@ -261,7 +261,7 @@ export class Overlays {
         source,
         paint: { "fill-opacity": 0.72, "fill-color": fillColor },
       },
-      FIRST_DEVICE_LAYER,
+      bandBefore(this.map, "shading"),
     );
 
     this.choroplethLayer = layer;

@@ -19,6 +19,7 @@ import {
   buildHexInspectHtml,
 } from "./hexdensity.ts";
 import { LEADERBOARD_DETAIL_TITLE } from "./leaderboard.ts";
+import { MapInspector } from "./map-inspect.ts";
 
 const CELL_R8 = latLngToCell(39.7392, -104.9903, 8);
 const CELL_R9 = latLngToCell(39.7392, -104.9903, 9);
@@ -112,17 +113,30 @@ function setup() {
   return { map, legend, hex, fetchTerritory, fetchAggregates, openProfile };
 }
 
-/** Feed n clicks on `cell` through the layer's click handler. */
+/** Feed n taps on `cell` through the map-wide inspector (map-inspect.ts),
+ *  which now owns the gesture; HexDensity answers as an InspectSource. */
+const inspectors = new WeakMap<object, { inspector: MapInspector; at: { cell: string; value?: number } }>();
 function clickCell(
+  hex: HexDensity,
   map: ReturnType<typeof fakeMap>,
   cell: string,
   n: number,
   value?: number,
 ): void {
+  let entry = inspectors.get(map);
+  if (!entry) {
+    const at: { cell: string; value?: number } = { cell };
+    const inspector = new MapInspector(map as never, {
+      sources: [{ hitAt: () => hex.hitForFeature(at) }],
+      fallback: () => ({ key: "spot", open: () => {} }),
+    });
+    entry = { inspector, at };
+    inspectors.set(map, entry);
+  }
+  entry.at.cell = cell;
+  entry.at.value = value;
   for (let i = 0; i < n; i++) {
-    for (const fn of map.layerClicks) {
-      fn({ features: [{ properties: { cell, value } }] });
-    }
+    entry.inspector.handleTap({ x: 10, y: 10 }, { lng: -104.99, lat: 39.74 });
   }
 }
 
@@ -292,14 +306,14 @@ describe("triple-click readout", () => {
   it("one or two clicks open nothing", async () => {
     const { hex, map } = setup();
     await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
-    clickCell(map, CELL_R8, 2);
+    clickCell(hex, map, CELL_R8, 2);
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
 
   it("three clicks on a territory cell open that territory's rankings", async () => {
     const { hex, map } = setup();
     await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
-    clickCell(map, CELL_R8, 3);
+    clickCell(hex, map, CELL_R8, 3);
     const modal = document.querySelector(".ranks-modal");
     expect(modal).not.toBeNull();
     expect(modal!.textContent).toContain(LEADERBOARD_DETAIL_TITLE);
@@ -309,7 +323,7 @@ describe("triple-click readout", () => {
   it("three clicks on a ramp-metric cell open its exact value", async () => {
     const { hex, map } = setup();
     await hex.setView("medium", "risk_share");
-    clickCell(map, CELL_R9, 3, 0.25);
+    clickCell(hex, map, CELL_R9, 3, 0.25);
     const modal = document.querySelector(".ranks-modal");
     expect(modal).not.toBeNull();
     expect(modal!.textContent).toContain(HEX_INSPECT_TITLE);
@@ -320,8 +334,8 @@ describe("triple-click readout", () => {
   it("clicks spread across two different cells don't add up to a triple", async () => {
     const { hex, map } = setup();
     await hex.setView("medium", "device_count");
-    clickCell(map, CELL_R9, 2, 7);
-    clickCell(map, CELL_R8, 1, 7);
+    clickCell(hex, map, CELL_R9, 2, 7);
+    clickCell(hex, map, CELL_R8, 1, 7);
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
 
@@ -330,9 +344,9 @@ describe("triple-click readout", () => {
     vi.useFakeTimers();
     try {
       await hex.setView("medium", "device_count");
-      clickCell(map, CELL_R9, 1, 7);
+      clickCell(hex, map, CELL_R9, 1, 7);
       expect(map.doubleClickZoom.disable).toHaveBeenCalled();
-      clickCell(map, CELL_R9, 2, 7);
+      clickCell(hex, map, CELL_R9, 2, 7);
       // The third click completes the run and releases it immediately.
       expect(map.doubleClickZoom.enable).toHaveBeenCalled();
       expect(map.doubleClickZoom.enabled).toBe(true);
@@ -346,7 +360,7 @@ describe("triple-click readout", () => {
     vi.useFakeTimers();
     try {
       await hex.setView("medium", "device_count");
-      clickCell(map, CELL_R9, 1, 7);
+      clickCell(hex, map, CELL_R9, 1, 7);
       expect(map.doubleClickZoom.enabled).toBe(false);
       vi.advanceTimersByTime(5000);
       expect(map.doubleClickZoom.enabled).toBe(true);
@@ -359,16 +373,16 @@ describe("triple-click readout", () => {
     const { hex, map } = setup();
     map.doubleClickZoom.enabled = false;
     await hex.setView("medium", "device_count");
-    clickCell(map, CELL_R9, 3, 7);
+    clickCell(hex, map, CELL_R9, 3, 7);
     expect(map.doubleClickZoom.enable).not.toHaveBeenCalled();
   });
 
   it("changing the view abandons a half-finished run", async () => {
     const { hex, map } = setup();
     await hex.setView("medium", "device_count");
-    clickCell(map, CELL_R9, 2, 7);
+    clickCell(hex, map, CELL_R9, 2, 7);
     await hex.setMetric("risk_share");
-    clickCell(map, CELL_R9, 1, 0.25);
+    clickCell(hex, map, CELL_R9, 1, 0.25);
     expect(document.querySelector(".ranks-modal")).toBeNull();
   });
 
@@ -391,7 +405,7 @@ describe("triple-click readout", () => {
       openProfile,
     });
     await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
-    clickCell(map, CELL_R8, 3);
+    clickCell(hex, map, CELL_R8, 3);
     document
       .querySelector<HTMLButtonElement>('[data-action="open-profile"]')!
       .click();
@@ -416,7 +430,7 @@ describe("triple-click readout", () => {
       // no openProfile
     });
     await hex.setView(TERRITORY_HEX_SIZE, TERRITORY_METRIC);
-    clickCell(map, CELL_R8, 3);
+    clickCell(hex, map, CELL_R8, 3);
     expect(document.querySelector('[data-action="open-profile"]')).toBeNull();
   });
 });
