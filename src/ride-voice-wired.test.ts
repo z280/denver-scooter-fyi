@@ -37,6 +37,17 @@ describe("the HUD actually speaks", () => {
     );
   });
 
+  it("stays quiet through a BRB, which keeps the geo watch alive", () => {
+    // `pauseRide` with `continue_tracking` deliberately leaves the watcher
+    // running, so fixes keep arriving while the rider is parked and in a shop
+    // with the phone in a pocket. The baseline keeps updating — the announcer
+    // does that while silent on purpose — so walking out of an area and back
+    // during a BRB does not produce a spurious crossing on resume.
+    expect(functionBody(hud, "  private speakForFix(): void {")).toContain(
+      "!this.paused",
+    );
+  });
+
   it("reads the mute, rather than assuming it is off", () => {
     expect(functionBody(hud, "  private speakForFix(): void {")).toContain(
       "this.voice.muted()",

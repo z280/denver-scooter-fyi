@@ -1952,7 +1952,14 @@ export class RideHud {
 
     const { announcements, state } = announce(
       {
-        status: this.state === "riding" ? "riding" : this.state,
+        // PAUSED IS NOT RIDING, for speaking purposes. A BRB with
+        // `continue_tracking` deliberately keeps the geolocation watch alive, so
+        // fixes keep arriving while the rider is parked and in a shop with the
+        // phone in a pocket — and a turn cue or a boundary announcement then is
+        // noise at best. The baseline keeps updating (the announcer does that
+        // while silent on purpose), so walking out of an area and back during a
+        // BRB does not produce a spurious crossing on resume.
+        status: this.state === "riding" && !this.paused ? "riding" : "paused",
         speedMps: this.smoothedMps,
         maneuver: this.navManeuver,
         insideEquityArea: inside,
