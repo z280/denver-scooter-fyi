@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <!-- Same no-FOUC theme resolution as index.html (sun-sync > stored
+         choice > OS), so the page opens in the theme the map was in. Keep
+         the storage keys in step with src/theme.ts. -->
+    <script>
+      (function () {
+        try {
+          var t = null;
+          if (localStorage.getItem("scooter-fyi-theme-sun") === "1") {
+            var times = JSON.parse(localStorage.getItem("scooter-fyi-sun-times"));
+            var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Denver" });
+            if (times && times.date === today && isFinite(times.sunrise) && isFinite(times.sunset)) {
+              var now = Date.now();
+              t = now >= times.sunrise && now < times.sunset ? "light" : "dark";
+            }
+          }
+          if (!t) {
+            var s = localStorage.getItem("scooter-fyi-theme");
+            t = (s === "light" || s === "dark") ? s
+              : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          }
+          document.documentElement.dataset.theme = t;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", t === "dark" ? "#0d1117" : "#ffffff");
+        } catch (e) {}
+      })();
+    </script>
+    <title>Fleet analytics — Scooter.fyi</title>
+    <meta
+      name="description"
+      content="How Denver's Veo fleet performs: rides, failed starts, fleet status, equity-area share and dwell, by hour, day, week or month, from Veo's public feed."
+    />
+    <link rel="icon" href="/favicon-48-v2.png" sizes="48x48" type="image/png" />
+  </head>
+  <body class="an-body">
+    <header class="an-header">
+      <a class="an-back" href="/">&larr; Map</a>
+      <h1 class="an-h1">Fleet analytics</h1>
+      <p class="an-standfirst">
+        How Veo's Denver fleet performs, measured from Veo's own public feed.
+        Every chart states its window, its sample and what it counts.
+      </p>
+    </header>
+    <!-- Everything inside #analytics is built by src/analytics-page.ts. -->
+    <main id="analytics" class="an-main">
+      <div class="an-state an-state--loading">Loading…</div>
+    </main>
+    <footer class="an-footer">
+      <p>
+        Data: <a href="https://data.scooter.fyi">data.scooter.fyi</a>, from Veo's
+        public GBFS feed. Times are Denver time. Figures are cached for 5 minutes.
+      </p>
+    </footer>
+    <script type="module" src="/src/analytics-page.ts"></script>
+  </body>
+</html>
