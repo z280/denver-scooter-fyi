@@ -142,9 +142,28 @@ export interface MatchContext {
    *  has failed to reach. */
   at?: { lat: number; lng: number };
   dest?: { lat: number; lon: number } | null;
+  /** TRUE when this vehicle is the one the rider is RENTING RIGHT NOW.
+   *
+   *  Veo leaves a rented vehicle in the feed with `is_reserved` set, which is
+   *  the feed saying "somebody has this one" — and when that somebody is the
+   *  rider asking, it is not a disqualification. Without this the hand-off
+   *  planner's continuation edge ("keep riding what you are on") was rejected
+   *  on every re-solve mid-ride, which is exactly the bias its own comment
+   *  warns about: carrying on was never in the graph to lose, so the search
+   *  systematically preferred handing off.
+   *
+   *  Waives `is_reserved` ONLY. `is_disabled` still disqualifies: a feed
+   *  saying the hardware is broken is not something the rider's possession of
+   *  it makes untrue, and planning a further leg on it would be routing them
+   *  onward on a scooter Veo has given up on. */
+  rentedByRider?: boolean;
 }
 
-function truthy(v: unknown): boolean {
+/** Feed booleans arrive as booleans, and sometimes as strings — MapLibre
+ *  flattens them in tile encoding, and GBFS mirrors have shipped both. Exported
+ *  because `along-the-way.ts` screens the SAME two availability fields and had
+ *  its own stricter `=== true`, which is one rule too many for one fact. */
+export function truthy(v: unknown): boolean {
   return v === true || v === "true" || v === 1 || v === "1";
 }
 
@@ -174,7 +193,9 @@ export function matches(
   spec: RideSpec,
   ctx: MatchContext = {},
 ): SpecMatch {
-  const available = !truthy(props.is_disabled) && !truthy(props.is_reserved);
+  const available =
+    !truthy(props.is_disabled) &&
+    (ctx.rentedByRider === true || !truthy(props.is_reserved));
   const unmet: SpecField[] = [];
 
   if (spec.models !== null) {

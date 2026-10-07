@@ -11,7 +11,7 @@ import {
   liveDibs,
   releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
-import { modelsOf } from "./model-filter.ts";
+import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
 import {
   hasAnswers,
   isLiveIntent,
@@ -2182,7 +2182,19 @@ function wireModels(): void {
   // Hidden in the everything-on default — it is a note about choosing
   // rovers, not a banner on the drawer.
   const roverNote = need<HTMLParagraphElement>("rover-area-note");
-  clearModelFilter = wireToggleGroup(
+  // NOT `wireToggleGroup`'s own clear. That closure guards on its LOCAL mirror
+  // of which boxes are ticked (`if (enabled.size === all.length) return`), and
+  // the ride HUD's "Show" pills write the shared filter without touching it —
+  // so after a pill narrowed the selection the mirror still read "everything
+  // on", the guard returned early, and the ✕ did nothing. The chip row lives
+  // OUTSIDE the drawer, so it is reachable without the drawer's on-open
+  // re-sync; wiring `refreshChips` to every filter change is what made that
+  // chip (and its dead ✕) appear in the first place.
+  //
+  // `devices` is the authority. Set it, then bring the buttons into line —
+  // which is a no-op when they are already right, and a real sync when the
+  // drawer is the surface that narrowed it.
+  void wireToggleGroup(
     btns,
     (b) => b.dataset.model as ModelKey,
     ALL_MODELS,
@@ -2198,6 +2210,13 @@ function wireModels(): void {
     },
     "models",
   );
+  clearModelFilter = () => {
+    devices.setModelSelection(ALL_SELECTED);
+    setToggleGroup("#model-filter", "model", new Set<string>(ALL_MODELS));
+    roverNote.hidden = true;
+    clusters.update(devices.visibleFeatures());
+    refreshChips();
+  };
 }
 
 function wireFeatureFilter(): void {

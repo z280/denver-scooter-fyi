@@ -754,3 +754,89 @@ describe("freeMinutesLeft against a ride already running", () => {
     expect(ridden.legs.every((l) => l.freeMinutesUsed === 0)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The rider's own rental is available TO THEM
+// ---------------------------------------------------------------------------
+
+describe("a current ride on a vehicle the feed marks reserved", () => {
+  /** Veo leaves a rented vehicle in the feed with `is_reserved` set. For every
+   *  other vehicle that means "somebody has this one"; for the one under the
+   *  rider it means "you do". */
+  const current = feature(at(100), {
+    device_id: "cur",
+    vehicle_identifier: "cur",
+    is_reserved: true,
+  });
+  const other = feature(at(1500), { device_id: "b", vehicle_identifier: "b" });
+  const inRide = {
+    vehicleIdentifier: "cur",
+    rangeMeters: 20_000,
+    unlockPaid: true as const,
+    freeMinutesUsedBeforeRide: 0,
+    rideStartedAt: "2026-10-02T11:55:00Z",
+  };
+
+  it("still offers carrying on", () => {
+    // THE BUG. `matches()` sets `available = false` for a reserved vehicle, and
+    // both `qualifies` and `ideal` gate on it — so the continuation edge was
+    // rejected on every mid-ride re-solve. That is precisely the bias its own
+    // comment warns about: "without it a re-solve would systematically prefer
+    // handing off, because carrying on would not be in the graph to lose".
+    const res = rankPlans([current, other], ctx({ inRide }));
+    const continuing = res.plans
+      .concat(res.backups)
+      .find((p) => vehicleSeq(p)[0] === "cur");
+    expect(continuing).toBeDefined();
+    expect(continuing!.legs[0].unlockCents).toBe(0);
+  });
+
+  it("does not make OTHER riders' reserved scooters available", () => {
+    // The waiver is scoped to the one vehicle the rider holds. A reserved
+    // scooter somebody else has is still not a candidate.
+    const someoneElses = feature(at(200), {
+      device_id: "theirs",
+      vehicle_identifier: "theirs",
+      is_reserved: true,
+    });
+    const res = rankPlans([current, someoneElses, other], ctx({ inRide }));
+    const seq = res.plans.concat(res.backups).flatMap((p) => vehicleSeq(p));
+    expect(seq).not.toContain("theirs");
+  });
+
+  it("still refuses a vehicle the feed calls DISABLED, even under the rider", () => {
+    // `is_disabled` is not waived: a feed saying the hardware is broken is not
+    // made untrue by the rider's possession of it, and planning a further leg
+    // on it would route them onward on a scooter Veo has given up on.
+    const broken = feature(at(100), {
+      device_id: "cur",
+      vehicle_identifier: "cur",
+      is_reserved: true,
+      is_disabled: true,
+    });
+    const res = rankPlans([broken, other], ctx({ inRide }));
+    const continuing = res.plans
+      .concat(res.backups)
+      .find((p) => vehicleSeq(p)[0] === "cur");
+    expect(continuing).toBeUndefined();
+  });
+
+  it("coerces a string flag the same way `matches` does", () => {
+    // One fact, one coercion rule. `toCandidates` used `=== true` while
+    // `matches` used `truthy`, so a string flag passed one screen and failed
+    // the other.
+    const stringy = feature(at(1500), {
+      device_id: "s",
+      vehicle_identifier: "s",
+      // THE CAST IS THE POINT. `api.ts` declares this `boolean | null`, so a
+      // string is not assignable — but MapLibre flattens booleans in tile
+      // encoding and GBFS mirrors have shipped both, which is why `truthy`
+      // exists at all. The declared type understates what arrives, and a
+      // screen written to the type rather than the wire is the bug.
+      is_reserved: "true" as unknown as boolean,
+    });
+    const res = rankPlans([stringy, other], ctx());
+    const seq = res.plans.concat(res.backups).flatMap((p) => vehicleSeq(p));
+    expect(seq).not.toContain("s");
+  });
+});

@@ -28,6 +28,7 @@ import {
   matches,
   relax,
   relaxationLadder,
+  truthy,
   type RideSpec,
   type SpecField,
 } from "./ride-spec";
@@ -385,15 +386,14 @@ function toCandidates(
     if (!props) continue;
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) continue;
-    // `=== true`, not `devices.ts`'s `asBool`, and deliberately. That helper
-    // exists because "MapLibre sometimes flattens booleans to strings when
-    // properties pass through tile encoding" — and this function is documented
-    // to take `devices.allFeatures()`, which is the API response straight from
-    // `fetch`, never through a tile. A caller that ever feeds tile-encoded
-    // features must coerce before calling, because the fix cannot live here:
-    // importing from `devices.ts` would drag maplibre into a module whose whole
-    // job is to be pure, the same reason `ride-spec.ts` refuses that import.
-    if (props.is_disabled === true || props.is_reserved === true) continue;
+    // `truthy`, the same coercion `matches()` applies to these same two
+    // fields. An earlier revision used `=== true` here and argued the strictness
+    // was safe because this function takes `devices.allFeatures()` — raw JSON,
+    // never tile-encoded. That was true and beside the point: one fact should
+    // not have two rules in modules that feed each other, and `ride-spec.ts`
+    // already had a pure `truthy` to share, so the "importing it would drag
+    // maplibre in" objection never applied.
+    if (truthy(props.is_disabled) || truthy(props.is_reserved)) continue;
     const key = vehicleKey(props);
     if (ctx.exclude?.has(key)) continue;
     // The vehicle the rider is already on is not a vehicle to walk to; it is
@@ -663,6 +663,12 @@ function searchOnce(
     must: spec.must.filter((f) => f === "must_reach"),
   };
 
+  /** Is this candidate the vehicle the rider is on right now? Only the
+   *  continuation edge builds one, from `feats` rather than `candidates`. */
+  const isCurrentRide = (c: Candidate): boolean =>
+    ctx.inRide != null &&
+    c.props.vehicle_identifier === ctx.inRide.vehicleIdentifier;
+
   /** Does this vehicle qualify for a leg ENDING at `legEnd`?
    *
    *  `mustReach` is evaluated per leg, against that leg's own endpoint. Handing
@@ -674,6 +680,11 @@ function searchOnce(
     const m = matches(c.props, isFinalLeg ? spec : starterSpec, {
       at: { lat: c.at.lat, lng: c.at.lng },
       dest: { lat: legEnd.lat, lon: legEnd.lng },
+      // The vehicle under the rider is rented BY the rider, so the feed's
+      // `is_reserved` is not a disqualification here — see `MatchContext`.
+      // Only the continuation edge can reach this: `toCandidates` drops the
+      // current vehicle, so every other `c` is one the rider does not have.
+      rentedByRider: isCurrentRide(c),
     });
     // The last leg's vehicle is the one the rider KEEPS, so it owes them
     // everything they asked for at this rung. A starter owes only

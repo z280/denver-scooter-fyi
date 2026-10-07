@@ -166,6 +166,23 @@ describe("the one model filter, through the device layer", () => {
     expect(hook).toContain("refreshChips()");
   });
 
+  it("has a clear that resets the shared value, not a toggle group's mirror", () => {
+    // Structural, same justification as the hook test above. `wireToggleGroup`'s
+    // own clear guards on its LOCAL mirror of which boxes are ticked
+    // (`if (enabled.size === all.length) return`), which the ride HUD's pills
+    // never touch — so after a pill narrowed the filter the mirror still read
+    // "everything on", the guard returned early, and the chip row's ✕ did
+    // nothing. The chip row sits OUTSIDE the drawer, so it is reachable without
+    // the drawer's on-open re-sync.
+    const main = readFileSync(join(import.meta.dirname, "main.ts"), "utf8");
+    const i = main.indexOf("clearModelFilter = () => {");
+    expect(i, "clearModelFilter must be its own function, not wireToggleGroup's return").toBeGreaterThan(-1);
+    const body = main.slice(i, main.indexOf("};", i));
+    expect(body).toContain("setModelSelection(ALL_SELECTED)");
+    // And it must not be the guarded closure again.
+    expect(main).not.toMatch(/clearModelFilter = wireToggleGroup\(/);
+  });
+
   it("defaults to showing everything", () => {
     expect(devices.modelSelection_()).toEqual({ kind: "all" });
     expect(visibleNames()).toHaveLength(5);
