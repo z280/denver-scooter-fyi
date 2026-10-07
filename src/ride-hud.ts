@@ -35,6 +35,15 @@ export interface RideDeviceControl {
   /** True while a device details popup is open — the follow-cam holds the
    *  camera still so the popup doesn't drift out from under the reader. */
   hasOpenPopup(): boolean;
+  /** §11.5: `current_range_meters` for one vehicle, from the UNFILTERED feed,
+   *  or null when the feed has no figure for it.
+   *
+   *  A narrow method rather than handing this module the feature collection: the
+   *  HUD has no other reason to know a GBFS property name, and a stub for a test
+   *  is then one function instead of a FeatureCollection. Optional, so the
+   *  legacy quick-start path and the existing tests construct a control without
+   *  it and simply get no battery warning. */
+  rangeMetersFor?(vehicleIdentifier: string): number | null;
 }
 import { applyTheme, currentTheme, initialTheme } from "./theme.ts";
 import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
@@ -65,6 +74,7 @@ import { dropNativeUndoHistory, setRideLive } from "./ios-shake-undo.ts";
 // function even though this class no longer calls it itself.
 import type { EndRideIn } from "./api.ts";
 import { isOwnDevice, selectedDevice } from "./ride-session.ts";
+import type { RideReachInput } from "./ride-reach.ts";
 import type { RideSessionStore, RideState as RideSessionState } from "./ride-session.ts";
 import type { TrackAddResult, TrackFix, TrackRecorder } from "./track-store.ts";
 import { createNavHud, decodePolyline, type NavHud } from "./ride-nav-hud.ts";
@@ -455,6 +465,11 @@ export class RideHud {
    *  per fix would let the estimate move under the warning — a balance that
    *  refreshes mid-ride can cross a threshold backwards and announce it twice. */
   private freeAtStart: number | null = null;
+  /** §11.5. `current_range_meters` for the ridden vehicle, sampled ONCE when the
+   *  ride began, because a rented vehicle drops out of the public feed and
+   *  cannot be re-read. Null means no observation, which `ride-reach.ts` treats
+   *  as the confidence floor: silence, never a hedged warning. */
+  private startRangeMeters: number | null = null;
   /** The equity polygons, cached for the synchronous per-fix test.
    *  `null` means not loaded, which the announcer reads as "unknown" and never as
    *  "outside". */
@@ -1299,6 +1314,8 @@ export class RideHud {
     this.routeLine?.clear();
     this.smoothedMps = 0;
     this.distanceM = 0;
+    // A previous ride's range must not price this one's reach.
+    this.startRangeMeters = null;
     this.fixCount = 0;
     this.lastFix = null;
     this.startPos = null;
@@ -1334,6 +1351,7 @@ export class RideHud {
     // Clamped on the way in: a figure above the hour, or a negative one, is not a
     // number to count down from.
     this.freeAtStart = atStart === null ? null : clampFreeMinutes(atStart);
+    this.startRangeMeters = this.sampleStartRange();
     this.setState("riding");
     this.renderRiding();
     closeAllPopups();
@@ -1965,6 +1983,7 @@ export class RideHud {
         maneuver: this.navManeuver,
         insideEquityArea: inside,
         freeMinutesLeft: freeLeft,
+        reach: this.reachInput(),
         // The same rule the follow-cam already follows: never speak over the
         // device popup or a modal.
         blocked: this.deviceCtl.hasOpenPopup(),
@@ -1974,6 +1993,44 @@ export class RideHud {
     );
     this.announceState = state;
     if (announcements.length > 0) this.voice.deliver(announcements);
+  }
+
+  /** The ridden vehicle's range, from the feed, at this moment and no other.
+   *
+   *  `allFeatures()` rather than `visibleFeatures()`, for the same reason the
+   *  deep link uses it: a leftover model or battery filter must not hide the
+   *  scooter the rider is sitting on, and a filtered-out vehicle would read as
+   *  "no observation" and silence the warning.
+   *
+   *  Null for an own-device ride (there is no feed entry, and no Veo battery
+   *  model behind it), for a vehicle the feed has dropped, and for one the feed
+   *  gives no range for — a pedal-only bike, for one, where the question does
+   *  not apply at all. */
+  private sampleStartRange(): number | null {
+    const doc = this.session?.current();
+    const device = doc ? selectedDevice(doc.device) : null;
+    if (!device) return null;
+    const n = this.deviceCtl.rangeMetersFor?.(device.vehicleIdentifier) ?? null;
+    return n !== null && Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  /** §11.5's inputs, or null when this ride cannot answer the question.
+   *
+   *  Null — not a partially-filled object — so the announcer's gate is one
+   *  check rather than four, and so the reasons for silence are stated here
+   *  where they can be read together. */
+  private reachInput(): RideReachInput | null {
+    if (this.startRangeMeters === null) return null;
+    const doc = this.session?.current();
+    const dest = doc?.state === "riding" ? doc.dest : null;
+    if (!dest) return null;
+    if (!this.lastFix) return null;
+    return {
+      startRangeMeters: this.startRangeMeters,
+      travelledMeters: this.distanceM,
+      at: { lat: this.lastFix.pos.lat, lng: this.lastFix.pos.lng },
+      dest: { lat: dest.lat, lon: dest.lon },
+    };
   }
 
   private async flagEquityStart(pos: LngLat): Promise<void> {

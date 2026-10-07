@@ -18,6 +18,12 @@
 
 import { FREE_MINUTES_PER_DAY } from "./free-minutes.ts";
 import { EQUITY_AREA_RATE } from "./config.ts";
+import {
+  reachSentence,
+  rideReach,
+  shouldWarnReach,
+  type RideReachInput,
+} from "./ride-reach.ts";
 
 /** How many seconds of travel before a turn to speak it.
  *
@@ -46,7 +52,8 @@ export type AnnouncementKind =
   | "equity_entered"
   | "equity_left"
   | "free_minutes"
-  | "free_minutes_gone";
+  | "free_minutes_gone"
+  | "battery_reach";
 
 export interface Announcement {
   kind: AnnouncementKind;
@@ -73,6 +80,11 @@ export interface AnnounceState {
   spokenFreeWarnings: ReadonlySet<number>;
   /** Whether the "free minutes are gone" line has been said. */
   spokenFreeGone: boolean;
+  /** Whether §11.5's battery-reach sentence has been said. ONCE PER RIDE, and
+   *  this flag is the whole of that rule: the condition it fires on is sticky
+   *  (range only goes down, distance only goes up), so without it the warning
+   *  would repeat on every fix for the rest of the ride. */
+  spokenBatteryReach: boolean;
 }
 
 export const INITIAL_ANNOUNCE_STATE: AnnounceState = {
@@ -80,6 +92,7 @@ export const INITIAL_ANNOUNCE_STATE: AnnounceState = {
   insideEquityArea: null,
   spokenFreeWarnings: new Set(),
   spokenFreeGone: false,
+  spokenBatteryReach: false,
 };
 
 export interface AnnounceInput {
@@ -102,6 +115,11 @@ export interface AnnounceInput {
   /** Access tier only. `null` for every other tier, which have no allowance and
    *  no cliff to warn about. */
   freeMinutesLeft: number | null;
+  /** §11.5. Everything needed to answer "will this reach where I'm going?",
+   *  or absent when the ride cannot answer it — no destination, no range
+   *  observation, no fix. Absent means SILENT: see `ride-reach.ts` on why a
+   *  hedged version of this warning is worse than none. */
+  reach?: RideReachInput | null;
   /** A popup or modal is open. Never speak over one — the same rule the
    *  follow-cam already follows via `hasOpenPopup()`. */
   blocked: boolean;
@@ -149,6 +167,7 @@ export function announce(
       input.insideEquityArea === null ? state.insideEquityArea : input.insideEquityArea,
     spokenFreeWarnings: state.spokenFreeWarnings,
     spokenFreeGone: state.spokenFreeGone,
+    spokenBatteryReach: state.spokenBatteryReach,
   };
 
   const silent = input.muted || input.blocked || input.status !== "riding";
@@ -186,6 +205,21 @@ export function announce(
             haptic: true,
           },
     );
+  }
+
+  // ---- Battery reach (§11.5). After the money moments and before the turns,
+  // and that position is deliberate: it is not a money fact, but it is the one
+  // thing that can end the ride early, so it outranks a turn cue that will come
+  // round again on the next sample. Once per ride — the flag, not the
+  // condition, is what stops it repeating.
+  if (input.reach && !state.spokenBatteryReach) {
+    if (shouldWarnReach({ ...input.reach, alreadyWarned: false })) {
+      const sentence = reachSentence(rideReach(input.reach));
+      if (sentence) {
+        announcements.push({ kind: "battery_reach", text: sentence, haptic: true });
+        next.spokenBatteryReach = true;
+      }
+    }
   }
 
   if (input.freeMinutesLeft !== null) {
