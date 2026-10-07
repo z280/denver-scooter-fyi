@@ -2415,6 +2415,42 @@ when the ride is not `riding`.
 The HUD offers ±15s/±1m nudges and a reset because we cannot see Veo's billing
 clock. That is an honest workaround, and it has become the rider's job.
 
+> **NOT BUILT, AND BOTH HALVES NEED THE OWNER.** This section rests on two
+> premises, and each has been overtaken by a later decision in this same
+> codebase. Recorded rather than worked around, because forcing either would
+> reverse a change that was made deliberately and for good reasons.
+>
+> **"Screen 8 already collects the truth" is no longer true.** `ride-post-s8.ts`
+> stopped asking for battery, cost and minutes entirely, in a documented
+> friction-reduction rewrite whose reasoning is strong: the form yanked focus
+> between fields, riders never reached [Submit], so `endTrackedRide` never
+> fired, `endReported` never dispatched, and **the ride never reached Screens
+> 9/10's donation flow at all**. [Rush Quit] skipped those by design, so even
+> the riders who escaped the broken form never got asked to donate. Screen 8 is
+> now one button.
+>
+> So the per-rider calibration has no input. Building it means reintroducing the
+> form that was deleted — and the calibration's value (a cost estimate that is
+> roughly right rather than trusted) is smaller than the value of every ride
+> reaching the donation flow. **If the owner wants the calibration, the input has
+> to come from somewhere other than a blocking form** — the receipt reader of
+> Phase 8 is the obvious candidate, since it already extracts a real total and
+> real minutes from a screenshot the rider was going to look at anyway, and asks
+> for nothing at the moment they are trying to leave.
+>
+> **"The QR scan is the start moment" is in tension with §6.7.3**, which states
+> the opposite rule for the neighbouring case: *"Inventing an earlier start time
+> on the rider's behalf would be guessing at the number Veo is actually billing
+> them on."* The two are reconcilable — §6.7.3 is about a rider saying "I already
+> started", where the unlock time is genuinely unknown, while a scan is a real
+> timestamped event — and the reconciliation is a judgement call about whose
+> clock we claim to know, which is not one to make silently. Worth noting that the
+> scan precedes the unlock, so a scan-time start makes our clock run LONG, which
+> is the safe direction for a cost estimate.
+>
+> `qr-ride-scan.ts`'s `QrRideAction` carries no timestamp today, so either answer
+> is a small change.
+
 Two things already in hand would mostly retire it:
 
 - **The QR scan is the start moment.** Ride mode's scan (`qr-ride-scan.ts`)
