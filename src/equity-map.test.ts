@@ -363,3 +363,43 @@ describe("triple-tap inspect sources", () => {
     expect(eq.hitAt(P, at(OUTSIDE))).toBeNull();
   });
 });
+
+describe("the receipt button", () => {
+  // "Didn't get the discount?" is drawn only when there is a form behind it,
+  // and both ways in (chip, triple-tap) get a working one.
+  function modalHost() {
+    return vi.fn((_t: string, body: string, onOpen?: (root: HTMLElement | null) => void) => {
+      const root = document.createElement("div");
+      root.innerHTML = body;
+      onOpen?.(root);
+      return root;
+    });
+  }
+
+  it("is not drawn without a form to open", () => {
+    expect(explainerHtml(null)).not.toContain("data-equity-receipt");
+    expect(explainerHtml(null, { receiptButton: true })).toContain("Didn't get the discount?");
+  });
+
+  it("opens the form from the triple-tap explainer", async () => {
+    await loadEquityAreas();
+    const openModal = modalHost();
+    const openForm = vi.fn();
+    const eq = new EquityAreaMap(fakeMap() as never, document.createElement("button"), openModal, openForm);
+    await eq.setOverlayVisible(true);
+    eq.hitAt({ x: 0, y: 0 }, { lng: INSIDE[0], lat: INSIDE[1] })!.open();
+    const root = openModal.mock.results[0].value as HTMLElement;
+    root.querySelector<HTMLButtonElement>("[data-equity-receipt]")!.click();
+    expect(openForm).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the form from the chip's explainer", () => {
+    const openModal = modalHost();
+    const openForm = vi.fn();
+    const eq = new EquityAreaMap(fakeMap() as never, document.createElement("button"), openModal, openForm);
+    eq.explain();
+    const root = openModal.mock.results[0].value as HTMLElement;
+    root.querySelector<HTMLButtonElement>("[data-equity-receipt]")!.click();
+    expect(openForm).toHaveBeenCalledTimes(1);
+  });
+});

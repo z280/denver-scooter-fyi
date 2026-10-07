@@ -454,7 +454,9 @@ type HttpMethod = "GET" | "PUT" | "POST" | "PATCH" | "DELETE";
 
 interface AuthedInit {
   method?: HttpMethod;
-  /** JSON-serialized into the request body with Content-Type set. */
+  /** JSON-serialized into the request body with Content-Type set — except a
+   *  FormData, which is sent as-is with NO Content-Type, so the browser can
+   *  write the multipart boundary (a fixed Content-Type loses it). */
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -473,8 +475,10 @@ async function authedFetch(path: string, init: AuthedInit): Promise<Response> {
     Accept: "application/json",
     Authorization: `Bearer ${auth.token}`,
   };
-  let body: string | undefined;
-  if (init.body !== undefined) {
+  let body: string | FormData | undefined;
+  if (init.body instanceof FormData) {
+    body = init.body;
+  } else if (init.body !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(init.body);
   }
@@ -1483,6 +1487,93 @@ export async function postRouteFeedback(
     throw err;
   }
   return (await res.json()) as { id: number; created_at: string };
+}
+
+// --- Equity Area receipts (missed-discount reports) ------------------------
+// The capture half of the equity-receipt plan (scooter-fyi-api
+// docs/PLAN_EQUITY_RECEIPTS.md, "Phase 1: capture"). The rider sends what is
+// printed on a Veo receipt plus two screenshots; matching it to a ride we saw
+// in the feed is the server's job, later, so the response only says it landed.
+
+/** The plan the rider says they were on. The RATE_PLANS keys (VeoPlus
+ *  variants included — unlike `ApiRatePlan`, which the profile strips to its
+ *  base, a receipt is judged against the exact plan) plus "not sure". */
+export type DeclaredRatePlan =
+  | "resident"
+  | "resident_plus"
+  | "visitor"
+  | "visitor_plus"
+  | "equity"
+  | "unknown";
+
+export interface DiscountReportIn {
+  /** The scooter code as printed on the receipt, spaces already stripped. */
+  vehicle_plate: string;
+  trip_minutes: number;
+  /** At least one of the two costs is required; both are integer cents. */
+  subtotal_cents?: number;
+  total_cents?: number;
+  /** As printed: YYYY-MM-DD. */
+  charge_date: string;
+  /** ISO 8601 with an offset. Only breaks ties between same-length rides. */
+  approx_started_at?: string;
+  declared_rate_plan?: DeclaredRatePlan;
+  pin_start?: { lat: number; lng: number };
+  pin_end?: { lat: number; lng: number };
+  receipt: Blob;
+  /** The Veo app screen showing the rider's active plan or pass. */
+  plan_evidence: Blob;
+}
+
+export interface DiscountReportResult {
+  id: number;
+  created_at: string;
+  status: "received";
+  receipt_stored: boolean;
+  plan_evidence_stored: boolean;
+}
+
+/** The multipart body, field for field. Separate from the POST so a test can
+ *  check exactly what goes over the wire. Optional fields are OMITTED rather
+ *  than sent empty: the API reads an absent field as "not given", and an
+ *  empty string as a malformed one. */
+export function discountReportFormData(r: DiscountReportIn): FormData {
+  const form = new FormData();
+  form.set("vehicle_plate", r.vehicle_plate);
+  form.set("trip_minutes", String(r.trip_minutes));
+  if (r.subtotal_cents !== undefined) form.set("subtotal_cents", String(r.subtotal_cents));
+  if (r.total_cents !== undefined) form.set("total_cents", String(r.total_cents));
+  form.set("charge_date", r.charge_date);
+  if (r.approx_started_at) form.set("approx_started_at", r.approx_started_at);
+  if (r.declared_rate_plan) form.set("declared_rate_plan", r.declared_rate_plan);
+  // Five decimals is about a metre: more than a hand-dropped pin means, and
+  // the server rounds further anywhere public.
+  if (r.pin_start) {
+    form.set("pin_start_lat", r.pin_start.lat.toFixed(5));
+    form.set("pin_start_lng", r.pin_start.lng.toFixed(5));
+  }
+  if (r.pin_end) {
+    form.set("pin_end_lat", r.pin_end.lat.toFixed(5));
+    form.set("pin_end_lng", r.pin_end.lng.toFixed(5));
+  }
+  form.set("receipt", r.receipt);
+  form.set("plan_evidence", r.plan_evidence);
+  return form;
+}
+
+/** Send a receipt. Signed-in only (the endpoint is `require_session`, so the
+ *  evidence has provenance): throws NO_AUTH / TOKEN_REJECTED like every other
+ *  authed call, and an HTTP_ERROR ApiError carrying `status` and `errorKey`
+ *  for the 422 / 413 / 429 cases the form explains to the rider. */
+export function submitDiscountReport(
+  r: DiscountReportIn,
+  signal?: AbortSignal,
+): Promise<DiscountReportResult> {
+  return authedFetchJSON<DiscountReportResult>("/api/v1/reports/discount", {
+    method: "POST",
+    body: discountReportFormData(r),
+    signal,
+  });
 }
 
 // --- Admin analytics (telemetry_daily rollups) -----------------------------
