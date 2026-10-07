@@ -150,17 +150,16 @@ for one ride.
   to put the write.
 - **`cost_hud` as a fully standing setting**, which needs the `autoStart`
   decision above.
-- **Two concurrent focus traps recurse.** Opening the ride modal while the
-  first-run tour's trap is live makes `ride-modal.ts`'s `onFocusIn` and
-  `modal-focus-trap.ts`'s steal focus from each other until the stack gives out.
-  Only reachable by synthesising a click the tour's backdrop would block, so not
-  a rider-facing bug today.
-- **`setDevice` does not re-apply the option cascades.** The reducer sets
-  `private` when a device pick makes a ride private, but `applyCascades` — whose
-  own doc comment says to run it "after any change that could affect a cascade —
-  a device pick landing `own_device: true`" — is not called, so a private ride
-  can keep `nav_improvement: true`, which the rules disable. Latent for a free
-  ride (no route, so nothing reads it); reachable for a signed-out rider who
-  picks a real vehicle with a destination. The fix wants the pure cascade
-  functions extracted out of the DOM-heavy `ride-settings.ts` so the type-only
-  reducer can import them.
+Both of the bugs this audit originally listed here are now fixed:
+
+- ~~Two concurrent focus traps recurse.~~ Fixed. `modal-focus-trap.ts` keeps a
+  recovery stack and the topmost live trap owns stray focus;
+  `ride-modal.ts`'s own trap registers with it. It was reachable in a real
+  browser — starting a ride while the tour is up threw "Maximum call stack size
+  exceeded" — not only by a synthesised click, as first thought.
+- ~~`setDevice` does not re-apply the option cascades.~~ Fixed. The pure rules
+  moved to `ride-option-cascades.ts` (no DOM, no API client) so the type-only
+  reducer can import them, and `open`, `setDevice` and `setOptions` all apply
+  them. `options.own_device` now follows the device too — Screen 2's own-device
+  option set only the device, so the `own_device` rules never fired for a pick
+  made there, and `guest_or_private` was covering all three by accident.
