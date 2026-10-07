@@ -115,8 +115,15 @@
 // callers keep their import, and the options/response types come from `api.ts`.
 
 import {
+  accumulateWithTotals,
+  accumulationSentence,
+  type AccumulatedRide,
+} from "./ride-accumulation.ts";
+import {
   ApiError,
+  fetchProfile as apiFetchProfile,
   listTrackedRides,
+  type Profile,
   type ListTrackedRidesOptions,
   type TrackedRideListResponse,
   donateTrack as apiDonateTrack,
@@ -520,6 +527,13 @@ export interface RidePostS10Deps {
   ): Promise<ListTrackedRidesResponse>;
   /** How many rows "See recent trips" asks for. Defaults to 5. */
   recentTripsLimit?: number;
+  /** §11.8's closing sentence — the rider's own profile, for its `ride_totals`.
+   *  Injected for tests; defaults to `api.ts`'s `fetchProfile`.
+   *
+   *  THE LIFETIME COUNT CANNOT COME FROM THE RIDE LIST. That response's `count`
+   *  is the page size, so the only alternative would be paging a rider's whole
+   *  history at the moment they are trying to put their phone away. */
+  fetchProfile?(signal?: AbortSignal): Promise<Profile>;
   /** Called once this mount tears down (phase left `eligibility(10)`, or the
    *  wiring's own teardown ran). */
   onClosed?(): void;
@@ -554,6 +568,7 @@ interface ResolvedDeps {
     signal?: AbortSignal,
   ): Promise<ListTrackedRidesResponse>;
   recentTripsLimit: number;
+  fetchProfile(signal?: AbortSignal): Promise<Profile>;
   onClosed(): void;
   mountRoot: HTMLElement;
   points(): ResolvedRideModePoints;
@@ -570,6 +585,7 @@ function resolveDeps(deps: RidePostS10Deps): ResolvedDeps {
       ((trackId: string) => defaultReadDonationBody(trackId, getTrackStore)),
     listTrackedRides: deps.listTrackedRides ?? listTrackedRides,
     recentTripsLimit: deps.recentTripsLimit ?? 5,
+    fetchProfile: deps.fetchProfile ?? apiFetchProfile,
     onClosed: deps.onClosed ?? (() => {}),
     mountRoot: deps.mountRoot ?? document.body,
     points: () => deps.points?.() ?? FALLBACK_RIDE_MODE_POINTS,
@@ -647,6 +663,26 @@ function mountRidePostS10(
   let recentTripsLoading = false;
   let recentTripsError: string | null = null;
   let recentTrips: TrackedRide[] | null = null;
+  /** §11.8's sentence, once both halves have landed. Null means "not yet, or
+   *  nothing worth saying" — the two are the same to the renderer, and
+   *  distinguishing them would only let it render a placeholder. */
+  let accumulationLine: string | null = null;
+  /** The ride-list request, shared by §11.8's sentence and "See recent trips".
+   *
+   *  THE PROMISE, NOT THE RESULT. Seeding `recentTrips` once the fetch lands only
+   *  helps when it lands before the rider taps — and a tap during the flight
+   *  started a second identical request, which a test caught. Holding the promise
+   *  makes the second caller await the first rather than race it.
+   *
+   *  Deliberately not cleared on failure: both callers handle a rejection, and
+   *  re-fetching on every toggle after one failed load is how a flaky connection
+   *  becomes a request per tap. */
+  let tripsRequest: Promise<ListTrackedRidesResponse> | null = null;
+
+  function requestTrips(): Promise<ListTrackedRidesResponse> {
+    tripsRequest ??= deps.listTrackedRides({ limit: deps.recentTripsLimit });
+    return tripsRequest;
+  }
 
   // House rule: "anything modal" needs a focus trap — see
   // modal-focus-trap.ts's header for why this is a standalone copy rather
@@ -771,6 +807,15 @@ function mountRidePostS10(
     returnBtn.disabled = busy;
     actions.append(donateBtn, recentBtn, returnBtn);
     wrap.append(actions);
+
+    // §11.8 — above the trips list and below the buttons: it is the thing that
+    // brings somebody back, not an action, so it must not sit between the rider
+    // and [Return to Main App].
+    if (accumulationLine) {
+      const line = el("p", "ride-post-s10__accumulation", accumulationLine);
+      line.setAttribute("role", "status");
+      wrap.append(line);
+    }
 
     if (recentTripsVisible) wrap.append(renderRecentTrips());
 
@@ -930,7 +975,7 @@ function mountRidePostS10(
     recentTripsError = null;
     render();
     try {
-      const res = await deps.listTrackedRides({ limit: deps.recentTripsLimit });
+      const res = await requestTrips();
       if (destroyed) return;
       recentTrips = res.rides;
     } catch (e) {
@@ -960,8 +1005,49 @@ function mountRidePostS10(
     // pattern as `ride-post-s8.ts`'s [Rush Quit] handler.
   }
 
+  /** §11.8's closing sentence.
+   *
+   *  AFTER THE SCREEN IS UP, and never blocking it. The rider has finished their
+   *  ride; the eligibility verdict and the three buttons are what they came for,
+   *  and a sentence about their twelfth ride is worth nothing if it delays them.
+   *
+   *  TWO SOURCES, because they answer different questions. The lifetime count and
+   *  distance come from the profile — the ride list's `count` is a page size, so
+   *  the alternative is paging a whole history at the worst moment. The premium is
+   *  a per-ride comparison against a frontend pass ladder, which is not linear and
+   *  cannot be summed server-side, so it is computed over the same window of rides
+   *  "See recent trips" uses. `isPartial` is how the figure admits its scope.
+   *
+   *  THE WINDOW FETCH IS SHARED with "See recent trips", which used to fetch on
+   *  expand — and shared as a PROMISE rather than a result, so a tap during the
+   *  flight awaits this request instead of starting a second identical one.
+   *
+   *  Any failure leaves the line absent. There is no degraded version of this
+   *  sentence worth showing: half of it is a statistic. */
+  async function loadAccumulation(): Promise<void> {
+    try {
+      const [profile, trips] = await Promise.all([
+        deps.fetchProfile(),
+        requestTrips(),
+      ]);
+      if (destroyed) return;
+      // Seed the trips list too, so expanding it costs nothing.
+      recentTrips = trips.rides;
+      const totals = profile.ride_totals;
+      if (!totals) return;
+      accumulationLine = accumulationSentence(
+        accumulateWithTotals(totals, trips.rides.map(asAccumulatedRide)),
+      );
+      if (accumulationLine) render();
+    } catch {
+      // An older deployment with no `ride_totals`, a signed-out rider, a flaky
+      // connection. The sentence simply does not appear.
+    }
+  }
+
   render();
   void loadValidation();
+  void loadAccumulation();
   deps.mountRoot.append(backdrop);
 
   return {
@@ -974,6 +1060,25 @@ function mountRidePostS10(
 // ---------------------------------------------------------------------------
 // Small DOM builders
 // ---------------------------------------------------------------------------
+
+/** A list row as §11.8's arithmetic needs it.
+ *
+ *  MINUTES ARE DERIVED FROM THE RIDE'S OWN SPAN, not from `reported_minutes`:
+ *  that field is what the rider typed off the Veo app and is null on nearly every
+ *  ride, so leaning on it would make the premium clause disappear for almost
+ *  everybody. The span is what the server measured, and `accumulate` refuses the
+ *  ride outright when either figure is missing. */
+function asAccumulatedRide(ride: TrackedRide): AccumulatedRide {
+  const startedMs = Date.parse(ride.started_at);
+  const endedRaw = ride.user_reported_ended_at;
+  const endedMs = endedRaw === null ? NaN : Date.parse(endedRaw);
+  const spanOk = Number.isFinite(startedMs) && Number.isFinite(endedMs) && endedMs > startedMs;
+  return {
+    distanceMeters: ride.distance_meters,
+    costCents: ride.total_cost_cents,
+    minutes: spanOk ? Math.ceil((endedMs - startedMs) / 60_000) : null,
+  };
+}
 
 function row(label: string, value: string): HTMLElement {
   const wrap = el("p", "ride-post-s10__row");
