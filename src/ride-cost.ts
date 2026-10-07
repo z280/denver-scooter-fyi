@@ -241,6 +241,28 @@ export function savedRatePlan(): RatePlanKey | null {
   }
 }
 
+/** The plan to price against when the rider has not chosen one.
+ *
+ *  FULL-PRICE NON-RESIDENT, and the direction matters more than the value.
+ *  Five call sites used to fall back to `"resident"`, which is the CHEAPER
+ *  Denver tier — so every estimate shown to a rider who had never opened the
+ *  rate picker was lower than what Veo would actually charge most of them. An
+ *  app whose entire purpose is telling riders what a ride really costs must not
+ *  round that guess downward. `"visitor"` ($1 + 39¢/min) is the standard,
+ *  no-discount, no-pass rate: the one a rider qualifies for by default, and the
+ *  one that is wrong in the rider's favour rather than Veo's when it is wrong.
+ *
+ *  Riders on a cheaper tier see a high estimate until they pick their plan,
+ *  which the HUD and the account panel both offer; that is a prompt to set it,
+ *  not a lie about their bill. */
+export const DEFAULT_RATE_PLAN: RatePlanKey = "visitor";
+
+/** `savedRatePlan()` with the default applied — the one place the fallback
+ *  lives, so no caller has to remember which way to round. */
+export function effectiveRatePlan(): RatePlanKey {
+  return savedRatePlan() ?? DEFAULT_RATE_PLAN;
+}
+
 /** Persist the pick locally and offer it to the account sync hook.
  *  Returns false when localStorage rejected the write (private mode) so
  *  callers can say so instead of claiming the device saved it. The hook

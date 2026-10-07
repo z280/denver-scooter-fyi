@@ -109,6 +109,7 @@ import {
   type RideUsualSettings,
 } from "./api.ts";
 import { rideModalRoot } from "./ride-modal.ts";
+import { showsCostHud, speedometerStyle } from "./ride-display-prefs.ts";
 import { savesTracks } from "./track-preference.ts";
 
 /** `${provider}` in the owner's copy — Veo today, written to be
@@ -142,8 +143,13 @@ export const RIDE_PROVIDER_NAME = "Veo";
  *   - `own_device: false` — most rides start from a nearby feed device. */
 export function defaultRideOptions(): RideOptions {
   return {
-    cost_hud: true,
-    speedometer: "classic",
+    // Standing answers, not per-ride defaults — `ride-display-prefs.ts` for
+    // why they moved, and `track-preference.ts` for the precedent they follow.
+    // Both still default to the values shipped here before the move
+    // (`cost_hud: true`, `speedometer: "classic"`), so a rider who has never
+    // opened the panel gets exactly what they got before.
+    cost_hud: showsCostHud(),
+    speedometer: speedometerStyle(),
     navigation: false,
     // The rider's standing answer, not a per-ride default — see
     // `track-preference.ts` for why it stopped being a question. Still

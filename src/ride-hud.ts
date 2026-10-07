@@ -41,6 +41,7 @@ import { RATE_PLANS, COMPARATOR, type RatePlanKey } from "./config.ts";
 import {
   billableMinutes,
   comparatorPassQuote,
+  effectiveRatePlan,
   equityAreaCostCents,
   formatCents,
   planFor,
@@ -2103,8 +2104,7 @@ export class RideHud {
       return;
     }
 
-    const rate = savedRatePlan();
-    const plan = planFor(rate ?? "resident");
+    const plan = planFor(effectiveRatePlan());
     const veoCents = rideCostCents(plan, elapsed);
     // The comparator is pass-based now: the realistic alternative to Veo's
     // metered bill is buying a block of Lime minutes up front (unlocks

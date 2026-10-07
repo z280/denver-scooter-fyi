@@ -196,7 +196,7 @@ import {
   type PlanSearchDeps,
 } from "./plan-search.ts";
 import { browserVoiceDeps, createRideVoice } from "./ride-voice.ts";
-import { currentTaxRate, planFor, savedRatePlan } from "./ride-cost.ts";
+import { currentTaxRate, effectiveRatePlan, planFor } from "./ride-cost.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -891,7 +891,7 @@ function wireRideHud(): RideHud {
     freeMinutesAtStart: () => {
       const estimate = planningFreeMinuteEstimate(
         planSearchDeps(),
-        planFor(savedRatePlan() ?? "resident"),
+        planFor(effectiveRatePlan()),
       );
       if (estimate === null || estimate.basis === "signed_out") return null;
       return estimate.remainingMinutes;
@@ -3962,7 +3962,7 @@ function planSearchDeps(): PlanSearchDeps {
       return fix ? { lat: fix.lat, lng: fix.lng } : null;
     },
     spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
-    rate: () => planFor(savedRatePlan() ?? "resident"),
+    rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
     // NO `favorites`, and that is not an omission to be tidied up later.
@@ -4049,7 +4049,7 @@ function openPlanList(dest: TripPlace): void {
 async function refreshTodaysRides(): Promise<boolean> {
   if (todaysRides !== null) return false;
   if (!isAuthenticated()) return false;
-  if ((savedRatePlan() ?? "resident") !== "equity") return false;
+  if (effectiveRatePlan() !== "equity") return false;
   if (savedCorrection(Date.now()) !== null) return false;
   try {
     todaysRides = spansOf((await listTrackedRides({ limit: 40 })).rides);
