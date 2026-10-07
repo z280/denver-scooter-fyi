@@ -168,6 +168,16 @@ export interface TripLeg {
   taxCents: number;
   /** Access tier only; 0 otherwise. */
   freeMinutesUsed: number;
+  /** This leg billed at the Equity Area rate — `legRate`'s own answer, carried
+   *  rather than re-derived.
+   *
+   *  It is here because Phase 5's disclosures (§5.2) must name the leg that
+   *  earns the discount and the unlock it carries, and the only alternative is
+   *  for the UI to re-test the polygons itself. That would be a second copy of
+   *  the rule `legRate` owns — and the copy a rider reads, while the planner
+   *  priced with the original. False on every walk leg, on a continuation
+   *  edge priced at the rider's tier, and for the Access tier throughout. */
+  equityArea: boolean;
 }
 
 export interface TripPlan {
@@ -541,6 +551,7 @@ function priceRide(
       minuteCents,
       taxCents,
       freeMinutesUsed: freeUsed,
+      equityArea: rate.equityArea,
     },
     cost,
     freeUsed,
@@ -556,6 +567,7 @@ function walkLeg(meters: number): TripLeg {
     minuteCents: 0,
     taxCents: 0,
     freeMinutesUsed: 0,
+    equityArea: false,
   };
 }
 
