@@ -55,6 +55,13 @@ import {
   type Dibs,
 } from "./dibs.ts";
 import { requestDibsNotifications } from "./dibs-notify.ts";
+import {
+  AT_THE_VEHICLE_M,
+  IN_REACH_M,
+  gate,
+  type DeviceAction,
+  type GateContext,
+} from "./device-action-tiers.ts";
 import { bareModelName, vehicleDisplayName } from "./vehicle-name.ts";
 import { registerDibs, type VehicleDibs } from "./api.ts";
 import {
@@ -160,10 +167,15 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
   biggap: "B",
 };
 
-/** How close (metres) the user must be for the "Unlock in Veo" button to
- *  appear. Generous enough to tolerate consumer-GPS scatter (~20–40 m),
- *  tight enough that the button means "you're at this scooter." */
-const UNLOCK_PROXIMITY_M = 75;
+/** §12.2's `at_the_vehicle` radius, under its old name. Both names point at the
+ *  one constant now: this card used to carry THREE radii in three places (75 m
+ *  unlock, 100 m parking report, ~1125 m walk) plus two actions with none at
+ *  all, and the pattern that produced — the cheap actions gated and the
+ *  expensive ones not — is what `device-action-tiers.ts` exists to replace.
+ *
+ *  Kept as an alias rather than deleted so the reads below stay legible at their
+ *  call sites; it is no longer a number anyone can change here. */
+const UNLOCK_PROXIMITY_M = AT_THE_VEHICLE_M;
 
 /** How far away a scooter can be and still be worth claiming.
  *
@@ -176,23 +188,27 @@ const UNLOCK_PROXIMITY_M = 75;
  *  decided: dibs allows a fifteen-minute walk, and this is that distance at
  *  the 4.5 km/h pace the walk router quotes. Past it a claim is speculation
  *  and the walk is a hike. */
-const RIDE_MAX_WALK_M = Math.round((4.5 * 1000 / 60) * 15); // ~1125 m
+const RIDE_MAX_WALK_M = IN_REACH_M; // ~1125 m, the `in_reach` tier
 
-/** Both device-photo endpoints require a bearer session — uploading AND
- *  listing — so a signed-out rider gets the same hint from either button. */
-const PHOTO_SIGNIN_HINT = "Sign in (Account tab) to add or view photos.";
+// The photo buttons' sign-in sentence moved to `device-action-tiers.ts`, where it
+// sits on both photo actions' rules — the module that decides a button is blocked
+// is now the module that says why, so the two cannot disagree. The words are
+// unchanged.
 
 /** Active-ride device taps: hold this long to open the full popup; a shorter
  *  tap only flashes the essentials tooltip (auto-hidden after that). */
 const RIDE_LONGPRESS_MS = 450;
 const RIDE_TOOLTIP_MS = 2200;
 
-/** How close (metres) the user must be to report a scooter's parking. A
- *  parking complaint is only credible from someone who can actually see the
- *  vehicle, so we gate on a live GPS fix AND sight distance. Looser than the
- *  unlock radius (you can see a badly-parked scooter from across the street)
- *  but still local — you can't report parking for a scooter across town. */
-const PARKING_REPORT_PROXIMITY_M = 100;
+/** Was 100 m, now the one `at_the_vehicle` radius (§12.2).
+ *
+ *  THIS IS A TIGHTENING, AND THE ARGUMENT IT OVERRULES WAS A REAL ONE: you can
+ *  see a badly-parked scooter from across the street, which is why 100 m was
+ *  chosen. What wins is that a second radius for the same claim-type — "I can
+ *  see this vehicle and here is what is wrong with it" — is a distinction no
+ *  rider can perceive and nobody will maintain, and the drift it licensed is
+ *  how this card ended up with four gates that nobody designed together. */
+const PARKING_REPORT_PROXIMITY_M = AT_THE_VEHICLE_M;
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -1337,6 +1353,19 @@ export class Devices {
 
 
       const signedIn = isAuthenticated();
+      /** §12.2's one gate, for every action on this card.
+       *
+       *  Built once so the four radii cannot drift apart again: each action asks
+       *  `allow(...)` and the tier table decides. The vehicle-STATUS gates below
+       *  (out of service, reserved, somebody else's dibs) stay where they are and
+       *  stay FIRST — no proximity or session fixes a scooter Veo itself will not
+       *  rent out, and those are not proximity questions. */
+      const gateCtx: GateContext = {
+        distanceMeters: user === null ? null : distanceMeters(user, here),
+        signedIn,
+        admin: this.adminSession,
+      };
+      const allow = (action: DeviceAction) => gate(action, gateCtx);
       const nearEnough =
         user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
       const startAllowed = signedIn && (this.adminSession || nearEnough);
@@ -1368,7 +1397,7 @@ export class Devices {
           : null;
       const startBtn = startHref
         ? `<a class="device-popup__actbtn device-popup__actbtn--start" href="${escapeHtml(startHref)}">▶️ Open in Veo</a>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" title="${escapeHtml(startHint)}">▶️ Open in Veo</button>`;
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--start is-blocked" data-action="start-blocked" aria-disabled="true" data-blocked="${escapeHtml(startHint)}" title="${escapeHtml(startHint)}">▶️ Open in Veo</button>`;
 
       // 🛴 I'll ride this one is gated on WALKING distance, not on standing
       // at the vehicle — it starts a walk, so requiring you to already be
@@ -1677,14 +1706,10 @@ export class Devices {
       // report is built from the DEVICE's coordinates, never the reporter's, so
       // a distant admin files exactly the same report, and an admin working a
       // reliability queue from a desk is doing the job.
-      const reportDistance = user === null ? null : distanceMeters(user, here);
-      const reportBlockedReason: string | null = this.adminSession
+      const reportGate = allow("report_device");
+      const reportBlockedReason: string | null = reportGate.allowed
         ? null
-        : reportDistance === null
-          ? "Turn on your location to report this one — reports carry weight because they come from somebody who was there."
-          : reportDistance <= PARKING_REPORT_PROXIMITY_M
-            ? null
-            : `You're too far away to report this one (${formatWalk(reportDistance)}). Reports come from riders at the scooter.`;
+        : reportGate.reason;
       // `aria-disabled`, never `disabled`: the chip has to stay focusable and
       // tappable so it can deliver its own reason. `is-blocked` is the same
       // class the other gated actions on this card use.
@@ -1780,7 +1805,7 @@ export class Devices {
       // without one.
       const rideBtn = rideOk
         ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride" data-action="use-in-ride-mode" aria-haspopup="dialog">🛴 I'll ride this one</button>`
-        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" title="${escapeHtml(rideHint)}">🛴 I'll ride this one</button>`;
+        : `<button type="button" class="device-popup__actbtn device-popup__actbtn--ride is-blocked" data-action="ride-blocked" aria-disabled="true" data-blocked="${escapeHtml(rideHint)}" title="${escapeHtml(rideHint)}">🛴 I'll ride this one</button>`;
       // NO "CALL DIBS" BUTTON. Calling dibs is not a separate decision from
       // going to get the scooter — it IS that decision, said out loud. So
       // 🛴 I'll ride this one claims it and starts the walk in one tap, and
@@ -1809,27 +1834,56 @@ export class Devices {
             ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-drop">✋ Release dibs</button>`
             : `<button type="button" class="device-popup__actbtn device-popup__actbtn--cert" data-action="dibs-explain">❓ What's dibs?</button>`)
         : "";
+      // ☑️ CONFIRM FEATURES NOW HAS A GATE, and had none at all before: a rider
+      // could assert a basket onto a scooter in another neighbourhood. It is a
+      // claim about this vehicle's equipment, so it is `at_the_vehicle` like
+      // every other claim about it (§12.2).
+      //
+      // Blocked, not hidden, and `aria-disabled` rather than `disabled`: a
+      // `disabled` button cannot be tapped, so its reason could never be
+      // delivered — and on a phone the tap is the ONLY channel, since `title`
+      // tooltips never appear (§12.4).
+      const featuresGate = allow("confirm_features");
       const featuresBtn =
-        vid.length >= 16
-          ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
-          : "";
+        vid.length < 16
+          ? ""
+          : featuresGate.allowed
+            ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
+            : `<button type="button" class="device-popup__actbtn device-popup__actbtn--features is-blocked" data-action="features-blocked" aria-disabled="true" data-blocked="${escapeHtml(featuresGate.reason)}" title="${escapeHtml(featuresGate.reason)}">☑️ Confirm Features</button>`;
       // Final row: rider-contributed photos of THIS scooter (API.md § Device
       // photos). Both endpoints need a bearer session — listing included, even
       // though the photos themselves are public objects — so signed out, both
       // buttons render blocked with the usual hint rather than disappearing:
       // "sign in and you get this" is the useful message. Hidden entirely when
       // the vehicle_identifier isn't the API's exact 16-hex shape, since no
-      // request could ever succeed. No proximity gate: an older photo of a
-      // scooter is worth looking at from anywhere, and that is much of the
-      // point of having them.
+      // request could ever succeed.
+      //
+      // THE TWO BUTTONS ARE DELIBERATELY ASYMMETRIC, which they were not before.
+      //
+      //   📷 Take Photo is `at_the_vehicle`. It attaches rider EVIDENCE to a
+      //   specific vehicle, and it used to be ungated by distance entirely — a
+      //   photo of anything could be filed against any scooter in the city from
+      //   anywhere on earth. A photo is a claim about a scooter you can see.
+      //
+      //   🖼️ Show Photos stays `anywhere`. It is READING, and an older photo of
+      //   a scooter is worth looking at from anywhere — that is much of the
+      //   point of having them. Gating the read too would be symmetry for its
+      //   own sake, costing the feature most of its value.
       const photosOk = supportsPhotos(vid);
+      const takeGate = allow("take_photo");
+      const showGate = allow("show_photos");
+      const photoBtn = (
+        label: string,
+        action: string,
+        g: ReturnType<typeof allow>,
+      ): string =>
+        g.allowed
+          ? `<button type="button" class="device-popup__actbtn" data-action="${action}" aria-haspopup="dialog">${label}</button>`
+          : `<button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" data-blocked="${escapeHtml(g.reason)}" title="${escapeHtml(g.reason)}">${label}</button>`;
       const photoRow = !photosOk
         ? ""
-        : signedIn
-          ? `<button type="button" class="device-popup__actbtn" data-action="take-photo" aria-haspopup="dialog">📷 Take Photo</button>
-             <button type="button" class="device-popup__actbtn" data-action="show-photos" aria-haspopup="dialog">🖼️ Show Photos</button>`
-          : `<button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">📷 Take Photo</button>
-             <button type="button" class="device-popup__actbtn is-blocked" data-action="photos-blocked" aria-disabled="true" title="${escapeHtml(PHOTO_SIGNIN_HINT)}">🖼️ Show Photos</button>`;
+        : `${photoBtn("📷 Take Photo", "take-photo", takeGate)}
+             ${photoBtn("🖼️ Show Photos", "show-photos", showGate)}`;
       // Open in Veo and Confirm Features share a row. Both used to span the
       // full width, which gave this card five stacked full-width bars before
       // the rider reached anything they came for.
@@ -1982,12 +2036,26 @@ export class Devices {
         hintLine.textContent = text;
         hintLine.hidden = false;
       };
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="start-blocked"]')
-        ?.addEventListener("click", () => showHint(startHint));
-      popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="ride-blocked"]')
-        ?.addEventListener("click", () => showHint(rideHint));
+      // §12.4 — BLOCKED IS A SENTENCE, UNIVERSALLY. Every blocked action button
+      // carries its reason in `data-blocked` and one handler delivers it, rather
+      // than each gated button remembering to wire its own.
+      //
+      // That is not tidiness. The three buttons wired by hand here before this
+      // each passed a CAPTURED variable, so a button whose reason came from
+      // somewhere else — 📷 Take Photo, which showed a hardcoded sign-in hint
+      // even once it could also be blocked for distance — said the wrong thing,
+      // and said it confidently. Reading the attribute makes the rendered reason
+      // and the spoken reason the same string by construction.
+      //
+      // `title` stays for pointer users and stops being the only channel: a
+      // phone never shows a tooltip, which was the whole of §12.1(c)'s bug.
+      // Scoped to `.device-popup__actbtn` because the report chips have their own
+      // live region directly under them and handle this themselves.
+      for (const btn of popupEl?.querySelectorAll<HTMLElement>(
+        ".device-popup__actbtn[data-blocked]",
+      ) ?? []) {
+        btn.addEventListener("click", () => showHint(btn.dataset.blocked ?? ""));
+      }
       // Tap a feature pill for the plain-English version. One shared line
       // under the row rather than a tooltip per pill: tooltips do not exist
       // on touch, and a modal for one sentence is a punishment.
@@ -2265,11 +2333,11 @@ export class Devices {
         ?.addEventListener("click", () => {
           this.openDevicePhotos(vid, headerName, false, here);
         });
-      popupEl
-        ?.querySelectorAll<HTMLButtonElement>('[data-action="photos-blocked"]')
-        .forEach((btn) =>
-          btn.addEventListener("click", () => showHint(PHOTO_SIGNIN_HINT)),
-        );
+      // No bespoke handler: `photos-blocked` buttons carry `data-blocked` and the
+      // universal handler above reads it. The version here passed
+      // PHOTO_SIGNIN_HINT unconditionally, which became a lie the moment 📷 Take
+      // Photo could also be blocked for distance — it told a rider standing 400 m
+      // away to sign in, which they already had.
       // "Tell us what this is" — reveal the model-report form, then handle
       // photo selection and submission for an unrecognized ("Veo Unknown")
       // vehicle.

@@ -10,8 +10,15 @@
 // kind of thing a later refactor silently drops.
 //
 // The final row — 📷 Take Photo / 🖼️ Show Photos — is gated on SESSION and on
-// the vehicle_identifier's shape instead: both endpoints need a bearer token
-// (listing included), and the API's path pattern is exactly 16 lowercase hex.
+// the vehicle_identifier's shape: both endpoints need a bearer token (listing
+// included), and the API's path pattern is exactly 16 lowercase hex.
+//
+// PHASE 12 §12.2 THEN SPLIT THE TWO APART on proximity. Both were ungated by
+// distance, which meant a photo of anything could be filed against any scooter
+// in the city from anywhere on earth. Uploading is now `at_the_vehicle` —
+// evidence about a scooter you can see — and LOOKING stays `anywhere`, because
+// an old photo is worth seeing from anywhere and that is much of the point of
+// having them.
 //
 // The only mock that matters is `maplibregl.Popup`: the real one needs a live
 // map/GL context. The fake captures the HTML the popup is built from and
@@ -65,6 +72,7 @@ vi.mock("./map-auth.js", () => ({
 vi.mock("./geocode.ts", () => ({ reverseGeocode: () => Promise.resolve(null) }));
 
 import { Devices } from "./devices.ts";
+import { _resetTelemetryForTests } from "./telemetry.ts";
 import type { DeviceProperties, DevicesResponse } from "./api.ts";
 import type { Map as MLMap } from "maplibre-gl";
 import type { Locate, LngLat } from "./locate.ts";
@@ -159,6 +167,18 @@ beforeEach(() => {
   lastPopupHtml = "";
   lastPopupEl = null;
   signedIn = true;
+  // THE TELEMETRY QUEUE IS MODULE STATE AND IT FLUSHES AT 20 EVENTS. Opening a
+  // popup records one, so the queue fills across this file and the flush lands
+  // inside whichever test happens to be running when the twentieth arrives —
+  // consuming the first response of that test's `mockResolvedValueOnce` queue
+  // and shifting every later one by one.
+  //
+  // That made the file's passing state depend on how many tests precede each
+  // other: adding three photo-gate tests above made the points assertion in
+  // "shows what the ledger actually granted" read the NEXT response's body and
+  // fail with a wrong figure, with nothing in that test to explain why. Reset
+  // here so no test inherits another's queue.
+  _resetTelemetryForTests();
 });
 
 describe("device popup — geographic gate on the two primary rows", () => {
@@ -301,6 +321,65 @@ describe("device popup — a late admin flag", () => {
   });
 });
 
+describe("device popup — blocked is a sentence, in the rendered card (§12.4)", () => {
+  // Over the RENDERED popup rather than over the source: the claim is about what
+  // a rider's thumb reaches, and `title` alone was the whole bug — a phone never
+  // shows a tooltip, so the rider got a dead grey button and no reason, on the
+  // primary CTA.
+  const worstCase = () => {
+    signedIn = false;
+    openPopup({ fix: null, props: { vehicle_identifier: PHOTO_VID } });
+    return lastPopupEl!;
+  };
+
+  it("gives every blocked action button a reason a tap can deliver", () => {
+    const el = worstCase();
+    const blocked = [...el.querySelectorAll<HTMLElement>(".device-popup__actbtn.is-blocked")];
+    expect(blocked.length).toBeGreaterThan(0);
+    for (const btn of blocked) {
+      expect(btn.dataset.blocked, btn.outerHTML).toBeTruthy();
+      expect(btn.getAttribute("aria-disabled"), btn.outerHTML).toBe("true");
+      // `disabled` would make the button untappable, so the reason could never
+      // be delivered at all. This is the rule the rest of §12.4 rests on.
+      expect(btn.hasAttribute("disabled"), btn.outerHTML).toBe(false);
+      // `title` stays for pointer users, and stops being the only channel.
+      expect(btn.getAttribute("title"), btn.outerHTML).toBe(btn.dataset.blocked!);
+    }
+  });
+
+  it("writes that reason into the live region when it is tapped", () => {
+    const el = worstCase();
+    const hint = el.querySelector<HTMLElement>(".device-popup__actionhint")!;
+    expect(hint.hidden).toBe(true);
+    for (const btn of el.querySelectorAll<HTMLElement>(".device-popup__actbtn.is-blocked")) {
+      btn.click();
+      expect(hint.hidden).toBe(false);
+      expect(hint.textContent).toBe(btn.dataset.blocked);
+    }
+  });
+
+  it("announces politely, so a blocked tap does not interrupt", () => {
+    const hint = worstCase().querySelector<HTMLElement>(".device-popup__actionhint")!;
+    expect(hint.getAttribute("role")).toBe("status");
+    expect(hint.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("says the right thing per button, not one shared sentence", () => {
+    // The handler this replaced wired three buttons by hand, each with a
+    // CAPTURED string — which is how 📷 Take Photo announced a sign-in hint to a
+    // rider who was signed in and merely far away.
+    signedIn = true;
+    openPopup({ fix: FAR, props: { vehicle_identifier: PHOTO_VID } });
+    const reasons = [
+      ...lastPopupEl!.querySelectorAll<HTMLElement>(".device-popup__actbtn.is-blocked"),
+    ].map((b) => b.dataset.blocked);
+    expect(reasons.length).toBeGreaterThan(1);
+    expect(new Set(reasons).size).toBeGreaterThan(1);
+    // Nobody signed-in is told to sign in.
+    for (const r of reasons) expect(r).not.toContain("Sign in");
+  });
+});
+
 describe("device popup — the photo row", () => {
   it("offers both photo actions to a signed-in rider", () => {
     const html = openPopup({
@@ -312,13 +391,42 @@ describe("device popup — the photo row", () => {
     expect(html).not.toContain('data-action="photos-blocked"');
   });
 
-  it("is NOT proximity-gated — an old photo is worth seeing from anywhere", () => {
+  // PHASE 12 §12.2 SPLIT THESE TWO APART. This test used to assert that NEITHER
+  // photo action was proximity-gated, on the reasoning that "an old photo is
+  // worth seeing from anywhere" — which is true, and is true only of LOOKING.
+  // Uploading was ungated by the same stroke, so a photo of anything could be
+  // filed against any scooter in the city from anywhere on earth. The reading
+  // half of the old rule survives below, unchanged; the writing half does not.
+  it("keeps 🖼️ Show Photos ungated — an old photo is worth seeing from anywhere", () => {
     const html = openPopup({
       fix: FAR,
       props: { vehicle_identifier: PHOTO_VID },
     });
-    expect(html).toContain('data-action="take-photo"');
     expect(html).toContain('data-action="show-photos"');
+  });
+
+  it("gates 📷 Take Photo at the vehicle — a photo is evidence about a scooter you can see", () => {
+    const html = openPopup({
+      fix: FAR,
+      props: { vehicle_identifier: PHOTO_VID },
+    });
+    expect(html).not.toContain('data-action="take-photo"');
+    expect(html).toContain('data-action="photos-blocked"');
+    // Blocked, never `disabled`: it has to stay tappable to deliver its reason,
+    // and on a phone the tap is the only channel.
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toContain(" disabled");
+  });
+
+  it("exempts an admin from the photo gate, as it does from every proximity gate", () => {
+    // The gate is a credibility check, not a data dependency: the upload is
+    // keyed on the DEVICE, so a distant admin files exactly the same photo.
+    const html = openPopup({
+      fix: FAR,
+      admin: true,
+      props: { vehicle_identifier: PHOTO_VID },
+    });
+    expect(html).toContain('data-action="take-photo"');
   });
 
   it("blocks both when signed out — listing needs a bearer token too", () => {
