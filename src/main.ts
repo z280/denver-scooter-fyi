@@ -790,6 +790,24 @@ void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
 wireAccount();
+/** §11.1's voice, one per app. Built eagerly rather than per ride so the mute
+ *  survives one — and because `createRideVoice` touches nothing until it is asked
+ *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
+ *  platform lacks either half.
+ *
+ *  DECLARED ABOVE `wireRideHud()`'S CALL, AND THAT ORDER IS LOAD-BEARING.
+ *  `wireRideHud` reads `rideVoice` in the object literal it builds, and it is
+ *  CALLED at module top level below. A `function` declaration hoists; a `const`
+ *  does not, so declaring this after that call put `rideVoice` in its temporal
+ *  dead zone at exactly the moment the call read it: `ReferenceError: Cannot
+ *  access 'rideVoice' before initialization`, thrown during module evaluation.
+ *  That aborts the REST of main.ts — every `wire*` below it, the ride-modal
+ *  registry, the Ride Mode button's own handler — so the whole app booted to a
+ *  map with dead chrome. `ride-voice-wired.test.ts` could not see it: it reads
+ *  this file as TEXT, and the text it asserts on was present and correct.
+ *  `main-boot-order.test.ts` is the guard that can see it. */
+const rideVoice = createRideVoice(browserVoiceDeps());
+
 const rideHud = wireRideHud();
 startSunSync();
 wireFreshnessCollapse();
@@ -846,12 +864,6 @@ if (!isAuthenticated()) {
 function equityZones(): Promise<IndexedFeature[]> {
   return equityAreaFeatures();
 }
-
-/** §11.1's voice, one per app. Built eagerly rather than per ride so the mute
- *  survives one — and because `createRideVoice` touches nothing until it is asked
- *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
- *  platform lacks either half. */
-const rideVoice = createRideVoice(browserVoiceDeps());
 
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
