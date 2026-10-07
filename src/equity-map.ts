@@ -114,9 +114,17 @@ function escapeHtml(s: string): string {
 /** Body markup for the explainer, quoting the contract terms verbatim.
  *  `openModal` is injected rather than imported so this module doesn't pull
  *  in devices.ts (and the whole map popup stack) just to render a dialog. */
-export function explainerHtml(areaName: string | null): string {
+export function explainerHtml(
+  areaName: string | null,
+  opts: { receiptButton?: boolean } = {},
+): string {
   const where = areaName
     ? `<p class="equity-explainer__where">You're looking at <strong>${escapeHtml(prettyEquityArea(areaName))}</strong>.</p>`
+    : "";
+  // Only when there is a form to open — a button wired to nothing is worse
+  // than no button. See `EquityAreaMap.openReceiptForm`.
+  const receipt = opts.receiptButton
+    ? `<button type="button" class="login-btn login-btn--secondary equity-explainer__receipt" data-equity-receipt>Didn't get the discount?</button>`
     : "";
   return `
     <div class="equity-explainer">
@@ -135,6 +143,7 @@ export function explainerHtml(areaName: string | null): string {
         contract. It is the same map this app's daily compliance numbers are
         computed against.
       </p>
+      ${receipt}
     </div>`;
 }
 
@@ -151,9 +160,33 @@ export class EquityAreaMap implements InspectSource {
   constructor(
     private readonly map: MLMap,
     private readonly chip: HTMLElement,
-    /** Opens the tap explainer. Injected — see explainerHtml. */
-    private readonly openModal: (title: string, bodyHtml: string) => void,
+    /** Opens the tap explainer. Injected — see explainerHtml. `onOpen` gets
+     *  the dialog once it is in the DOM, to wire the receipt button. */
+    private readonly openModal: (
+      title: string,
+      bodyHtml: string,
+      onOpen?: (root: HTMLElement | null) => void,
+    ) => void,
+    /** "Didn't get the discount?" — opens equity-receipt-form.ts. Injected
+     *  for the same reason as `openModal`; omitted, the button is not drawn. */
+    private readonly openReceiptForm?: () => void,
   ) {}
+
+  /** Open the explainer, with the receipt button wired when there is a form
+   *  behind it. Both entry points (the chip, the triple-tap) go through here
+   *  so neither can end up with a dead button. */
+  private openExplainer(title: string, areaName: string | null): void {
+    const openForm = this.openReceiptForm;
+    if (!openForm) {
+      this.openModal(title, explainerHtml(areaName));
+      return;
+    }
+    this.openModal(title, explainerHtml(areaName, { receiptButton: true }), (root) =>
+      root
+        ?.querySelector("[data-equity-receipt]")
+        ?.addEventListener("click", () => openForm()),
+    );
+  }
 
   /** Wire the chip and start watching the map. Loads the geometry lazily,
    *  then syncs once when it lands — a rider who opens the app already
@@ -310,16 +343,12 @@ export class EquityAreaMap implements InspectSource {
     if (!area) return null;
     return {
       key: `equity:${area.region_name}`,
-      open: () =>
-        this.openModal("This is an Equity Area", explainerHtml(area.region_name)),
+      open: () => this.openExplainer("This is an Equity Area", area.region_name),
     };
   }
 
   /** Open the explainer for whatever the chip is currently showing. */
   explain(): void {
-    this.openModal(
-      "You're in an Equity Area",
-      explainerHtml(this.shownArea ?? null),
-    );
+    this.openExplainer("You're in an Equity Area", this.shownArea ?? null);
   }
 }

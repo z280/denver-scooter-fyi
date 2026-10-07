@@ -75,6 +75,7 @@ import { requestLocationOnLoad } from "./locate-on-load.ts";
 import { RideHud, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
+import { openEquityReceiptForm } from "./equity-receipt-form.ts";
 import { equityAreaFeatures, isInEquityArea } from "./equity-areas.ts";
 import { ensureBands } from "./map-bands.ts";
 import { MapInspector, SPOT_INSPECT_TITLE, buildSpotHtml } from "./map-inspect.ts";
@@ -375,9 +376,34 @@ const overlays = new Overlays(map, need("choropleth-legend"));
 // default) and the on-screen "$0.13/min" indicator. Replaces the equity-rank
 // estimator, whose whole premise — that the city hadn't said which ranks
 // bind the SLA — stopped being true in August 2026.
-const equityAreas = new EquityAreaMap(map, need("equity-indicator"), (t, b) =>
-  openFloatingModal(t, b),
+const equityAreas = new EquityAreaMap(
+  map,
+  need("equity-indicator"),
+  (t, b, onOpen) => openFloatingModal(t, b, onOpen),
+  () => openEquityReceipt(),
 );
+/** "Didn't get the discount?" — the receipt form, opened from the explainer.
+ *  The explainer closes first: the form is the next step, and two stacked
+ *  dialogs would each want Escape. A function declaration, and only ever
+ *  called from a click, so nothing it reads can be in its TDZ at startup. */
+function openEquityReceipt(): void {
+  document
+    .querySelector<HTMLButtonElement>(".ranks-modal .ranks-modal__close")
+    ?.click();
+  openEquityReceiptForm({
+    isSignedIn: () => isAuthenticated(),
+    openSignIn: () => {
+      const tab = document.querySelector<HTMLButtonElement>(
+        '.topbar__right .drawer-tab[data-drawer="account"]',
+      );
+      if (!tab || tab.classList.contains("is-active")) return;
+      tab.dataset.accountTab = "login";
+      tab.click();
+    },
+    pickOnMap: (hint) => mapPick.pick({ hint }),
+    returnFocusTo: document.getElementById("equity-indicator"),
+  });
+}
 /** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
  *  See `micromobility-zones.ts` for the provenance and for what the city's
  *  rulebook does and does not tell us. */

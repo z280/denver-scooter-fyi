@@ -1867,6 +1867,7 @@ body.ride-active .arrival {
 .home-bar__close,
 .qr-scan__close,
 .device-features__close,
+.equity-receipt__close,
 .ride-preflight__close,
 .admin-analytics__close,
 .ride-modal__close {
@@ -1897,6 +1898,7 @@ body.ride-active .arrival {
    promise not to wrap, which it gets below. */
 .qr-scan__card,
 .device-features__card,
+.equity-receipt__card,
 .ride-preflight__card,
 .admin-analytics__card,
 .home-bar__sheet {
@@ -1904,6 +1906,7 @@ body.ride-active .arrival {
 }
 .qr-scan__close,
 .device-features__close,
+.equity-receipt__close,
 .ride-preflight__close,
 .admin-analytics__close,
 .home-bar__close,
@@ -1920,6 +1923,7 @@ body.ride-active .arrival {
 }
 .qr-scan__head,
 .device-features__head,
+.equity-receipt__head,
 .ride-preflight__head,
 .admin-analytics__head {
   padding-right: 40px;
@@ -2592,6 +2596,161 @@ body.is-map-picking .home-bar {
   margin-bottom: 0;
   color: var(--fg-muted);
   font-size: 12px;
+}
+.equity-explainer__receipt {
+  margin-top: 14px;
+}
+
+/* ---------- equity-receipt-form.ts: "Didn't get the discount?" ---------- */
+/* Mobile first: a full-height sheet on a phone (it is a long form, and a
+   floating card would leave a sliver of map nobody can use), a card from
+   tablet width up. Above .ranks-modal (70), below .qr-scan (74), which it
+   opens. */
+.equity-receipt {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+/* `display: flex` above would otherwise beat the attribute: hidden while a
+   map pick is under way. */
+.equity-receipt[hidden] {
+  display: none;
+}
+.equity-receipt__card {
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  padding: calc(14px + env(safe-area-inset-top)) 16px
+    calc(16px + env(safe-area-inset-bottom));
+}
+@media (min-width: 600px) {
+  .equity-receipt {
+    align-items: center;
+    padding: 20px;
+  }
+  .equity-receipt__card {
+    width: min(440px, 94vw);
+    max-height: 90vh;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 14px 16px 16px;
+  }
+}
+.equity-receipt__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.equity-receipt__head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.equity-receipt__close {
+  cursor: pointer;
+}
+.equity-receipt__lede {
+  margin: 6px 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.equity-receipt__field,
+.equity-receipt__costs {
+  margin: 0 0 14px;
+}
+.equity-receipt__costs {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.equity-receipt__label {
+  display: block;
+  margin: 0 0 4px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.equity-receipt__sublabel {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.equity-receipt__hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+/* 16px text: anything smaller and iOS Safari zooms the page on focus. */
+.equity-receipt__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 16px;
+}
+.equity-receipt__input[aria-invalid="true"] {
+  border-color: var(--fail);
+}
+.equity-receipt__file {
+  display: block;
+  width: 100%;
+  font-size: 14px;
+}
+.equity-receipt__row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.equity-receipt__row > .equity-receipt__input,
+.equity-receipt__cell,
+.equity-receipt__pin {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.equity-receipt__scan {
+  flex: 0 0 auto;
+  width: auto;
+}
+.equity-receipt__error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fail);
+}
+.equity-receipt__alert {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.equity-receipt__status {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.equity-receipt__status:empty {
+  display: none;
+}
+.equity-receipt__done {
+  margin: 10px 0 14px;
+  font-size: 15px;
+  line-height: 1.45;
 }
 
 /* ---------- Compliance calendar ---------- */
