@@ -1194,32 +1194,44 @@ export interface ActiveRideResponse {
   active: TrackedRide | null;
 }
 
+export interface ListTrackedRidesOptions {
+  limit?: number;
+  /** ISO timestamp; must carry a UTC offset per the API contract. */
+  before?: string;
+  status?: TrackedRideStatus;
+}
+
 export interface TrackedRideListResponse {
   count: number;
+  /** List rows never carry `track_signing` (API.md, verbatim) — the type is the
+   *  full `TrackedRide` shape only because that field, and the other owner-only
+   *  extras, are already optional there. */
   rides: TrackedRide[];
 }
 
 /** The rider's recent tracked rides, newest first (API.md: owner-only).
  *
- *  FOR §2.2'S FREE-MINUTE ESTIMATE, which needs today's rides and nothing
- *  older. `limit` is small by default for that reason: a rider cannot spend a
- *  60-minute allowance across more than 60 rides, Veo bills the started minute,
- *  and the estimate only ever counts rides that started on today's Denver
- *  billing day — so a deeper page is network spent on rows the caller discards.
- *
- *  No `before` cursor is taken. Paging backwards through history to be sure of
- *  catching every ride today would make an estimate the control already labels
- *  as a FLOOR into a much more expensive estimate that is still a floor, because
- *  rides taken outside this app are invisible to it either way. */
-export async function listTrackedRides(
-  options: { limit?: number; signal?: AbortSignal } = {},
-): Promise<TrackedRide[]> {
-  const limit = options.limit ?? 40;
-  const res = await authedFetchJSON<TrackedRideListResponse>(
-    `/api/v1/tracked-rides?limit=${encodeURIComponent(String(limit))}`,
-    { signal: options.signal },
+ *  THE ONE CLIENT FOR THIS ENDPOINT, and it was two for a while. `ride-post-s10.ts`
+ *  built its own as a documented deviation — "added HERE rather than touching the
+ *  shared api.ts ... flagged for the integrator to fold into api.ts properly
+ *  whenever that file next gets touched" — and this module's first version of it
+ *  arrived for §2.2's free-minute estimate without noticing, which made two
+ *  clients for one endpoint with different signatures and different return shapes.
+ *  Exactly the "two mechanisms that agree by coincidence" this program keeps
+ *  deleting. Folded, as that note asked. */
+export function listTrackedRides(
+  opts: ListTrackedRidesOptions = {},
+  signal?: AbortSignal,
+): Promise<TrackedRideListResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.before) params.set("before", opts.before);
+  if (opts.status) params.set("status", opts.status);
+  const qs = params.toString();
+  return authedFetchJSON<TrackedRideListResponse>(
+    `/api/v1/tracked-rides${qs ? `?${qs}` : ""}`,
+    { signal },
   );
-  return res?.rides ?? [];
 }
 
 /** The rider's live ride, or null. Unwraps the `{ active }` envelope. */

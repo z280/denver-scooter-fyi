@@ -4040,7 +4040,7 @@ async function refreshTodaysRides(): Promise<boolean> {
   if ((savedRatePlan() ?? "resident") !== "equity") return false;
   if (savedCorrection(Date.now()) !== null) return false;
   try {
-    todaysRides = spansOf(await listTrackedRides({ limit: 40 }));
+    todaysRides = spansOf((await listTrackedRides({ limit: 40 })).rides);
     return true;
   } catch {
     // Left as null, which the estimate reads as the pessimistic figure. A failed

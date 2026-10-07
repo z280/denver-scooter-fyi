@@ -23,7 +23,10 @@ import {
   type RideSessionSelectedDevice,
 } from "./ride-session.ts";
 import type { TrackRecorder, TrackStore } from "./track-store.ts";
-import { showResumeOrEnd } from "./ride-resume-prompt.ts";
+import {
+  showResumeOrEnd,
+  type ShowResumeOrEndDeps,
+} from "./ride-resume-prompt.ts";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -492,5 +495,204 @@ describe("[End it]", () => {
       expect.objectContaining({ end_lat: FIX.lat, end_lon: FIX.lng }),
     );
     expect(queryRoot()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.4 case 2 — "did your ride end at 4:12pm?"
+//
+// The failure this closes: a rider walks away without finishing Screen 8, comes
+// back hours later, and [End it] stamps `ended_at` with NOW. A ride abandoned at
+// 4:12pm and recovered at 9pm files as a five-hour ride, and §11.4's own words
+// are that "a ride ended hours late is worse data than no ride".
+// ---------------------------------------------------------------------------
+
+/** A track store that also answers `readTip`, which the recovery offer reads. */
+function storeWithTip(
+  lastPointMs: number | null,
+  recorder: TrackRecorder | null = null,
+): TrackStore & { readTip: ReturnType<typeof vi.fn> } {
+  const base = fakeTrackStore(recorder);
+  const readTip = vi.fn(async () =>
+    lastPointMs === null ? null : { lastPointMs, trackId: "server-ride-1" },
+  );
+  return Object.assign(base, { readTip }) as never;
+}
+
+const STARTED_MS = Date.parse("2026-07-29T12:00:00Z");
+/** Five hours after the ride started; the last recorded point is at +1h. */
+const RECOVERED_NOW = STARTED_MS + 5 * 60 * 60_000;
+const LAST_POINT = STARTED_MS + 60 * 60_000;
+
+type EndFn = NonNullable<ShowResumeOrEndDeps["endTrackedRide"]>;
+
+/** A typed `PATCH /end` mock whose `mock.calls` these tests read the body out of. */
+function endMock() {
+  return vi.fn<EndFn>(async () => fakeRide({ status: "completed" }));
+}
+
+function showWithTip(opts: {
+  lastPointMs: number | null;
+  endTrackedRide?: ReturnType<typeof endMock>;
+  withResumePlan?: boolean;
+}) {
+  const endTrackedRide = opts.endTrackedRide ?? endMock();
+  const store = storeWithTip(opts.lastPointMs);
+  const dispose = showResumeOrEnd(
+    outcomeFor(
+      fakeRide(),
+      opts.withResumePlan === false
+        ? null
+        : { trackId: "server-ride-1", signing: null, keySource: "server", freshChain: false, tip: null },
+    ),
+    {
+      session: docSession(),
+      locate: fakeLocate(FIX),
+      getTrackStore: async () => store,
+      onResumed: vi.fn(),
+      endTrackedRide,
+      now: () => RECOVERED_NOW,
+    },
+  );
+  return { dispose, endTrackedRide, store };
+}
+
+describe("[End it at …] — the recovered end time", () => {
+  it("offers the last recorded time once the tip lands", async () => {
+    showWithTip({ lastPointMs: LAST_POINT });
+    // Not before: a recovery prompt that waits on IndexedDB is worse than one
+    // that grows a third option a moment later.
+    expect(root().textContent).not.toContain("End it at");
+    await flush();
+    expect(root().textContent).toContain("End it at");
+    // And it says what it CANNOT recover, which is the part a rider would assume.
+    expect(root().textContent).toContain("not the place");
+    expect(root().textContent).toContain("about 4 hours ago");
+  });
+
+  it("relabels the now-button so the two are told apart", async () => {
+    // The two actions are nearly the same, and the difference between them is the
+    // only thing worth reading.
+    showWithTip({ lastPointMs: LAST_POINT });
+    await flush();
+    expect(root().textContent).toContain("End it now instead");
+  });
+
+  it("sends the recovered timestamp, not now", async () => {
+    const { endTrackedRide } = showWithTip({ lastPointMs: LAST_POINT });
+    await flush();
+    const btn = [...root().querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.textContent?.startsWith("End it at"),
+    )!;
+    btn.click();
+    await flush();
+    expect(endTrackedRide).toHaveBeenCalledTimes(1);
+    const body = endTrackedRide.mock.calls[0][1];
+    expect(body.ended_at).toBe(new Date(LAST_POINT).toISOString());
+    expect(body.ended_at).not.toBe(new Date(RECOVERED_NOW).toISOString());
+  });
+
+  it("marks the recovered fields so a consumer can tell them apart", async () => {
+    // `EndRideIn` requires end_lat/end_lon, so the CURRENT position goes in them
+    // either way. On a recovered end that is not where the ride stopped — quietly
+    // sending it under a recovered timestamp would trade one wrong field for
+    // another and call it a fix.
+    const { endTrackedRide } = showWithTip({ lastPointMs: LAST_POINT });
+    await flush();
+    const btn = [...root().querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.textContent?.startsWith("End it at"),
+    )!;
+    btn.click();
+    await flush();
+    const body = endTrackedRide.mock.calls[0][1];
+    expect(body.metadata).toMatchObject({
+      ended_at_source: "last_recorded_fix",
+      end_position_source: "reporting_device_now",
+    });
+    expect(body.end_lat).toBe(FIX.lat);
+  });
+
+  it("still stamps now when the rider picks the now-button", async () => {
+    const { endTrackedRide } = showWithTip({ lastPointMs: LAST_POINT });
+    await flush();
+    buttonWithText("End it now instead").click();
+    await flush();
+    const body = endTrackedRide.mock.calls[0][1];
+    expect(body.ended_at).toBe(new Date(RECOVERED_NOW).toISOString());
+    // No recovery metadata on a witnessed end — the marking exists to flag the
+    // recovered case, so attaching it here would make it meaningless.
+    expect(body.metadata).toBeUndefined();
+  });
+
+  it("offers nothing when this device recorded no point", async () => {
+    showWithTip({ lastPointMs: null });
+    await flush();
+    expect(root().textContent).not.toContain("End it at");
+    expect(root().textContent).toContain("End it");
+  });
+
+  it("never opens the track store without a resume plan", async () => {
+    // The pre-existing invariant, and the same field gates both: no local track
+    // means `readTip` would answer null anyway, so opening IndexedDB is work with
+    // a known-empty result.
+    const store = storeWithTip(LAST_POINT);
+    showResumeOrEnd(outcomeFor(fakeRide(), null), {
+      session: docSession(),
+      locate: fakeLocate(FIX),
+      getTrackStore: async () => store,
+      onResumed: vi.fn(),
+      endTrackedRide: endMock(),
+      now: () => RECOVERED_NOW,
+    });
+    await flush();
+    expect(store.readTip).not.toHaveBeenCalled();
+    expect(root().textContent).not.toContain("End it at");
+  });
+
+  it("reads the resume plan's own track id, not the ride id", async () => {
+    // They are the same for a server ride today. Reading the plan's id is correct
+    // by construction instead of by coincidence.
+    const store = storeWithTip(LAST_POINT);
+    showResumeOrEnd(
+      outcomeFor(fakeRide(), {
+        trackId: "local-track-9",
+        signing: null,
+        keySource: "server",
+        freshChain: false,
+        tip: null,
+      }),
+      {
+        session: docSession(),
+        locate: fakeLocate(FIX),
+        getTrackStore: async () => store,
+        onResumed: vi.fn(),
+        endTrackedRide: endMock(),
+        now: () => RECOVERED_NOW,
+      },
+    );
+    await flush();
+    expect(store.readTip).toHaveBeenCalledWith("local-track-9");
+  });
+
+  it("survives a track store that will not open", async () => {
+    // Every failure path means "we cannot honestly say when it ended", so the
+    // prompt keeps its existing two buttons rather than breaking.
+    showResumeOrEnd(
+      outcomeFor(fakeRide(), { trackId: "t", signing: null, keySource: "server", freshChain: false, tip: null }),
+      {
+        session: docSession(),
+        locate: fakeLocate(FIX),
+        getTrackStore: async () => {
+          throw new Error("IndexedDB blocked");
+        },
+        onResumed: vi.fn(),
+        endTrackedRide: endMock(),
+        now: () => RECOVERED_NOW,
+      },
+    );
+    await flush();
+    expect(queryRoot()).not.toBeNull();
+    expect(root().textContent).not.toContain("End it at");
+    expect(buttonWithText("End it")).toBeTruthy();
   });
 });

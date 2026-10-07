@@ -35,6 +35,11 @@ import type {
   RideRecoveryOutcome,
   RideSessionStore,
 } from "./ride-session.ts";
+import {
+  endRecoveryCopy,
+  endRecoveryOffer,
+  type EndRecoveryOffer,
+} from "./ride-end-recovery.ts";
 import { defaultRideOptionsFor } from "./ride-settings.ts";
 import type { TrackRecorder, TrackStore } from "./track-store.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
@@ -131,6 +136,12 @@ export function showResumeOrEnd(
   let destroyed = false;
   let busy = false;
   let error: string | null = null;
+  /** §11.4 case 2's offer, once the track store has been asked. `undefined` means
+   *  not asked yet, `null` means asked and there is nothing honest to offer — the
+   *  prompt renders immediately either way and gains the button when it lands,
+   *  because a recovery prompt that waits on IndexedDB is worse than one that
+   *  grows a third option a moment later. */
+  let recovery: EndRecoveryOffer | null | undefined = undefined;
 
   const backdrop = el("div", "ride-post-modal");
   backdrop.setAttribute("role", "dialog");
@@ -180,7 +191,28 @@ export function showResumeOrEnd(
     resumeBtn.type = "button";
     resumeBtn.disabled = busy;
     resumeBtn.addEventListener("click", () => void onResume());
-    const endBtn = el("button", "login-btn login-btn--secondary", "End it");
+    // §11.4 case 2. OFFERED ABOVE [End it] AND LABELLED WITH THE TIME, because
+    // the two buttons are nearly the same action and the difference between them
+    // is the only thing worth reading: "End it" stamps now, this one stamps when
+    // the ride actually stopped being recorded. A rider abandoning a ride at
+    // 4:12pm and recovering at 9pm otherwise files a five-hour ride.
+    if (recovery) {
+      card.append(el("p", "ride-modal__hint", endRecoveryCopy(recovery)));
+      const atBtn = el(
+        "button",
+        "login-btn login-btn--secondary",
+        `End it at ${recovery.timeLabel}`,
+      );
+      atBtn.type = "button";
+      atBtn.disabled = busy;
+      atBtn.addEventListener("click", () => void onEnd(recovery ?? undefined));
+      actions.append(atBtn);
+    }
+    const endBtn = el(
+      "button",
+      "login-btn login-btn--secondary",
+      recovery ? "End it now instead" : "End it",
+    );
     endBtn.type = "button";
     endBtn.disabled = busy;
     endBtn.addEventListener("click", () => void onEnd());
@@ -247,7 +279,10 @@ export function showResumeOrEnd(
     deps.onResumed(ride, startedAtMs, recorder);
   }
 
-  async function onEnd(): Promise<void> {
+  /** `at` present: §11.4 case 2's recovered end. Absent: the original behaviour,
+   *  stamping now — which is correct for a rider who just finished and is
+   *  explicitly offered as "End it now instead" when a recovery is available. */
+  async function onEnd(at?: EndRecoveryOffer): Promise<void> {
     if (busy || destroyed) return;
     let fix = deps.locate.current();
     if (!fix) {
@@ -269,9 +304,14 @@ export function showResumeOrEnd(
     render();
     try {
       await endTrackedRide(ride.id, {
-        ended_at: new Date(now()).toISOString(),
+        ended_at: new Date(at ? at.endedAtMs : now()).toISOString(),
+        // The CURRENT position either way, because `EndRideIn` requires one and
+        // this is the only one available. On a recovered end that is not where the
+        // ride stopped, which is why the metadata says so rather than leaving a
+        // consumer to assume a witnessed fix.
         end_lat: fix.lat,
         end_lon: fix.lng,
+        ...(at ? { metadata: at.metadata } : {}),
       });
     } catch (e) {
       if (destroyed) return;
@@ -289,8 +329,57 @@ export function showResumeOrEnd(
     destroy();
   }
 
+  /** §11.4 case 2 — ask the local track store when it last recorded this ride.
+   *
+   *  AFTER THE FIRST RENDER, never before it. A recovery prompt that waits on
+   *  IndexedDB to appear is worse than one that grows a third option a moment
+   *  later: the two buttons it already has are both usable, and the rider may
+   *  well be reaching for [Resume] regardless.
+   *
+   *  Every failure path leaves `recovery` null, which is the existing behaviour.
+   *  A store that will not open, a ride this device never recorded, or a tip
+   *  whose timestamps do not make sense all mean "we cannot honestly say when it
+   *  ended" — and the prompt says nothing rather than guessing. */
+  async function loadRecovery(): Promise<void> {
+    // GATED ON `outcome.resume`, for two reasons that happen to agree.
+    //
+    // It is the signal that THIS DEVICE HAS A LOCAL TRACK for the ride — without
+    // one, `readTip` answers null and there is nothing to recover, so opening
+    // IndexedDB would be work with a known-empty result. [Resume]'s own branch
+    // gates on the same field for the same reason, and a test pins that the store
+    // is never opened without it.
+    //
+    // It also carries the right KEY. `trackId` is not necessarily `ride.id` — it
+    // is `ride.id` for a server ride today, and reading the plan's own id rather
+    // than assuming they match is correct by construction instead of by
+    // coincidence.
+    const plan = outcome.resume;
+    if (!plan) {
+      recovery = null;
+      return;
+    }
+    try {
+      const store = await deps.getTrackStore();
+      const tip = await store.readTip(plan.trackId);
+      if (destroyed) return;
+      recovery = endRecoveryOffer({
+        lastPointMs: tip?.lastPointMs ?? null,
+        startedAtMs: Date.parse(ride.started_at),
+        now: now(),
+      });
+    } catch {
+      if (destroyed) return;
+      recovery = null;
+    }
+    // Only repaint when there is something new to show, and never over a rider
+    // mid-action: a button appearing under a thumb that is already pressing one is
+    // how a rider ends a ride at the wrong time by accident.
+    if (recovery && !busy) render();
+  }
+
   mountRoot.append(backdrop);
   render();
+  void loadRecovery();
 
   return destroy;
 }

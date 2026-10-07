@@ -2415,6 +2415,42 @@ when the ride is not `riding`.
 The HUD offers ±15s/±1m nudges and a reset because we cannot see Veo's billing
 clock. That is an honest workaround, and it has become the rider's job.
 
+> **NOT BUILT, AND BOTH HALVES NEED THE OWNER.** This section rests on two
+> premises, and each has been overtaken by a later decision in this same
+> codebase. Recorded rather than worked around, because forcing either would
+> reverse a change that was made deliberately and for good reasons.
+>
+> **"Screen 8 already collects the truth" is no longer true.** `ride-post-s8.ts`
+> stopped asking for battery, cost and minutes entirely, in a documented
+> friction-reduction rewrite whose reasoning is strong: the form yanked focus
+> between fields, riders never reached [Submit], so `endTrackedRide` never
+> fired, `endReported` never dispatched, and **the ride never reached Screens
+> 9/10's donation flow at all**. [Rush Quit] skipped those by design, so even
+> the riders who escaped the broken form never got asked to donate. Screen 8 is
+> now one button.
+>
+> So the per-rider calibration has no input. Building it means reintroducing the
+> form that was deleted — and the calibration's value (a cost estimate that is
+> roughly right rather than trusted) is smaller than the value of every ride
+> reaching the donation flow. **If the owner wants the calibration, the input has
+> to come from somewhere other than a blocking form** — the receipt reader of
+> Phase 8 is the obvious candidate, since it already extracts a real total and
+> real minutes from a screenshot the rider was going to look at anyway, and asks
+> for nothing at the moment they are trying to leave.
+>
+> **"The QR scan is the start moment" is in tension with §6.7.3**, which states
+> the opposite rule for the neighbouring case: *"Inventing an earlier start time
+> on the rider's behalf would be guessing at the number Veo is actually billing
+> them on."* The two are reconcilable — §6.7.3 is about a rider saying "I already
+> started", where the unlock time is genuinely unknown, while a scan is a real
+> timestamped event — and the reconciliation is a judgement call about whose
+> clock we claim to know, which is not one to make silently. Worth noting that the
+> scan precedes the unlock, so a scan-time start makes our clock run LONG, which
+> is the safe direction for a cost estimate.
+>
+> `qr-ride-scan.ts`'s `QrRideAction` carries no timestamp today, so either answer
+> is a small change.
+
 Two things already in hand would mostly retire it:
 
 - **The QR scan is the start moment.** Ride mode's scan (`qr-ride-scan.ts`)
@@ -2454,6 +2490,31 @@ Three endings, one of which corrupts data:
    offer: *"did your ride end at 4:12pm?"*, using the last fix's timestamp,
    which is the honest answer and one tap. Today the rider has to reconstruct
    it themselves, and a ride ended hours late is worse data than no ride.
+
+   > **Shipped** as `ride-end-recovery.ts` plus a third button on
+   > `ride-resume-prompt.ts`. `TrackTip.lastPointMs` is the source — when this
+   > device last recorded a position for that ride.
+   >
+   > **IT CANNOT RECOVER *WHERE*, and the offer says so.** `EndRideIn` requires
+   > `end_lat`/`end_lon`, so something has to go in them, and the only position
+   > available at recovery time is where the rider is standing now. Quietly
+   > sending that under a recovered timestamp would trade one wrong field for
+   > another and call it a fix — so the copy names the limit, and the `metadata`
+   > marks both fields' sources so a consumer can tell a recovered end from a
+   > witnessed one.
+   >
+   > Three guards, each a case where the offer would be a guess dressed as a
+   > recollection: a gap under two minutes (where "now" is the same answer and a
+   > third button is noise), a last point before the ride began or in the future
+   > (a clock problem), and a non-finite figure (`Intl.DateTimeFormat` throws on
+   > one, and a prompt that throws while rendering leaves the rider unable to end
+   > their ride at all — the one outcome worse than a late timestamp).
+   >
+   > It reads the track store only when `outcome.resume` exists, which is both
+   > correct and free: that field means this device HAS a local track, so without
+   > it `readTip` answers null anyway. It also carries the right key — `trackId`
+   > is `ride.id` for a server ride today, and reading the plan's own id is
+   > correct by construction rather than by coincidence.
 3. **Something went wrong — a crash, a fall, a stop.** Nothing. There is no
    detection and no check-in. This is worth stating as a deliberate decision
    rather than an omission: a false "are you OK?" is alarming, and a missed
@@ -2522,6 +2583,54 @@ missing from the end of a ride is the sentence that brings somebody back:
 *that was your 12th ride, 38 miles, and you've saved $47 against the
 comparator.* `equity-savings.ts` (Phase 5) already computes most of it. The
 asset exists and the ride flow does not use it.
+
+> **Shipped as `ride-accumulation.ts`, with the comparison THE OTHER WAY
+> ROUND.**
+>
+> "You've saved $47 against the comparator" has the sign backwards. The
+> comparator is `config.ts`'s `COMPARATOR` — "if Veo had competition", a pass
+> ladder at **$2.99 for 30 minutes** — and it is CHEAPER than Veo for essentially
+> every ride. A rider does not save against it; they pay a premium to a monopoly.
+> Every other surface already says so in those terms: the ride summary's own line
+> is *"You paid ≈ $X more because Denver has one operator"*, computed as
+> `veoCents − passQuote.cents`.
+>
+> A lifetime "you've saved $47" would therefore be the one place in this app that
+> inverts the comparison — and it would invert it **in Veo's favour**. The
+> accumulated figure is the premium, which is also the more on-mission sentence:
+> documenting what the single-operator market costs riders is what this app is
+> for.
+>
+> Two other judgements, both about saying nothing:
+>
+> - **Every total carries its own denominator.** A lifetime distance computed over
+>   the three rides that happened to be measured, presented as covering all
+>   twelve, is the kind of number that gets noticed once and never trusted again.
+>   `isPartial()` lets the surface say which.
+> - **Each clause earns its place independently**, and under two rides there is no
+>   sentence at all. "That was your 1st ride, 0.6 miles, and you've saved $0.40"
+>   is the app congratulating a rider on nothing, at the moment they are trying to
+>   put their phone away, and it makes the figure look like the point rather than
+>   the trend.
+>
+> `equity-savings.ts` is NOT used here, incidentally: its figures are about a
+> plan a rider has not taken yet, and this is about rides they have.
+>
+> **NOT WIRED, AND IT IS AN API GAP RATHER THAN AN OVERSIGHT.** "That was your
+> 12th ride" needs a LIFETIME ride count, and nothing serves one:
+> `GET /api/v1/tracked-rides` returns `{ count, rides }` where `count` is
+> `len(rides)` — the page size, not the total. The figure can only be had by
+> paging all of a rider's history at the moment they are trying to put their
+> phone away, which is the one thing this sentence must not cost. Counting the
+> local track store instead gives a PER-DEVICE figure, so a rider on a second
+> phone is told a confidently wrong ordinal; and dropping the count leaves a
+> statistic rather than a reason to come back.
+>
+> **The ask is small and the query already exists.** `badges.py`'s `_ride_badges`
+> runs the exact UNION of `tracked_rides` and off-feed `rides` this needs, for
+> lifetime distance, to award the 10- and 100-mile badges. It wants an endpoint
+> returning the totals rather than only the thresholds crossed — see the
+> correction to the sequencing table below.
 
 ### 11.9 Leg two is a new ride
 
@@ -2845,7 +2954,7 @@ the wrong call and the envelope should come back.
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
 | Phase 7 (the walkthrough) | **nothing at all** | yes, but *after* Phase 6 — see below |
-| Phase 11 (ride mode) | **almost nothing.** Voice, haptics, the equity and free-minute callouts, the clock calibration, the HUD hierarchy and the ride's closing sentence are all local. Two exceptions: the battery-reach warning wants `battery_model.py`'s view of range rather than a client guess, and share-my-ride (§11.4) is a server feature or it is nothing | yes, for everything except those two |
+| Phase 11 (ride mode) | **almost nothing.** Voice, haptics, the equity and free-minute callouts, the HUD hierarchy and the ride's closing sentence are all local. ~~the clock calibration~~ — §11.2 cannot be built as written at all; see that section. Two exceptions: the battery-reach warning wants `battery_model.py`'s view of range rather than a client guess, and share-my-ride (§11.4) is a server feature or it is nothing. **A THIRD, found while building §11.8:** the closing sentence needs a lifetime ride count, and `GET /tracked-rides`'s `count` is the page size. `badges.py` already runs the query — it wants an endpoint returning the totals, not only the badge thresholds | yes, for everything except those three |
 | Phase 12 (the device card) | **nothing at all.** Every gate it moves is client-side, and the one data change — dropping `Vehicle ID` and `Parked for` from the compact card — is a render decision | yes |
 
 Phases 1, 2 and 5a have no hard API dependency and can land first. Phase 3
