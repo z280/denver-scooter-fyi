@@ -840,3 +840,42 @@ describe("a current ride on a vehicle the feed marks reserved", () => {
     expect(seq).not.toContain("s");
   });
 });
+
+describe("the favourite bonus is a preference, not a discount", () => {
+  it("never drives a leg's cost below zero", () => {
+    // MUTATION-VERIFIED HOLE (hermes, PR #94): removing the `Math.max(0, …)`
+    // clamp in `priceRide` failed no test in the suite. Dijkstra's correctness
+    // depends on non-negative edges, so an unclamped bonus on a very cheap leg
+    // is not a mispriced plan — it is a search that can revisit a state at a
+    // lower cost forever.
+    //
+    // The fixture has to make the UNCLAMPED cost negative: a favourite one
+    // metre away, free to ride (equity tier inside its free budget, no unlock
+    // to pay), so seconds + money ≈ 0 while the bonus is 90s.
+    const nearFavorite = feature(at(1), {
+      device_id: "fav",
+      vehicle_identifier: "fav",
+    });
+    const res = rankPlans(
+      [nearFavorite],
+      ctx({
+        rate: rate("equity"),
+        freeMinutesLeft: 60,
+        to: { lat: at(2).lat, lon: at(2).lng },
+        // On the CONTEXT, keyed by `vehicleKey` (vehicle_identifier ?? device_id)
+        // — not on the spec. An earlier version of this test put it on the spec,
+        // where the field does not exist, so nothing was a favourite and the
+        // test passed with the clamp removed. It was theatre until tsc said so.
+        favorites: new Set(["fav"]),
+      }),
+    );
+    const legs = res.plans.concat(res.backups).flatMap((p) => p.legs);
+    expect(legs.length).toBeGreaterThan(0);
+    for (const l of legs) {
+      expect(l.seconds).toBeGreaterThanOrEqual(0);
+    }
+    for (const p of res.plans.concat(res.backups)) {
+      expect(p.generalisedCost).toBeGreaterThanOrEqual(0);
+    }
+  });
+});

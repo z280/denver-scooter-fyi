@@ -330,9 +330,6 @@ export function legRate(
   };
 }
 
-/** Today's free-minute usage on a re-solve, as a count of whole minutes.
- *
- *  Through `billableMinutes`, never a raw subtraction — see `InRideState`. */
 /** Today's free minutes spent, as of `now`, from an `InRideState` baseline.
  *
  *  FOR WHOEVER COMPUTES `freeMinutesLeft`, not for the search. The search takes
@@ -840,8 +837,14 @@ function searchOnce(
   }
 
   while (queue.length > 0) {
-    // Cheapest first. The queue stays small (bounded candidates × ≤61 free
-    // layers × LABELS_PER_STATE), so a linear scan beats a heap's overhead.
+    // Cheapest first, by linear scan. THE QUEUE IS BOUNDED, which is what makes
+    // that safe: `push` is label-SETTING, so a state `(node, freeUsed)` retains
+    // at most LABELS_PER_STATE (6) labels and drops a new one that no existing
+    // label beats. Hops chain with no depth cap, but the STATE SPACE does not
+    // grow with them — it is (≤ 1 origin + W first hops + H pickups + 1 dest) ×
+    // (≤61 free-minute layers), so ~22 × 61 × 6 ≈ 8k labels worst case and ~130
+    // for the four tiers that collapse to one layer. A heap wins only past that
+    // ceiling, which no input reaches.
     let best = 0;
     for (let k = 1; k < queue.length; k += 1) {
       if (queue[k].cost < queue[best].cost) best = k;
