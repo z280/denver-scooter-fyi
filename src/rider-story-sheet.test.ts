@@ -235,3 +235,39 @@ describe("declining", () => {
     expect(loadDrafts()).toEqual([]);
   });
 });
+
+describe("keyboard focus survives the panel's own rebuilds", () => {
+  it("stays on the We See You Veo box after ticking it", () => {
+    mount();
+    tick().focus();
+    setTick(true);
+    expect(document.activeElement).toBe(tick());
+    expect(tick().checked).toBe(true);
+  });
+
+  it("stays on the anonymous box and the neighbourhood list after changing them", () => {
+    mount();
+    setTick(true);
+    const anon = () => root.querySelector<HTMLInputElement>('[data-focus-key="anonymous"]')!;
+    anon().focus();
+    anon().checked = !anon().checked;
+    anon().dispatchEvent(new Event("change"));
+    expect(document.activeElement).toBe(anon());
+
+    const hood = () => root.querySelector<HTMLSelectElement>('[data-focus-key="neighborhood"]')!;
+    hood().focus();
+    hood().value = HOODS[1];
+    hood().dispatchEvent(new Event("change"));
+    expect(document.activeElement).toBe(hood());
+    expect(hood().value).toBe(HOODS[1]);
+  });
+
+  it("does not steal focus that was elsewhere", () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    mount();
+    outside.focus();
+    setTick(true);
+    expect(document.activeElement).toBe(outside);
+  });
+});

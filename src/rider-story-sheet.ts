@@ -106,6 +106,22 @@ export function mountStoryPanel(
 
   function render(): void {
     if (destroyed) return;
+    // Ticking a box or choosing a neighbourhood rebuilds the panel (the
+    // disclosure has to follow the draft). Without this a keyboard rider's
+    // focus fell back to <body> on every toggle; every focusable control
+    // carries a stable data-focus-key, and focus is put back on its rebuilt twin.
+    const active = document.activeElement;
+    const focusKey =
+      active instanceof HTMLElement && root.contains(active)
+        ? (active.dataset.focusKey ?? null)
+        : null;
+    build();
+    if (focusKey) {
+      root.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"]`)?.focus();
+    }
+  }
+
+  function build(): void {
     root.replaceChildren();
 
     if (finished) {
@@ -124,6 +140,7 @@ export function mountStoryPanel(
     box.maxLength = STORY_MAX_LENGTH;
     box.value = draft.text;
     box.id = `story-text-${draft.id}`;
+    box.dataset.focusKey = "text";
     label.htmlFor = box.id;
     box.addEventListener("input", () => {
       // No re-render on input: rebuilding the panel under a typing rider
@@ -140,6 +157,7 @@ export function mountStoryPanel(
       const tick = el("input");
       tick.type = "checkbox";
       tick.checked = draft.sendToWsyv;
+      tick.dataset.focusKey = "wsyv";
       tick.addEventListener("change", () => {
         update({ sendToWsyv: tick.checked });
         render();
@@ -208,6 +226,7 @@ export function mountStoryPanel(
       hood.append(opt);
     }
     hood.value = draft.neighborhood;
+    hood.dataset.focusKey = "neighborhood";
     hood.addEventListener("change", () => {
       update({ neighborhood: hood.value });
       // Re-render: the disclosure names the neighbourhood, so it has to
@@ -220,6 +239,7 @@ export function mountStoryPanel(
     const anon = el("input");
     anon.type = "checkbox";
     anon.checked = draft.anonymous;
+    anon.dataset.focusKey = "anonymous";
     anon.addEventListener("change", () => {
       update({ anonymous: anon.checked });
       render();
@@ -232,6 +252,7 @@ export function mountStoryPanel(
       const mail = el("input", "story-panel__input");
       mail.type = "email";
       mail.id = `story-mail-${draft.id}`;
+      mail.dataset.focusKey = "email";
       mailLabel.htmlFor = mail.id;
       mail.value = draft.contactEmail;
       mail.addEventListener("input", () => {

@@ -214,6 +214,10 @@ function baseDeps(session: SessionLike, extra: Partial<RidePostS9Deps> = {}): Ri
     // cases exercise the full pane without reading or writing `localStorage`;
     // the cadence itself has its own tests below.
     askNps: true,
+    // The tail story prompt is pinned OFF here (and never fetches), so these
+    // cases are unchanged by it; it has its own block below.
+    askStory: false,
+    fetchSurveyOptions: () => Promise.reject(new Error("offline")),
     recordSubmitted: () => {},
     ...extra,
   };
@@ -1156,5 +1160,82 @@ describe("qualitative feedback against an API without the detailed tier", () => 
     const p = describeQualitativeProgress(sixtyUnitsButThirtyChars);
     expect(p.trimmedLength).toBe(30);
     expect(p.message).not.toContain("detailed-feedback bonus");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The post-ride tail story prompt (RIDER_REPORTING_BACKLOG §1)
+// ---------------------------------------------------------------------------
+
+describe("Screen 9 tail story prompt", () => {
+  const doc = () => makeDoc({ endSurvey: true, route: ROUTE });
+
+  it("is absent when the cadence says not this ride", () => {
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc()), { askStory: false }));
+    expect(screen.primary.querySelector(".ride-post-s9__story-offer")).toBeNull();
+    expect(screen.primary.querySelector("textarea.story-panel__text")).toBeNull();
+  });
+
+  it("is one optional button, not an open box, and never blocks Submit", () => {
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc()), { askStory: true }));
+    const offer = screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__story-offer");
+    expect(offer).not.toBeNull();
+    expect(offer!.textContent).toContain("How was getting around today?");
+    expect(offer!.textContent).toContain("optional");
+    expect(screen.primary.querySelector("textarea.story-panel__text")).toBeNull();
+    const submit = screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__submit");
+    expect(submit!.disabled).toBe(false);
+  });
+
+  it("opens on click with focus in the textarea", () => {
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc()), { askStory: true }));
+    document.body.append(screen.primary);
+    screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__story-offer")!.click();
+    const box = screen.primary.querySelector<HTMLTextAreaElement>("textarea.story-panel__text");
+    expect(box).not.toBeNull();
+    expect(document.activeElement).toBe(box);
+    screen.primary.remove();
+  });
+
+  it("keeps the same textarea, caret and words while the rider taps faces", () => {
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc()), { askStory: true }));
+    document.body.append(screen.primary);
+    screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__story-offer")!.click();
+    const box = screen.primary.querySelector<HTMLTextAreaElement>("textarea.story-panel__text")!;
+    box.value = "The bike lane on Colfax was";
+    box.dispatchEvent(new Event("input"));
+    // Selections rebuild the pane slots — the story host must be untouched.
+    clickYesNo(screen.primary, "Did you deviate from the proposed routing?", "Yes");
+    const after = screen.primary.querySelector<HTMLTextAreaElement>("textarea.story-panel__text");
+    expect(after).toBe(box);
+    expect(after!.value).toBe("The bike lane on Colfax was");
+    expect(after!.isConnected).toBe(true);
+    screen.primary.remove();
+  });
+
+  it("is not remounted when the neighbourhood list arrives late", async () => {
+    let resolve!: (v: { neighborhoods: string[] }) => void;
+    const late = new Promise<{ neighborhoods: string[] }>((r) => { resolve = r; });
+    const screen = buildRidePostS9Screen(baseDeps(stubSession(doc()), {
+      askStory: true,
+      fetchSurveyOptions: (() => late) as unknown as RidePostS9Deps["fetchSurveyOptions"],
+    }));
+    screen.primary.querySelector<HTMLButtonElement>(".ride-post-s9__story-offer")!.click();
+    const box = screen.primary.querySelector("textarea.story-panel__text");
+    resolve({ neighborhoods: ["Five Points"] });
+    await flush();
+    expect(screen.primary.querySelector("textarea.story-panel__text")).toBe(box);
+  });
+
+  it("follows the recommendation question's cadence by default (first, then every tenth)", () => {
+    localStorage.clear();
+    const screen = buildRidePostS9Screen({
+      session: stubSession(doc()),
+      getGateFacts: () => ({ hasWaypoints: false }),
+      fetchSurveyOptions: () => Promise.reject(new Error("offline")),
+    });
+    // A rider who has never submitted a survey is on their first.
+    expect(screen.primary.querySelector(".ride-post-s9__story-offer")).not.toBeNull();
   });
 });

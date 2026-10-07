@@ -9431,6 +9431,16 @@ input[data-ride-keypad="on"] {
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
+.ride-post-s9__story:not(:empty) {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.ride-post-s9__story-offer {
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+}
 .ride-screen-start__story {
   margin-top: 14px;
   padding-top: 14px;
