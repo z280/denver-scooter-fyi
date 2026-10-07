@@ -790,6 +790,17 @@ void renderCompliance(need("compliance")).catch((e) => {
   console.error("compliance render failed", e);
 });
 wireAccount();
+/** §11.1's voice, one per app. Built eagerly rather than per ride so the mute
+ *  survives one — and because `createRideVoice` touches nothing until it is asked
+ *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
+ *  platform lacks either half.
+ *
+ *  Declared HERE, above `wireRideHud()`'s call, not beside the function: the
+ *  call runs at module load and reads it, and a `const` read before its line
+ *  is a ReferenceError that stopped main.ts before any vehicle was drawn
+ *  (2026-10-07, ~11 h blank map). */
+const rideVoice = createRideVoice(browserVoiceDeps());
+
 const rideHud = wireRideHud();
 startSunSync();
 wireFreshnessCollapse();
@@ -846,12 +857,6 @@ if (!isAuthenticated()) {
 function equityZones(): Promise<IndexedFeature[]> {
   return equityAreaFeatures();
 }
-
-/** §11.1's voice, one per app. Built eagerly rather than per ride so the mute
- *  survives one — and because `createRideVoice` touches nothing until it is asked
- *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
- *  platform lacks either half. */
-const rideVoice = createRideVoice(browserVoiceDeps());
 
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
