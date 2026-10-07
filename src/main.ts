@@ -190,7 +190,12 @@ import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
 import { defaultSpec } from "./ride-spec.ts";
 import type { PlanRow } from "./plan-list.ts";
-import { searchPlans, type PlanSearchDeps } from "./plan-search.ts";
+import {
+  planningFreeMinuteEstimate,
+  searchPlans,
+  type PlanSearchDeps,
+} from "./plan-search.ts";
+import { browserVoiceDeps, createRideVoice } from "./ride-voice.ts";
 import { currentTaxRate, planFor, savedRatePlan } from "./ride-cost.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
@@ -842,11 +847,43 @@ function equityZones(): Promise<IndexedFeature[]> {
   return equityAreaFeatures();
 }
 
+/** §11.1's voice, one per app. Built eagerly rather than per ride so the mute
+ *  survives one — and because `createRideVoice` touches nothing until it is asked
+ *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
+ *  platform lacks either half. */
+const rideVoice = createRideVoice(browserVoiceDeps());
+
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
     session: rideSession,
     trail: rideTrail,
     routeLine: rideRouteLine,
+    voice: rideVoice,
+    // §11.3's cliff, from the same estimate §2.2's control and the plan list use.
+    // One source for the hour, so the warning and the plan prices cannot disagree
+    // about it.
+    //
+    // NULL IN TWO CASES, and they are different reasons for the same silence:
+    //
+    //   * a tier with no allowance (four of the five), where the estimate itself
+    //     is null. There is no cliff to warn about.
+    //   * a SIGNED-OUT Access rider, whose estimate is the pessimistic zero. That
+    //     figure is right for pricing — §2.2 argues for it — and wrong to speak
+    //     aloud: "your free minutes are used up" said on every ride to somebody
+    //     who may have a full hour is a confident false statement, and it trains
+    //     them to ignore the one warning that matters. Silence is the honest
+    //     version of a guess.
+    //
+    // A signed-in rider with a genuinely exhausted hour DOES get it, because that
+    // figure was counted rather than assumed.
+    freeMinutesAtStart: () => {
+      const estimate = planningFreeMinuteEstimate(
+        planSearchDeps(),
+        planFor(savedRatePlan() ?? "resident"),
+      );
+      if (estimate === null || estimate.basis === "signed_out") return null;
+      return estimate.remainingMinutes;
+    },
   });
 }
 
