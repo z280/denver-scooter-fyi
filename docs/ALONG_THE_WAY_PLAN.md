@@ -2440,6 +2440,13 @@ past the controls to reach the facts the controls depend on.
 buttons in the header (`🔔 🧺 📱` with the explanation behind a tap) and a
 prose summary in the stat list. Two renderings, no words on the prominent one.
 
+> **Out of date on the second half.** The prose summary in the stat list IS a
+> labelled rendering, so features are labelled once and glyph-only once — not
+> "neither time". The duplication stands as a finding; "no words anywhere" does
+> not. See §12.3 for why the labels were taken off the pills deliberately, and
+> why this plan does not get to overturn that on its own.
+
+
 **(c) Blocked actions explain themselves with `title`, which does not exist on
 a phone.** `▶️ Open in Veo` greys out with `title="You're too far away,
 sorry!"`. Touch devices never show a tooltip. The rider gets a dead grey
@@ -2557,9 +2564,40 @@ Order by what the rider decides on, then what they can do:
   range estimate it already has), and features as labelled chips. `Vehicle ID`
   and `Parked for` move into `ℹ️ Details`, where the rest of the forensics
   already live — `Parked for` is an auditing fact, not a choosing fact.
+
+  > **The move SHIPPED.** `Vehicle ID` and `Parked for` are in `ℹ️ Details`
+  > now, beside `Device ID`, which is the same kind of fact and was already
+  > there. `Parked for` keeps its peer-median context: the dwell figure is the
+  > compliance signal this whole app exists to publish, so it is one tap
+  > further from the decision and not gone.
+  >
+  > The **single facts strip** itself has not shipped — it depends on the
+  > labelled-chips question above, and a strip built around glyph-only pills is
+  > a different design from the one drawn here. Worth doing as one change once
+  > that is settled, rather than half now.
 - **Features get their words back**, and the broken ones keep the `(!)` they
   already have. A glyph is not a label (`emoji-scale.ts` had to learn the same
   thing).
+
+  > **NOT DONE, AND DELIBERATELY LEFT FOR THE OWNER.** The labels were taken
+  > off the pills *after* this section was written, as a considered change with
+  > its reasoning recorded in `style.css`: *"The names were three words of
+  > chrome on the busiest line of the card; the icon is the recognisable part
+  > and the name is one tap away in the explanation, which says more than a
+  > label could anyway. The full sentence is still the button's aria-label, so
+  > nothing is lost to a screen reader."*
+  >
+  > That is a real argument and it answers this one: the `emoji-scale.ts`
+  > precedent is about a glyph carrying meaning with no words available
+  > anywhere, which is not this — the words are in the `aria-label`, in the
+  > tapped explanation, and in the stat list's prose row. The pills are also in
+  > the header, which is the one line on this card with the least room.
+  >
+  > So this is two documents disagreeing, the later one being the code, and the
+  > question is a judgement call about a busy line rather than a correctness
+  > bug. Flipping it back unilaterally would just be the newer document winning
+  > on recency. **Owner's call.** Everything else in §12.3 that does not depend
+  > on it has shipped.
 - **The secondary row is text-sized**, not three more full-width bars.
 
 ### 12.4 Blocked is a sentence, in the card

@@ -91,3 +91,28 @@ describe("the admin exemption is one rule, not four coincidences", () => {
     expect(devicesSrc.match(/const gateCtx: GateContext = \{/g)).toHaveLength(1);
   });
 });
+
+describe("§12.3 — the card is ordered by what the rider decides on", () => {
+  it("keeps Vehicle ID and Parked for out of the popup's own stat list", () => {
+    // Both are AUDITING facts. In the stat list they carried the same visual
+    // weight as battery and equipment, which are what the rider actually
+    // chooses on, and sat above ~8 full-width action buttons — so the rider
+    // scrolled past the controls to reach the facts the controls depend on.
+    const statBlock = devicesSrc.slice(
+      devicesSrc.indexOf("const statRows: string[] = []"),
+      devicesSrc.indexOf("const detailRows: string[] = []"),
+    );
+    expect(statBlock).not.toContain("<dt>Vehicle ID</dt>");
+    expect(statBlock).not.toContain("<dt>Parked for</dt>");
+  });
+
+  it("moves them, rather than removing them", () => {
+    // `Parked for` is the dwell figure — the compliance signal this whole app
+    // exists to publish — and it keeps its peer-median context. One tap
+    // further from the decision, not gone.
+    const detailBlock = devicesSrc.slice(devicesSrc.indexOf("const detailRows: string[] = []"));
+    expect(detailBlock).toContain("<dt>Vehicle ID</dt>");
+    expect(detailBlock).toContain("<dt>Parked for</dt>");
+    expect(detailBlock).toContain("dwell_peer_median_hours");
+  });
+});

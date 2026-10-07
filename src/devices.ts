@@ -1475,9 +1475,11 @@ export class Devices {
         );
       }
 
-      // ---- The five compact stats the popup shows (issue #18: 3-5 key
-      // stats): Rating, Battery, Type, Vehicle ID, Parked for. Everything
-      // else moves to the "Full details" modal so the popup stays short.
+      // ---- The compact stats the popup shows (issue #18: 3-5 key stats), now
+      // ordered by what a rider DECIDES on: Rating (only when the bar cannot say
+      // it), Battery, Type, Features. Everything else — including `Vehicle ID`
+      // and `Parked for`, which moved out in §12.3 — lives in the "Full details"
+      // modal so the popup stays short.
       const batteryPct = asNumber(props.battery_percent);
       const statRows: string[] = [];
       // Normally the bar at the top IS the verdict, so this row carries only
@@ -1564,23 +1566,17 @@ export class Devices {
           `<dt>Features</dt><dd>${escapeHtml(summary)}${statusHint}</dd>`,
         );
       }
-      if (props.vehicle_identifier) {
-        statRows.push(
-          `<dt>Vehicle ID</dt><dd><code class="device-popup__vid">${escapeHtml(String(props.vehicle_identifier))}</code></dd>`,
-        );
-      }
-      if (props.first_observed_at_location) {
-        // Peer context (public since the §1.4 recalibration): how this
-        // dwell compares to scooters in the same H3 neighborhood.
-        const peerMedian = asNumber(props.dwell_peer_median_hours);
-        const peerHint =
-          peerMedian !== null && peerMedian > 0
-            ? ` <span class="device-popup__hint">block median ${escapeHtml(formatDwellHours(peerMedian))}</span>`
-            : "";
-        statRows.push(
-          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
-        );
-      }
+      // `Vehicle ID` and `Parked for` USED TO BE HERE and moved to ℹ️ Details
+      // (§12.3). Both are AUDITING facts, not choosing facts: no rider decides
+      // which scooter to walk to on the strength of a 16-hex identifier or of
+      // how long this one has been standing there, and sitting in this list they
+      // carried the same visual weight as battery and equipment — which are
+      // exactly what the rider does decide on. The forensics they belong with
+      // are already in the modal.
+      //
+      // Neither is removed, and `Parked for` keeps its peer-median context: the
+      // dwell figure is the compliance signal this whole app exists to publish.
+      // It is one tap further from the decision, not gone.
 
       // ---- Everything else: rows for the "Full details" modal, in rough
       // priority order. Range-rank rows only exist when the fetch carried
@@ -1589,6 +1585,25 @@ export class Devices {
       detailRows.push(
         `<dt>Device ID</dt><dd><code>${escapeHtml(props.device_id)}</code></dd>`,
       );
+      // Moved down from the popup's stat list (§12.3) — beside Device ID, which
+      // is the same kind of fact and was already here.
+      if (props.vehicle_identifier) {
+        detailRows.push(
+          `<dt>Vehicle ID</dt><dd><code class="device-popup__vid">${escapeHtml(String(props.vehicle_identifier))}</code></dd>`,
+        );
+      }
+      if (props.first_observed_at_location) {
+        // Peer context (public since the §1.4 recalibration): how this dwell
+        // compares to scooters in the same H3 neighborhood.
+        const peerMedian = asNumber(props.dwell_peer_median_hours);
+        const peerHint =
+          peerMedian !== null && peerMedian > 0
+            ? ` <span class="device-popup__hint">block median ${escapeHtml(formatDwellHours(peerMedian))}</span>`
+            : "";
+        detailRows.push(
+          `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
+        );
+      }
       const rangeMeters = asNumber(props.current_range_meters);
       if (rangeMeters !== null) {
         const showing = this.rangeCircleDeviceId === props.device_id;
