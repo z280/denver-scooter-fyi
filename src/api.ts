@@ -1521,8 +1521,6 @@ export interface DiscountReportIn {
   pin_start?: { lat: number; lng: number };
   pin_end?: { lat: number; lng: number };
   receipt: Blob;
-  /** The Veo app screen showing the rider's active plan or pass. */
-  plan_evidence: Blob;
 }
 
 export interface DiscountReportResult {
@@ -1530,7 +1528,6 @@ export interface DiscountReportResult {
   created_at: string;
   status: "received";
   receipt_stored: boolean;
-  plan_evidence_stored: boolean;
 }
 
 /** The multipart body, field for field. Separate from the POST so a test can
@@ -1557,7 +1554,10 @@ export function discountReportFormData(r: DiscountReportIn): FormData {
     form.set("pin_end_lng", r.pin_end.lng.toFixed(5));
   }
   form.set("receipt", r.receipt);
-  form.set("plan_evidence", r.plan_evidence);
+  // NO `plan_evidence`. The API stopped asking for a screenshot of the rider's
+  // plan (owner, 2026-10-07; API sql/094) — `declared_rate_plan` above is taken
+  // on trust. It ignores the part rather than rejecting it, so sending one would
+  // have cost a rider an upload for bytes nobody reads.
   return form;
 }
 

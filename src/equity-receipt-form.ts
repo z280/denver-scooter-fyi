@@ -11,13 +11,18 @@
 // are required; the start time and the two map pins are optional tie-breakers
 // for the day a rider took two rides of the same length.
 //
-// THE PLAN SCREENSHOT IS REQUIRED, not a nice-to-have. Veo's likely answer to
-// an equity claim is "your plan doesn't get that rate"; the contract
-// (Exhibit A §5.2) applies the Equity Area rate whatever the plan. Proof of
-// the plan is what lets the claim stand, so the form will not send without it.
+// NO PLAN SCREENSHOT, and that is a reversal worth recording. It WAS required:
+// Veo's likely answer to an equity claim is "your plan doesn't get that rate",
+// the contract (Exhibit A §5.2) applies the Equity Area rate whatever the plan,
+// so proof of the plan looked like what lets a claim stand. It was dropped on
+// 2026-10-07 (owner; API `sql/094`) because nothing ever read it — a claim is
+// checked against the FEED, and the server's own arithmetic prices the minutes
+// at the Equity Area rate. It was a second upload, over a phone connection,
+// of a photo of someone's account page, kept 18 months, that no step consumed.
+// The rider still tells us their plan in the select below; we take their word.
 //
 // VALIDATION MIRRORS THE SERVER'S GATE (plate 7–10 digits, minutes 1–600, at
-// least one cost) so a rider hears about a typo before uploading two images
+// least one cost) so a rider hears about a typo before uploading the image
 // over a phone connection. The server still decides; these are the same
 // rules, said earlier.
 //
@@ -54,13 +59,9 @@ export const MSG_RECEIVED = "Received. We'll check it against what we saw in the
 export const MSG_NOT_RATE_CHECKABLE =
   "Thanks for taking part. We can't check a rate from this, so we haven't kept it.";
 export const MSG_RATE_LIMITED = "You've sent a lot today — try again tomorrow.";
-export const MSG_TOO_LARGE = "One of the images is too large. Each must be 10 MB or less.";
 export const MSG_TOO_LARGE_ONE = "That image is over 10 MB.";
 export const MSG_TOTAL_BELOW_SUBTOTAL =
   "The cost with tax can't be less than the cost before tax.";
-export const MSG_PLAN_REQUIRED =
-  "Add a screenshot of the screen in the Veo app that shows your plan or pass.";
-
 // ---------------------------------------------------------------------------
 // Parsing — pure, so every rule is testable without a DOM
 // ---------------------------------------------------------------------------
@@ -194,7 +195,6 @@ export interface ReceiptFormValues {
   pinStart: PickedPoint | null;
   pinEnd: PickedPoint | null;
   receipt: File | null;
-  plan: File | null;
 }
 
 export type ValidationResult =
@@ -250,8 +250,6 @@ export function validateReceipt(
 
   const receiptErr = imageError(v.receipt, "Add a screenshot of the receipt.");
   if (receiptErr) errors.receipt = receiptErr;
-  const planErr = imageError(v.plan, MSG_PLAN_REQUIRED);
-  if (planErr) errors.plan = planErr;
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };
 
@@ -261,7 +259,6 @@ export function validateReceipt(
     charge_date: v.chargeDate,
     declared_rate_plan: v.ratePlan,
     receipt: v.receipt as File,
-    plan_evidence: v.plan as File,
   };
   if (subtotal.kind === "ok") input.subtotal_cents = subtotal.value;
   if (total.kind === "ok") input.total_cents = total.value;
@@ -307,8 +304,6 @@ export function describeSubmitError(err: unknown): SubmitOutcome {
       return { kind: "signed_out" };
     if (err.status === 422 && err.errorKey === "not_rate_checkable")
       return { kind: "not_rate_checkable" };
-    if (err.status === 422 && err.errorKey === "plan_evidence_required")
-      return { kind: "fields", errors: { plan: MSG_PLAN_REQUIRED } };
     if (err.status === 422 && err.errorKey === "receipt_required")
       return { kind: "fields", errors: { receipt: "Add a screenshot of the receipt." } };
     if (err.status === 422 && err.errorKey === "invalid_field") {
@@ -327,18 +322,18 @@ export function describeSubmitError(err: unknown): SubmitOutcome {
     if (err.status === 429) return { kind: "rate_limited" };
     if (err.status === 400 && err.errorKey === "unreadable_image") {
       // e.g. an Android HEIC: retrying won't help, a different file will.
+      // Only one image can be unreadable now, so the server's `field` is
+      // always "receipt" and reading it back would say nothing.
       const msg = "We couldn't read this image. Try a PNG or JPEG screenshot.";
-      const field = detailOf(err).field;
-      if (field === "plan_evidence") return { kind: "fields", errors: { plan: msg } };
       return { kind: "fields", errors: { receipt: msg } };
     }
     if (err.errorKey === "storage_unavailable")
       return { kind: "failed", message: "We can't take images right now. Your form is still here; try again later." };
     if (err.status === 413) {
-      const field = detailOf(err).field;
-      if (field === "receipt") return { kind: "fields", errors: { receipt: MSG_TOO_LARGE_ONE } };
-      if (field === "plan_evidence") return { kind: "fields", errors: { plan: MSG_TOO_LARGE_ONE } };
-      return { kind: "failed", message: MSG_TOO_LARGE };
+      // There is only one image, so there is only one field this can be about.
+      // The plural "one of the images is too large" fallback went with the plan
+      // screenshot — copy naming a second upload a rider was never asked for.
+      return { kind: "fields", errors: { receipt: MSG_TOO_LARGE_ONE } };
     }
     if (err.status === 422)
       return { kind: "failed", message: "Something in the form didn't check out. Look it over and try again." };
@@ -698,18 +693,17 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     "equity-receipt-receipt",
     "Receipt screenshot",
     receiptInput,
-    "The receipt screen in the Veo app. Up to 10 MB.",
+    // SAYS WHAT HAPPENS TO THE IMAGE, at the moment the rider decides to send
+    // it. The privacy policy carries the same three facts, and this is where
+    // somebody is actually choosing — a disclosure only reachable from the map's
+    // attribution panel is one nobody reads before uploading. Deliberately does
+    // NOT promise on-device reading: the owner's rule (2026-10-07) is that
+    // either place is allowed, so a promise of one would be a promise the
+    // software may not keep.
+    "The receipt screen in the Veo app. Up to 10 MB. We read the figures off " +
+      "it — on your device or on our server — and keep it in private storage " +
+      "for 18 months.",
   );
-  const planInput = fileInput();
-  const planEvidenceField = field(
-    "plan",
-    "equity-receipt-plan-evidence",
-    "Plan screenshot",
-    planInput,
-    "The screen in the Veo app showing your active plan or pass (or that you have none). " +
-      "The contract gives the Equity Area rate whatever plan you're on, so proof of your plan is what makes the claim stand.",
-  );
-
   const status = el("p", `${ROOT_CLASS}__status`);
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
@@ -730,7 +724,6 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     ...(pick ? [pinsWrap] : []),
     planField,
     receiptField,
-    planEvidenceField,
     status,
     actions,
   );
@@ -747,7 +740,6 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
       pinStart,
       pinEnd,
       receipt: receiptInput.files?.[0] ?? null,
-      plan: planInput.files?.[0] ?? null,
     };
   }
 

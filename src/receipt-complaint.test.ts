@@ -231,9 +231,10 @@ describe("both paths carry the same content", () => {
 
 describe("a missing support address is its own answer", () => {
   it("copies rather than opening a draft addressed to nobody", () => {
-    // config.ts's VEO_SUPPORT_EMAIL ships empty on purpose, so this is the LIVE
-    // path today. A mailto: with an empty `to` opens a blank draft, which looks
-    // like the feature working.
+    // No longer the live path — `VEO_SUPPORT_EMAIL` is filled in now — but the
+    // behaviour still has to hold: a `mailto:` with an empty `to` opens a blank
+    // draft, which looks like the feature working, and the address could be
+    // cleared again by a deploy that forgets to set it.
     const route = complaintRoute(complaintDraft(finding(), facts(), ""));
     expect(route.kind).toBe("clipboard");
     if (route.kind !== "clipboard") return;
