@@ -1194,6 +1194,34 @@ export interface ActiveRideResponse {
   active: TrackedRide | null;
 }
 
+export interface TrackedRideListResponse {
+  count: number;
+  rides: TrackedRide[];
+}
+
+/** The rider's recent tracked rides, newest first (API.md: owner-only).
+ *
+ *  FOR §2.2'S FREE-MINUTE ESTIMATE, which needs today's rides and nothing
+ *  older. `limit` is small by default for that reason: a rider cannot spend a
+ *  60-minute allowance across more than 60 rides, Veo bills the started minute,
+ *  and the estimate only ever counts rides that started on today's Denver
+ *  billing day — so a deeper page is network spent on rows the caller discards.
+ *
+ *  No `before` cursor is taken. Paging backwards through history to be sure of
+ *  catching every ride today would make an estimate the control already labels
+ *  as a FLOOR into a much more expensive estimate that is still a floor, because
+ *  rides taken outside this app are invisible to it either way. */
+export async function listTrackedRides(
+  options: { limit?: number; signal?: AbortSignal } = {},
+): Promise<TrackedRide[]> {
+  const limit = options.limit ?? 40;
+  const res = await authedFetchJSON<TrackedRideListResponse>(
+    `/api/v1/tracked-rides?limit=${encodeURIComponent(String(limit))}`,
+    { signal: options.signal },
+  );
+  return res?.rides ?? [];
+}
+
 /** The rider's live ride, or null. Unwraps the `{ active }` envelope. */
 export async function getActiveRide(
   signal?: AbortSignal,

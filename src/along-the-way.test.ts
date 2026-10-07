@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   DEFAULT_BOUNDS,
   FAVORITE_BONUS_SECONDS,
@@ -12,6 +13,11 @@ import {
 } from "./along-the-way.ts";
 import type { DeviceProperties } from "./api.ts";
 import { RATE_PLANS, type RatePlanKey } from "./config.ts";
+import {
+  __resetEquityAreasForTest,
+  loadEquityAreas,
+  type EquityAreaCollection,
+} from "./equity-areas.ts";
 import { defaultSpec, type RideSpec } from "./ride-spec.ts";
 
 // ---------------------------------------------------------------------------
@@ -74,6 +80,37 @@ function rate(key: RatePlanKey) {
   if (!found) throw new Error(`no rate plan ${key}`);
   return found;
 }
+
+/** A point verified inside EQ_001 in the city's bundled map — the same
+ *  coordinate `equity-areas.test.ts` asserts against, so the two files cannot
+ *  disagree about where an Equity Area is. */
+const INSIDE_EQUITY_AREA = { lat: 39.785137, lng: -104.826320 };
+
+const EQUITY_MAP = JSON.parse(
+  readFileSync("public/equity-areas.geojson", "utf8"),
+) as EquityAreaCollection;
+
+/** Load the REAL polygons, not a stand-in rectangle.
+ *
+ *  `legRate` reads module state in `equity-areas.ts`, which is empty until
+ *  something loads it — and its documented behaviour on empty state is "treat
+ *  as outside". So any test of the area rate that does not do this tests the
+ *  outside path while appearing to test the inside one. */
+async function withEquityAreas(): Promise<void> {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => EQUITY_MAP }),
+  );
+  await loadEquityAreas();
+}
+
+afterEach(() => {
+  // Module-level and process-lifetime by design, so it has to be undone or it
+  // leaks into every later test in this file — repricing legs that the tests
+  // around it expect at the rider's own tier.
+  __resetEquityAreasForTest();
+  vi.unstubAllGlobals();
+});
 
 function ctx(over: Partial<RankPlansContext> = {}): RankPlansContext {
   return {
@@ -423,22 +460,60 @@ describe("rankPlans — the money term", () => {
     expect(ride.taxCents).toBeGreaterThan(0);
   });
 
-  it("prices an equity-area leg at the area rate, not the rider's tier", () => {
+  it("prices an equity-area leg at the area rate, not the rider's tier", async () => {
     // $1 + 13¢/min is a RATE. A tier whose ordinary unlock is $0 does not get
     // an equity leg for free: whether a Pass waives THAT dollar is exactly
     // what the contract does not say, and §5.2 takes the worse reading.
-    const inside = { lat: 39.7700, lng: -104.9700 };
-    const r = legRate(rate("resident_plus"), inside, inside);
-    if (r.equityArea) {
-      expect(r.unlockCents).toBe(100);
-      expect(r.perMinCents).toBe(13);
-    }
+    //
+    // THIS TEST USED TO PROVE NOTHING, in two independent ways, and both are
+    // worth naming because either alone was enough to hollow it out. It
+    // guarded its assertions behind `if (r.equityArea)`, and it never loaded
+    // the polygons — so `isInEquityArea` answered `null`, `legRate` took its
+    // "unknown counts as outside" path, and the guard never opened. Its
+    // coordinate (39.77, -104.97) is also outside every area in the city's
+    // map, so loading them alone would not have saved it. Verified by
+    // mutation: with the area rate replaced by 999¢/min the old test still
+    // passed. The fix is to load the real map, use a point verified inside
+    // EQ_001, and assert unconditionally.
+    await withEquityAreas();
+    const r = legRate(rate("resident_plus"), INSIDE_EQUITY_AREA, INSIDE_EQUITY_AREA);
+    expect(r.equityArea).toBe(true);
+    expect(r.unlockCents).toBe(100);
+    expect(r.perMinCents).toBe(13);
+
+    // Start-OR-end: one endpoint inside is the whole rule (Exhibit A §5.2).
+    const oneEnd = legRate(rate("resident"), INSIDE_EQUITY_AREA, ORIGIN);
+    expect(oneEnd.equityArea).toBe(true);
+    expect(oneEnd.perMinCents).toBe(13);
+
     // An Access rider is never offered the area rate — whether the free hour
     // interacts with it is unstated, and advice we cannot price is advice we
     // do not give.
-    const access = legRate(rate("equity"), inside, inside);
+    const access = legRate(rate("equity"), INSIDE_EQUITY_AREA, INSIDE_EQUITY_AREA);
     expect(access.equityArea).toBe(false);
     expect(access.perMinCents).toBe(15);
+  });
+
+  it("carries the equity flag onto the leg, so a plan can name its own discount", async () => {
+    // §5.2's disclosures must say WHICH leg earns the discount and what unlock
+    // it carries. `priceRide` had `legRate`'s answer in hand and dropped it,
+    // leaving the UI to re-test the polygons — a second copy of the rule, and
+    // the copy the rider would read.
+    await withEquityAreas();
+    const feats = [feature(INSIDE_EQUITY_AREA, { device_id: "eq", vehicle_identifier: "eq" })];
+    const res = rankPlans(
+      feats,
+      ctx({ from: INSIDE_EQUITY_AREA, to: { lat: INSIDE_EQUITY_AREA.lat, lon: INSIDE_EQUITY_AREA.lng + 0.01 } }),
+    );
+    const ride = res.plans
+      .concat(res.backups)
+      .flatMap((p) => p.legs)
+      .find((l) => l.mode === "ride");
+    expect(ride).toBeDefined();
+    expect(ride!.equityArea).toBe(true);
+    expect(ride!.unlockCents).toBe(100);
+    // Walk legs never carry it.
+    for (const leg of res.walkOnly.legs) expect(leg.equityArea).toBe(false);
   });
 
   it("values a $1 unlock at 13 min 20 s, and tests the crossover", () => {

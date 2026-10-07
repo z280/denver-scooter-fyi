@@ -50,7 +50,7 @@ import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { renderFleetStats } from "./fleet-stats.ts";
 import { ensureRoverZoneLayers, setRoverZoneVisible } from "./rover-zone.ts";
-import { fetchSurveyOptions, submitRiderStory } from "./api.ts";
+import { fetchSurveyOptions, listTrackedRides, submitRiderStory } from "./api.ts";
 import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 import { openComplianceCalendar } from "./compliance-calendar.ts";
 import { Freshness } from "./freshness.ts";
@@ -181,6 +181,17 @@ import {
   takePendingTrip,
   type TripPlace,
 } from "./pending-trip.ts";
+import {
+  saveCorrection,
+  savedCorrection,
+  spansOf,
+} from "./free-minutes-control.ts";
+import type { RideSpan } from "./free-minutes.ts";
+import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
+import { defaultSpec } from "./ride-spec.ts";
+import type { PlanRow } from "./plan-list.ts";
+import { searchPlans, type PlanSearchDeps } from "./plan-search.ts";
+import { currentTaxRate, planFor, savedRatePlan } from "./ride-cost.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -3686,12 +3697,18 @@ function wireHomeBar(): HomeBarHandle {
         return planStartedTrip({ dest, start });
       }
       setPendingTrip({ dest, wheels, start });
-      // "Need wheels" is a question about which vehicle, which is exactly what
-      // the find-a-ride ranker answers: the rider picks one on the map, and
-      // 🧭 Use in Ride Mode hands them to the walk flow rather than the
-      // wizard (see beginWalkToVehicle).
+      // "Need wheels" opens the PLAN LIST (§2.4) — one to four ways to get
+      // there, each with its legs, its total time and its cost including every
+      // unlock. That is what the Phase 2 engine was built to answer, and until
+      // now nothing in the app asked it: `rankPlans` shipped tested and
+      // unreachable.
+      //
+      // The map chooser is not replaced, it is underneath — `openPlanList`
+      // enters find-wheels mode too, so dismissing the list leaves the rider on
+      // a map that is already in the right state, and a rider with no GPS fix
+      // gets it instead of a list computed from a guessed origin.
       if (wheels === "need") {
-        enterFindWheels();
+        openPlanList(dest);
         return;
       }
       // "Got my own" has no vehicle to choose and nowhere to walk to. The
@@ -3839,6 +3856,173 @@ let exitFindWheels: () => void = () => {};
  *  by `wireModes`; a no-op before it runs. */
 let enterFindWheels: () => void = () => {};
 
+/** The plan list, while it is on screen. One at a time: two of these would be
+ *  two surfaces arguing about one decision. */
+let planListPanel: PlanListPanelHandle | null = null;
+
+/** Today's tracked rides, for §2.2's free-minute estimate.
+ *
+ *  `null` means WE HAVE NOT LOOKED, and `estimateFreeMinutes` reads that as the
+ *  pessimistic figure — the hour is gone, price every minute. An empty array
+ *  means we looked and the rider has taken none today, which is a much stronger
+ *  statement and a different sentence on the control. Conflating them would tell
+ *  a rider with a full hour that we cannot see their rides. */
+let todaysRides: readonly RideSpan[] | null = null;
+
+function closePlanList(): void {
+  planListPanel?.destroy();
+  planListPanel = null;
+}
+
+/** What `rankPlans` needs, gathered from the live app.
+ *
+ *  `plan-search.ts` owns the assembly and says why each of these is a decision
+ *  rather than a lookup — in particular that the fleet is `allFeatures()` and
+ *  never the filtered view, because a rider's leftover map filters are a view
+ *  and the SPEC is what says what they will ride. */
+function planSearchDeps(): PlanSearchDeps {
+  return {
+    fleet: () => devices.allFeatures(),
+    origin: () => {
+      const fix = locate.current();
+      return fix ? { lat: fix.lat, lng: fix.lng } : null;
+    },
+    spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
+    rate: () => planFor(savedRatePlan() ?? "resident"),
+    taxRate: () => currentTaxRate(),
+    now: () => Date.now(),
+    // NO `favorites`, and that is not an omission to be tidied up later.
+    //
+    // `along-the-way.ts`'s favourite bonus wants VEHICLE keys, and this app has
+    // no favourite-vehicle store: `my-scooters.ts` was built, shipped and then
+    // deleted as the wrong feature (see the plan's module map). `favorites.ts`
+    // is saved PLACES — Home, Work, lat/lon and an emoji — so handing it over
+    // would pass place ids as vehicle keys, match nothing, and silently never
+    // apply the bonus. A dead ranking term that looks wired is worse than one
+    // that is visibly absent. `device-notify.ts`'s watch list is not a
+    // substitute either: "tell me when this moves" is not "I prefer this one",
+    // and ranking on it would read a rider's curiosity as a preference.
+    // §2.2, both halves. `todaysRides` is null until the fetch lands, which the
+    // estimate reads as the pessimistic figure rather than as an empty day — so
+    // a list opened before the response arrives prices nothing as free, and
+    // re-prices upward when it does. The rider's own correction WINS over both,
+    // without being averaged against them: they can see their Veo app and this
+    // module cannot, and blending the two produces a number neither of us
+    // believes.
+    rides: () => todaysRides,
+    riderSaysRemaining: () => savedCorrection(Date.now()),
+    signedIn: () => isAuthenticated(),
+  };
+}
+
+/** "Need wheels" — §2.4's plan list, which is what that answer has always
+ *  meant and what the Phase 2 engine was built to answer.
+ *
+ *  FALLS BACK TO THE MAP RATHER THAN FAILING. Without a GPS fix there is no
+ *  origin, and a plan list computed from a guessed one walks the rider to a
+ *  scooter that is not near them. The map chooser needs no fix to be useful —
+ *  the rider can see where they are — so that is where they go instead. Same on
+ *  dismissal: closing the list should not leave them on a bare map with the
+ *  question they just asked unanswered. */
+function openPlanList(dest: TripPlace): void {
+  const deps = planSearchDeps();
+  const first = searchPlans(deps, dest);
+  if (first.kind !== "ok") {
+    enterFindWheels();
+    return;
+  }
+  closePlanList();
+  // The map still shows the fleet the plans are drawn from, so find-wheels mode
+  // stays on underneath: dismissing the list reveals a map that is already in
+  // the right state rather than one that has to be put there.
+  enterFindWheels();
+  const resolve = (): void => {
+    const again = searchPlans(deps, dest);
+    if (again.kind === "ok") planListPanel?.update(again.view);
+  };
+  planListPanel = createPlanListPanel(need("plan-list"), first.view, {
+    onChoose: (row) => takePlanRow(row),
+    onCancel: () => closePlanList(),
+    onRefresh: resolve,
+    onCorrectFreeMinutes: (minutes) => {
+      saveCorrection(Date.now(), minutes);
+      // Re-price rather than just re-label. The free-minute balance is SEARCH
+      // STATE — `searchOnce` makes a node `(location, free minutes consumed)`
+      // precisely because pricing a whole plan under one regime is unsound — so
+      // a corrected figure can change which plans exist and in what order, not
+      // only what the control says above them.
+      resolve();
+    },
+  });
+  // §2.2's estimate, fetched AFTER the list is on screen and never before it.
+  // A rider who asked for plans gets plans; the figure arrives and the list
+  // re-prices upward. "A failure degrades to the client tier and never blocks
+  // the list" is §2.3's rule for the routed tier and it applies here for the
+  // same reason.
+  void refreshTodaysRides().then((changed) => {
+    if (changed) resolve();
+  });
+}
+
+/** Today's tracked rides, for the free-minute estimate. Resolves to whether the
+ *  figure changed, so a caller can avoid re-pricing for nothing.
+ *
+ *  ONLY FOR THE ACCESS TIER, and only signed in. The other four have no free
+ *  hour — `searchOnce`'s budget is 0 for them regardless — so this would be a
+ *  request whose answer is discarded. A rider who has already given their own
+ *  figure does not need it either: their answer wins, so counting rides to
+ *  produce an estimate that loses is work with no consequence. */
+async function refreshTodaysRides(): Promise<boolean> {
+  if (todaysRides !== null) return false;
+  if (!isAuthenticated()) return false;
+  if ((savedRatePlan() ?? "resident") !== "equity") return false;
+  if (savedCorrection(Date.now()) !== null) return false;
+  try {
+    todaysRides = spansOf(await listTrackedRides({ limit: 40 }));
+    return true;
+  } catch {
+    // Left as null, which the estimate reads as the pessimistic figure. A failed
+    // count must not become an empty day: that would hand the rider a full hour
+    // on the strength of a network error.
+    return false;
+  }
+}
+
+/** Hand a chosen plan to the walk flow.
+ *
+ *  ONLY THE FIRST LEG IS ACTED ON, and the rest of the plan is deliberately not
+ *  carried anywhere yet. Honouring a hand-off end to end needs the living plan
+ *  (Phase 3) — the re-solve, the claim that moves, the loss detection — and a
+ *  walk flow that silently forgot legs two and three would be worse than one
+ *  that never claimed to have them. So this starts the rider on the first
+ *  scooter, which is the whole of what every existing surface does, and the
+ *  list it came from stays on screen state-free. */
+function takePlanRow(row: PlanRow): void {
+  const props = row.firstVehicle;
+  if (!props) return;
+  const feature = devices
+    .allFeatures()
+    .find((f) => f.properties.device_id === props.device_id);
+  if (!feature) return;
+  const [lng, lat] = feature.geometry.coordinates;
+  closePlanList();
+  void beginWalkToVehicle({
+    name: vehicleDisplayName(
+      props.public_name,
+      null,
+      props.vehicle_model_name,
+      props.plate_suffix,
+    ),
+    // The raw plate is not on the public payload, and `beginWalkToVehicle`
+    // treats a missing one as "Veo can only be opened cold" rather than as an
+    // error. The ride flow downstream resolves it when it needs one.
+    plate: null,
+    vehicleIdentifier: props.vehicle_identifier ?? null,
+    lat,
+    lng,
+  });
+}
+
 function endWalkFlow(): void {
   deviceWatch?.stop();
   deviceWatch = null;
@@ -3872,6 +4056,13 @@ function beginWalkToVehicle(info: {
   // surfaces arguing about one decision, and the ranked list is stale the
   // moment a scooter is picked out of it.
   exitFindWheels();
+  // THE PLAN LIST IS A CHOOSER TOO, and the sentence above is about it as much
+  // as about find-wheels mode. `takePlanRow` closes it on its own way through,
+  // but that is not the only way in: a rider can leave the list open and tap a
+  // scooter on the map, or resume a dibs claim from a toast, and both land here.
+  // Without this the list floats over the arrival panel offering four plans for
+  // a trip the rider has already started walking.
+  closePlanList();
   document.body.classList.add("arrival-open");
 
   const panel = createArrivalPanel(need("arrival-panel"), {
