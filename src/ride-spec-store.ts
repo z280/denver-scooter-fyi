@@ -205,8 +205,12 @@ export function sameFilters(a: FilterSnapshot, b: FilterSnapshot): boolean {
   // the detachment rule true, and it should not rest on that staying so.
   const set = (xs: readonly string[] | undefined): string =>
     JSON.stringify([...(xs ?? [])].sort());
+  // No `rideTypes` comparison. Both sides of every live comparison are
+  // produced in-process — `snapshotFilters()` against `toFilterSnapshot()` —
+  // and neither writes that key since the ride-type control was deleted, so
+  // comparing it could only ever be `[] === []`. A stored preset may still
+  // carry it; nothing reads it back, and `models` already says what it said.
   return (
-    set(a.rideTypes) === set(b.rideTypes) &&
     set(a.models) === set(b.models) &&
     set(a.features) === set(b.features) &&
     a.hideUnavailable === b.hideUnavailable &&

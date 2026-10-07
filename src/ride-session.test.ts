@@ -38,7 +38,6 @@ const VEHICLE = "a1b2c3d4e5f60718";
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: true,
   save_tracks: true,
   battery_modeling: true,
@@ -1310,5 +1309,53 @@ describe("associateDevice", () => {
       { type: "associateDevice", device: SCOOTER },
     );
     expect(t.doc.state).toBe("riding");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 §6.5 — a doc stored before `RideOptions.theme` was dropped
+// ---------------------------------------------------------------------------
+
+describe("parseRideSession and the dropped theme option", () => {
+  /** A persisted doc exactly as a client shipped before §6.5, `theme` and all.
+   *  `parseRideSession` is a VERSION-SKEWED READ by its own description, so
+   *  this is the case it exists for — the field left the vocabulary and no
+   *  migration was written, because none is needed. */
+  function storedWithTheme(): string {
+    return JSON.stringify({
+      v: RIDE_SESSION_VERSION,
+      state: "riding",
+      rideId: "r1",
+      startedAtMs: 1_700_000_000_000,
+      options: {
+        cost_hud: true,
+        speedometer: "classic",
+        theme: "dark",
+        navigation: true,
+        save_tracks: true,
+        battery_modeling: false,
+        nav_improvement: false,
+        end_survey: false,
+        own_device: false,
+      },
+    });
+  }
+
+  it("still reads a doc that carries the removed key", () => {
+    // The whole point: an old blob must not fail to parse. Dropping a
+    // client-owned field is only free if the reader ignores it.
+    const doc = parseRideSession(storedWithTheme());
+    expect(doc).not.toBeNull();
+    expect(doc?.state).toBe("riding");
+    expect(doc?.options.speedometer).toBe("classic");
+    expect(doc?.options.save_tracks).toBe(true);
+  });
+
+  it("does not carry the key forward", () => {
+    // The reader builds an explicit object, so the stale key is dropped rather
+    // than smuggled back into a blob this version will store again.
+    const doc = parseRideSession(storedWithTheme());
+    expect(Object.keys(doc?.options ?? {})).not.toContain("theme");
+    expect("theme" in (doc?.options ?? {})).toBe(false);
   });
 });

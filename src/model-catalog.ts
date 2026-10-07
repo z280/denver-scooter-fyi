@@ -39,12 +39,22 @@ export type RideType = "sitting" | "standing";
 export const ALL_RIDE_TYPES: readonly RideType[] = ["sitting", "standing"];
 
 /** Which recognized models serve each ride type — the Astro is the only
- *  standing scooter in the line-up; everything else is seated. Drives the
- *  Filters drawer's ride-type → model sync (main.ts), which exists to keep
- *  the two deliberately-redundant controls from combining into a dead
- *  filter (ride type: seated, model: Astro → nothing shown), and the ride
- *  spec's model-widening rung (ride-spec.ts), which relaxes a model
- *  requirement to "anything you'd sit on the same way". */
+ *  standing scooter in the line-up; everything else is seated.
+ *
+ *  THIS MIRRORS THE API, it does not decide. `ingest.py`'s
+ *  `_KNOWN_VEHICLE_TYPES` maps one Veo vehicle-type id to BOTH the model name
+ *  and the sitting/standing value, so posture is already a function of the
+ *  model by the time a device reaches this client. Treat this as a local copy
+ *  of that table's posture column, kept because the client needs the mapping
+ *  without a round trip — and update it when that table changes, not on its
+ *  own authority.
+ *
+ *  Two readers, both of which want the relationship rather than a filter:
+ *  the ride spec's model-widening rung (ride-spec.ts), which relaxes a model
+ *  requirement to "anything you'd sit on the same way", and the Quick Filters'
+ *  "no standing" preset. It used to drive a ride-type → model sync as well;
+ *  that control is deleted (see the note in main.ts), because asking the same
+ *  question twice is what made the sync necessary. */
 export const MODELS_BY_RIDE_TYPE: Record<RideType, readonly ModelKey[]> = {
   standing: ["astro"],
   sitting: ["cosmo", "apollo", "trike"],
@@ -81,9 +91,14 @@ export function modelKeyOf(p: {
     : null;
 }
 
-/** Ride posture for the "Device use" icon style and the ride-type filter:
- *  the server-corrected `vehicle_use_type` decides, with the seated models
- *  (Cosmo, Apollo, Rover) as the tiebreaker when it's absent.
+/** Ride posture for the "Device use" icon style (`use-sitting`/`use-standing`
+ *  sprites). There is no longer a ride-type FILTER — posture is derived from
+ *  the model upstream, so filtering on it was filtering on models by a longer
+ *  route — but the sprite still has to pick a glyph, including for hardware
+ *  with no recognized model.
+ *
+ *  The server's `vehicle_use_type` decides, with the seated models (Cosmo,
+ *  Apollo, Rover) as the tiebreaker when it's absent.
  *
  *  The tiebreaker reads RIDE_TYPE_BY_MODEL rather than re-listing the seated
  *  models inline, which is what it used to do — a third copy of the same

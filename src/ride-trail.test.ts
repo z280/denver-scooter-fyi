@@ -161,7 +161,6 @@ async function freshRecorder(rideId: string): Promise<TrackRecorder> {
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: false,
   save_tracks: true,
   battery_modeling: true,
@@ -193,7 +192,8 @@ function buildDoc(
 function fakeDeviceCtl(): RideDeviceControl {
   return {
     setRideActive: () => {},
-    setRideModelFilter: () => {},
+    setModelSelection: () => {},
+    modelSelection_: () => ({ kind: "all" }) as const,
     hasOpenPopup: () => false,
   };
 }

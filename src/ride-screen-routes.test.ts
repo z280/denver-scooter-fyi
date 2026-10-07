@@ -73,7 +73,6 @@ function baseOptions(overrides: Partial<RideOptions> = {}): RideOptions {
   return {
     cost_hud: false,
     speedometer: "classic",
-    theme: "auto",
     navigation: true,
     save_tracks: true,
     battery_modeling: false,

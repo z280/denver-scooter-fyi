@@ -12,6 +12,13 @@ import {
   liveDibs,
   releaseDibs,} from "./api.ts";
 import { createMap } from "./map.ts";
+import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
+import {
+  hasAnswers,
+  isLiveIntent,
+  rideButtonCopy,
+  rideButtonIntent,
+} from "./ride-reentry.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
@@ -20,14 +27,12 @@ import { createDibsNotifier } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
-  ALL_RIDE_TYPES,
   ALL_MODELS,
   MODELS_BY_RIDE_TYPE,
   gaugeColor,
   iconPreviewURL,
   whenModelIconsReady,
   hideMapTooltip,
-  type RideType,
   type ModelKey,
   modelKeyOf,
   type QualityFilter,
@@ -67,7 +72,7 @@ import {
   type ZoneGroup,
 } from "./micromobility-zones.ts";
 import { requestLocationOnLoad } from "./locate-on-load.ts";
-import { RideHud, isLiveRideEntry, type RideHudTrackControl } from "./ride-hud.ts";
+import { RideHud, type RideHudTrackControl } from "./ride-hud.ts";
 import { RideWizard } from "./ride-wizard.ts";
 import { EquityAreaMap } from "./equity-map.ts";
 import { equityAreaFeatures, isInEquityArea } from "./equity-areas.ts";
@@ -105,7 +110,7 @@ import {
   isRideLive,
   isPostRide,
   isWizardScreen,
-  type RideSessionDoc,} from "./ride-session.ts";
+} from "./ride-session.ts";
 import { showResumeOrEnd } from "./ride-resume-prompt.ts";
 import { openTrackStore, type TrackStore } from "./track-store.ts";
 import { wireRideScreenAuth } from "./ride-screen-auth.ts";
@@ -505,17 +510,29 @@ const layerInputs = new Map<BoundaryLayer, HTMLInputElement>();
 // resets the originating control through its normal event path so the
 // drawer UI stays in sync.
 const chips = new FilterChips(need("filter-chips"));
-let rideTypesOn: ReadonlySet<RideType> = new Set(ALL_RIDE_TYPES);
 /** The ideal-scooter bridge. Null when its markup is absent (a page that
  *  does not carry the Filters drawer). */
 let rideSpecPanel: RideSpecPanelHandle | null = null;
-let modelsOn: ReadonlySet<ModelKey> = new Set(ALL_MODELS);
+/** The model selection, DERIVED (Phase 6 §6.3). This used to be a third copy
+ *  of the filter — a module-level `Set` written only by the Filters drawer's
+ *  toggle handler. Once the ride HUD's pills began writing the one shared
+ *  selection, that copy went stale on every pill tap, and `snapshotFilters`
+ *  reads it: an attached ride spec compares the live filters against its
+ *  projection to decide whether the rider has edited it, so a stale snapshot
+ *  left the spec claiming to show "only my ideal scooters" over a map the
+ *  pills had changed underneath it.
+ *
+ *  Reading through `devices` instead makes that detach work by itself, which
+ *  is what §6.4 means by reusing `noticeFilterChange` rather than inventing a
+ *  second notion of "this no longer matches". */
+function modelsOn(): ReadonlySet<ModelKey> {
+  return modelsOf(devices.modelSelection_());
+}
 let minBatteryPct = 0;
 let qualityOn: QualityFilter = "any";
 let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
-let clearRideTypeFilter: () => void = () => {};
 /** "Notify me if moved", in the Tools drawer. Null until boot wires it. */
 let notifyPanel: DeviceNotifyPanelHandle | null = null;
 
@@ -606,11 +623,6 @@ function fetchIncludes(): DeviceInclude[] {
   return document.body.classList.contains("ride-active") ? [] : ["h3", "ranks"];
 }
 
-const RIDE_TYPE_CHIP_LABEL: Record<RideType, string> = {
-  standing: "🛴 Standing only",
-  sitting: "🚲 Seated only",
-};
-
 const QUALITY_CHIP_LABEL: Partial<Record<QualityFilter, string>> = {
   "no-risk": "Hiding high-risk",
   "ok-only": "✓ Likely rideable",
@@ -629,20 +641,12 @@ const FEATURE_CHIP_LABEL: Record<FeatureFilterKey, string> = {
 function activeFilterChips(): Chip[] {
   const active: Chip[] = [];
 
-  if (rideTypesOn.size < ALL_RIDE_TYPES.length) {
-    const only = [...rideTypesOn][0];
-    active.push({
-      id: "ride-type",
-      label: only ? RIDE_TYPE_CHIP_LABEL[only] : "🚫 No ride types",
-      onClear: clearRideTypeFilter,
-    });
-  }
-
-  if (modelsOn.size < ALL_MODELS.length) {
+  const pickedModels = modelsOn();
+  if (pickedModels.size < ALL_MODELS.length) {
     // Capitalized key ≠ display name for the three-wheeler: the internal
     // key stays "trike" (presets/sprites/wire format) but riders know it
     // as the Rover.
-    const names = [...modelsOn].map((m) =>
+    const names = [...pickedModels].map((m) =>
       m === "trike" ? "Rover" : m[0].toUpperCase() + m.slice(1),
     );
     active.push({
@@ -827,9 +831,6 @@ function equityZones(): Promise<IndexedFeature[]> {
   return equityAreaFeatures();
 }
 
-// The 🧭 Ride button (data-mode="riding") is bound in wireModes() alongside
-// the other two modes — a separate binding here would double-fire once the
-// mode-bar query matches it.
 function wireRideHud(): RideHud {
   return new RideHud(need("ride-hud"), equityZones, map, devices, {
     session: rideSession,
@@ -1115,7 +1116,6 @@ map.on("load", async () => {
   // one is first drawn.
   ensureBands(map);
   buildLayerToggles();
-  wireRideTypes();
   wireModels();
   wireFeatureFilter();
   wireHideUnavailable();
@@ -1204,6 +1204,13 @@ map.on("load", async () => {
     snapshot: snapshotFilters,
     apply: (s) => applyFilterSnapshot(s),
   });
+  // THE SPEC REACHES THE RIDE (§6.4). Honouring it needs no wiring any more —
+  // a spec projects onto the one model filter, and the HUD's pills read that
+  // same value — but a rider opening the Show row to a selection they did not
+  // make on this screen deserves to be told where it came from, and what the
+  // next tap will detach. Read through a function, because a pill tap ends the
+  // attachment while the HUD is still up.
+  rideHud.setAttachedSpecName(() => rideSpecPanel?.activeSpecName() ?? null);
   wireEquityAreas();
   wireMicromobilityZones();
   wireRoverZone(map);
@@ -1339,6 +1346,14 @@ map.on("load", async () => {
     // spec it claims to be showing. Reusing this rather than adding a second
     // change signal keeps "the filters changed" a single fact.
     rideSpecPanel?.onFiltersChanged();
+    // ...and the chip row, for the same reason. The drawer's own handlers call
+    // `refreshChips` directly, which was enough while the drawer was the only
+    // writer — but the ride HUD's "Show" pills now write the same filter, and a
+    // pill tap left the chips describing the pre-ride selection. The chips are
+    // hidden during a ride, so the damage showed up AFTER it: a rider who set
+    // Show to `none` came back to an empty map with no chip and no ✕ to clear
+    // it until they opened the drawer. One signal, every writer.
+    refreshChips();
   });
   map.on("moveend", () => {
     freshness.setViewportCount(countDevicesInViewport());
@@ -1361,12 +1376,12 @@ map.on("load", async () => {
   }
 
   // ---------- Ride wizard (F1 shell + F2 screens + F3 wiring) ----------
-  // F3 flips the 🧭 Ride button on by default (frontend plan, "Entry") — see
-  // wireModes()'s `case "riding"` (ride-hud.ts's `isLiveRideEntry` guard) —
-  // so this wizard wiring is now unconditional: the button calls
-  // `openRideModal()` whenever no ride is live, which needs a real, registered
-  // screen behind it rather than the `scooter-fyi-ride-modal` dev flag's old
-  // placeholder. `isRideModalEnabled`/`RIDE_MODAL_FLAG_KEY` (ride-modal.ts)
+  // F3 flipped the ride entry on by default (frontend plan, "Entry"), so this
+  // wizard wiring is unconditional: an entry calls `openRideModal()` whenever
+  // no ride is live, which needs a real, registered screen behind it rather
+  // than the `scooter-fyi-ride-modal` dev flag's old placeholder. The 🧭 mode
+  // button that used to be that entry is gone (§6.2); the top bar's ride
+  // button and the home bar are the entries now. `isRideModalEnabled`/`RIDE_MODAL_FLAG_KEY` (ride-modal.ts)
   // are dead code now — left for ride-modal.ts's own owner to prune.
   //
   // Wired after the first device response because a `?ride=plate:` link
@@ -1813,11 +1828,7 @@ const ONBOARDING_AUTOSHOW = false;
 function wireOnboarding(): void {
   const hooks: OnboardingHooks = {
     onStartExploring: () => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '#mode-switch .mode-btn[data-mode="ride"]',
-        )
-        ?.click();
+      enterFindWheels();
       const legend = document.getElementById(
         "legend-toggle",
       ) as HTMLInputElement | null;
@@ -2012,57 +2023,30 @@ function wireToggleGroup<T extends string>(
   };
 }
 
-function wireRideTypes(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(
-      "#ride-type-filter .toggle-pill",
-    ),
-  );
-  clearRideTypeFilter = wireToggleGroup(
-    btns,
-    (b) => b.dataset.ride as RideType,
-    ALL_RIDE_TYPES,
-    (enabled) => {
-      rideTypesOn = enabled;
-      devices.setRideTypes(enabled);
-      syncModelsToRideTypes(enabled);
-      clusters.update(devices.visibleFeatures());
-      refreshChips();
-    },
-    "ride-types",
-  );
-}
-
-/** Ride type → model sync: the two controls are deliberately redundant
- *  (Astro is the only standing model), so every ride-type change drives the
- *  model toggles to exactly the models that ride type can produce —
- *  otherwise "Seated" + a leftover Astro-only model pick is a dead filter
- *  showing nothing. Deliberately one-directional: a model tap is a narrower
- *  statement than a ride-type tap and never rewrites the type pills.
- *  Both-off is left alone (the empty ride-type set already hides
- *  everything, and any model rewrite would just be lost state). */
-function syncModelsToRideTypes(types: ReadonlySet<RideType>): void {
-  if (types.size === 0) return;
-  const want = new Set<string>(
-    ALL_RIDE_TYPES.filter((t) => types.has(t)).flatMap((t) => [
-      ...MODELS_BY_RIDE_TYPE[t],
-    ]),
-  );
-  // A narrower model pick that can still produce the enabled ride types
-  // SURVIVES the sync — expanding it wholesale re-showed models the user
-  // deliberately hid (Apollo-only + "Seated" is a perfectly live filter).
-  // Only the actual dead-filter case this sync exists for — none of the
-  // picked models can produce any enabled type — expands to the full
-  // per-type set.
-  const compatible = new Set<string>(
-    [...modelsOn].filter((m) => want.has(m)),
-  );
-  setToggleGroup(
-    "#model-filter",
-    "model",
-    compatible.size > 0 ? compatible : want,
-  );
-}
+// NO RIDE-TYPE FILTER, and no ride-type → model sync.
+//
+// The sitting/standing control was a second way to say something the model
+// toggles already said. Posture is DERIVED from the model, and not loosely:
+// the API's ingest maps one Veo vehicle-type id to both the model name and the
+// sitting/standing value (`_KNOWN_VEHICLE_TYPES`), so for a recognized model
+// the two can never disagree. "Seated only" was "Cosmo or Apollo or Rover"
+// with extra steps.
+//
+// Being redundant is not what made it worth deleting. What made it worth
+// deleting is that the redundancy was LOAD-BEARING: `syncModelsToRideTypes`
+// existed because the two controls could combine into a filter that shows
+// nothing ("Seated" plus an Astro-only model pick), and it had to be careful —
+// preserving a narrower model pick that could still produce the enabled types,
+// expanding only in the genuinely dead case, one-directional so a model tap
+// never rewrote the pills. All of that is gone with the control it guarded.
+//
+// WHAT STAYS, deliberately: `rideTypeOf` (the device icon's sprite picks
+// `use-sitting`/`use-standing`), `MODELS_BY_RIDE_TYPE` (the ride spec's
+// model-widening rung — "anything you'd sit on the same way"), and the
+// `vehicle_use_type` field itself, which on the API side is a SplitDimension in
+// the equity-compliance metrics and is described there as the
+// accessibility-relevant split. Deleting the concept would delete an
+// accessibility metric; only the redundant control is going.
 
 /** "I'm rude AF" — other people's claims stop dimming the map.
  *
@@ -2171,9 +2155,16 @@ function wireQuickFilters(): void {
       setQualityFilter("no-risk");
       setHideUnavailableControl(true);
     },
-    // Seated rides only — the ride-type sync turns the Astro off in step.
+    // Seated rides only. Now says it directly in models rather than setting a
+    // ride type and relying on a sync to turn the Astro off in step —
+    // `MODELS_BY_RIDE_TYPE` is the same mapping that sync read, so this is the
+    // identical selection by a shorter route.
     "no-standing": () => {
-      setToggleGroup("#ride-type-filter", "ride", new Set(["sitting"]));
+      setToggleGroup(
+        "#model-filter",
+        "model",
+        new Set<string>(MODELS_BY_RIDE_TYPE.sitting),
+      );
       setHideUnavailableControl(true);
     },
   };
@@ -2198,12 +2189,25 @@ function wireModels(): void {
   // Hidden in the everything-on default — it is a note about choosing
   // rovers, not a banner on the drawer.
   const roverNote = need<HTMLParagraphElement>("rover-area-note");
-  clearModelFilter = wireToggleGroup(
+  // NOT `wireToggleGroup`'s own clear. That closure guards on its LOCAL mirror
+  // of which boxes are ticked (`if (enabled.size === all.length) return`), and
+  // the ride HUD's "Show" pills write the shared filter without touching it —
+  // so after a pill narrowed the selection the mirror still read "everything
+  // on", the guard returned early, and the ✕ did nothing. The chip row lives
+  // OUTSIDE the drawer, so it is reachable without the drawer's on-open
+  // re-sync; wiring `refreshChips` to every filter change is what made that
+  // chip (and its dead ✕) appear in the first place.
+  //
+  // `devices` is the authority. Set it, then bring the buttons into line —
+  // which is a no-op when they are already right, and a real sync when the
+  // drawer is the surface that narrowed it.
+  void wireToggleGroup(
     btns,
     (b) => b.dataset.model as ModelKey,
     ALL_MODELS,
     (enabled) => {
-      modelsOn = enabled;
+      // No local mirror to update: `setModels` below writes the one selection
+      // and `modelsOn()` reads it back.
       roverNote.hidden = !(
         enabled.has("trike") && enabled.size < ALL_MODELS.length
       );
@@ -2213,6 +2217,13 @@ function wireModels(): void {
     },
     "models",
   );
+  clearModelFilter = () => {
+    devices.setModelSelection(ALL_SELECTED);
+    setToggleGroup("#model-filter", "model", new Set<string>(ALL_MODELS));
+    roverNote.hidden = true;
+    clusters.update(devices.visibleFeatures());
+    refreshChips();
+  };
 }
 
 function wireFeatureFilter(): void {
@@ -2274,8 +2285,7 @@ function wireQuality(): void {
 function snapshotFilters(): FilterSnapshot {
   const display = lastAreaState?.display;
   return {
-    rideTypes: [...rideTypesOn],
-    models: [...modelsOn],
+    models: [...modelsOn()],
     // The lineup as of this save, so a model added AFTER can be told apart
     // from one the saver deselected (see effectiveModels) — absence from
     // `models` alone can't distinguish the two, which is how pre-Rover
@@ -2295,21 +2305,24 @@ function snapshotFilters(): FilterSnapshot {
  *  wireToggleGroup can tell a synthetic click from a rider's tap and skip
  *  the `control_change` telemetry for it — the same programmatic-replay
  *  suppression wireSeg already does for its setter. Without this, one
- *  ride-type tap also recorded a phantom "models" gesture (via
- *  syncModelsToRideTypes), and every quick filter recorded a burst of
- *  control_change events for controls the rider never touched. */
+ *  quick filter recorded a burst of control_change events for controls the
+ *  rider never touched. (It also stopped a ride-type tap recording a phantom
+ *  "models" gesture through the old ride-type → model sync; that sync and the
+ *  control that drove it are gone, but the quick filters still replay.) */
 let drivingToggleGroup = false;
 
 function setToggleGroup(
   rootSel: string,
-  key: "ride" | "model" | "feature",
+  key: "model" | "feature",
   want: ReadonlySet<string>,
 ): void {
-  // Save/restore rather than set/clear: setToggleGroup re-enters itself
-  // (a Quick Filter drives the ride-type buttons, whose click handler runs
-  // syncModelsToRideTypes → setToggleGroup for the models), and an inner
-  // call blanking the flag would unsuppress telemetry for the rest of the
-  // outer drive.
+  // Save/restore rather than set/clear. The known re-entrant path is gone with
+  // the ride-type sync — a Quick Filter used to drive the ride-type buttons,
+  // whose handler drove the model buttons — but this stays: `applyFilterSnapshot`
+  // still drives several groups in one pass, and an inner call blanking the flag
+  // would unsuppress telemetry for the rest of the outer drive. Keeping the
+  // save/restore costs two lines; trading it for the assumption that nothing
+  // will ever nest again costs a silent burst of phantom gestures.
   const wasDriving = drivingToggleGroup;
   drivingToggleGroup = true;
   try {
@@ -2334,7 +2347,9 @@ let applyFilterSnapshot: (s: FilterSnapshot) => Promise<void> = () =>
 
 function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
   return async (s: FilterSnapshot): Promise<void> => {
-    setToggleGroup("#ride-type-filter", "ride", new Set(s.rideTypes));
+    // No ride-type group to drive: an old preset's `rideTypes` says nothing
+    // its `models` does not already say, because posture is derived from the
+    // model upstream (see the note above `wireModels`).
     // effectiveModels, not s.models verbatim: a model the preset never knew
     // about (saved before it joined the lineup) defaults to ON rather than
     // being read as deselected.
@@ -2351,7 +2366,6 @@ function makeApplyFilterSnapshot(areaFilter: AreaFilter) {
 
 function wireClearFilters(): void {
   resetAllFilters = () => {
-    clearRideTypeFilter();
     clearModelFilter();
     clearFeatureFilter();
     clearBatteryMin();
@@ -3105,20 +3119,12 @@ function wireAreaFilter(): AreaFilter {
 let resumeLiveRide: () => void = () => {};
 
 function wireModes(): void {
-  const btns = Array.from(
-    document.querySelectorAll<HTMLButtonElement>(
-      "#mode-switch .mode-btn[data-mode]",
-    ),
-  );
+  // NO MODE BAR (§6.2). `#mode-switch` is gone from `index.html`, and with it
+  // `setActive` and the `is-active`/`aria-pressed` bookkeeping it kept on two
+  // buttons that had been `hidden` since the home bar took over — state nobody
+  // could see, on elements nobody could press.
   let rideActive = false;
 
-  const setActive = (mode: string | null): void => {
-    for (const b of btns) {
-      const on = b.dataset.mode === mode;
-      b.classList.toggle("is-active", on);
-      b.setAttribute("aria-pressed", String(on));
-    }
-  };
   const setSelect = (id: string, value: string): void => {
     const sel = need<HTMLSelectElement>(id);
     if (sel.value !== value) {
@@ -3282,16 +3288,21 @@ function wireModes(): void {
     if (!rideActive) rideEntrySummary = filterSummary();
     setDrawer(null);
     setRideSurface(true);
-    setActive("ride");
     wizard.start();
     setWizardDocked(true);
   };
 
-  // Which mode the bar returns to when the HUD closes (End Ride, summary
-  // Done, or BRB) — captured when the HUD opens, since the HUD covers the
-  // bar and a "selected" Ride button is never actually seen.
-  let hudReturnMode: string | null = "analysis";
-  rideHud.setOnHidden(() => setActive(hudReturnMode));
+  // WHERE THE RIDER LANDS WHEN THE HUD CLOSES. There used to be a
+  // `hudReturnMode` here, captured by reading `is-active` off the hidden mode
+  // buttons on the way in and written back to them on the way out — the DOM
+  // used as storage for a selection that was never rendered. §6.2 asked for
+  // that to become explicit state; it turned out to need no state at all.
+  // Closing the HUD reveals the map the rider already had (ONE MAP: entering a
+  // ride never rearranged it), so there is no mode to restore — only the top
+  // bar to re-read, because this is the moment its ride button becomes the
+  // only way back to a live ride (§6.3.2). BRB does not dispatch, so the
+  // session subscription alone would not fire here.
+  rideHud.setOnHidden(() => refreshRideButton());
 
   // Back into the live ride, from anywhere. The ribbon's 🧭 tap was the only
   // way in, which made every OTHER route to a live ride — a scooter popup, a
@@ -3300,50 +3311,28 @@ function wireModes(): void {
   // rider is actually on. See that hook for the failure this closes.
   resumeLiveRide = () => {
     closeAllPopups();
-    hudReturnMode =
-      btns.find(
-        (b) => b.classList.contains("is-active") && b.dataset.mode !== "riding",
-      )?.dataset.mode ?? null;
-    setActive("riding");
     rideHud.open();
   };
 
-  for (const btn of btns) {
-    btn.addEventListener("click", () => {
-      track("mode_switch", { mode: btn.dataset.mode ?? "?" });
-      switch (btn.dataset.mode) {
-        case "riding":
-          // 🧭 now opens the Screens 1–6 wizard by default (frontend plan,
-          // "Entry" — F3 flips this on unconditionally; no dev-flag gate
-          // here) UNLESS a tracked ride is already live, in which case a
-          // second tap must resume the HUD (whose paused path resumes
-          // correctly) instead of opening a fresh wizard over a running ride
-          // — `ride-session.ts`'s own `open` reducer guard rejects exactly
-          // that anyway, but the button should never even attempt it.
-          // "Live" (`isLiveRideEntry`) covers both a same-tab BRB'd ride
-          // (the HUD's own `paused` flag) and the session doc still reading
-          // `riding`/`countdown` (e.g. right after a reload, before the
-          // tracking-integration lane's resume flow has re-attached the HUD).
-          closeAllPopups();
-          if (isLiveRideEntry(rideHud.isPaused(), rideSession.current()?.state)) {
-            resumeLiveRide();
-          } else {
-            openRideModal();
-          }
-          break;
-        case "ride":
-          enterRide();
-          break;
-        // NO `default`. It was the Analysis button's branch, and being a
-        // catch-all meant any button reaching this switch with an unexpected
-        // `data-mode` — or none at all — silently applied a whole map preset.
-        // A switch over a closed set of modes should name them.
-      }
-    });
-  }
-
-  // No `[data-mode-preset]` forwarding: the Analysis tab it existed for is
-  // gone from the ribbon.
+  // THE TWO BRANCHES THE MODE BAR USED TO CARRY, as the plan asked — except
+  // only one of them still had a caller.
+  //
+  // `data-mode="ride"` is this, called directly by the onboarding card and the
+  // home bar instead of through a synthetic click:
+  enterFindWheels = () => {
+    track("mode_switch", { mode: "ride" });
+    enterRide();
+  };
+  //
+  // `data-mode="riding"` had NO reachable caller left. Its button carried
+  // `id="ride-open"` and nothing referenced it; the one helper that clicked
+  // modes by name was only ever passed "ride". Its behaviour — resume a live
+  // ride, else open the wizard — is not lost: that is precisely the
+  // `isLiveRideEntry` decision, which the top bar's ride button reaches
+  // through `beforeOpen` (§6.3.2), and `resumeLiveRide` above is the same
+  // resume. Lifting it into a second named function with no caller would have
+  // preserved the shape of the seam while deleting the bar, which is the one
+  // outcome this section is against.
 }
 
 // ---------- Home bar ("Where are you going?") ----------
@@ -3687,10 +3676,6 @@ function wireHomeBar(): HomeBarHandle {
     pickOnMap: (hint) => mapPick.pick({ hint }),
     onPlanTrip: ({ dest, wheels, start }) => {
       closeAllPopups();
-      const click = (mode: string): void =>
-        document
-          .querySelector<HTMLButtonElement>(`#mode-switch .mode-btn[data-mode="${mode}"]`)
-          ?.click();
       // "I've already started one" is the only answer that needs something
       // from the rider before it can be acted on, so it is the only one that
       // can come back refused. Handled first, and it is the ONLY branch that
@@ -3706,7 +3691,7 @@ function wireHomeBar(): HomeBarHandle {
       // 🧭 Use in Ride Mode hands them to the walk flow rather than the
       // wizard (see beginWalkToVehicle).
       if (wheels === "need") {
-        click("ride");
+        enterFindWheels();
         return;
       }
       // "Got my own" has no vehicle to choose and nowhere to walk to. The
@@ -3847,6 +3832,12 @@ let deviceWatch: DeviceWatchHandle | null = null;
  *  and the drawer, and the walk flow is the only other thing that needs to
  *  put them away. */
 let exitFindWheels: () => void = () => {};
+/** Enter the find-a-ride flow. Named, and called directly (Phase 6 §6.2).
+ *  Every caller used to synthesise a click on a `hidden` button in
+ *  `#mode-switch` — right for the move that put the home bar in charge, wrong
+ *  to leave, and two modules had already had to learn about the seam. Assigned
+ *  by `wireModes`; a no-op before it runs. */
+let enterFindWheels: () => void = () => {};
 
 function endWalkFlow(): void {
   deviceWatch?.stop();
@@ -4232,30 +4223,32 @@ function wireFilterAccordion(): void {
  *  The device is marked "own" because that is what it is: whatever you are
  *  riding, we did not rent it to you.
  */
-/** Does this doc carry anything the rider told us? A doc outlives the surface
- *  that made it (a reload, a closed wizard, a "back in a minute"), and any of
- *  these means a ride is in progress even when nothing is on screen. `state`
- *  alone is not enough — `wizard` covers both "just opened, asked nothing"
- *  and "chose a scooter and a destination". */
-function hasAnswers(doc: RideSessionDoc): boolean {
-  // A FINISHED ride is not an unfinished one. `done` and `idle` docs keep
-  // their device and `startedAtMs` — that is the record of the ride that just
-  // happened — so answering this on the fields alone made every tap after the
-  // first reopen the last ride's wizard instead of starting a new one. The
-  // second through nth attempt "broke" for exactly this reason.
-  if (doc.state === "idle" || doc.state === "done") return false;
-  return (
-    doc.device !== null ||
-    doc.dest !== null ||
-    doc.route !== null ||
-    doc.rideId !== null ||
-    doc.startedAtMs !== null
-  );
-}
+/** Re-read the top bar's ride button. Assigned by `wireFreeRide`; called by
+ *  the HUD's hide hook, which is the one transition the session subscription
+ *  does not cover (BRB tears the HUD down without dispatching). */
+let refreshRideButton: () => void = () => {};
 
 function wireFreeRide(): void {
   const btn = document.getElementById("free-ride");
   if (!(btn instanceof HTMLButtonElement)) return;
+
+  // THE BUTTON SAYS WHICH ONE IT IS (Phase 6 §6.3.2). It always took a rider
+  // back to a live ride — `beforeOpen` deflects a live doc to `RideHud.open()`
+  // — but it read "start recording a free ride" while doing it, so a rider who
+  // BRB'd out had no way to tell their ride was still running, let alone one
+  // tap away. A control nobody can see is the same as no control.
+  const render = (): void => {
+    const intent = rideButtonIntent(rideSession.current());
+    const copy = rideButtonCopy(intent);
+    btn.title = copy.title;
+    btn.setAttribute("aria-label", copy.ariaLabel);
+    // The lit state is CSS only; the accessible name above is what carries
+    // the same fact to a reader who gets no colour.
+    btn.classList.toggle("topbar__btn--live", isLiveIntent(intent));
+  };
+  render();
+  refreshRideButton = render;
+  rideSession.subscribe(() => render());
 
   btn.addEventListener("click", () => {
     // THIS BUTTON NEVER DESTROYS AN ANSWER THE RIDER ALREADY GAVE.
@@ -4271,7 +4264,11 @@ function wireFreeRide(): void {
     // the HUD owns ending, and a second control for one irreversible action
     // is how a rider ends a ride they meant to keep.
     const doc = rideSession.current();
-    if (doc && (isRideLive(doc) || hasAnswers(doc))) {
+    // One source of truth with `render` above: whatever the button SAYS it
+    // will do is what it does. Reading the doc twice with two different sets
+    // of conditions is how a control starts lying.
+    const intent = rideButtonIntent(doc);
+    if (doc && intent.kind !== "start_free") {
       // `resume` is what makes the "never destroys an answer" promise above
       // actually hold (see `onOpen`), and a live ride is deflected to the HUD
       // by `beforeOpen` before this entry is ever built.
@@ -4377,6 +4374,20 @@ function wireDrawers(): void {
     // is hidden again.
     if (id === "leaderboard") leaderboardPanel?.open();
     else leaderboardPanel?.close();
+    // ONE FILTER, TWO SURFACES (Phase 6 §6.3). The model toggles are a view
+    // onto `devices`' single selection, which the ride HUD's "Show" pills
+    // edit too — so re-read it when the Filters drawer is shown rather than
+    // trusting the buttons' own memory. Lazily, on open, which is what §6.3
+    // means by "visible in the other when the rider gets there": a live
+    // listener would re-enter `setToggleGroup`, whose synthetic clicks drive
+    // the very handler that would fire it.
+    if (id === "devices") {
+      setToggleGroup(
+        "#model-filter",
+        "model",
+        modelsOf(devices.modelSelection_()),
+      );
+    }
     // Same for the watch list in Tools: a watch can be armed from a map popup
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.
@@ -4435,9 +4446,10 @@ function wireDrawers(): void {
 // can't flicker it shut while someone is reading.
 function wireFreshnessCollapse(): void {
   const root = need("freshness");
-  // The home bar, not the mode bar: #mode-switch is `hidden` now (it survives
-  // only as the seam the home bar clicks), so lifting it would move nothing.
-  const modeSwitch = need("home-bar");
+  // The home bar — named for what it is. It was called `modeSwitch` back when
+  // `#mode-switch` was the thing lifted here, which was already the wrong
+  // element before §6.2 deleted it outright.
+  const homeBarEl = need("home-bar");
   const mq = window.matchMedia("(max-width: 640px)");
   let expanded = false;
   let idleTimer: number | undefined;
@@ -4452,7 +4464,7 @@ function wireFreshnessCollapse(): void {
     // or collapsed size exactly, including whatever the actual device
     // counts/timestamp text needs.
     const lifted = mq.matches && expanded;
-    modeSwitch.style.setProperty(
+    homeBarEl.style.setProperty(
       "--freshness-lift",
       lifted ? `${Math.ceil(root.getBoundingClientRect().height) + 10}px` : "0px",
     );

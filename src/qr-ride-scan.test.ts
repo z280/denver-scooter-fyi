@@ -11,7 +11,6 @@ import { blankRideSession, type RideSessionDoc } from "./ride-session.ts";
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "classic",
-  theme: "auto",
   navigation: false,
   save_tracks: true,
   battery_modeling: false,

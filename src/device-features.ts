@@ -838,8 +838,8 @@ export const FEATURE_FILTER_KEYS: readonly FeatureFilterKey[] = [
 
 /** Does a device pass the Features filter?
  *
- *  This is a REQUIRE filter, not a hide filter like the ride-type/model
- *  toggles: most of the fleet has no confirmed data at all, so
+ *  This is a REQUIRE filter, not a hide filter like the model toggles:
+ *  most of the fleet has no confirmed data at all, so
  *  "everything on, tap to hide" has nothing to hide. Empty selection =
  *  filter off.
  *

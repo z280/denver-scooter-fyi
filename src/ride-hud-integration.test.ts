@@ -64,6 +64,12 @@ import {
 import type { RideOptions, RouteManeuver, TrackSigning } from "./api.ts";
 import type { RideSessionDoc, RideSessionRoute } from "./ride-session.ts";
 import { encodePolyline } from "./polyline-encode.ts";
+import {
+  admits,
+  sameSelection,
+  selectionOf,
+  type ModelSelection,
+} from "./model-filter.ts";
 
 // ---------------------------------------------------------------------------
 // A minimal, straight-line "on route" fixture: 6 points heading due east,
@@ -110,7 +116,6 @@ function buildRoute(): RideSessionRoute {
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: true,
   save_tracks: true,
   battery_modeling: true,
@@ -201,10 +206,33 @@ function fakeMap() {
   };
 }
 
+/** A device control that really holds the one model filter, so a test can
+ *  see what entering and leaving a ride does to it (Phase 6 §6.3). The
+ *  no-op `fakeDeviceCtl` below stays for the tests that do not care. */
+function statefulDeviceCtl(initial: ModelSelection): RideDeviceControl & {
+  selection: () => ModelSelection;
+  writes: () => number;
+} {
+  let selection = initial;
+  let writes = 0;
+  return {
+    setRideActive: () => {},
+    setModelSelection: (next) => {
+      selection = next;
+      writes += 1;
+    },
+    modelSelection_: () => selection,
+    hasOpenPopup: () => false,
+    selection: () => selection,
+    writes: () => writes,
+  };
+}
+
 function fakeDeviceCtl(): RideDeviceControl {
   return {
     setRideActive: () => {},
-    setRideModelFilter: () => {},
+    setModelSelection: () => {},
+    modelSelection_: () => ({ kind: "all" }) as const,
     hasOpenPopup: () => false,
   };
 }
@@ -626,7 +654,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
     };
   }
 
-  function mountWith(doc: RideSessionDoc) {
+  function mountWith(doc: RideSessionDoc, ctl?: RideDeviceControl) {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const { geo } = stubGeolocation();
@@ -636,7 +664,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
       container,
       async () => [],
       fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
-      fakeDeviceCtl(),
+      ctl ?? fakeDeviceCtl(),
       { session: { current: () => doc, dispatch } },
     );
     hud.beginHandoff({
@@ -651,6 +679,145 @@ describe("RideHud own-device cost fix + Display chips", () => {
     container.querySelector<HTMLButtonElement>(
       `[data-hud="display"][data-display="${key}"]`,
     );
+
+  // -------------------------------------------------------------------------
+  // ONE MAP, asserted (Phase 6 §6.1 / §6.3)
+  // -------------------------------------------------------------------------
+  // Ride start used to empty the "Show" pills — "F3: hide every scooter by
+  // default" — and `setState` cleared the ride filter on the way out while
+  // `resumeRide` pushed the unchanged selection back. All three were only
+  // possible because the pills owned a SECOND filter. With one shared value a
+  // reset is a filter wipe, which §6.1 forbids, and there is nothing to
+  // re-push. These tests are the ones that would catch any of it coming back.
+
+  it("starting a ride does not touch the rider's model filter", () => {
+    const chosen = selectionOf(["apollo", "cosmo"]);
+    const ctl = statefulDeviceCtl(chosen);
+    mountWith(ownDeviceDoc(), ctl);
+    expect(sameSelection(ctl.selection(), chosen)).toBe(true);
+    // Not merely "the same value" — the HUD must not have written at all, or
+    // a future reset that happens to re-set the same selection would pass.
+    expect(ctl.writes()).toBe(0);
+  });
+
+  it("a rider who hid everything still sees nothing when the ride begins", () => {
+    // The other direction: ride start must not helpfully re-show scooters
+    // either. `none` is a state the rider chose, and it survives.
+    const ctl = statefulDeviceCtl(selectionOf([]));
+    mountWith(ownDeviceDoc(), ctl);
+    expect(ctl.selection().kind).toBe("none");
+    expect(ctl.writes()).toBe(0);
+  });
+
+  it("the HUD's Show pills render from the shared filter, not their own memory", () => {
+    // The rider set this in the Filters drawer; the pills must already agree
+    // when the wrench panel opens. A pill row with its own default is the
+    // second filter coming back.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    const pill = (m: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-hud="dev"][data-model="${m}"]`,
+      );
+    // The panel is rendered on mount; if these are absent the selector moved
+    // and this test needs updating rather than deleting.
+    expect(pill("cosmo")).not.toBeNull();
+    expect(pill("cosmo")?.getAttribute("aria-pressed")).toBe("true");
+    expect(pill("apollo")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("opens honouring an attached spec, and names it", () => {
+    // §6.4: Phase 1 stores, syncs and attaches a spec, and the ride surface
+    // used to ignore it — a rider who had said "only Cosmos" opened the HUD to
+    // everything and said it again in pills. Honouring it needs no wiring now
+    // (a spec projects onto the one filter, which the pills read), but a
+    // selection the rider did not make on THIS screen has to say where it came
+    // from, and what the next tap will undo.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    hud.setAttachedSpecName(() => "Commuter");
+    // Re-render the panel so the note is built with the name registered.
+    container
+      .querySelector<HTMLButtonElement>('[data-hud="adjust"]')
+      ?.click();
+    const text = container.textContent ?? "";
+    expect(text).toContain("Commuter");
+    expect(text).toMatch(/detaches/i);
+  });
+
+  it("says nothing about specs when none is attached", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.textContent ?? "").not.toMatch(/spec/i);
+  });
+
+  it("escapes a rider-typed spec name", () => {
+    // The name is rider-typed text landing in a template literal assigned
+    // with innerHTML.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    hud.setAttachedSpecName(() => '<img src=x onerror="boom()">');
+    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("#hud-spec-note")?.textContent).toContain("img src");
+  });
+
+  it("stops naming the spec once a pill tap detaches it", () => {
+    // The note must not outlive the attachment it describes — that staleness
+    // is the very thing this seam removes.
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container, hud } = mountWith(ownDeviceDoc(), ctl);
+    let attached: string | null = "Commuter";
+    hud.setAttachedSpecName(() => attached);
+    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    expect(container.querySelector("#hud-spec-note")?.textContent).toContain("Commuter");
+    // The host detaches off the device layer's filter-change signal, which a
+    // pill tap triggers; model that by clearing the source, then tap.
+    attached = null;
+    container
+      .querySelector<HTMLButtonElement>('[data-hud="dev"][data-model="apollo"]')
+      ?.click();
+    const note = container.querySelector<HTMLElement>("#hud-spec-note");
+    expect(note?.hidden).toBe(true);
+    expect(note?.textContent).toBe("");
+  });
+
+  it("does not warn about Rover service areas on the default selection", () => {
+    // THE REGRESSION the pills' move onto the shared filter introduced. The old
+    // check read a selection that started EMPTY, so `has("trike")` was false and
+    // the note was hidden; the new one starts `all`, where `admits` is true for
+    // every model — so a service-area warning rendered for every rider who had
+    // never asked about Rovers. The drawer's own rule is "selected AND narrowed".
+    const ctl = statefulDeviceCtl({ kind: "all" });
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    const note = container.querySelector<HTMLElement>("#hud-rover-note");
+    expect(note).not.toBeNull();
+    expect(note?.hidden).toBe(true);
+  });
+
+  it("warns once the rider narrows TO the Rover", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["trike"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.querySelector<HTMLElement>("#hud-rover-note")?.hidden).toBe(false);
+  });
+
+  it("stays quiet when the rider narrows to something else", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["astro"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    expect(container.querySelector<HTMLElement>("#hud-rover-note")?.hidden).toBe(true);
+  });
+
+  it("tapping a pill writes the one shared filter", () => {
+    const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
+    const { container } = mountWith(ownDeviceDoc(), ctl);
+    container
+      .querySelector<HTMLButtonElement>('[data-hud="dev"][data-model="apollo"]')
+      ?.click();
+    // The map's filter changed — there is no ride-scoped copy to push later.
+    expect(admits(ctl.selection(), "apollo")).toBe(true);
+    expect(admits(ctl.selection(), "cosmo")).toBe(true);
+    expect(admits(ctl.selection(), "astro")).toBe(false);
+  });
 
   function ownDeviceDoc(): RideSessionDoc {
     return docWith(

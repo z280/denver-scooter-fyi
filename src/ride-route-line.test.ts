@@ -82,7 +82,6 @@ function buildRoute(): RideSessionRoute {
 const OPTIONS: RideOptions = {
   cost_hud: true,
   speedometer: "digital",
-  theme: "auto",
   navigation: true,
   save_tracks: true,
   battery_modeling: true,
@@ -220,7 +219,8 @@ function asMLMap(map: AnyMap) {
 function fakeDeviceCtl(): RideDeviceControl {
   return {
     setRideActive: () => {},
-    setRideModelFilter: () => {},
+    setModelSelection: () => {},
+    modelSelection_: () => ({ kind: "all" }) as const,
     hasOpenPopup: () => false,
   };
 }

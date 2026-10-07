@@ -14,7 +14,6 @@ import { track } from "./telemetry.ts";
  *  AreaFilterState carries computed geometry that must not be serialized. */
 export interface FilterPreset {
   name: string;
-  rideTypes: RideType[];
   models: ModelKey[];
   /** The model line-up that existed when this preset was SAVED. A stored
    *  `models` array only encodes which of the models the saver could see
@@ -33,6 +32,19 @@ export interface FilterPreset {
   minBattery: number;
   quality: QualityFilter;
   area: { layer: BoundaryLayer; subset: string[] | null } | null;
+  /** NOT WRITTEN ANY MORE, and read by nothing. Presets saved before the
+   *  ride-type (sitting/standing) filter was removed still carry it, so it is
+   *  declared here to say what that key in an old blob is — and tolerated by
+   *  `isValidPreset` rather than required, which is what lets a preset saved
+   *  from here on validate without it.
+   *
+   *  The filter went because posture is DERIVED from the model: the API's
+   *  ingest maps one vehicle-type id to both the model name and the
+   *  sitting/standing value, so "seated only" was "Cosmo or Apollo or Rover"
+   *  with extra steps. An old preset's `rideTypes` therefore adds nothing its
+   *  `models` does not already say. The posture FIELD is untouched — it is a
+   *  compliance metric on the API side and the device icon's sprite here. */
+  rideTypes?: RideType[];
 }
 
 export type FilterSnapshot = Omit<FilterPreset, "name">;
@@ -45,7 +57,6 @@ interface StoredPresets {
 
 const KEY = "scooter-fyi-filter-presets";
 
-const RIDE_TYPES: readonly string[] = ["standing", "sitting"];
 // Derived from the shared catalog, never a second hardcoded list (review
 // fix): a copy here that lagged a model addition would reintroduce the
 // exact "new model hidden by old preset" bug effectiveModels prevents.
@@ -85,8 +96,10 @@ const QUALITIES: readonly string[] = ["any", "no-risk", "ok-only"];
 function isValidPreset(p: FilterPreset): boolean {
   return (
     typeof p?.name === "string" &&
-    Array.isArray(p.rideTypes) &&
-    p.rideTypes.every((t) => RIDE_TYPES.includes(t)) &&
+    // `rideTypes` is tolerated, never required: presets written from here on
+    // omit it, and a stored one that carries junk under that key is not a
+    // reason to reject an otherwise sound preset nothing will read it from.
+    (p.rideTypes === undefined || Array.isArray(p.rideTypes)) &&
     Array.isArray(p.models) &&
     p.models.every((m) => MODEL_KEYS.includes(m)) &&
     (p.knownModels === undefined ||

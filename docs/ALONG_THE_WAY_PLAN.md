@@ -551,6 +551,36 @@ disagreeing about which vehicles were *considered* disagree about
 **disqualification**, which that rule forbids outright. Rule 1 (they may
 disagree on order) does not cover it.
 
+**WHICH SCOOTER MUST MATCH THE SPEC — the second one, if the first cannot.**
+Only the **first ride leg's vehicle** may fail the spec, and only because it is
+a *starter*: something ordinary you ride to get to what you asked for.
+Everything downstream of it is the vehicle the rider wanted, so **a plan can
+never hand off FROM a matching scooter TO a non-matching one**, and the vehicle
+they arrive on always matches.
+
+Revision 3 left this unstated and it is load-bearing in both directions. Read
+the other way — every vehicle must satisfy every requirement — the feature
+deletes itself: if the Astro you walk to needs the basket too, there is nothing
+to hand off *from*, and the plan collapses back to "walk to the matching
+scooter", which is the misreading this whole revision exists to correct.
+
+**Three checks enforce it and none is sufficient alone**, so a change to any
+one breaks the rule silently — which is why they are listed together, and why
+§2.5 tests the invariant rather than the checks:
+
+| | Enforces |
+|---|---|
+| the **pickup pool** is screened on `ideal` | any vehicle reached by a hand-off matches |
+| the **final ride leg** must be `ideal` | a single-vehicle plan cannot quietly offer a non-matching scooter |
+| the **continuation edge** obeys both | a re-solve cannot answer *"keep riding the basket-less starter to the door"* — the rider's requirement does not evaporate because their pickup was taken |
+
+`ideal` and not `qualifies`, and the difference is the whole mechanism:
+`qualifies` enforces only the rider's `must` fields, so with no musts set it is
+true of every available vehicle — nothing is ever "not found", nothing is ever
+given up, and the relaxation ladder below could never run. The ladder exists to
+trade **preferences** away one rung at a time, so the pool has to begin by
+demanding them.
+
 **`mustReach` is evaluated per leg, against that leg's own endpoint.**
 `matches()` checks whichever `dest` it is handed (`src/ride-spec.ts:214`), so
 handing it the final destination for every candidate disqualifies precisely the
@@ -1042,24 +1072,221 @@ displayed nothing since the bar went `hidden`.
   before". With no bar, that has to become explicit state, or the rider lands
   nowhere.
 
-### 6.3 Seam 2 — two model filters, opposite empty sets
+**Shipped.** `#mode-switch` is gone from `index.html`, its CSS with it, and a
+source-level test asserts that no module queries it — the trap here is somebody
+reintroducing the selector, which no behavioural test can express.
+
+Three findings worth keeping:
+
+- **The second trap needed no state at all.** `hudReturnMode` was captured by
+  reading `is-active` off the hidden buttons and written back on the way out —
+  the DOM used as storage for a selection that was never rendered. But closing
+  the HUD reveals the map the rider already had (ONE MAP: entering a ride never
+  rearranged it), so there is no mode to restore. The hook now only re-reads the
+  top bar, which is §6.3.2's business.
+- **One of the two branches had no caller.** `data-mode="riding"` lived on
+  `#ride-open`, nothing referenced that id, and the one helper that clicked
+  modes by name was only ever passed `"ride"`. Its behaviour is not lost —
+  that is the `isLiveRideEntry` decision, which `beforeOpen` reaches via
+  `isRideLive(doc)` — so it was deleted rather than lifted into a second named
+  function with nothing to call it. `isLiveRideEntry` itself is now
+  production-unreferenced and says so in its own doc comment, with what
+  replaced it.
+- **The first trap was left exactly as written.** `void resetIconography` and
+  `void setSelect` stay, comment untouched. Untangling that knot is still its
+  own change.
+
+### 6.3 Seam 2 — ONE FILTER SYSTEM, not two that agree by coincidence
 
 `devices.ts` holds `rideModelFilter` (HUD "Show" pills) alongside the Filters
-drawer's `models`:
+drawer's `models`, and they disagree about the one gesture a rider is most
+likely to make by accident — turning everything off.
 
-| | `null` | empty set |
+**An earlier draft of this table was wrong**, and the correction is the reason
+this seam is worth more than tidying. Read `filtered()`: the drawer's branch is
+`if (this.models.size < ALL_MODELS.length)`, so an EMPTY set does not skip the
+filter — it enters it, and keeps only what `key === null || has(key)` admits,
+which with nothing selected is **unrecognized hardware alone**:
+
+| Selection | drawer `models` | `rideModelFilter` |
 |---|---|---|
-| drawer `models` | every model | **every model** |
-| `rideModelFilter` | no ride filter | **none** |
+| all | every model (branch skipped) | passed upstream as `null` — no filter |
+| some | those **plus** unrecognized | those **plus** unrecognized |
+| **none** | **only unrecognized hardware** | **nothing at all** |
 
-Both are documented, both are right in isolation, one map applies both. Same
-gesture — deselect everything — opposite outcome, with nothing in the UI to
-tell them apart.
+So "some" agrees and "none" disagrees — and neither answer is what a rider
+means by turning every toggle off. `wireToggleGroup` has no all-off guard, so
+both states are reachable with ordinary taps.
 
-**The work:** one concept, one meaning for the empty set. If the HUD really
-needs "show none" (it may — the pills are a live control, not a search), it
-becomes a **named** state, not an empty selection that inverts its meaning one
-drawer away.
+**The decision: one filter system, one vocabulary, both surfaces driving the
+same value.** The HUD is a *view onto* the map's filter, not a second filter
+that happens to run on the same features. Concretely:
+
+- the model selection becomes a **named three-state** — `all`, `only(models)`,
+  `none` — so "show none" is a state somebody chose rather than an empty set
+  whose meaning inverts one drawer away;
+- unrecognized hardware stays visible under `all` and `only`, and is hidden
+  under `none`, because `none` means none;
+- a change in either surface is a change to the one filter, visible in the
+  other when the rider gets there. No copy, no re-push.
+
+**That last point deletes a whole dance.** `setState` currently clears the
+ride-model filter on the way to `hidden` and `resumeRide` pushes the unchanged
+selection back — a correctness patch that exists only because there are two
+filters to keep in step. With one, there is nothing to re-push.
+
+**AND IT OVERTURNS F3's RIDE-START RESET, which is a decision, not a tidy-up.**
+`RideHud` emptied its pills at the start of every ride — *"F3: hide every
+scooter by default"*. That was reachable only because the pills owned a second
+filter: emptying a ride-scoped copy left the rider's real filter alone. Against
+one shared value the same line is a **filter wipe**, and §6.1's ONE MAP
+guarantee — "entering a ride flow no longer wipes filters" — forbids it. The
+reset was the last surviving counterexample to a guarantee this plan states as
+already true.
+
+So it goes, and the intent behind it survives in a better form: a rider who
+wants an uncluttered ride view picks **`none`**, which is now a named state
+they chose and which persists, instead of one imposed on every ride and
+silently discarded at the end of it. The hand-off program argues the same way
+from the other side — Phase 2's whole point is the *next* scooter, and a ride
+view that hides every scooter by default hides it.
+
+**Shipped.** `model-filter.ts` holds the three-state and the one `admits()`
+that decides what each means; `devices.ts` has one model branch and one field;
+the HUD renders from it and writes to it; the clear/re-push pair and the F3
+reset are gone. The Filters drawer re-reads the value when it opens, which is
+what "visible in the other when the rider gets there" buys — a live listener
+would re-enter `setToggleGroup`, whose synthetic clicks drive the very handler
+that would fire it.
+
+### 6.3.3 Seam 2d — the ride-type filter was a THIRD way to say it
+
+Not in the original plan; added after §6.3 shipped and the question was put
+directly: should sitting/standing stop being a filter, with posture simply
+documented per model?
+
+**Yes for the control, no for the concept.** Posture was never an independent
+signal. The API's `ingest.py` maps one Veo vehicle-type id to **both** the model
+name and the sitting/standing value (`_KNOWN_VEHICLE_TYPES`: `1` → Astro /
+standing, `3` → Cosmo / sitting, `4` → Apollo / sitting, `5` → Rover /
+sitting). For a recognized model the two cannot disagree, so "seated only" was
+"Cosmo or Apollo or Rover" with extra steps — and `MODELS_BY_RIDE_TYPE` was
+already the documented mapping the question asked for, as a local copy of that
+table's posture column.
+
+**There is no correlation win, and that was the hypothesis worth testing.**
+Nothing correlates posture against model, because posture *is* the model
+upstream. What the deletion buys is the removal of a redundancy that was
+**load-bearing**: `syncModelsToRideTypes` existed only because the two controls
+could combine into a filter that shows nothing ("Seated" plus an Astro-only
+model pick), and it had to be careful about it — preserving a narrower model
+pick that could still produce the enabled types, expanding only in the genuinely
+dead case, one-directional so a model tap never rewrote the pills. That, the
+chip, the device-layer branch and the preset field all go with the control.
+
+**What stays, and why deleting it would have been a mistake:**
+
+| Kept | Because |
+|---|---|
+| `vehicle_use_type` on the API | A `SplitDimension` in the equity-compliance metrics, generating stored columns per equity region. `ingest.py` calls it "the accessibility-relevant split" — a rider who cannot stand needs a seated vehicle, so its distribution is an advocacy question |
+| `rideTypeOf` | The device icon picks `use-sitting`/`use-standing`, and must answer for hardware with **no recognized model** — the one case a model-only rule cannot cover |
+| `MODELS_BY_RIDE_TYPE` | The ride spec's model-widening rung ("anything you'd sit on the same way") and the Quick Filters' "No Standing" preset, which now reads it directly instead of setting a ride type and relying on the sync |
+
+**The repo had already made this argument once, in the other direction.**
+`ingest.py` keeps `use_type` separate from `form_factor` with the note that
+"every vehicle here happens to agree with its (corrected) form_factor today, but
+the two are tracked separately since GBFS's vocabulary and the
+compliance-relevant distinction aren't guaranteed to be the same axis forever."
+That is exactly why the field survives while the control does not: two tracked
+fields cost nothing, two **controls** cost a sync and a dead-filter state.
+
+### 6.3.1 Seam 2b — the camera has exactly TWO framings
+
+**The regular map is never tilted.** It is built today with no pitch or rotate
+restrictions at all, so a two-finger drag tilts it — and the navigation control
+is registered `showCompass: false`, so there is **no visible way to undo that**.
+A rider who tilts the map by accident is stuck with a tilted map. That is a bug
+today, and under this phase it stops being reachable:
+
+| | Pitch | Bearing | Where |
+|---|---|---|---|
+| **2D map** | **0, always** | 0 | everywhere outside the ride view |
+| **3D ride view** | `RIDE_PITCH` (60) | tracks direction of travel | `ride-hud.ts`'s follow-cam |
+
+Nothing in between, and no rider-reachable gesture that produces an
+in-between. The work is to disable the pitch gesture on the map and let the
+follow-cam keep driving pitch programmatically, which it already does.
+
+**This also simplifies the restore.** `enterFollowCam` saves `{center, zoom,
+pitch, bearing}` and `exitFollowCam` puts all four back — which, once the map
+cannot be tilted, is saving a pitch that is always 0 and a bearing that is
+always 0. Restoring the framing becomes **centre and zoom**, and the pitch and
+bearing go back to the only values the 2D map is allowed to have. One less pair
+of fields that can disagree with reality.
+
+### 6.3.2 Seam 2c — 3D is a VIEW, not a mode, and the toggle already exists
+
+The one mode this app keeps is the 3D ride view (`wireModes()` says so in
+those words). What it does not yet have is a way in and out that reads as a
+**view toggle** rather than as leaving the ride.
+
+**The mechanism is already built and already correct — it is BRB.**
+`pauseRide()` tears the follow-cam down *without* stopping a tracked ride: the
+clock stays anchored, the shared watcher and track-store recording keep
+running, and only the HUD's visual display leaves, so the map chrome returns.
+`resumeRide()` re-mounts it. The hard parts — not double-counting the clock,
+not moving a map the rider is reading for something else (`onFix`'s
+`following` gate), trail and route-line visibility, theme restore, immersive
+fullscreen — are all solved and commented.
+
+**BRB STAYS AS IT IS.** An earlier draft of this section proposed renaming it
+to a 2D/3D toggle; that is withdrawn. BRB is a rider saying *"I am stepping
+away from this ride for a moment"*, and it reads correctly as that. A view
+toggle is a different intent that happens to share a mechanism, and collapsing
+the two would cost the clearer of the two names.
+
+**What is left is a way back IN, and it belongs in the top bar.** The gap is
+not the leaving, it is the returning: once the HUD is down, a live session has
+no persistent affordance anywhere on the map. The rider is still on a ride —
+clock anchored, watcher running, track recording — and the app shows them
+nothing that says so or takes them back.
+
+- a **live session is visible in the top bar** whenever the HUD is not up, and
+  tapping it returns to the ride exactly where it was;
+- it is an **in-and-out** control, not a one-way door: leaving again is the
+  same gesture, and neither direction touches the clock, the watcher or the
+  recording — the guarantee `brbStrategyFor(...) === "continue_tracking"`
+  already makes, and the reason this is cheap to build on;
+- the 3D framing stays reachable **without** a tracked ride, so a rider can use
+  the view the app is proudest of while they are deciding, not only after
+  committing. The follow-cam needs a GPS fix, not a ride id.
+
+**What must not happen** is a third framing or a second entry point. If this
+grows a "tilt slider" or a map that remembers a 40° pitch, both tables above
+are void and the seam is back.
+
+**Shipped, and smaller than this section expected.** The control already
+existed: the top bar's `#free-ride` button is labelled "Ride Mode", and
+`main.ts`'s `beforeOpen` already deflects a live doc to `RideHud.open()`, which
+resumes a BRB'd ride exactly where it paused. The way back in WORKED. What it
+did not do was **say so** — it read "Ride Mode — start recording a free ride"
+the entire time a ride was running, so a rider who stepped away had no way to
+tell their ride was still going, let alone one tap away. A control nobody can
+see is the same as no control, which is what "the gap is not the leaving, it is
+the returning" turned out to mean in practice.
+
+So `ride-reentry.ts` answers one question — *given the session doc, what is
+this button right now?* — as four named intents, and the button renders and
+acts from the same answer. A ride in flight lights it and changes its
+accessible name; the fact lives in the name, not only in the colour.
+
+**One correction to this section.** It asks for an "in-and-out control" where
+"leaving again is the same gesture". A single control cannot do both halves:
+`body.ride-active` sets `.topbar { display: none }`, so the top bar is not on
+screen while the HUD is up. BRB stays the way out — as it should, per the
+paragraph above — and the top bar is the way in. What holds, and what the tests
+assert, is that the PAIR is repeatable and that neither direction touches the
+clock, the watcher or the recording.
 
 ### 6.4 Seam 3 — the spec stops at the ride
 
@@ -1077,6 +1304,29 @@ names which spec. Changing the pills **detaches**, exactly as §1.3's
 attach/detach rule already specifies for the map — reuse
 `ride-spec-store.ts`'s `noticeFilterChange`, do not invent a second notion of
 "this no longer matches".
+
+**Shipped, and seam 2 did most of it.** Honouring the spec needed no wiring in
+the end: a spec projects onto the model filter, and after §6.3 the HUD's pills
+ARE that filter, so a ride opens matching the attached spec by construction.
+Detaching likewise — `main.ts` hangs the detach off `devices.onCountsChange`,
+"the one signal that fires for all of them", and a pill tap now goes through
+`setModelSelection`, which fires it.
+
+**But seam 2 left a third copy of the filter, and this seam is where it would
+have bitten.** `main.ts` held `modelsOn`, a module-level `Set` written only by
+the Filters drawer's toggle handler, and `snapshotFilters` reads it — which is
+what `noticeFilterChange` compares against its projection. So once the pills
+began writing the shared selection, a pill tap changed the map and left the
+snapshot stale: `sameFilters` saw no change, nothing detached, and the spec went
+on claiming to show "only my ideal scooters" over a map it no longer matched.
+`modelsOn` is now derived from `devices.modelSelection_()`. **Two copies were
+visible in §6.3's table; the third was not, and unifying two of three is worse
+than leaving all three, because the remaining disagreement is the silent one.**
+
+What was left to build is the sentence: the Show row names the attached spec
+and says that changing a pill detaches it. Rendered **live**, not baked into the
+markup, because the attachment can end while the HUD is up — a note that
+outlived its attachment would be the same staleness this seam removes.
 
 ### 6.5 Seam 4 — one settings vocabulary across two entrances
 
@@ -1097,15 +1347,71 @@ here: it is the Screen 4 route-preview basemap flavour, not the app theme,
 which is why `ride-settings.ts` deliberately has no Theme row and a paragraph
 explaining the absence. A field that needs a paragraph is misnamed.
 
+**`theme` was not misnamed, it was INERT — so it is deleted, not renamed.**
+`ride-screen-routes.ts` never mentioned it. Nothing read it on any screen: it
+was defaulted, copied into `RideOptions`, validated on recovery, stored in
+`tracked_rides.ride_options` and in Usuals, echoed back by the server, and
+consumed by no one — the only references outside that chain were test fixtures.
+Renaming it would have codified an intention nothing implements. The deletion is
+client-only and needs no migration: the server's `_serialize_ride_options`
+validates `if key in options`, so an absent key is simply not checked, and
+`parseRideSession` is a version-skewed read that builds an explicit object, so
+blobs already carrying `theme` still parse and drop it.
+
+**The audit, which found a worse problem than the naming.** Every question
+either flow asks, against the per-ride-or-standing test:
+
+| Field | Asked where | Read? | Verdict |
+|---|---|---|---|
+| `save_tracks` | nowhere — Settings → Local Data | yes | **Correct, and the precedent.** A rider who wants their tracks wants them every ride |
+| `navigation` | pre-flight | yes | Genuinely per-ride — turn-by-turn is a property of *this* trip |
+| `cost_hud` | pre-flight only | **yes, now** | **Open question for the owner.** One entrance asks, the other dropped its row. Plausibly standing, like Save Tracks |
+| `speedometer` | **nowhere** | **yes, now** | **A control that went missing.** Read, three meaningful values, pinned to `"classic"` for every rider forever |
+| `battery_modeling`, `nav_improvement`, `end_survey` | Screens 9/10 | yes | Correct — asked once the data exists, not pre-committed |
+| `theme` | nowhere | **no** | Deleted (above) |
+
+**`ride-settings.ts`'s header had gone stale, and that is the drift this seam is
+about.** It justified removing the Cost HUD and Speedometer rows on the grounds
+that "both `RideOptions` fields were never actually read by `ride-hud.ts`" —
+true when written, false now: that module says "`RideOptions.cost_hud` finally
+being READ" and "`RideOptions.speedometer`, finally read", and applies both in
+`renderRiding`. A reader trusting the old paragraph would have concluded the
+fields were dead and deleted them, blanking the readouts. The paragraph now
+records what expired and what each absence costs.
+
+**Not done, because they are the owner's calls, not a refactor's:** whether
+`cost_hud` becomes a standing setting, and where `speedometer` gets asked.
+
 ### 6.6 Tests
 
 - `#mode-switch` is absent from `index.html`, and no module queries it.
 - Entering and leaving a ride leaves every filter, drawer tab and iconography
   setting exactly as it was — the ONE MAP guarantee, now asserted rather than
   described.
-- One property over both filter paths: an empty model selection produces the
-  same visible set in the drawer and in the HUD, or the HUD's "none" is a
-  distinct named state that the drawer has no way to express.
+- **One filter, asserted as one value**: a change made in the drawer is
+  readable from the HUD and vice versa, with no copy step between them. The
+  three-state selection round-trips — `all`, `only(models)`, `none` — and
+  `none` hides unrecognized hardware too, which is the case the old empty set
+  got wrong in two different directions.
+- The `setState`/`resumeRide` re-push is **gone**, not merely working: nothing
+  clears a filter on a state change, so nothing has to put it back.
+
+**The camera, which is where this phase could do visible harm:**
+
+- **The 2D map cannot be tilted by any gesture.** Drive the pitch gesture
+  directly and assert `getPitch() === 0` after it. This is the test that would
+  have caught today's bug, where the map tilts and `showCompass: false` leaves
+  no way back.
+- **The framing round-trips.** Entering the 3D view pitches to `RIDE_PITCH`;
+  leaving restores the rider's centre and zoom and returns pitch and bearing
+  to 0. Asserted as one gesture, because undoing one and not the others leaves
+  the map somewhere nobody chose.
+- **Popping out and back in does not touch the ride.** With a tracked ride
+  live, 2D → 3D → 2D leaves the clock anchored, the watcher running and the
+  track recording unbroken — the guarantee `pauseRide` already makes, now
+  asserted because a view toggle will be used far more often than a pause was.
+- **The 3D view opens without a ride id.** It needs a GPS fix, not a
+  commitment.
 - With a spec attached, the HUD's initial pill state equals
   `toFilterSnapshot(spec).models`; changing a pill detaches, once.
 - No `RideOptions` field is written by two surfaces meaning two things.

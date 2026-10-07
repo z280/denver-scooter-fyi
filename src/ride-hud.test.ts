@@ -10,8 +10,11 @@
 // were extracted as pure, exported functions instead, and this file is their
 // full coverage:
 //
-//   - `rideModelFilterFor`   — the rideModels-empty-push decision (item 3:
-//                              hide-scooters on ride start).
+//   - the model-filter decision MOVED. Phase 6 §6.3 replaced
+//     `rideModelFilterFor` with one shared, named three-state; it and its
+//     cases live in `model-filter.test.ts` now. The ride-start reset that
+//     function existed to serve is gone with it — a reset is a filter wipe
+//     once there is only one filter, which §6.1's ONE MAP guarantee forbids.
 //   - `brbStrategyFor`       — the BRB tracked-vs-private branch decision
 //                              (item 5).
 //   - `minimalEndReport`     — the interim end-report field set (item 6).
@@ -28,52 +31,11 @@
 // ride-hud-integration.test.ts's "ending a TRACKED ride..." test.
 import { describe, expect, it } from "vitest";
 
-import { ALL_MODELS, type ModelKey } from "./devices.ts";
 import {
   brbStrategyFor,
   isLiveRideEntry,
   minimalEndReport,
-  rideModelFilterFor,
 } from "./ride-hud.ts";
-
-// ---------------------------------------------------------------------------
-// rideModelFilterFor — item 3, the hide-scooters push decision.
-// ---------------------------------------------------------------------------
-
-describe("rideModelFilterFor", () => {
-  it("an empty selection (ride start's new default) pushes an empty set — setRideModelFilter's documented 'show none' path", () => {
-    const result = rideModelFilterFor(new Set());
-    expect(result).not.toBeNull();
-    expect(result?.size).toBe(0);
-  });
-
-  it("every model selected pushes null — no filter, matching the pre-F3 'all selected = show everything' behavior", () => {
-    const result = rideModelFilterFor(new Set(ALL_MODELS));
-    expect(result).toBeNull();
-  });
-
-  it("a partial selection pushes exactly that set", () => {
-    const partial = new Set<ModelKey>(["cosmo"]);
-    const result = rideModelFilterFor(partial);
-    expect(result).not.toBeNull();
-    expect([...(result ?? [])]).toEqual(["cosmo"]);
-  });
-
-  it("returns a COPY, not the same Set instance — later mutation of the input must not silently change what was already pushed", () => {
-    const input = new Set<ModelKey>(["astro"]);
-    const result = rideModelFilterFor(input);
-    expect(result).not.toBe(input);
-    input.add("cosmo");
-    expect([...(result ?? [])]).toEqual(["astro"]);
-  });
-
-  it("ALL_MODELS itself is non-empty, so the empty-selection and all-selected cases are actually distinguishable", () => {
-    // Guards the whole suite above against a future ALL_MODELS = [] regression
-    // silently making "empty" and "all" the same case.
-    expect(ALL_MODELS.length).toBeGreaterThan(0);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // brbStrategyFor — item 5, the BRB tracked-vs-private branch decision.
 // ---------------------------------------------------------------------------
