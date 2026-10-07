@@ -1906,7 +1906,13 @@ body.ride-active .arrival {
 .device-features__close,
 .ride-preflight__close,
 .admin-analytics__close,
-.home-bar__close {
+.home-bar__close,
+/* The plan list joins this rule rather than carrying a sixth near-identical
+   copy, which is the thing this block exists to have stopped. It reserves its
+   corner the same way (`.planlist__head` has the padding) and needs no
+   `position: relative` of its own: `.planlist` is `position: fixed`, which is
+   already a containing block. */
+.planlist__close {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -9593,11 +9599,9 @@ input[data-ride-keypad="on"] {
   font-weight: 700;
   line-height: 1.25;
 }
+/* Position, size and shape all come from the two shared ×-rules this selector is
+   listed in. Only the cursor is local. */
 .planlist__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
   cursor: pointer;
 }
 .planlist__notes {

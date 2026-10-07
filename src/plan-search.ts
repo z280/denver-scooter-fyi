@@ -115,6 +115,19 @@ export function buildContext(
     taxRate: deps.taxRate(),
     now: deps.now(),
     ...(deps.favorites ? { favorites: deps.favorites() } : {}),
+    // NO `inRide`, which is correct for an initial search and WRONG for a
+    // re-solve — and the difference is not cosmetic. With it, the search gains
+    // §6.2's continuation edge ("keep riding what you have", priced with no
+    // unlock because it is already paid) and bounds that edge by the vehicle's
+    // remaining range. Without it, a mid-ride search charges the rider a second
+    // unlock for the scooter they are sitting on and systematically prefers
+    // handing off, because carrying on is not in the graph to lose.
+    //
+    // This surface only opens from the home bar's "need wheels", which is a
+    // rider who is not on a scooter, so omitting it is right today. It is
+    // recorded here rather than left to be inferred because the fix is not
+    // "pass the field": `InRideState` wants a free-minute BASELINE from before
+    // the rental began, and §3.2's re-solve is where that lives.
   };
 }
 
