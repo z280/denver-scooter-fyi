@@ -795,17 +795,11 @@ wireAccount();
  *  to speak: `browserVoiceDeps()` feature-detects and hands back nulls where a
  *  platform lacks either half.
  *
- *  DECLARED ABOVE `wireRideHud()`'S CALL, AND THAT ORDER IS LOAD-BEARING.
- *  `wireRideHud` reads `rideVoice` in the object literal it builds, and it is
- *  CALLED at module top level below. A `function` declaration hoists; a `const`
- *  does not, so declaring this after that call put `rideVoice` in its temporal
- *  dead zone at exactly the moment the call read it: `ReferenceError: Cannot
- *  access 'rideVoice' before initialization`, thrown during module evaluation.
- *  That aborts the REST of main.ts — every `wire*` below it, the ride-modal
- *  registry, the Ride Mode button's own handler — so the whole app booted to a
- *  map with dead chrome. `ride-voice-wired.test.ts` could not see it: it reads
- *  this file as TEXT, and the text it asserts on was present and correct.
- *  `main-boot-order.test.ts` is the guard that can see it. */
+ *  Declared HERE, above `wireRideHud()`'s call, not beside the function: the
+ *  call runs at module load and reads it, and a `const` read before its line
+ *  is a ReferenceError that stopped main.ts before any vehicle was drawn
+ *  (2026-10-07, ~11 h blank map). `main-boot-order.test.ts` fails on that
+ *  ordering now, and `scripts/smoke.mjs` fails on the boot it produces. */
 const rideVoice = createRideVoice(browserVoiceDeps());
 
 const rideHud = wireRideHud();

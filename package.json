@@ -11,7 +11,7 @@
     "vectors:check": "node scripts/gen-track-vectors.mjs --check",
     "preview": "vite preview",
     "simulate:ride": "node scripts/simulate-gps-ride.mjs",
-    "smoke": "node scripts/smoke-boot.mjs"
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@protomaps/basemaps": "^5.2.0",
