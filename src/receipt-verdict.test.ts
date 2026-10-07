@@ -33,7 +33,7 @@ const MINUTES = 15;
 const EXPECTED = equityAreaEstimateWithTax(MINUTES * 60_000, TAX).total;
 
 function verdictFor(totalCents: number, over: Partial<VerdictContext> = {}) {
-  return receiptVerdict(confirmRead({ minutes: MINUTES, totalCents }), ctx(over));
+  return receiptVerdict(confirmRead({ minutes: MINUTES, totalCents })!, ctx(over));
 }
 
 describe("the expected charge is the contract's own figure", () => {
@@ -100,7 +100,7 @@ describe("the comparison is ONE-SIDED — exceeds, never merely differs", () => 
     // own 15¢ comes to 15¢ against an expected $1.13 — nearly a dollar BELOW. For
     // short trips the area rate is WORSE for them, so there is no overcharge to
     // make provable and nothing to write to support about.
-    const r = receiptVerdict(confirmRead({ minutes: 1, totalCents: 15 }), ctx({ rate: rate("equity") }));
+    const r = receiptVerdict(confirmRead({ minutes: 1, totalCents: 15 })!, ctx({ rate: rate("equity") }));
     expect(r.verdict).toBe("correct");
     expect(r.differenceCents).toBeLessThan(0);
   });
@@ -221,7 +221,7 @@ describe("tax is on top of the fare, not on the discount", () => {
   it("expects tax on unlock + minutes, and absorbs its rounding", () => {
     const taxed = equityAreaEstimateWithTax(MINUTES * 60_000, 0.0915);
     expect(taxed.tax).toBe(Math.round((taxed.unlock + taxed.perMin) * 0.0915));
-    const r = receiptVerdict(confirmRead({ minutes: MINUTES, totalCents: taxed.total }), {
+    const r = receiptVerdict(confirmRead({ minutes: MINUTES, totalCents: taxed.total })!, {
       startedOrEndedInArea: true,
       rate: rate("resident"),
       taxRate: 0.0915,
@@ -236,17 +236,46 @@ describe("confirmation is the third condition, and it is a type", () => {
     // step un-skippable. Enforced by construction rather than by a boolean nobody
     // checks — which is also why the reason enum has no code for "unconfirmed":
     // such a receipt never reaches the verdict.
-    const confirmed = confirmRead({ minutes: 15, totalCents: 295 });
+    const confirmed = confirmRead({ minutes: 15, totalCents: 295 })!;
     expect(confirmed.__confirmed).toBe(true);
     expect(confirmed.minutes).toBe(15);
     expect(confirmed.totalCents).toBe(295);
+  });
+
+  it("refuses figures that cannot be on a receipt", () => {
+    // WITHOUT THIS THE NONSENSE DOES NOT FAIL, IT PRICES. `billableMinutes` is
+    // max(1, ceil(ms / 60_000)), so a misread of 0 or -3 minutes silently becomes
+    // one minute, the expected charge becomes $1.13, and a $4.75 receipt is
+    // reported to Veo as a $3.62 overcharge. §8.3's whole argument is that a
+    // misread total is a rider sent to lose an argument in public.
+    expect(confirmRead({ minutes: 0, totalCents: 475 })).toBeNull();
+    expect(confirmRead({ minutes: -3, totalCents: 475 })).toBeNull();
+    expect(confirmRead({ minutes: NaN, totalCents: 475 })).toBeNull();
+    expect(confirmRead({ minutes: 15, totalCents: -1 })).toBeNull();
+    expect(confirmRead({ minutes: 15, totalCents: NaN })).toBeNull();
+    expect(confirmRead({ minutes: 15, totalCents: Infinity })).toBeNull();
+  });
+
+  it("rounds a fractional minute up rather than refusing it", () => {
+    // Veo bills the started minute, so that is how the figure is billed — and
+    // "15.0" is a plausible OCR of a whole number. Refusing it would send the
+    // rider back to retype a figure that was right.
+    expect(confirmRead({ minutes: 15.0, totalCents: 295 })!.minutes).toBe(15);
+    expect(confirmRead({ minutes: 14.2, totalCents: 295 })!.minutes).toBe(15);
+  });
+
+  it("accepts a free ride, which is a real receipt", () => {
+    // A fully credited trip reads $0.00 and must not be refused as nonsense.
+    const r = confirmRead({ minutes: 15, totalCents: 0 });
+    expect(r).not.toBeNull();
+    expect(receiptVerdict(r!, ctx()).verdict).toBe("correct");
   });
 
   it("uses the receipt's own billed minutes, never re-derived ones", () => {
     // The receipt is the document the complaint is about. Veo bills the started
     // minute, so its printed figure is already whole, and arguing with it would
     // put our arithmetic in the complaint instead of theirs.
-    const r = receiptVerdict(confirmRead({ minutes: 1, totalCents: 113 }), ctx());
+    const r = receiptVerdict(confirmRead({ minutes: 1, totalCents: 113 })!, ctx());
     expect(r.expected!.perMin).toBe(13);
     expect(r.expected!.total).toBe(113);
     expect(r.verdict).toBe("correct");

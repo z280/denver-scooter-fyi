@@ -28,7 +28,7 @@ const EXPECTED = equityAreaEstimateWithTax(MINUTES * 60_000, 0).total; // $2.95
 const BASE_FARE = 100 + MINUTES * 25; // $4.75, the discount not applied
 
 function verdict(totalCents: number, key: RatePlanKey = "resident") {
-  return receiptVerdict(confirmRead({ minutes: MINUTES, totalCents }), {
+  return receiptVerdict(confirmRead({ minutes: MINUTES, totalCents })!, {
     startedOrEndedInArea: true,
     rate: rate(key),
     taxRate: 0,
@@ -59,7 +59,7 @@ describe("the gate: neither path is reachable without a finding", () => {
     expect(overchargeFinding(verdict(EXPECTED, "resident_plus"))).toBeNull(); // veoplus
     expect(
       overchargeFinding(
-        receiptVerdict(confirmRead({ minutes: MINUTES, totalCents: BASE_FARE }), {
+        receiptVerdict(confirmRead({ minutes: MINUTES, totalCents: BASE_FARE })!, {
           startedOrEndedInArea: null,
           rate: rate("resident"),
           taxRate: 0,

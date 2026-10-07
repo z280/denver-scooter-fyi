@@ -97,12 +97,33 @@ export interface ConfirmedReceipt {
 }
 
 /** The only way to make a `ConfirmedReceipt`. Called by §8.3's confirm step,
- *  after the rider has looked at each field over their own screenshot. */
+ *  after the rider has looked at each field over their own screenshot.
+ *
+ *  `null` FOR FIGURES THAT CANNOT BE ON A RECEIPT, which is the point of this
+ *  being the boundary. §8.3's whole argument is that "receipt layouts change
+ *  without notice, and a misread total is a rider sent to lose an argument in
+ *  public" — so this is where OCR output or a typed correction becomes trusted,
+ *  and it is the one place that can refuse.
+ *
+ *  Without the check the nonsense does not fail, it PRICES: `billableMinutes` is
+ *  `max(1, ceil(ms / 60_000))`, so a misread of `0` or `-3` minutes silently
+ *  becomes one minute, the expected charge becomes $1.13, and a $4.75 receipt is
+ *  reported as a $3.62 overcharge in an email to Veo. An honest refusal sends the
+ *  rider back to the field they need to fix.
+ *
+ *  Veo bills the STARTED minute, so one is the smallest figure a real receipt
+ *  carries. A fractional reading is accepted and rounded up for the same reason —
+ *  that is how the minute is billed — rather than refused, since "15.0" is a
+ *  plausible OCR of a whole number and refusing it would send the rider back to
+ *  retype a figure that was right. */
 export function confirmRead(fields: {
   minutes: number;
   totalCents: number;
-}): ConfirmedReceipt {
-  return { __confirmed: true, minutes: fields.minutes, totalCents: fields.totalCents };
+}): ConfirmedReceipt | null {
+  const minutes = Math.ceil(fields.minutes);
+  if (!Number.isFinite(minutes) || minutes < 1) return null;
+  if (!Number.isFinite(fields.totalCents) || fields.totalCents < 0) return null;
+  return { __confirmed: true, minutes, totalCents: Math.round(fields.totalCents) };
 }
 
 export interface VerdictContext {
