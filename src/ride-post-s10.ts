@@ -101,23 +101,24 @@
 // "just show me what's already there."
 //
 // ---------------------------------------------------------------------------
-// DEVIATION — `listTrackedRides` is not in `api.ts` yet.
+// DEVIATION RESOLVED — `listTrackedRides` now lives in `api.ts`.
 //
-// `api.ts` (checked: no `listTrackedRides` export, no reference to
-// `GET /api/v1/tracked-rides` without an id) has no client for "See recent
-// trips". `scooter-fyi-api`'s `API.md` documents the endpoint as already
-// live: `GET /api/v1/tracked-rides?limit=&before=&status=` → `{ count,
-// rides }`, owner-only, newest first, never carrying `track_signing`. Per
-// this lane's brief ("a trivial GET wrapper"), it is added HERE rather than
-// touching the shared `api.ts` file — built on `api.ts`'s already-exported
-// `authedFetchJSON`, so it shares that module's auth/error/429 handling
-// byte-for-byte. Flagged in `shared_file_edits` for the integrator to fold
-// into `api.ts` properly (alongside the rest of the module map's `api.ts`
-// additions) whenever that file next gets touched.
+// This module built its own as a deliberate deviation, flagged "for the
+// integrator to fold into `api.ts` properly whenever that file next gets
+// touched". `api.ts` was next touched by Phase 2 §2.2, which needed the same
+// endpoint for the free-minute estimate and added a SECOND client rather than
+// noticing this one — two wrappers for one endpoint, with different signatures
+// and different return shapes, which is the "two mechanisms that agree by
+// coincidence" this program keeps deleting.
+//
+// Folded as the note asked. This module re-exports it so its own tests and
+// callers keep their import, and the options/response types come from `api.ts`.
 
 import {
   ApiError,
-  authedFetchJSON,
+  listTrackedRides,
+  type ListTrackedRidesOptions,
+  type TrackedRideListResponse,
   donateTrack as apiDonateTrack,
   getTrackedRide as apiGetTrackedRide,
   type DonateTrackIn,
@@ -414,40 +415,12 @@ export function describeRecentTripsError(e: unknown): string {
 // (see the module header's DEVIATION note: not yet in api.ts)
 // ---------------------------------------------------------------------------
 
-export interface ListTrackedRidesOptions {
-  limit?: number;
-  /** ISO timestamp; must carry a UTC offset per the API contract. */
-  before?: string;
-  status?: TrackedRideStatus;
-}
-
-export interface ListTrackedRidesResponse {
-  count: number;
-  /** List rows never carry `track_signing` (API.md, verbatim) — the type is
-   *  the full `TrackedRide` shape only because that field (and the other
-   *  owner-only extras) are already optional there. */
-  rides: TrackedRide[];
-}
-
-function listTrackedRidesQuery(opts: ListTrackedRidesOptions): string {
-  const params = new URLSearchParams();
-  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
-  if (opts.before) params.set("before", opts.before);
-  if (opts.status) params.set("status", opts.status);
-  const qs = params.toString();
-  return qs ? `?${qs}` : "";
-}
-
-/** Owner-only, newest first. See the module header's DEVIATION note. */
-export function listTrackedRides(
-  opts: ListTrackedRidesOptions = {},
-  signal?: AbortSignal,
-): Promise<ListTrackedRidesResponse> {
-  return authedFetchJSON<ListTrackedRidesResponse>(
-    `/api/v1/tracked-rides${listTrackedRidesQuery(opts)}`,
-    { signal },
-  );
-}
+/** Re-exported from `api.ts`, where the client now lives — see the module
+ *  header. `ListTrackedRidesResponse` keeps its local name because this module's
+ *  deps interface and its tests are written against it. */
+export { listTrackedRides };
+export type { ListTrackedRidesOptions };
+export type ListTrackedRidesResponse = TrackedRideListResponse;
 
 const TRIP_STATUS_LABELS: Record<TrackedRideStatus, string> = {
   watching: "In progress",

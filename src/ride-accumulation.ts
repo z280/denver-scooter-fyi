@@ -42,6 +42,38 @@
 // of $0.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// NOT WIRED YET, AND THE REASON IS AN API ONE — stated here rather than left to
+// be discovered, because an unused module that LOOKS ready is how Phase 2 came
+// to ship an engine nothing called.
+//
+// "That was your 12th ride" needs a LIFETIME ride count, and nothing serves one.
+// `GET /api/v1/tracked-rides` returns `{ count, rides }` where `count` is
+// `len(rides)` — the page size, not the total (`api_tracked_rides.py`). So the
+// figure can only be had by paging all of a rider's history at the moment they
+// are trying to put their phone away, which is the one thing this sentence must
+// not cost.
+//
+// The three alternatives and why each is wrong:
+//
+//   * page everything — a network cost proportional to how much somebody has
+//     used the app, charged at the worst moment;
+//   * count the local track store (`listTrackIds`) — a PER-DEVICE count, so a
+//     rider on a second phone is told a confidently wrong ordinal;
+//   * drop the count — it is the clause that makes the sentence personal, and
+//     distance alone is a statistic rather than a reason to come back.
+//
+// The ask is small and the query already exists: `badges.py`'s `_ride_badges`
+// runs the exact UNION of `tracked_rides` and off-feed `rides` this needs, for
+// lifetime distance, to award the 10- and 100-mile badges. It wants an endpoint
+// that returns the totals rather than only the thresholds crossed. THAT IS A
+// THIRD API DEPENDENCY FOR PHASE 11, which the plan's sequencing table lists as
+// needing "almost nothing" with two named exceptions — corrected there.
+//
+// Everything below is finished and tested against the contract figures, so
+// wiring it is a one-line map from whatever that endpoint returns.
+// ---------------------------------------------------------------------------
+
 import { comparatorPassQuote, formatCents } from "./ride-cost.ts";
 
 /** Below this, there is no trend to report and the count is the only true thing

@@ -2615,6 +2615,22 @@ asset exists and the ride flow does not use it.
 >
 > `equity-savings.ts` is NOT used here, incidentally: its figures are about a
 > plan a rider has not taken yet, and this is about rides they have.
+>
+> **NOT WIRED, AND IT IS AN API GAP RATHER THAN AN OVERSIGHT.** "That was your
+> 12th ride" needs a LIFETIME ride count, and nothing serves one:
+> `GET /api/v1/tracked-rides` returns `{ count, rides }` where `count` is
+> `len(rides)` — the page size, not the total. The figure can only be had by
+> paging all of a rider's history at the moment they are trying to put their
+> phone away, which is the one thing this sentence must not cost. Counting the
+> local track store instead gives a PER-DEVICE figure, so a rider on a second
+> phone is told a confidently wrong ordinal; and dropping the count leaves a
+> statistic rather than a reason to come back.
+>
+> **The ask is small and the query already exists.** `badges.py`'s `_ride_badges`
+> runs the exact UNION of `tracked_rides` and off-feed `rides` this needs, for
+> lifetime distance, to award the 10- and 100-mile badges. It wants an endpoint
+> returning the totals rather than only the thresholds crossed — see the
+> correction to the sequencing table below.
 
 ### 11.9 Leg two is a new ride
 
@@ -2938,7 +2954,7 @@ the wrong call and the envelope should come back.
 | `equity-savings.ts` | nothing (geometry is bundled) | yes |
 | Phase 6 (one app, one mode) | **nothing at all** | yes — it adds no endpoint, field or migration |
 | Phase 7 (the walkthrough) | **nothing at all** | yes, but *after* Phase 6 — see below |
-| Phase 11 (ride mode) | **almost nothing.** Voice, haptics, the equity and free-minute callouts, the clock calibration, the HUD hierarchy and the ride's closing sentence are all local. Two exceptions: the battery-reach warning wants `battery_model.py`'s view of range rather than a client guess, and share-my-ride (§11.4) is a server feature or it is nothing | yes, for everything except those two |
+| Phase 11 (ride mode) | **almost nothing.** Voice, haptics, the equity and free-minute callouts, the HUD hierarchy and the ride's closing sentence are all local. ~~the clock calibration~~ — §11.2 cannot be built as written at all; see that section. Two exceptions: the battery-reach warning wants `battery_model.py`'s view of range rather than a client guess, and share-my-ride (§11.4) is a server feature or it is nothing. **A THIRD, found while building §11.8:** the closing sentence needs a lifetime ride count, and `GET /tracked-rides`'s `count` is the page size. `badges.py` already runs the query — it wants an endpoint returning the totals, not only the badge thresholds | yes, for everything except those three |
 | Phase 12 (the device card) | **nothing at all.** Every gate it moves is client-side, and the one data change — dropping `Vehicle ID` and `Parked for` from the compact card — is a render decision | yes |
 
 Phases 1, 2 and 5a have no hard API dependency and can land first. Phase 3
