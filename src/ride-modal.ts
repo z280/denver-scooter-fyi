@@ -19,6 +19,16 @@
 // On a flip, screens RE-SLOT their panes through `ctx.setPanes()`; they are
 // never rebuilt, so nothing typed or selected is lost when a phone turns.
 
+// THE ONE IMPORT IN THIS FILE, and the header's "the shell must stand alone"
+// still holds: `modal-focus-trap.ts` is a leaf with no imports of its own — pure
+// DOM, no session, no screens, no API — so nothing about the shell's
+// independence changes. What it buys is the focus-recovery stack. This file's
+// own trap (below, and older than that module) and every other dialog's both
+// listen for `focusin` on `document`, and with two live at once they recovered
+// from each other until the stack gave out. They have to agree on which one is
+// in charge, and agreeing needs something shared.
+import { ownsFocusRecovery, registerFocusTrap } from "./modal-focus-trap.ts";
+
 /** Owner's screen numbering. There is deliberately no Screen 5, and 2.5 is the
  *  Usuals picker — never renumber (master plan, Part 0 numbering note).
  *  Deliberately declared here rather than imported: the shell must stand alone
@@ -779,12 +789,24 @@ class RideModal {
       this.root.removeEventListener("keydown", onKeyDown),
     );
 
+    // Joins `modal-focus-trap.ts`'s recovery stack even though this trap is its
+    // own implementation. Both listen for `focusin` on `document`, and `focus()`
+    // dispatches `focusin` synchronously — so with another dialog's trap live
+    // (the first-run tour, say) the two recovered from each other on one stack
+    // until it gave out. The registry decides which trap is in charge; see its
+    // own comment. Registered before the listener so the first event already
+    // sees a correct stack.
+    const leaveStack = registerFocusTrap(this.root, () => !this.closed);
+    this.cleanupFns.push(leaveStack);
+
     // Programmatic focus (or the browser cycling in from its own chrome) can
     // land outside the dialog without a Tab keydown ever reaching us. Recover
     // onto the card rather than a control: it re-announces the dialog, can't
     // summon a keyboard, and Tab from there walks the panes normally.
     const onFocusIn = (e: FocusEvent): void => {
       if (this.closed) return;
+      // A dialog opened over this one owns focus.
+      if (!ownsFocusRecovery(this.root)) return;
       const target = e.target;
       if (target instanceof Node && this.root.contains(target)) return;
       this.card.focus();
