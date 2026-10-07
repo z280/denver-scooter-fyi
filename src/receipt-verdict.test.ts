@@ -133,18 +133,26 @@ describe("the margin, and its ceiling", () => {
     expect(MARGIN_CENTS).toBeGreaterThanOrEqual(2);
   });
 
-  it("will not call an overage inside the margin an overcharge", () => {
-    const r = verdictFor(EXPECTED + MARGIN_CENTS);
-    expect(r.verdict).toBe("cannot_tell");
-    expect(r.reason).toBe("inside_margin");
-    expect(mayComplain(r)).toBe(false);
-  });
-
-  it("does call one cent past the margin an overcharge", () => {
-    // §8.7's boundary. The margin is exclusive on the overcharge side.
-    const r = verdictFor(EXPECTED + MARGIN_CENTS + 1);
-    expect(r.verdict).toBe("overcharged");
-    expect(r.reason).toBe("exceeds_bar");
+  it("pins §8.7's whole table, so a test cannot pick its own operator", () => {
+    // 9¢ / 10¢ / 11¢, written out rather than derived from MARGIN_CENTS: the
+    // point of the table is that the comparison is STRICT, and a test that
+    // computes its own boundary from the same constant the code uses agrees with
+    // whatever operator the code picked.
+    const table: [number, string, string][] = [
+      [9, "cannot_tell", "inside_margin"],
+      [10, "cannot_tell", "inside_margin"],
+      [11, "overcharged", "exceeds_bar"],
+    ];
+    for (const [excess, verdict, reason] of table) {
+      const r = verdictFor(EXPECTED + excess);
+      expect(r.verdict, `${excess}¢ over`).toBe(verdict);
+      expect(r.reason, `${excess}¢ over`).toBe(reason);
+    }
+    // The two sub-threshold rows read like the `correct` case and are not: one is
+    // arithmetic we can account for, the other is a gap we cannot explain and
+    // will not accuse anybody over.
+    expect(verdictFor(EXPECTED + 9).verdict).not.toBe("correct");
+    expect(verdictFor(EXPECTED + 10).verdict).not.toBe("correct");
   });
 
   it("keeps a one-minute overcharge provable, which is what the ceiling buys", () => {

@@ -1853,6 +1853,26 @@ overcharge.
 
 ### 8.5 The complaint
 
+**Shipped as `receipt-complaint.ts`** — the draft and the routing decision, pure.
+The panel that renders it, and the clipboard write itself, are still to build.
+
+Two notes:
+
+- **The gate is a type, and it covers both paths at once.** §8.7 warns that
+  "gating only one of them means an unconfirmed complaint can still be opened
+  and sent", and a boolean checked in two places is the shape that gets checked
+  in one. So both routes take an `OverchargeFinding`, only
+  `overchargeFinding()` makes one, and it only accepts an `overcharged`
+  verdict — which only a `ConfirmedReceipt` can produce. The chain is
+  confirm → verdict → finding → complaint and no link is skippable.
+- **The recipient is injected, not read from `config.ts`.** The module reached
+  for `VEO_SUPPORT_EMAIL` first, and that made the length-threshold branch
+  untestable: the address ships empty, so the route always took its no-address
+  path and §8.7's "both sides of 1,800" could not be asserted at all. A hidden
+  dependency that only one branch can be reached through is a hidden dependency
+  that hides a branch.
+
+
 **The rider sends it**, from their own address, to the support address in
 `config.ts`. The app never sends it, and this is not a limitation to route
 around: sending it would mean this project asserting a contract claim on
