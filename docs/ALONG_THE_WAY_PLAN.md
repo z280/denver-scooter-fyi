@@ -1786,6 +1786,40 @@ notice, and a misread total is a rider sent to lose an argument in public.
 
 ### 8.4 The bar, and why "cannot tell" is a feature
 
+**Shipped as `receipt-verdict.ts`**, ahead of the rest of the phase: it is pure,
+it is the part that decides whether this app sends a rider to argue with Veo,
+and it does not depend on the OCR question §8.1 leaves open.
+
+Three things the section did not settle, decided here and flagged as decisions:
+
+- **Confirmation is enforced by a TYPE, not a boolean.** `receiptVerdict` takes
+  a `ConfirmedReceipt`, and only `confirmRead()` produces one. §8.4's third
+  condition then cannot be forgotten by a caller, and it is why the reason enum
+  needs no code for "unconfirmed" — such a receipt never reaches the verdict.
+- **`inside_margin` and `matches_expected` are different answers.** A charge a
+  few cents OVER lands on `cannot_tell` / `inside_margin`; one at or below the
+  expected figure is `correct` / `matches_expected`. The alternative — calling
+  the whole margin "correct" — would have the verdict assert a charge is right
+  when all we know is that we cannot prove otherwise.
+- **`veoplus_unmodelled` is an interpretation, and the opposite reading is
+  recorded beside it.** `expected` includes the area's $1 under the worse
+  reading, so a Pass rider whose charge matches it may have paid a dollar they
+  did not owe. We will not claim it (unprovable) and do not bless it either:
+  `cannot_tell`, because "correct" would tell them to stop looking. A Pass rider
+  a full unlock LIGHT is `correct` — that is the better reading having been
+  applied, not an ambiguity.
+
+**`config.ts`'s support address ships EMPTY, on purpose.** Every other Veo
+endpoint in that file was verified against something Veo publishes; a
+plausible-looking address is worse than none, because the complaint path's whole
+value is that it reaches somebody. `complaintReady()` is what stops a blank
+`mailto:` shipping as a working feature, and a test pins it.
+
+**Still to build:** `receipt-read.ts` (§8.1's OCR decision is still open, and
+manual entry is the stated fallback), `receipt-panel.ts`, `account-confirm.ts`,
+and §8.6's three API clients.
+
+
 All three, or no claim is made:
 
 1. the trip **demonstrably** starts or ends inside an Equity Area polygon;
