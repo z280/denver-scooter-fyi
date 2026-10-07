@@ -1,4 +1,4 @@
-// Rider stats: what share of rentals never left the kerb.
+// Rider stats: what share of rentals ended where they began.
 //
 // THE NUMBER. `/api/v1/fleet/outcomes` aggregates counters the ingest has
 // maintained since sql/072, incremented the moment each rental completes.
@@ -25,8 +25,9 @@
 // THREE THINGS ARE ALWAYS RENDERED, because a percentage without them is the
 // kind of figure that gets quoted back at you naked:
 //
-//   * the window — these counters have never reset, so this is a lifetime
-//     figure and NOT "today". An unlabelled rate reads as "now".
+//   * the window — the counters run from their reset (sql/089, 2026-10-07),
+//     so this is "since <date>" and NOT "today". An unlabelled rate reads as
+//     "now".
 //   * the radius — the codebase holds three different ideas of how far is
 //     "moved" (ANALYTICS_PLAN §0.2). Until that is settled the figure says
 //     which circle it was counted at instead of letting a reader assume.
@@ -83,7 +84,12 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     // Consumer information, stated as such. No villain, named or implied.
     standfirst:
       "Every unlock we have seen, and whether it turned into a trip. Useful before you tap one.",
-    headlineLabel: "of rentals never left the kerb",
+    // "ended where they began", not "never left the kerb": what is counted is
+    // END displacement (unlock point to drop point), so a ride that looped
+    // back to the same rack counts too. "Never left" describes a maximum and
+    // would overstate it; that wording waits for a maximum-distance counter
+    // (scooter-fyi-api rental_outcomes_hourly) to stand behind it.
+    headlineLabel: "of rentals ended where they began",
     modelsLabel: "By model",
     empty: "No rentals counted yet. This fills in as the fleet gets ridden.",
     unavailable: "Stats are unavailable right now. The map is unaffected.",
@@ -97,7 +103,12 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     title: "Rentals that went nowhere",
     standfirst:
       "Measured from Veo's own public feed: unlocks that never produced a trip.",
-    headlineLabel: "of rentals never left the kerb",
+    // "ended where they began", not "never left the kerb": what is counted is
+    // END displacement (unlock point to drop point), so a ride that looped
+    // back to the same rack counts too. "Never left" describes a maximum and
+    // would overstate it; that wording waits for a maximum-distance counter
+    // (scooter-fyi-api rental_outcomes_hourly) to stand behind it.
+    headlineLabel: "of rentals ended where they began",
     modelsLabel: "By model",
     empty: "No rentals counted yet.",
     unavailable: "Stats are unavailable right now.",
@@ -139,13 +150,30 @@ function formatMeters(m: number): string {
 /** The provenance line. Not a footnote in the sense of "ignorable" — it is
  *  what makes the figure above it quotable, and it is built from the payload
  *  rather than hard-coded so it cannot drift from what was counted. */
+/** "Since 7 October 2026": the window's start, from the server's own record
+ *  of when the counters were reset, in Denver time. */
+export function windowText(data: FleetOutcomesResponse): string {
+  if (data.window === "since_reset") {
+    const at = data.counted_since_at ? new Date(data.counted_since_at) : null;
+    if (at && !Number.isNaN(at.getTime())) {
+      const day = at.toLocaleDateString("en-US", {
+        timeZone: "America/Denver", day: "numeric", month: "long", year: "numeric",
+      });
+      return `Since ${day}`;
+    }
+    return "Since the counters were last reset";
+  }
+  // An API older than the reset.
+  if (data.window === "lifetime") return "All rentals we have seen";
+  return data.window;
+}
+
 export function provenanceText(data: FleetOutcomesResponse): string {
-  const window = data.window === "lifetime" ? "All rentals we have seen" : data.window;
   return (
-    `${window} — ${formatCount(data.rentals)} across ` +
-    `${formatCount(data.vehicles)} vehicles. A rental counts as going nowhere ` +
-    `when the vehicle stayed within ${formatMeters(data.radius_meters)} of ` +
-    `where it was unlocked. It does not say why.`
+    `${windowText(data)} — ${formatCount(data.rentals)} across ` +
+    `${formatCount(data.vehicles)} vehicles. A rental counts when it ended ` +
+    `within ${formatMeters(data.radius_meters)} of where it was unlocked; a ` +
+    `ride that looped back to the same spot counts too. It does not say why.`
   );
 }
 
