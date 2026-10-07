@@ -43,8 +43,6 @@ import type {
 } from "./map-inspect.ts";
 import {
   EQUITY_AREA_COLOR,
-  EQUITY_AREA_UNLOCK_NOTE,
-  EQUITY_DISCOUNT_NOTICE,
   EQUITY_INDICATOR_LABEL,
   EQUITY_INDICATOR_MIN_ZOOM,
   equityAreaAt,
@@ -119,29 +117,29 @@ export function explainerHtml(
   opts: { receiptButton?: boolean } = {},
 ): string {
   const where = areaName
-    ? `<p class="equity-explainer__where">You're looking at <strong>${escapeHtml(prettyEquityArea(areaName))}</strong>.</p>`
+    ? `<p class="equity-explainer__where">You're in <strong>${escapeHtml(prettyEquityArea(areaName))}</strong>.</p>`
     : "";
   // Only when there is a form to open — a button wired to nothing is worse
   // than no button. See `EquityAreaMap.openReceiptForm`.
   const receipt = opts.receiptButton
     ? `<button type="button" class="login-btn login-btn--secondary equity-explainer__receipt" data-equity-receipt>Didn't get the discount?</button>`
     : "";
+  // Short on purpose (owner, 2026-10-07: "more concise"): where you are,
+  // what the ride should cost, that it is automatic whatever your plan, and
+  // what to do if it wasn't. EQUITY_DISCOUNT_NOTICE's longer wording stays on
+  // the ride HUD.
   return `
     <div class="equity-explainer">
       ${where}
-      <p class="equity-explainer__quote">${escapeHtml(EQUITY_DISCOUNT_NOTICE)}</p>
-      <p class="equity-explainer__note">${escapeHtml(EQUITY_AREA_UNLOCK_NOTE)}</p>
       <p class="equity-explainer__note">
-        The discount applies to a ride that <strong>starts or ends</strong> in
-        an equity area — not only one that stays inside the whole way, and you
-        do not have to enroll in anything: the contract says Veo applies it
-        automatically. If your receipt charges the standard rate, the
-        screenshot is what makes the difference provable later.
+        A ride that <strong>starts or ends</strong> here should cost
+        <strong>$1 unlock + 13¢/min</strong> (about $2.30 for 10 minutes),
+        whatever plan you're on. Veo applies it automatically under its City
+        contract.
       </p>
+      <p class="equity-explainer__note">Charged more? Keep a screenshot of the receipt.</p>
       <p class="equity-explainer__note equity-explainer__note--source">
-        Boundaries: the City of Denver's official Equity Area map for the Veo
-        contract. It is the same map this app's daily compliance numbers are
-        computed against.
+        Map: the City of Denver's official Equity Areas.
       </p>
       ${receipt}
     </div>`;
