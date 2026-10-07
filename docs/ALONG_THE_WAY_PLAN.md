@@ -2584,6 +2584,38 @@ missing from the end of a ride is the sentence that brings somebody back:
 comparator.* `equity-savings.ts` (Phase 5) already computes most of it. The
 asset exists and the ride flow does not use it.
 
+> **Shipped as `ride-accumulation.ts`, with the comparison THE OTHER WAY
+> ROUND.**
+>
+> "You've saved $47 against the comparator" has the sign backwards. The
+> comparator is `config.ts`'s `COMPARATOR` — "if Veo had competition", a pass
+> ladder at **$2.99 for 30 minutes** — and it is CHEAPER than Veo for essentially
+> every ride. A rider does not save against it; they pay a premium to a monopoly.
+> Every other surface already says so in those terms: the ride summary's own line
+> is *"You paid ≈ $X more because Denver has one operator"*, computed as
+> `veoCents − passQuote.cents`.
+>
+> A lifetime "you've saved $47" would therefore be the one place in this app that
+> inverts the comparison — and it would invert it **in Veo's favour**. The
+> accumulated figure is the premium, which is also the more on-mission sentence:
+> documenting what the single-operator market costs riders is what this app is
+> for.
+>
+> Two other judgements, both about saying nothing:
+>
+> - **Every total carries its own denominator.** A lifetime distance computed over
+>   the three rides that happened to be measured, presented as covering all
+>   twelve, is the kind of number that gets noticed once and never trusted again.
+>   `isPartial()` lets the surface say which.
+> - **Each clause earns its place independently**, and under two rides there is no
+>   sentence at all. "That was your 1st ride, 0.6 miles, and you've saved $0.40"
+>   is the app congratulating a rider on nothing, at the moment they are trying to
+>   put their phone away, and it makes the figure look like the point rather than
+>   the trend.
+>
+> `equity-savings.ts` is NOT used here, incidentally: its figures are about a
+> plan a rider has not taken yet, and this is about rides they have.
+
 ### 11.9 Leg two is a new ride
 
 Screen 8's [New Destination] loops back to the wizard, which is the hand-off
