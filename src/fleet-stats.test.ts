@@ -26,14 +26,16 @@ import {
   formatOdds,
   formatRate,
   provenanceText,
+  windowText,
   type StatsVoice,
 } from "./fleet-stats.ts";
 
 function payload(over: Partial<FleetOutcomesResponse> = {}): FleetOutcomesResponse {
   return {
-    window: "lifetime",
-    counted_since: "sql/072",
-    radius_meters: 16,
+    window: "since_reset",
+    counted_since: "sql/089",
+    counted_since_at: "2026-10-07T18:00:00+00:00",
+    radius_meters: 25,
     rentals: 214_846,
     no_gos: 19_551,
     no_go_rate: 0.091,
@@ -89,10 +91,22 @@ describe("formatting", () => {
 });
 
 describe("the disclosures that make the figure quotable", () => {
-  it("says the window is every rental, not today's", () => {
-    // These counters have never reset. An unlabelled percentage reads as
-    // "now", and this is a lifetime figure.
-    expect(render().textContent).toContain("All rentals we have seen");
+  it("says the window opens at the reset, with its date, not today", () => {
+    // The counters were reset (sql/089). An unlabelled percentage reads as
+    // "now"; this one says when it started counting.
+    expect(render().textContent).toContain("Since October 7, 2026");
+  });
+
+  it("still labels an older API's lifetime window", () => {
+    expect(render({ window: "lifetime", counted_since_at: null }).textContent)
+      .toContain("All rentals we have seen");
+  });
+
+  it("describes end displacement, not a maximum: loop rides count", () => {
+    const text = render().textContent ?? "";
+    expect(text).toContain("ended within 25 m of where it was unlocked");
+    expect(text).toContain("looped back");
+    expect(text).not.toContain("stayed within");
   });
 
   it("states the sample: rentals and vehicles", () => {
@@ -103,14 +117,14 @@ describe("the disclosures that make the figure quotable", () => {
 
   it("states the radius it was counted at", () => {
     // The app holds three different ideas of how far is "moved" (16 m, 25 m,
-    // 50 m — docs/ANALYTICS_PLAN.md §0.2). Until that is settled the figure
+    // 50 m — docs/ANALYTICS_PLAN.md §0.2). The figure always
     // travels with the circle it was measured against.
-    expect(render().textContent).toContain("16 m");
+    expect(render().textContent).toContain("25 m");
   });
 
   it("reads the radius off the payload rather than printing a constant", () => {
     expect(provenanceText(payload({ radius_meters: 50 }))).toContain("50 m");
-    expect(provenanceText(payload({ radius_meters: 50 }))).not.toContain("16 m");
+    expect(provenanceText(payload({ radius_meters: 50 }))).not.toContain("25 m");
   });
 
   it("says the number does not explain itself", () => {
@@ -126,7 +140,10 @@ describe("the headline", () => {
     const text = render().textContent ?? "";
     expect(text).toContain("9.1%");
     expect(text).toContain("about 1 in 11");
-    expect(text).toContain("never left the kerb");
+    expect(text).toContain("ended where they began");
+    // "Never left the kerb" describes a maximum distance, which is not what
+    // is counted (end displacement). It must not come back unbacked.
+    expect(text).not.toContain("never left the kerb");
   });
 
   it("shows counts instead of a rate when the whole fleet is under the floor", () => {
@@ -146,7 +163,7 @@ describe("the headline", () => {
       .textContent ?? "";
     expect(text).toContain("No rentals counted yet");
     // No headline, no provenance line about a sample of zero.
-    expect(text).not.toContain("never left the kerb");
+    expect(text).not.toContain("ended where they began");
   });
 });
 
@@ -206,7 +223,7 @@ describe("the voice", () => {
         .map((n) => n.textContent)
         .join("|");
     expect(figures("rider")).toBe(figures("civic"));
-    expect(provenanceText(payload())).toContain("16 m"); // identical by construction
+    expect(provenanceText(payload())).toContain("25 m"); // identical by construction
   });
 
   it("renders different words under each voice", () => {
@@ -317,5 +334,37 @@ describe("the story slot", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("the window across Denver's date line", () => {
+  it("names the Denver date, not the UTC one", () => {
+    // 03:00Z on 7 Oct is still the evening of 6 Oct in Denver (MDT).
+    expect(windowText(payload({ counted_since_at: "2026-10-07T03:00:00+00:00" })))
+      .toBe("Since October 6, 2026");
+    expect(windowText(payload({ counted_since_at: "2026-10-07T07:00:00+00:00" })))
+      .toBe("Since October 7, 2026");
+  });
+
+  it("follows daylight saving: 06:30Z is the previous Denver day in winter (MST)", () => {
+    expect(windowText(payload({ counted_since_at: "2026-12-15T06:30:00+00:00" })))
+      .toBe("Since December 14, 2026");
+  });
+});
+
+describe("no copy claims more than end displacement", () => {
+  it("the under-floor screen (what shows right after a reset) says what is counted", () => {
+    for (const voice of ["rider", "civic"] as const) {
+      const text = render({ rentals: 40, no_gos: 4, no_go_rate: null }, voice).textContent ?? "";
+      expect(text).toContain("ended where they began");
+      for (const banned of ["went nowhere", "never produced", "never left the kerb", "turned into a trip"]) {
+        expect(text).not.toContain(banned);
+      }
+    }
+  });
+
+  it("an empty panel still states its window", () => {
+    expect(render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] }).textContent)
+      .toContain("Since October 7, 2026");
   });
 });

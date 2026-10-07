@@ -953,11 +953,14 @@ export interface FleetOutcomeModel {
 }
 
 export interface FleetOutcomesResponse {
-  /** Always "lifetime" today. Rendered, never assumed: these counters have
-   *  never reset, so this is not today's rate, and an unlabelled percentage
-   *  gets read as "now". */
+  /** "since_reset" (the API before sql/089 said "lifetime"). Rendered, never
+   *  assumed: this is not today's rate, and an unlabelled percentage gets
+   *  read as "now". */
   window: string;
+  /** The migration that opened the window (sql/089, the counter reset). */
   counted_since: string;
+  /** When that reset ran in production, ISO 8601; null if unknown. */
+  counted_since_at?: string | null;
   /** The circle a no-go was counted against. The app holds three different
    *  ideas of how far is "moved" (see docs/ANALYTICS_PLAN.md §0.2), so the
    *  figure travels with the one it was measured at. */
@@ -970,7 +973,7 @@ export interface FleetOutcomesResponse {
   by_model: FleetOutcomeModel[];
 }
 
-/** Share of rentals that never left the kerb, fleet-wide and by model.
+/** Share of rentals that ended where they began, fleet-wide and by model.
  *
  *  Degrades rather than throws on the server side: a database failure comes
  *  back as zeros, which the caller tells apart from a real zero by `rentals`.
