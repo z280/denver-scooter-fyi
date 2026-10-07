@@ -551,6 +551,8 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
   const plateInput = textInput("numeric");
   plateInput.setAttribute("aria-required", "true");
   plateInput.setAttribute("spellcheck", "false");
+  // The format, shown in the box itself: the 7-digit number after "Ride #".
+  plateInput.placeholder = "e.g. 1018354";
   const plateRow = el("div", `${ROOT_CLASS}__row`);
   plateRow.append(plateInput);
   const scanBtn = el("button", `login-btn login-btn--secondary ${ROOT_CLASS}__scan`, "Scan QR");
@@ -567,11 +569,14 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
 
   const minutesInput = textInput("numeric");
   minutesInput.setAttribute("aria-required", "true");
+  minutesInput.placeholder = "e.g. 16";
   const minutesField = field("minutes", "equity-receipt-minutes", "Trip minutes", minutesInput);
 
   // Two costs, one rule (at least one), so one error line under both.
   const subtotalInput = textInput("decimal");
   const totalInput = textInput("decimal");
+  subtotalInput.placeholder = "e.g. 5.00";
+  totalInput.placeholder = "e.g. 5.46";
   const costs = el("fieldset", `${ROOT_CLASS}__costs`);
   const legend = el("legend", `${ROOT_CLASS}__label`, "Cost");
   const costHint = el("p", `${ROOT_CLASS}__hint`, "Fill in at least one, in dollars, like 4.50.");

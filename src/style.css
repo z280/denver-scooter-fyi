@@ -560,6 +560,12 @@ body:not(.ribbon-open) .drawer-tabs {
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
+  /* Above the drawer's own content. Without it, any POSITIONED control in
+     the body (a toggle's hidden checkbox, segmented buttons, inputs) is
+     painted after this header and scrolled over it: visibly, and
+     clickably, so a tap on the title could flip a switch. Every drawer
+     (Profile, Areas, Filters, …) shares this header. */
+  z-index: 10;
   background: var(--bg-panel);
   border-top-left-radius: var(--radius);
   border-top-right-radius: var(--radius);
@@ -2193,10 +2199,16 @@ body.ride-active .arrival {
   display: flex;
   gap: 8px;
 }
-/* Three choices, not two. At phone width three side by side leaves each one
-   about a third of a narrow sheet, which is not enough for a two-line blurb —
-   so they stack, which also puts them in the reading order of the question. */
-@media (max-width: 560px) {
+/* Three choices, not two. Side by side, each gets a third of the sheet, which
+   is not enough for a name and a two-line blurb below ~560 px of SHEET — so
+   they stack, which also puts them in the reading order of the question. A
+   container query, not a media query: the sheet stays narrow on a desktop
+   window, and the viewport rule put three cards in it with "Already started
+   one" overflowing into its neighbour. */
+.home-bar__wheels-wrap {
+  container-type: inline-size;
+}
+@container (max-width: 560px) {
   .home-bar__wheels {
     flex-direction: column;
   }
@@ -2247,7 +2259,10 @@ body.ride-active .arrival {
 .home-bar__wheel-name {
   font-size: 14.5px;
   font-weight: 700;
-  white-space: nowrap;
+  /* Wraps rather than spilling into the next card if a card is ever narrower
+     than its name (a long translation, large text settings). */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .home-bar__wheel-desc {
   font-size: 12px;
@@ -2654,6 +2669,13 @@ body.is-map-picking .home-bar {
 .equity-receipt__close {
   cursor: pointer;
 }
+/* The × is absolutely placed (10 px down, 34 px tall); the head's 40 px of
+   right padding cleared it sideways but not downward, so it hung over the
+   first line of the lede. The head is at least as tall as the button. */
+.equity-receipt__head {
+  min-height: 34px;
+  align-items: center;
+}
 .equity-receipt__lede {
   margin: 6px 0 12px;
   font-size: 13px;
@@ -2720,9 +2742,16 @@ body.is-map-picking .home-bar {
   flex: 1 1 0;
   min-width: 0;
 }
-.equity-receipt__scan {
+/* Two classes, not one: `.login-btn { width: 100% }` comes later in this
+   file at the same specificity and won, so the button took the whole row and
+   squeezed the scooter-code input to a sliver. */
+.equity-receipt__row > .equity-receipt__scan {
   flex: 0 0 auto;
   width: auto;
+}
+.equity-receipt__input::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.75;
 }
 .equity-receipt__error {
   margin: 4px 0 0;

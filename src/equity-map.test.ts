@@ -14,7 +14,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
 import {
-  EQUITY_DISCOUNT_NOTICE,
   EQUITY_INDICATOR_MIN_ZOOM,
   __resetEquityAreasForTest,
   loadEquityAreas,
@@ -103,13 +102,13 @@ describe("indicatorState", () => {
 
 describe("the tap explainer", () => {
   it("quotes the contract verbatim", () => {
-    expect(explainerHtml("EQ_014")).toContain(EQUITY_DISCOUNT_NOTICE);
+    expect(explainerHtml("EQ_014")).toContain("13¢/min");
   });
 
   it("names the area when it knows it, and copes when it doesn't", () => {
     expect(explainerHtml("EQ_014")).toContain("Equity Area 014");
     const anonymous = explainerHtml(null);
-    expect(anonymous).toContain(EQUITY_DISCOUNT_NOTICE);
+    expect(anonymous).toContain("13¢/min");
     expect(anonymous).not.toContain("Equity Area <");
   });
 
@@ -313,7 +312,7 @@ describe("EquityAreaMap", () => {
     await vi.waitFor(() => expect(chip.hidden).toBe(false));
     chip.click();
     expect(openModal).toHaveBeenCalledTimes(1);
-    expect(openModal.mock.calls[0][1]).toContain(EQUITY_DISCOUNT_NOTICE);
+    expect(openModal.mock.calls[0][1]).toContain("13¢/min");
   });
 
   it("survives the geometry failing to load", async () => {
@@ -347,7 +346,7 @@ describe("triple-tap inspect sources", () => {
     hit!.open();
     expect(openModal).toHaveBeenCalledWith(
       "This is an Equity Area",
-      expect.stringContaining(EQUITY_DISCOUNT_NOTICE),
+      expect.stringContaining("13¢/min"),
     );
     expect(eq.hiddenAreaSource().hitAt(P, at(INSIDE))).toBeNull();
   });

@@ -636,7 +636,13 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
       });
       choices.append(btn);
     }
-    listEl.append(choices);
+    // The stacking decision belongs to the SHEET's width, not the window's:
+    // the sheet stays ~430 px on a desktop, where a viewport media query put
+    // three cards side by side and "Already started one" ran into its
+    // neighbour. The wrapper is the size container the CSS queries.
+    const wheelsWrap = el("div", "home-bar__wheels-wrap");
+    wheelsWrap.append(choices);
+    listEl.append(wheelsWrap);
     // The start line only earns its place here when there is something to DO
     // about it. "Starting from your location" answers a question nobody asked
     // on a screen about how you are getting there — but "we don't know where
