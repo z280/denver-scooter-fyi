@@ -12,6 +12,7 @@ import {
   controlsToSearch,
   DEFAULT_CONTROLS,
   denverLocalToUtc,
+  lineSegments,
   lineSeries,
   modelColor,
   modelLabel,
@@ -67,11 +68,32 @@ describe("Denver calendar buckets", () => {
     expect(bucketLabel(mo, "month")).toBe("Sep 2026");
   });
 
-  it("labels hours in Denver time, including the repeated 1 AM", () => {
+  it("labels hours in Denver time, and tells the two fall-back 1 AMs apart", () => {
     expect(bucketLabel(Date.parse("2026-10-07T15:00:00-06:00"), "hour")).toBe("Oct 7, 3 PM");
-    expect(bucketLabel(Date.parse("2026-11-01T01:00:00-06:00"), "hour")).toBe("Nov 1, 1 AM");
-    expect(bucketLabel(Date.parse("2026-11-01T01:00:00-07:00"), "hour")).toBe("Nov 1, 1 AM");
+    // API hour buckets are true UTC hours: Nov 1 has two 01:00 buckets.
+    expect(bucketLabel(Date.parse("2026-11-01T01:00:00-06:00"), "hour")).toBe("Nov 1, 1 AM MDT");
+    expect(bucketLabel(Date.parse("2026-11-01T01:00:00-07:00"), "hour")).toBe("Nov 1, 1 AM MST");
+    expect(bucketLabel(Date.parse("2026-11-01T02:00:00-07:00"), "hour")).toBe("Nov 1, 2 AM");
     expect(bucketLabel(Date.parse("2027-03-14T03:00:00-06:00"), "hour")).toBe("Mar 14, 3 AM");
+  });
+
+  it("gives each fall-back 01:00 bucket its own slot", () => {
+    const slots = bucketSlots("2026-11-01T06:00:00+00:00", "2026-11-01T10:00:00+00:00", "hour");
+    const a = slots.indexOf(Date.parse("2026-11-01T01:00:00-06:00"));
+    const b = slots.indexOf(Date.parse("2026-11-01T01:00:00-07:00"));
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(b).toBe(a + 1);
+    const chart = lineSeries(
+      "2026-11-01T06:00:00+00:00",
+      "2026-11-01T10:00:00+00:00",
+      "hour",
+      [
+        { bucket: "2026-11-01T01:00:00-06:00", v: 1 },
+        { bucket: "2026-11-01T01:00:00-07:00", v: 2 },
+      ],
+      [{ key: "v", name: "v", color: "x" }],
+    );
+    expect(chart.series[0].values.slice(a, a + 2)).toEqual([1, 2]);
   });
 
   it("puts hourly ticks on Denver midnights only", () => {
@@ -119,6 +141,40 @@ describe("series → chart arrays", () => {
     expect(chart.series[0].values).toEqual([5, 0, 0, null]);
     expect(chart.series[2].values).toEqual([0, 0, 1, null]);
     expect(chart.unplaced).toBe(0);
+  });
+
+  it("carries the API's partial flag: a complete prior bucket and a partial current one", () => {
+    const chart = modelStacks({
+      window_start: "2026-10-05T06:00:00+00:00",
+      window_end: "2026-10-07T22:00:00+00:00",
+      granularity: "day",
+      models: ["Cosmo"],
+      data_through: "2026-10-07T22:00:00+00:00",
+      series: [
+        { bucket: "2026-10-05T00:00:00-06:00", by_model: { Cosmo: 900 }, total: 900 },
+        { bucket: "2026-10-06T00:00:00-06:00", by_model: { Cosmo: 1000 }, total: 1000 },
+        { bucket: "2026-10-07T00:00:00-06:00", by_model: { Cosmo: 400 }, total: 400, partial: true },
+      ],
+    });
+    expect(chart.series[0].values).toEqual([900, 1000, 400]);
+    expect(chart.partial).toEqual([false, false, true]);
+    const lines = lineSeries("2026-10-06T06:00:00+00:00", "2026-10-07T22:00:00+00:00", "day", [
+      { bucket: "2026-10-06T00:00:00-06:00", percent: 31 },
+      { bucket: "2026-10-07T00:00:00-06:00", percent: 22, partial: true },
+    ], [{ key: "percent", name: "p", color: "x" }]);
+    expect(lines.partial).toEqual([false, true]);
+  });
+
+  it("dashes exactly the line segments that touch an incomplete bucket", () => {
+    expect(lineSegments([1, 2, 3, 4], [false, false, false, true])).toEqual([
+      { start: 0, values: [1, 2, 3], dashed: false },
+      { start: 2, values: [3, 4], dashed: true },
+    ]);
+    expect(lineSegments([1, null, 5], [false, false, true])).toEqual([
+      { start: 0, values: [1], dashed: false },
+      { start: 2, values: [5], dashed: true },
+    ]);
+    expect(lineSegments([1, 2], [false, false])).toEqual([{ start: 0, values: [1, 2], dashed: false }]);
   });
 
   it("treats everything as not-yet-counted when the rollup is empty", () => {

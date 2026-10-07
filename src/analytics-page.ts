@@ -25,6 +25,7 @@ import {
   fetchAnalyticsFleetCounts,
   fetchAnalyticsFleetStatus,
   fetchAnalyticsRides,
+  FLEET_STATUS_RETENTION_DAYS,
   type AnalyticsDwellResponse,
   type AnalyticsFleetCountsResponse,
   type AnalyticsGranularity,
@@ -225,6 +226,23 @@ function regionPhrase(type: AnalyticsRegionType, name: string): string {
   return type === "city" ? "All of Denver" : regionLabel(name, type);
 }
 
+/** The note that explains a lighter bar / dashed segment, when there is one. */
+export function partialNote(chart: { partial: boolean[] }, mark: "bar" | "line"): string[] {
+  const n = chart.partial.filter(Boolean).length;
+  if (!n) return [];
+  const what =
+    mark === "bar"
+      ? n === 1 ? "The lighter, outlined bar is an incomplete bucket" : `The ${n} lighter, outlined bars are incomplete buckets`
+      : n === 1 ? "The dotted end of the line is an incomplete bucket" : `Dotted line segments mark ${n} incomplete buckets`;
+  return [`${what}: counted so far, not a total.`];
+}
+
+/** Days to ask fleet-status for: its source keeps only `retention` days,
+ *  and the endpoint refuses more with a 400. */
+export function fleetStatusDays(days: number, retention: number): number {
+  return Math.max(1, Math.min(days, retention));
+}
+
 function throughNote(dataThrough: string | null, windowEnd: string, unplaced = 0): string[] {
   const out: string[] = [];
   if (unplaced) out.push(`${plural(unplaced, "bucket")} from the API did not match this axis and ${unplaced === 1 ? "is" : "are"} not drawn.`);
@@ -346,6 +364,9 @@ export interface MountOptions {
 export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: () => ControlsState } {
   let state = controlsFromSearch(opts.search);
   const regionNames = new Map<AnalyticsRegionLayer, Promise<string[]>>();
+  // fleet-status's source keeps only this many days; learned from the
+  // response's retention_days once one arrives.
+  let fleetRetention = FLEET_STATUS_RETENTION_DAYS;
 
   // ----- controls
   const bar = h("form", "an-controls");
@@ -452,7 +473,7 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
             window: windowLabel(d.window_start, d.window_end),
             sample: `${plural(d.rides, "ride")} · ${regionPhrase(d.region.type, d.region.name)}`,
             definition: d.definition,
-            notes: throughNote(d.data_through, d.window_end, chart.unplaced),
+            notes: [...throughNote(d.data_through, d.window_end, chart.unplaced), ...partialNote(chart, "bar")],
           },
           (body, foot) => {
             renderStackedBars(body, chart, { ariaLabel: `Rides per ${d.granularity} by model`, totalLabel: "All models" });
@@ -471,7 +492,7 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
         const place = undercountPlacement(chart.slots, d.window_end, d.undercount_since);
         const since = dateLabel(d.undercount_since);
         failed.setTitle(`Failed starts per ${gName(d.granularity)}, by model`);
-        const notes = throughNote(d.data_through, d.window_end, chart.unplaced);
+        const notes = [...throughNote(d.data_through, d.window_end, chart.unplaced), ...partialNote(chart, "bar")];
         if (place === "whole") notes.unshift(`This whole window is after ${since}, so every bucket is affected by the undercount.`);
         failed.show(
           {
@@ -496,8 +517,11 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
     makeLoader(
       status,
       (s) => `${s.days}|${s.granularity}`,
-      (s, sig) => fetchAnalyticsFleetStatus(s.days, s.granularity, sig),
-      (d) => {
+      (s, sig) => fetchAnalyticsFleetStatus(fleetStatusDays(s.days, fleetRetention), s.granularity, sig),
+      (d, s) => {
+        if (d.retention_days && d.retention_days > 0) fleetRetention = d.retention_days;
+        const keep = d.retention_days ?? fleetRetention;
+        const capped = s.days > keep;
         const chart = lineSeries(d.window_start, d.window_end, d.granularity, d.series, [
           { key: "available", name: "Available", color: "var(--viz-avail)" },
           { key: "in_use", name: "In use", color: "var(--viz-inuse)" },
@@ -510,9 +534,13 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
         status.show(
           {
             window: windowLabel(d.window_start, d.window_end),
-            sample: `${plural(cycles, "feed cycle")} averaged`,
+            sample: `${plural(cycles, "feed cycle")} averaged${capped ? ` · last ${keep} days only` : ""}`,
             definition: d.definition,
             notes: [
+              ...(capped
+                ? [`Covers the last ${keep} days only, not the ${windowOptionLabel(s.days)} selected: the source keeps ${keep} days of fleet-status history. The other charts show the full window.`]
+                : []),
+              ...partialNote(chart, "line"),
               offMapPoints === 0
                 ? "Off-map has no points in this window: it is recorded from Oct 7, 2026, and earlier buckets are blank, not zero."
                 : "Off-map is recorded from Oct 7, 2026; earlier buckets are blank, not zero.",
@@ -541,6 +569,7 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
             window: windowLabel(d.window_start, d.window_end),
             sample: `${commas(d.buckets_meeting_threshold)} of ${plural(d.buckets, d.granularity)} at or above ${d.threshold_percent}% · ${plural(cycles, "cycle")}`,
             definition: d.definition,
+            notes: partialNote(chart, "line"),
           },
           (body, foot) => {
             renderLines(body, chart, {

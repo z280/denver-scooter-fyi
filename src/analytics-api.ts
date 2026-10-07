@@ -44,9 +44,19 @@ interface AnalyticsWindow {
   timezone: string;
 }
 
-export interface AnalyticsModelBucket {
-  /** Bucket start, Denver local, ISO 8601 WITH its offset. */
+/** Every bucketed row: its start, and whether it is incomplete. */
+export interface AnalyticsBucket {
+  /** Bucket start, ISO 8601 WITH its Denver offset. Hour buckets are true
+   *  UTC hours, so the fall-back night has two "01:00" buckets told apart by
+   *  their offsets (-06:00, then -07:00). */
   bucket: string;
+  /** True when the bucket runs past what the data covers (the current day,
+   *  week or month; failed starts past data_through): a count so far, not a
+   *  total. Absent on complete buckets. */
+  partial?: boolean;
+}
+
+export interface AnalyticsModelBucket extends AnalyticsBucket {
   by_model: Record<string, number>;
   total: number;
 }
@@ -90,13 +100,13 @@ export interface AnalyticsDevicesByRegionResponse extends AnalyticsWindow {
   regions: AnalyticsRegionDevices[];
   definition: string;
   region_name?: string;
-  series?: { bucket: string; average: number; cycles: number }[] | null;
+  series?: (AnalyticsBucket & { average: number; cycles: number })[] | null;
 }
 
 export interface AnalyticsEquityResponse extends AnalyticsWindow {
   granularity: AnalyticsGranularity;
   threshold_percent: number;
-  series: { bucket: string; percent: number; cycles: number; meets_threshold: boolean }[];
+  series: (AnalyticsBucket & { percent: number; cycles: number; meets_threshold: boolean })[];
   buckets: number;
   buckets_meeting_threshold: number;
   definition: string;
@@ -117,8 +127,7 @@ export interface AnalyticsDwellResponse extends AnalyticsWindow {
   definition: string;
 }
 
-export interface AnalyticsFleetStatusBucket {
-  bucket: string;
+export interface AnalyticsFleetStatusBucket extends AnalyticsBucket {
   available: number | null;
   in_use: number | null;
   out_of_service: number | null;
@@ -132,6 +141,9 @@ export interface AnalyticsFleetStatusResponse extends AnalyticsWindow {
   model: string | null;
   series: AnalyticsFleetStatusBucket[];
   definition: string;
+  /** How many days the source keeps (device_status_snapshots is pruned at
+   *  30). The endpoint refuses a longer `days` with a 400. */
+  retention_days?: number;
 }
 
 export interface AnalyticsFleetCountsResponse {
@@ -204,6 +216,10 @@ export function fetchAnalyticsDwell(
     signal,
   );
 }
+
+/** fleet-status's own cap, for every granularity (API
+ *  FLEET_STATUS_RETENTION_DAYS). The response's `retention_days` overrides it. */
+export const FLEET_STATUS_RETENTION_DAYS = 30;
 
 export function fetchAnalyticsFleetStatus(
   days: number,

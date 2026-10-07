@@ -37,7 +37,7 @@ const FIX: Record<string, unknown> = {
     granularity: "hour",
     region: { type: "city", name: "Denver" },
     models: ["Astro", "Cosmo"],
-    series: hours(168, (i) => ({ by_model: { Cosmo: i % 24, Astro: 2 }, total: (i % 24) + 2 })),
+    series: hours(168, (i) => ({ by_model: { Cosmo: i % 24, Astro: 2 }, total: (i % 24) + 2, ...(i === 167 ? { partial: true } : {}) })),
     rides: 12345,
     data_through: W.window_end,
     definition: "A ride is a vehicle that moved from one stop to another (trip_events).",
@@ -61,6 +61,7 @@ const FIX: Record<string, unknown> = {
     model: null,
     series: hours(168, (i) => ({ available: 5000, in_use: 300, out_of_service: 200, off_map: i > 160 ? 40 : null, cycles: 30 })),
     definition: "Averages per bucket of the feed's own status counts. Off-map … null before (not zero).",
+    retention_days: 30,
   },
   "/api/v1/analytics/equity-compliance": {
     ...W,
@@ -228,6 +229,50 @@ describe("the analytics page", () => {
     const win = document.querySelector<HTMLSelectElement>('select[name="days"]')!;
     expect(win.value).toBe("30");
     expect([...win.options].find((o) => o.value === "90")!.disabled).toBe(true);
+  });
+});
+
+describe("API #121 follow-ups", () => {
+  it("asks fleet-status for at most its 30 retained days and says so; other charts keep the full window", async () => {
+    mountAnalytics(document.getElementById("root")!, { search: "?days=365&g=day" });
+    await settle();
+    expect(calls).toContain("/api/v1/analytics/fleet-status?days=30&granularity=day");
+    expect(calls.some((c) => c.startsWith("/api/v1/analytics/fleet-status?days=365"))).toBe(false);
+    expect(calls).toContain("/api/v1/analytics/rides?days=365&granularity=day&region_type=city");
+    expect(calls).toContain("/api/v1/analytics/equity-compliance?days=365&granularity=day");
+    expect(calls).toContain("/api/v1/analytics/dwell?region_type=council_district&days=365");
+    const meta = card("an-status").querySelector(".an-card__meta")!.textContent!;
+    expect(meta).toContain("last 30 days only");
+    expect(text("an-status")).toContain("Covers the last 30 days only, not the 1 year selected");
+    expect(card("an-rides").querySelector(".an-card__meta")!.textContent).not.toContain("30 days");
+  });
+
+  it("does not mention the cap when the window fits", async () => {
+    mountAnalytics(document.getElementById("root")!, { search: "?days=7&g=hour" });
+    await settle();
+    expect(calls).toContain("/api/v1/analytics/fleet-status?days=7&granularity=hour");
+    expect(text("an-status")).not.toContain("last 30 days only");
+  });
+
+  it("draws an incomplete bucket distinctly and labels it in the table", async () => {
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    const rides = card("an-rides");
+    const outlines = rides.querySelectorAll(".viz-partial-outline");
+    expect(outlines).toHaveLength(1);
+    expect(outlines[0].querySelector("title")!.textContent).toContain("(incomplete: so far)");
+    expect(rides.querySelectorAll(".viz-seg--partial").length).toBeGreaterThan(0);
+    expect(text("an-rides")).toContain("The lighter, outlined bar is an incomplete bucket: counted so far, not a total.");
+    const details = rides.querySelector<HTMLDetailsElement>("details.viz-table")!;
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    const rows = [...details.querySelectorAll("tbody tr")];
+    expect(rows).toHaveLength(168);
+    expect(rows.at(-1)!.textContent).toContain("(incomplete: so far)");
+    expect(rows.at(-1)!.className).toBe("is-partial");
+    expect(rows.at(-2)!.textContent).not.toContain("incomplete");
+    // complete charts carry no partial note
+    expect(text("an-equity")).not.toContain("incomplete");
   });
 });
 

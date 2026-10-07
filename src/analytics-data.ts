@@ -122,11 +122,24 @@ const F_MONTH_YEAR = fmt({ month: "short", year: "numeric" });
 const F_MONTH = fmt({ month: "short" });
 const F_DATETIME = fmt({ month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
+const F_ZONE = fmt({ hour: "numeric", timeZoneName: "short" });
+const hourLabel = (ms: number) => `${F_MONTH_DAY.format(ms)}, ${F_HOUR.format(ms)}`;
+
+/** Appended wherever an incomplete bucket is named (tooltip, data table). */
+export const PARTIAL_LABEL = "incomplete: so far";
+
 /** Full label for one bucket — tooltips and the data table. */
 export function bucketLabel(ms: number, g: AnalyticsGranularity): string {
   switch (g) {
-    case "hour":
-      return `${F_MONTH_DAY.format(ms)}, ${F_HOUR.format(ms)}`;
+    case "hour": {
+      const label = hourLabel(ms);
+      // The fall-back night has two 1 AMs (API hour buckets are true UTC
+      // hours). Name the zone on both so they never read as one bucket twice.
+      if (label === hourLabel(ms - HOUR_MS) || label === hourLabel(ms + HOUR_MS)) {
+        return `${label} ${F_ZONE.formatToParts(ms).find((p) => p.type === "timeZoneName")?.value ?? ""}`.trim();
+      }
+      return label;
+    }
     case "day":
       return F_MONTH_DAY.format(ms);
     case "week":
@@ -273,10 +286,17 @@ export interface SlotChart {
   slots: number[];
   granularity: AnalyticsGranularity;
   series: ChartSeries[];
+  /** Per slot: the API marked the bucket `partial` — it runs past what the
+   *  data covers, so its value is a count so far. Drawn lighter / dashed. */
+  partial: boolean[];
 }
 
 /** Index API rows by their bucket instant. Rows whose bucket is not on the
  *  generated axis (a DST fold, a malformed string) are reported, not lost. */
+function partialFlags(at: Map<number, { partial?: boolean }>, n: number): boolean[] {
+  return Array.from({ length: n }, (_, i) => at.get(i)?.partial === true);
+}
+
 function indexBuckets<T extends { bucket: string }>(rows: T[], slots: number[]) {
   const pos = new Map<number, number>();
   slots.forEach((t, i) => pos.set(t, i));
@@ -320,12 +340,12 @@ export function modelStacks(
       return end <= through ? 0 : null;
     }),
   }));
-  return { slots, granularity: res.granularity, series, unplaced: unplaced.length };
+  return { slots, granularity: res.granularity, series, partial: partialFlags(at, slots.length), unplaced: unplaced.length };
 }
 
 /** Line series from one numeric field each. Missing buckets and null values
  *  both stay null — the renderer breaks the line there. */
-export function lineSeries<T extends { bucket: string }>(
+export function lineSeries<T extends { bucket: string; partial?: boolean }>(
   windowStart: string,
   windowEnd: string,
   granularity: AnalyticsGranularity,
@@ -337,6 +357,7 @@ export function lineSeries<T extends { bucket: string }>(
   return {
     slots,
     granularity,
+    partial: partialFlags(at, slots.length),
     series: fields.map((f) => ({
       key: f.key,
       name: f.name,
@@ -368,6 +389,34 @@ export function contiguousRuns(values: (number | null)[]): { start: number; valu
     cur.values.push(v);
   });
   return runs;
+}
+
+/** Polyline pieces: runs of consecutive non-null points, further split so a
+ *  piece is dashed exactly where it touches an incomplete bucket (a segment
+ *  into or out of a partial point). Points are shared at the joins so the
+ *  line stays continuous. A lone point is a one-point piece. */
+export function lineSegments(
+  values: (number | null)[],
+  partial: boolean[],
+): { start: number; values: number[]; dashed: boolean }[] {
+  const out: { start: number; values: number[]; dashed: boolean }[] = [];
+  for (const run of contiguousRuns(values)) {
+    if (run.values.length === 1) {
+      out.push({ start: run.start, values: run.values, dashed: !!partial[run.start] });
+      continue;
+    }
+    let cur: { start: number; values: number[]; dashed: boolean } | null = null;
+    for (let k = 0; k + 1 < run.values.length; k++) {
+      const i = run.start + k;
+      const dashed = !!partial[i] || !!partial[i + 1];
+      if (!cur || cur.dashed !== dashed) {
+        cur = { start: i, values: [run.values[k]], dashed };
+        out.push(cur);
+      }
+      cur.values.push(run.values[k + 1]);
+    }
+  }
+  return out;
 }
 
 /** Index of the slot that contains the instant `ms` (first slot at or after

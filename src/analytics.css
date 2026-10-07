@@ -326,6 +326,32 @@ a {
   stroke: var(--bg-elev);
   stroke-width: 1;
 }
+/* Incomplete (partial) buckets: lighter fill, dashed outline; dashed lines. */
+.viz-seg--partial {
+  fill-opacity: 0.45;
+}
+.viz-partial-outline {
+  fill: none;
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.viz-line--partial {
+  stroke-dasharray: 2 3;
+  opacity: 0.75;
+}
+.viz-dot--partial {
+  fill-opacity: 0.45;
+}
+.viz-tip__partial {
+  color: var(--warn-fg);
+  font-size: 11.5px;
+  margin-bottom: 2px;
+}
+.viz-table tr.is-partial td {
+  color: var(--fg-muted);
+  font-style: italic;
+}
 .viz-nodata {
   fill: var(--viz-nodata);
 }

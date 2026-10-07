@@ -16,7 +16,8 @@
 import {
   bucketLabel,
   commas,
-  contiguousRuns,
+  lineSegments,
+  PARTIAL_LABEL,
   niceScale,
   pickTicks,
   stackMax,
@@ -146,6 +147,7 @@ function hover(
     cross.setAttribute("x2", String(cx));
     cross.style.display = "";
     tip.replaceChildren(h("div", "viz-tip__title", bucketLabel(chart.slots[i], chart.granularity)));
+    if (chart.partial[i]) tip.append(h("div", "viz-tip__partial", `Incomplete bucket: counted so far`));
     let total = 0;
     let any = false;
     for (const s of chart.series) {
@@ -211,7 +213,8 @@ export function dataTable(chart: SlotChart, format: ValueFormat = defaultFormat,
     const body = h("tbody");
     chart.slots.forEach((ms, i) => {
       const tr = h("tr");
-      tr.append(h("td", undefined, bucketLabel(ms, chart.granularity)));
+      tr.append(h("td", undefined, bucketLabel(ms, chart.granularity) + (chart.partial[i] ? ` (${PARTIAL_LABEL})` : "")));
+      if (chart.partial[i]) tr.className = "is-partial";
       let tot = 0;
       let any = false;
       for (const s of chart.series) {
@@ -281,6 +284,7 @@ export function renderStackedBars(
         continue;
       }
       let acc = 0;
+      const part = chart.partial[i];
       for (const s of chart.series) {
         const v = s.values[i] ?? 0;
         if (v <= 0) continue;
@@ -288,8 +292,18 @@ export function renderStackedBars(
         const y1 = y(acc + v);
         acc += v;
         const r = svg("rect", { x: left, y: y1, width: bw, height: Math.max(0.5, y0 - y1), fill: s.color });
-        if (slotW > 6) r.setAttribute("class", "viz-seg");
+        const cls = [slotW > 6 ? "viz-seg" : "", part ? "viz-seg--partial" : ""].filter(Boolean).join(" ");
+        if (cls) r.setAttribute("class", cls);
         bars.append(r);
+      }
+      // An incomplete bucket: lighter fill (above) and a dashed outline over
+      // the stack, so a short last bar reads as "so far", not as a drop.
+      if (part && acc > 0) {
+        const outline = svg("rect", { x: left, y: y(acc), width: bw, height: Math.max(0.5, y(0) - y(acc)), class: "viz-partial-outline" });
+        const t = svg("title");
+        t.textContent = `${bucketLabel(chart.slots[i], chart.granularity)} (${PARTIAL_LABEL})`;
+        outline.append(t);
+        bars.append(outline);
       }
     }
     g.append(bars);
@@ -338,14 +352,14 @@ export function renderLines(
       g.append(t);
     }
     for (const s of chart.series) {
-      for (const run of contiguousRuns(s.values)) {
+      for (const run of lineSegments(s.values, chart.partial)) {
         if (run.values.length === 1) {
-          g.append(svg("circle", { cx: x(run.start), cy: y(run.values[0]), r: 2.5, fill: s.color, class: "viz-dot" }));
+          g.append(svg("circle", { cx: x(run.start), cy: y(run.values[0]), r: 2.5, fill: s.color, class: run.dashed ? "viz-dot viz-dot--partial" : "viz-dot" }));
           continue;
         }
         const d = run.values.map((v, k) => `${k ? "L" : "M"}${x(run.start + k).toFixed(1)},${y(v).toFixed(1)}`).join("");
-        const p = svg("path", { d, stroke: s.color, class: s.dashed ? "viz-line viz-line--dashed" : "viz-line" });
-        g.append(p);
+        const cls = ["viz-line", s.dashed ? "viz-line--dashed" : "", run.dashed ? "viz-line--partial" : ""].filter(Boolean).join(" ");
+        g.append(svg("path", { d, stroke: s.color, class: cls }));
       }
     }
     xAxis(g, chart, width, height, x);
