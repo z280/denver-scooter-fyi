@@ -50,7 +50,12 @@ const server = createServer(async (req, res) => {
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, "");
     let path = join(DIST, rel);
     if (!path.startsWith(DIST)) throw new Error("outside dist");
-    const st = await stat(path).catch(() => null);
+    let st = await stat(path).catch(() => null);
+    // Pages' pretty URLs: /analytics serves analytics.html.
+    if (!st && rel && !extname(rel)) {
+      st = await stat(`${path}.html`).catch(() => null);
+      if (st) path = `${path}.html`;
+    }
     if (st?.isDirectory()) path = join(path, "index.html");
     else if (!st) path = join(DIST, "index.html"); // SPA fallback, as Pages does
     await serveFile(res, path);
@@ -79,6 +84,23 @@ try {
   await page.waitForTimeout(SETTLE_MS);
   const started = await page.evaluate(() => !!document.querySelector("canvas.maplibregl-canvas"));
   if (!started) errors.push("the map never initialised (no maplibre canvas)");
+
+  // The fleet analytics page (analytics.html, its own entry). Offline, every
+  // chart lands in its error state — which is exactly what must not throw.
+  const an = await browser.newPage({ viewport: { width: 360, height: 800 } });
+  an.on("pageerror", (e) => errors.push(`/analytics: ${e.stack || String(e)}`));
+  await an.route("**/*", (route) =>
+    route.request().url().startsWith(origin) ? route.continue() : route.abort(),
+  );
+  await an.goto(`${origin}/analytics`, { waitUntil: "load", timeout: 60_000 });
+  await an.waitForTimeout(Math.min(SETTLE_MS, 3000));
+  const anOk = await an.evaluate(() => ({
+    controls: !!document.querySelector("#analytics .an-controls"),
+    cards: document.querySelectorAll("#analytics .an-card").length,
+    hscroll: document.documentElement.scrollWidth > window.innerWidth,
+  }));
+  if (!anOk.controls || anOk.cards < 6) errors.push(`/analytics never rendered (${JSON.stringify(anOk)})`);
+  if (anOk.hscroll) errors.push("/analytics scrolls horizontally at 360px");
 } catch (e) {
   errors.push(`smoke harness: ${e.stack || e}`);
 } finally {

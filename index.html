@@ -1092,6 +1092,17 @@
         <div id="fleet-stats" class="fleet-stats" role="status" aria-live="polite" aria-label="Rental outcome statistics">
           <div class="compliance-loading">Loading stats…</div>
         </div>
+        <!-- Outside #fleet-stats on purpose: fleet-stats.ts owns that node and
+             replaces its contents on every render. The analytics page is its
+             own entry (analytics.html), so linking to it costs the map nothing. -->
+        <section class="control-group stats-analytics-link" aria-labelledby="stats-analytics-label">
+          <h3 id="stats-analytics-label" class="control-label">Fleet analytics</h3>
+          <p class="control-hint">
+            Rides, failed starts, fleet status, equity-area share and dwell
+            times, by hour, day, week or month, for Denver or one area.
+          </p>
+          <a class="preset-btn" href="/analytics">📊 Fleet analytics</a>
+        </section>
       </div>
     </aside>
 

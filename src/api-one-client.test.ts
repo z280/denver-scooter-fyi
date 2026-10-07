@@ -39,7 +39,7 @@ describe("api.ts is the only module that builds API URLs", () => {
   /** Modules that build their own request, each for a stated reason.
    *
    *  A PINNED SET RATHER THAN A BAN, because a flat ban is wrong here: these three
-   *  predate this test and each has a reason in its own file. The point of pinning
+   *  predate this test (the fourth, analytics-api.ts, came after and says why) and each has a reason in its own file. The point of pinning
    *  is that a FOURTH has to be added deliberately, with a reason, which is the
    *  step the duplicate tracked-rides client skipped.
    *
@@ -55,6 +55,12 @@ describe("api.ts is the only module that builds API URLs", () => {
     ["telemetry.ts", "/api/v1/telemetry/events"],
     // Device photos, whose own lane owns the endpoint and its multipart upload.
     ["device-photos.ts", "/api/v1/devices/"],
+    // The fleet analytics page's seven endpoints, through api.ts's getJSON.
+    // Kept out of api.ts because api.ts is a chunk the MAP loads and Rollup
+    // ships a module whole: in api.ts these fetchers would ride along on
+    // every map load for a page most riders never open. It is still the ONE
+    // client for /api/v1/analytics/* — nothing else builds those URLs.
+    ["analytics-api.ts", "/api/v1/analytics/"],
   ]);
 
   it("holds every versioned API URL but the pinned exceptions", () => {

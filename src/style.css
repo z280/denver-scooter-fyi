@@ -6992,6 +6992,16 @@ body.landscape-hint-dismissed .hud-note--landscape {
   flex-direction: column;
   gap: 6px;
 }
+/* The Stats drawer's link out to /analytics: a preset-btn look on an <a>. */
+.stats-analytics-link {
+  margin-top: 16px;
+}
+.stats-analytics-link .preset-btn {
+  display: inline-block;
+  text-decoration: none;
+  padding: 8px 12px;
+}
+
 .quick-filters .preset-btn {
   flex: none;
   text-align: left;
