@@ -953,9 +953,9 @@ export interface FleetOutcomeModel {
 }
 
 export interface FleetOutcomesResponse {
-  /** Always "lifetime" today. Rendered, never assumed: these counters have
-   *  never reset, so this is not today's rate, and an unlabelled percentage
-   *  gets read as "now". */
+  /** "since_reset" (the API before sql/089 said "lifetime"). Rendered, never
+   *  assumed: this is not today's rate, and an unlabelled percentage gets
+   *  read as "now". */
   window: string;
   /** The migration that opened the window (sql/089, the counter reset). */
   counted_since: string;
@@ -973,7 +973,7 @@ export interface FleetOutcomesResponse {
   by_model: FleetOutcomeModel[];
 }
 
-/** Share of rentals that never left the kerb, fleet-wide and by model.
+/** Share of rentals that ended where they began, fleet-wide and by model.
  *
  *  Degrades rather than throws on the server side: a database failure comes
  *  back as zeros, which the caller tells apart from a real zero by `rentals`.

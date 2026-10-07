@@ -26,6 +26,7 @@ import {
   formatOdds,
   formatRate,
   provenanceText,
+  windowText,
   type StatsVoice,
 } from "./fleet-stats.ts";
 
@@ -333,5 +334,37 @@ describe("the story slot", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("the window across Denver's date line", () => {
+  it("names the Denver date, not the UTC one", () => {
+    // 03:00Z on 7 Oct is still the evening of 6 Oct in Denver (MDT).
+    expect(windowText(payload({ counted_since_at: "2026-10-07T03:00:00+00:00" })))
+      .toBe("Since October 6, 2026");
+    expect(windowText(payload({ counted_since_at: "2026-10-07T07:00:00+00:00" })))
+      .toBe("Since October 7, 2026");
+  });
+
+  it("follows daylight saving: 06:30Z is the previous Denver day in winter (MST)", () => {
+    expect(windowText(payload({ counted_since_at: "2026-12-15T06:30:00+00:00" })))
+      .toBe("Since December 14, 2026");
+  });
+});
+
+describe("no copy claims more than end displacement", () => {
+  it("the under-floor screen (what shows right after a reset) says what is counted", () => {
+    for (const voice of ["rider", "civic"] as const) {
+      const text = render({ rentals: 40, no_gos: 4, no_go_rate: null }, voice).textContent ?? "";
+      expect(text).toContain("ended where they began");
+      for (const banned of ["went nowhere", "never produced", "never left the kerb", "turned into a trip"]) {
+        expect(text).not.toContain(banned);
+      }
+    }
+  });
+
+  it("an empty panel still states its window", () => {
+    expect(render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] }).textContent)
+      .toContain("Since October 7, 2026");
   });
 });
