@@ -233,6 +233,13 @@ function wire(
   const defaultListTrackedRides = vi.fn((_opts: unknown, _signal?: AbortSignal) =>
     Promise.resolve({ count: 0, rides: [] }),
   );
+  // STUBBED EVEN WHERE A TEST DOES NOT CARE. §11.8's sentence fetches the profile
+  // on mount, so without this every test in this file attempts a real request —
+  // swallowed by the loader's catch, so nothing fails, which is exactly why it
+  // would have gone unnoticed as a connection attempt per test.
+  const defaultFetchProfile = vi.fn(() =>
+    Promise.resolve({ ride_totals: { rides: 0, distance_meters: 0, distance_from_rides: 0 } } as never),
+  );
 
   const getTrackedRide =
     (overrides.getTrackedRide as ReturnType<typeof vi.fn> | undefined) ??
@@ -255,6 +262,7 @@ function wire(
     donateTrack: defaultDonateTrack,
     readDonationBody: defaultReadDonationBody,
     listTrackedRides: defaultListTrackedRides,
+    fetchProfile: defaultFetchProfile,
     mountRoot: container,
     ...overrides,
   });
@@ -1417,5 +1425,139 @@ describe("listTrackedRides — default GET wrapper", () => {
     stubAuth();
     stubFetch(() => jsonResponse({ detail: "nope" }, 500));
     await expect(listTrackedRides()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.8 — the closing sentence
+//
+// "Screen 10 awards points. The track lands in IndexedDB and is visible in the
+// Account drawer's Local Data tab, which is not a place anybody goes." The
+// sentence is what was missing, and the lifetime count it needs cannot come from
+// the ride list — that response's `count` is the page size.
+// ---------------------------------------------------------------------------
+
+function profileWith(rides: number, distanceMeters: number, fromRides = rides) {
+  return vi.fn(() =>
+    Promise.resolve({
+      ride_totals: { rides, distance_meters: distanceMeters, distance_from_rides: fromRides },
+    } as never),
+  );
+}
+
+/** Fifteen minutes at $4.75, against a $2.99 thirty-minute comparator pass. */
+function pricedRide(id: string) {
+  return fakeTrackedRide({
+    id,
+    status: "completed",
+    distance_meters: 3 * 1609.344,
+    total_cost_cents: 475,
+    started_at: "2026-07-29T12:00:00Z",
+    user_reported_ended_at: "2026-07-29T12:15:00Z",
+  });
+}
+
+describe("§11.8 — the closing sentence", () => {
+  it("shows the lifetime count and distance from the profile", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      fetchProfile: profileWith(12, 38 * 1609.344),
+    });
+    await flush();
+    expect(root().textContent).toContain("That was your 12th ride");
+    expect(root().textContent).toContain("38 miles");
+    unwire();
+  });
+
+  it("adds the premium clause from the ride window, which the server cannot sum", async () => {
+    // The comparator is a PASS LADDER: the cheapest pass covering two 15-minute
+    // rides is not the cheapest covering one 30-minute ride, so this is per-ride
+    // and stays on the client.
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      fetchProfile: profileWith(12, 38 * 1609.344),
+      listTrackedRides: vi.fn(() =>
+        Promise.resolve({ count: 2, rides: [pricedRide("r-1"), pricedRide("r-2")] }),
+      ),
+    });
+    await flush();
+    expect(root().textContent).toContain("more than a competitive market would charge");
+    unwire();
+  });
+
+  it("says nothing on a first ride", async () => {
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, { fetchProfile: profileWith(1, 900) });
+    await flush();
+    expect(root().textContent).not.toContain("That was your");
+    unwire();
+  });
+
+  it("says nothing when the deployment has no ride_totals", async () => {
+    // An older API. The sentence must be absent rather than render "undefined".
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      fetchProfile: vi.fn(() => Promise.resolve({} as never)),
+    });
+    await flush();
+    expect(root().textContent).not.toContain("That was your");
+    unwire();
+  });
+
+  it("says nothing when the profile fetch fails", async () => {
+    // A signed-out rider, a flaky connection. There is no degraded version of
+    // this sentence worth showing — half of it is a statistic.
+    //
+    // WHAT THIS TEST CANNOT PIN, said plainly rather than left as a gap: the
+    // loader's `catch` is hygiene, not behaviour. It is fired with `void`, so
+    // replacing the `catch` with a `finally` renders exactly this screen and
+    // merely leaves an unhandled rejection behind — and mutation confirms no
+    // assertion here can tell the difference. An attempt to catch it via an
+    // `unhandledrejection` listener did not fire under happy-dom, so it was
+    // removed rather than left sitting here proving nothing.
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      fetchProfile: vi.fn(() => Promise.reject(new Error("401"))),
+    });
+    await flush();
+    expect(root().textContent).not.toContain("That was your");
+    // The screen itself is unharmed: the verdict and the buttons are what the
+    // rider came for, and that IS assertable.
+    expect(buttonWithText("Return to Main App")).toBeTruthy();
+    unwire();
+  });
+
+  it("shares ONE ride-list request with See recent trips", async () => {
+    // Shared as a promise, not a result: seeding the list once the fetch lands
+    // only helps when it lands before the rider taps, and a tap during the flight
+    // started a second identical request.
+    const session = sessionAtEligibility();
+    const listTrackedRidesFn = vi.fn(() =>
+      Promise.resolve({ count: 1, rides: [pricedRide("r-1")] }),
+    );
+    const { unwire } = wire(session, {
+      fetchProfile: profileWith(12, 38 * 1609.344),
+      listTrackedRides: listTrackedRidesFn,
+    });
+    buttonWithText("See recent trips").click();
+    await flush();
+    expect(listTrackedRidesFn).toHaveBeenCalledTimes(1);
+    expect(root().textContent).toContain("Recent trips");
+    expect(root().textContent).toContain("That was your 12th ride");
+    unwire();
+  });
+
+  it("does not block the screen on either fetch", async () => {
+    // The rider has finished their ride. The verdict and the three buttons are
+    // what they came for, and a sentence about their twelfth ride is worth
+    // nothing if it delays them.
+    const session = sessionAtEligibility();
+    const { unwire } = wire(session, {
+      fetchProfile: vi.fn(() => new Promise<never>(() => {})),
+      listTrackedRides: vi.fn(() => new Promise<never>(() => {})),
+    });
+    expect(buttonWithText("Return to Main App")).toBeTruthy();
+    expect(root().textContent).not.toContain("That was your");
+    unwire();
   });
 });

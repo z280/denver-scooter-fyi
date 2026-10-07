@@ -9,6 +9,7 @@ import {
   MIN_RIDES_FOR_SENTENCE,
   MIN_PREMIUM_CENTS,
   accumulate,
+  accumulateWithTotals,
   accumulationSentence,
   isPartial,
   ordinal,
@@ -73,6 +74,41 @@ describe("accumulate", () => {
       expect(accumulate([ride({ distanceMeters: bad })]).distanceFromRides, String(bad)).toBe(0);
     }
     expect(accumulate([ride({ costCents: NaN })]).premiumFromRides).toBe(0);
+  });
+});
+
+describe("accumulateWithTotals — two sources, two questions", () => {
+  const totals = { rides: 12, distance_meters: 61_154, distance_from_rides: 9 };
+
+  it("takes the count and distance from the server, not from the window", () => {
+    // The window is however many rides the client happened to fetch. Using its
+    // length as the lifetime count is the bug this split exists to prevent —
+    // "that was your 5th ride" to somebody on their twelfth.
+    const merged = accumulateWithTotals(totals, [ride(), ride()]);
+    expect(merged.rideCount).toBe(12);
+    expect(merged.distanceMeters).toBe(61_154);
+  });
+
+  it("carries the SERVER's distance denominator, not the ride count", () => {
+    // `distance_from_rides` is the number of rides that actually had a distance.
+    // Substituting the ride count would make the figure claim to be complete, and
+    // the substitution is invisible in the sentence — only `isPartial` reads it.
+    const merged = accumulateWithTotals(totals, []);
+    expect(merged.distanceFromRides).toBe(9);
+    expect(merged.distanceFromRides).not.toBe(merged.rideCount);
+    expect(isPartial(merged)).toBe(true);
+  });
+
+  it("takes the premium from the window, because the server cannot sum it", () => {
+    const merged = accumulateWithTotals(totals, [ride(), ride()]);
+    expect(merged.premiumFromRides).toBe(2);
+    expect(merged.premiumCents).toBe(accumulate([ride(), ride()]).premiumCents);
+  });
+
+  it("works with an empty window — the count and distance are most of it", () => {
+    const merged = accumulateWithTotals(totals, []);
+    expect(merged.premiumFromRides).toBe(0);
+    expect(accumulationSentence(merged)).toBe("That was your 12th ride — 38 miles.");
   });
 });
 

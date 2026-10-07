@@ -583,6 +583,21 @@ export interface Profile {
   ruling_color: string | null;
   ruling_border_color: string | null;
   badges: ProfileBadge[];
+  /** Lifetime ride count and distance, server-computed like `badges`.
+   *
+   *  Optional because a client may be talking to an older deployment, and the
+   *  §11.8 sentence it feeds must simply not appear rather than render
+   *  "undefined". */
+  ride_totals?: ProfileRideTotals;
+}
+
+/** §11.8's figures. `distanceFromRides` is the DENOMINATOR and travels with the
+ *  distance on purpose: a NULL distance is summed as unknown rather than as
+ *  zero, so a client showing "38 miles" drawn from 9 of 12 rides can say so. */
+export interface ProfileRideTotals {
+  rides: number;
+  distance_meters: number;
+  distance_from_rides: number;
 }
 
 /** PUT /api/v1/profile is a partial merge: send any subset, omitted fields

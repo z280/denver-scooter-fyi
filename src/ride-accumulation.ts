@@ -43,35 +43,27 @@
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// NOT WIRED YET, AND THE REASON IS AN API ONE — stated here rather than left to
-// be discovered, because an unused module that LOOKS ready is how Phase 2 came
-// to ship an engine nothing called.
+// WHERE THE COUNT COMES FROM, because it cannot come from the ride list.
 //
-// "That was your 12th ride" needs a LIFETIME ride count, and nothing serves one.
-// `GET /api/v1/tracked-rides` returns `{ count, rides }` where `count` is
-// `len(rides)` — the page size, not the total (`api_tracked_rides.py`). So the
-// figure can only be had by paging all of a rider's history at the moment they
-// are trying to put their phone away, which is the one thing this sentence must
-// not cost.
+// "That was your 12th ride" needs a LIFETIME count. `GET /api/v1/tracked-rides`
+// returns `{ count, rides }` where `count` is `len(rides)` — the page size, not
+// the total — so the only client-side answer would be to page a rider's entire
+// history at the moment they are trying to put their phone away. Counting the
+// local track store instead gives a PER-DEVICE figure, which hands a rider on a
+// second phone a confidently wrong ordinal.
 //
-// The three alternatives and why each is wrong:
+// So the count and the distance come from `GET /profile`'s `ride_totals`, which
+// was added for this (one query over the same union of tracked and off-feed rides
+// `badges.py` already uses for its mileage badges).
 //
-//   * page everything — a network cost proportional to how much somebody has
-//     used the app, charged at the worst moment;
-//   * count the local track store (`listTrackIds`) — a PER-DEVICE count, so a
-//     rider on a second phone is told a confidently wrong ordinal;
-//   * drop the count — it is the clause that makes the sentence personal, and
-//     distance alone is a statistic rather than a reason to come back.
-//
-// The ask is small and the query already exists: `badges.py`'s `_ride_badges`
-// runs the exact UNION of `tracked_rides` and off-feed `rides` this needs, for
-// lifetime distance, to award the 10- and 100-mile badges. It wants an endpoint
-// that returns the totals rather than only the thresholds crossed. THAT IS A
-// THIRD API DEPENDENCY FOR PHASE 11, which the plan's sequencing table lists as
-// needing "almost nothing" with two named exceptions — corrected there.
-//
-// Everything below is finished and tested against the contract figures, so
-// wiring it is a one-line map from whatever that endpoint returns.
+// THE PREMIUM STAYS A CLIENT COMPUTATION, and not for want of asking. It is not
+// linear: the comparator is a PASS LADDER, and the cheapest pass covering two
+// 15-minute rides is not the cheapest covering one 30-minute ride — so summing
+// minutes server-side and quoting once gives a different, smaller number than the
+// per-ride truth. The ladder is also a frontend constant, and a copy of it in
+// Python would be a second pricing table. It is therefore computed over whatever
+// window of rides the caller already fetched, and `isPartial()` is how the
+// surface says so.
 // ---------------------------------------------------------------------------
 
 import { comparatorPassQuote, formatCents } from "./ride-cost.ts";
@@ -120,6 +112,30 @@ export interface RideAccumulation {
    *  made in a different place. */
   premiumCents: number;
   premiumFromRides: number;
+}
+
+/** Merge the server's lifetime totals with a window of rides the caller has.
+ *
+ *  TWO SOURCES BECAUSE THEY ANSWER DIFFERENT THINGS, and the split is the point:
+ *  the count and the distance are lifetime figures only the server can total,
+ *  while the premium is a per-ride comparison against a frontend pricing table.
+ *  Pretending either could supply the other is how a lifetime distance ends up
+ *  covering a window, or a pass ladder ends up duplicated in Python.
+ *
+ *  `window` may be empty — a rider whose rides carry no cost data gets the count
+ *  and the distance, which is most of the sentence. */
+export function accumulateWithTotals(
+  totals: { rides: number; distance_meters: number; distance_from_rides: number },
+  window: readonly AccumulatedRide[],
+): RideAccumulation {
+  const fromWindow = accumulate(window);
+  return {
+    rideCount: totals.rides,
+    distanceMeters: totals.distance_meters,
+    distanceFromRides: totals.distance_from_rides,
+    premiumCents: fromWindow.premiumCents,
+    premiumFromRides: fromWindow.premiumFromRides,
+  };
 }
 
 /** Sum what is known, and count what it was known from.
