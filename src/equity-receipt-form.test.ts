@@ -243,7 +243,7 @@ describe("discountReportFormData", () => {
     expect(fd.get("receipt")).toBeInstanceOf(Blob);
     // NO plan screenshot on the wire. The API ignores the part rather than
     // rejecting it, so sending one would cost a rider an upload for bytes
-    // nobody reads (owner, 2026-10-07; API sql/094).
+    // nobody reads (owner, 2026-10-07; API sql/095).
     expect(fd.get("plan_evidence")).toBeNull();
   });
 });

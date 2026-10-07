@@ -1555,7 +1555,7 @@ export function discountReportFormData(r: DiscountReportIn): FormData {
   }
   form.set("receipt", r.receipt);
   // NO `plan_evidence`. The API stopped asking for a screenshot of the rider's
-  // plan (owner, 2026-10-07; API sql/094) — `declared_rate_plan` above is taken
+  // plan (owner, 2026-10-07; API sql/095) — `declared_rate_plan` above is taken
   // on trust. It ignores the part rather than rejecting it, so sending one would
   // have cost a rider an upload for bytes nobody reads.
   return form;

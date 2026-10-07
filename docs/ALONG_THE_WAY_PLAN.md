@@ -1787,7 +1787,7 @@ checked by the person it is about.
 plan — on the reasoning that the Equity Area rate applies whatever tier you are
 on, so the tier is what makes a claim stand. The owner removed it the next day:
 nothing automated read it, a claim is checked against the feed, and
-`declared_rate_plan` is taken on trust. See the API's `sql/094`.
+`declared_rate_plan` is taken on trust. See the API's `sql/095`.
 
 ### 8.2 Modules
 

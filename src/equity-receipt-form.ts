@@ -15,7 +15,7 @@
 // Veo's likely answer to an equity claim is "your plan doesn't get that rate",
 // the contract (Exhibit A §5.2) applies the Equity Area rate whatever the plan,
 // so proof of the plan looked like what lets a claim stand. It was dropped on
-// 2026-10-07 (owner; API `sql/094`) because nothing ever read it — a claim is
+// 2026-10-07 (owner; API `sql/095`) because nothing ever read it — a claim is
 // checked against the FEED, and the server's own arithmetic prices the minutes
 // at the Equity Area rate. It was a second upload, over a phone connection,
 // of a photo of someone's account page, kept 18 months, that no step consumed.
