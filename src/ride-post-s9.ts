@@ -54,14 +54,18 @@
 
 import {
   ApiError,
+  fetchSurveyOptions as defaultFetchSurveyOptions,
   postRouteFeedback as apiPostRouteFeedback,
   postSurvey as apiPostSurvey,
+  submitRiderStory as defaultSubmitRiderStory,
   type RideSurveyIn,
   type RideSurveyResponse,
   type RouteFeedbackIn,
   type SurveyIssue,
   type SurveyModelBonus,
 } from "./api.ts";
+import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
+import { storyPrompt } from "./rider-story.ts";
 import {
   FALLBACK_RIDE_MODE_POINTS,
   RIDE_PROVIDER_NAME,
@@ -505,6 +509,14 @@ export interface RidePostS9Deps {
    *  its questions and got nothing, so counting it would spend the rider's turn
    *  in the cadence on an answer we never received. */
   recordSubmitted?(): void;
+  /** Override the tail story prompt's cadence. Defaults to the same rule as
+   *  the recommendation question (`shouldAskNps`: first survey, then every
+   *  tenth) — RIDER_REPORTING_BACKLOG §1. Injected for tests. */
+  askStory?: boolean;
+  /** Injected for tests; default `api.ts`'s `fetchSurveyOptions`. */
+  fetchSurveyOptions?: typeof defaultFetchSurveyOptions;
+  /** Injected for tests; default `api.ts`'s `submitRiderStory`. */
+  submitRiderStory?: typeof defaultSubmitRiderStory;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -593,6 +605,11 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
    *  question appear or vanish underneath the rider if anything else bumped it.
    *  Injectable so the cadence is testable without touching storage. */
   const askNps = deps.askNps ?? shouldAskNps(surveysSubmitted());
+  /** The tail story prompt (RIDER_VOICE_PLAN §3.2): the least motivated of
+   *  the three asking moments — a rider who just had a fine ride has nothing
+   *  to say — so it rides the same sparse cadence and is decided once, here,
+   *  for the same reason as `askNps`. */
+  const askStory = deps.askStory ?? shouldAskNps(surveysSubmitted());
 
   const root = el("div", "ride-post-s9");
   const panesWrap = el("div", "ride-post-s9__panes");
@@ -619,7 +636,56 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
   submitBtn.type = "button";
   footer.append(skipBtn, submitBtn);
 
-  root.append(panesWrap, statusEl, footer);
+  // The story host sits OUTSIDE both pane slots on purpose: renderLeft and
+  // renderRight rebuild their slot on every selection (the bug
+  // `emoji-scale.ts`'s pendingKeyboardFocus exists for), and a textarea
+  // inside a slot would lose its caret mid-sentence whenever the rider
+  // touched a face. Out here, nothing in this screen ever rebuilds it.
+  const storyHost = el("div", "ride-post-s9__story");
+  root.append(panesWrap, storyHost, statusEl, footer);
+  let storyPanel: StoryPanel | null = null;
+  if (askStory) mountStoryOffer();
+
+  /** One quiet button, not an open box: the prompt never stands between the
+   *  rider and Submit (their points), and a rider with nothing to say passes
+   *  it without a decision. The panel mounts ONCE, on the click, with focus
+   *  moved into the textarea, and is never remounted — so a neighbourhood
+   *  list that arrives late cannot rebuild it under a typing rider; it simply
+   *  is not offered the We See You Veo send that time. */
+  function mountStoryOffer(): void {
+    let neighborhoods: readonly string[] | null = null;
+    void (deps.fetchSurveyOptions ?? defaultFetchSurveyOptions)()
+      .then((opts) => {
+        neighborhoods = opts.neighborhoods;
+      })
+      .catch(() => {
+        /* no send option this time; the story is still kept locally */
+      });
+
+    const offer = el(
+      "button",
+      "login-btn login-btn--ghost ride-post-s9__story-offer",
+      `${storyPrompt("ride_end")} Add a sentence (optional)`,
+    );
+    offer.type = "button";
+    offer.addEventListener("click", () => {
+      if (destroyed || storyPanel) return;
+      storyHost.replaceChildren();
+      storyPanel = mountStoryPanel(storyHost, {
+        origin: "ride_end",
+        context: {
+          happenedAt: new Date().toISOString(),
+          vehicleModel: model,
+          appAssessment: null,
+        },
+        neighborhoods,
+        submit: (draftId, payload) =>
+          (deps.submitRiderStory ?? defaultSubmitRiderStory)(draftId, payload),
+      });
+      storyHost.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+    });
+    storyHost.append(offer);
+  }
 
   if (!gates.scooter && !gates.navigation) {
     root.append(
@@ -1034,6 +1100,9 @@ export function buildRidePostS9Screen(deps: RidePostS9Deps): RidePostS9Screen {
     primary: root,
     destroy() {
       destroyed = true;
+      // The draft is already saved locally on every edit; this only stops
+      // the panel's own work.
+      storyPanel?.destroy();
     },
   };
 }
