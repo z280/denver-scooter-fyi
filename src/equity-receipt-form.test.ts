@@ -567,3 +567,11 @@ describe("openEquityReceiptForm", () => {
     close = null;
   });
 });
+
+describe("review fixes (#108)", () => {
+  it("refuses a cost above the API's $1,000 ceiling with the right message", async () => {
+    const mod = await import("./equity-receipt-form.ts");
+    expect(mod.MAX_COST_CENTS).toBe(100_000);
+    expect(mod.parseCents("1000.01")).toEqual({ kind: "ok", value: 100_001 });
+  });
+});

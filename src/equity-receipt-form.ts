@@ -76,6 +76,11 @@ export type Parsed<T> =
  *  dollars and the cents are read as two integers and never meet a float.
  *  Accepts an optional "$", up to two decimals ("4.5" is 450), and nothing
  *  negative. */
+/** The API's ceiling for a single ride's cost ($1,000). Above it the server
+ *  names the field as invalid, and for `total_cents` that would surface as
+ *  "less than the cost before tax", which is the wrong message. */
+export const MAX_COST_CENTS = 100_000;
+
 export function parseCents(raw: string): Parsed<number> {
   if (raw.trim() === "") return { kind: "blank" };
   const s = raw.trim().replace(/^\$\s*/, "");
@@ -226,6 +231,9 @@ export function validateReceipt(
     errors.cost = "Enter costs in dollars and cents, like 4.50.";
   else if (subtotal.kind === "blank" && total.kind === "blank")
     errors.cost = "Enter at least one of the two costs.";
+  else if ((subtotal.kind === "ok" && subtotal.value > MAX_COST_CENTS) ||
+           (total.kind === "ok" && total.value > MAX_COST_CENTS))
+    errors.cost = "That's more than any single ride costs. Check the decimal point.";
   else if (subtotal.kind === "ok" && total.kind === "ok" && total.value < subtotal.value)
     errors.cost = MSG_TOTAL_BELOW_SUBTOTAL;
 
@@ -317,6 +325,15 @@ export function describeSubmitError(err: unknown): SubmitOutcome {
         return { kind: "fields", errors, summary: notes.join(" ") || undefined };
     }
     if (err.status === 429) return { kind: "rate_limited" };
+    if (err.status === 400 && err.errorKey === "unreadable_image") {
+      // e.g. an Android HEIC: retrying won't help, a different file will.
+      const msg = "We couldn't read this image. Try a PNG or JPEG screenshot.";
+      const field = detailOf(err).field;
+      if (field === "plan_evidence") return { kind: "fields", errors: { plan: msg } };
+      return { kind: "fields", errors: { receipt: msg } };
+    }
+    if (err.errorKey === "storage_unavailable")
+      return { kind: "failed", message: "We can't take images right now. Your form is still here; try again later." };
     if (err.status === 413) {
       const field = detailOf(err).field;
       if (field === "receipt") return { kind: "fields", errors: { receipt: MSG_TOO_LARGE_ONE } };
@@ -474,8 +491,8 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     "p",
     `${ROOT_CLASS}__lede`,
     "Send the receipt from a ride that started or ended in an Equity Area and " +
-      "wasn't charged $1 + 13¢ a minute. Copy the numbers as printed. Every " +
-      "receipt is reviewed.",
+      "wasn't charged $1 + 13¢ a minute. Copy the numbers as printed; we " +
+      "check them against the screenshot and what we saw in the feed.",
   );
 
   // Announced on a failed send: the count and what to fix.
