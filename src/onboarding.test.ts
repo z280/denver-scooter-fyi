@@ -5,7 +5,13 @@
 // What matters here is the contract main.ts wires against: auto-show exactly
 // once per browser, skippable at every screen, eight screens with a live
 // progress readout, and the final CTA (and ONLY the final CTA) firing the
-// Find-a-ride hand-off.
+// closing hand-off.
+//
+// WHAT THAT HAND-OFF IS has changed twice and this file no longer names it. It
+// clicked the mode bar, then entered find-wheels mode, and now opens the home
+// bar's own "where are you going?" (§7.3). None of that is onboarding.ts's
+// business — the hook is injected — so the assertions are about the hook firing,
+// and `onboarding-audit.test.ts` is where what it DOES is pinned.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -119,7 +125,7 @@ describe("maybeShowOnboarding", () => {
     expect(tour()).toBeNull();
   });
 
-  it("skip does NOT fire the Find-a-ride hand-off", () => {
+  it("skip does NOT fire the closing hand-off", () => {
     const h = hooks();
     maybeShowOnboarding(h);
     click(".onboarding__skip");

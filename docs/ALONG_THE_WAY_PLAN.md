@@ -1666,6 +1666,14 @@ should stop moving first (master plan §4).
 two effects (switch the legend on, fire the one-time "tap any scooter" nudge)
 are still fine and stay.
 
+> **Already fixed by the time this phase ran.** Phase 6 replaced the click with
+> `enterFindWheels()`, and `mode-bar-gone.test.ts` is why — it asserts that no
+> code anywhere looks for `#mode-switch`. §7.3 moved the CTA once more, from a
+> map STATE to the home bar's own question; the dead-click bug itself was
+> already gone. The failure is still the one §7.4's audit test is built around,
+> because it is the shape that recurs: a tour making a claim about a control
+> that no longer resolves.
+
 **Editorially:** two of seven screens describe a UI that moved. `ride-mode`
 sells "Ride Mode" as a place you go — the mode vocabulary this app has spent
 several PRs removing. `models` promises "save your favorite combos and reuse
@@ -1681,6 +1689,26 @@ is wrong, the screen changes — never the other way round. No surface survives
 in this app because the walkthrough mentions it.
 
 ### 7.3 What ships
+
+**Shipped.** The audit left behind as `onboarding-audit.test.ts`, per §7.4.
+
+Two notes on what the list below turned out to mean:
+
+- **"Phases 1 and 4 earn a screen or a sentence each" — Phase 4 is moot.**
+  `my-scooters.ts` was built and deleted as the wrong feature, so there is no
+  "My Scooters" to tell a rider about. What earned the sentence instead is
+  **Phase 2's hand-off plan**, which is the largest thing the app does that no
+  screen mentioned. It went on the `routing` screen rather than a ninth screen:
+  a hand-off IS routing, and the tour's own success criterion is five ideas in
+  under 60 seconds.
+- **The `models` screen also had to drop a filter that no longer exists.** It
+  offered "standing or seated", which §6.3.3 deleted — posture is a property of
+  the model, so the model is the filter. The plan listed only the saved
+  view/spec problem on that screen.
+
+One more drift, recorded because it is the same class of error one layer out:
+the module header described a **seven**-screen tour and there are eight.
+
 
 - The CTA lands on the home bar's "where are you going?" instead of clicking
   a deleted element.

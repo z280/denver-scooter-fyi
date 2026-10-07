@@ -1,17 +1,36 @@
-// First-run onboarding: a skippable, seven-screen tour of the ideas that make
-// Scooter.fyi worth using (model choice, rideability, Ride Mode, routing,
-// contributions, territory).
+// First-run onboarding: a skippable tour of the ideas that make Scooter.fyi
+// worth using (model choice, equipment, rideability, the riding dashboard,
+// routing, contributions, territory). EIGHT screens, not the seven this comment
+// claimed for a while — `ONBOARDING_SCREENS` is the count.
 //
 // The tour's job is NOT to explain every feature — it is to land five ideas
 // in under 60 seconds (see docs discussion / success criteria): pick your
-// model, avoid bad scooters, Ride Mode is built for riding, contributions
-// help everyone, and there's a territory game. One idea per screen, big
-// visuals, skippable at any time, replayable from the About drawer.
+// model, avoid bad scooters, the app is built for while-you-ride,
+// contributions help everyone, and there's a territory game. One idea per
+// screen, big visuals, skippable at any time, replayable from the About
+// drawer.
+//
+// ---------------------------------------------------------------------------
+// THE TOUR DESCRIBES THE APP; THE APP DOES NOT CHASE THE TOUR (§7.2). If a
+// screen is wrong, the screen changes — never the other way round, and no
+// surface survives here because the walkthrough mentions it. Two screens had
+// drifted and were rewritten rather than propped up:
+//
+//   * `ride-mode` was headlined "Ride Mode" and sold it as a place you go,
+//     which is the mode vocabulary this app spent several PRs removing. It is
+//     a dashboard you get while riding.
+//   * `models` offered "standing or seated" as a filter, which was deleted
+//     (§6.3.3 — posture is a property of the model, so the model IS the
+//     filter), and promised "save your favorite combos" without distinguishing
+//     a saved VIEW from a saved SPEC. The tour is where a new rider forms that
+//     distinction, so it now draws it in one sentence.
+// ---------------------------------------------------------------------------
 //
 // This module owns only the overlay DOM + its localStorage flags. What
-// happens AFTER the tour (entering Find-a-ride, the legend, the first
-// tooltip) is main.ts's integration business, injected via OnboardingHooks —
-// so this file needs no map, no wizard, and its tests need neither.
+// happens AFTER the tour (opening the home bar's own question, the legend, the
+// first tooltip) is main.ts's integration business, injected via
+// OnboardingHooks — so this file needs no map, no wizard, and its tests need
+// neither.
 
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 
@@ -20,8 +39,14 @@ import { trapFocusWithin } from "./modal-focus-trap.ts";
 export const ONBOARDED_KEY = "scooter-fyi-onboarded";
 
 export interface OnboardingHooks {
-  /** Final CTA ("Start Exploring"): hand the user straight to Find-a-ride so
-   *  they are never left wondering what to do next. Not called on Skip. */
+  /** Final CTA ("Start Exploring"): leave the rider on a real question rather
+   *  than on a map they have to work out. Not called on Skip.
+   *
+   *  It used to end by CLICKING `#mode-switch .mode-btn[data-mode="ride"]` — an
+   *  element Phase 6 deleted, so the tour's closing promise was a click into a
+   *  seam that no longer existed. That is the failure the audit test now
+   *  guards: a tour that names a control is making a claim about the app, and
+   *  the claim has to resolve. */
   onStartExploring: () => void;
 }
 
@@ -91,9 +116,12 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
         ${modelCard("Apollo", "/apollo.png")}
         ${modelCard("Rover", "/trike.png")}
       </div>
-      <p>Filter by model, standing or seated, minimum battery, rideability —
-      even by neighborhood. Save your favorite combos and reuse them in one
-      tap.</p>`,
+      <p>Filter by model, minimum battery, rideability, equipment — even by
+      neighborhood.</p>
+      <p class="onb-callout">Two different things worth saving.<br />
+      A <strong>saved view</strong> is what the map shows you.
+      <strong>My ideal scooter</strong> is what you will actually ride — and one
+      tap turns it into a filter.</p>`,
   },
   {
     id: "features",
@@ -129,15 +157,16 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
   },
   {
     id: "ride-mode",
-    headline: "Ride Mode",
+    headline: "A dashboard while you ride.",
     body: `
       <div class="onb-phone" aria-hidden="true">
         <img class="onb-phone__shot" src="/onboarding-hud.webp"
           alt="" width="760" height="351" loading="lazy" />
       </div>
-      <p>Built specifically for Denver scooter riders.</p>
-      <p>Rotate your phone and enjoy a dashboard designed for the landscape
-      phone mounts found on many Veo scooters.</p>`,
+      <p>Start a ride and the app becomes a dashboard: your speed, what it is
+      costing, and how far the battery will take you.</p>
+      <p>Rotate your phone for a layout built for the landscape mounts on many
+      Veo scooters.</p>`,
   },
   {
     id: "routing",
@@ -151,7 +180,10 @@ export const ONBOARDING_SCREENS: readonly OnboardingScreen[] = [
       </div>
       <p>Ride the way you want. Stick to safer streets, dodge hills to
       stretch your battery, chase shade on hot days, or take the most
-      direct line.</p>`,
+      direct line.</p>
+      <p class="onb-callout">Say where you are going and we will plan the whole
+      way there — including <strong>swapping scooters mid-trip</strong> when the
+      one you want is further along your route than the one at your feet.</p>`,
   },
   {
     id: "contribute",

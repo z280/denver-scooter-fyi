@@ -1827,19 +1827,35 @@ map.on("load", async () => {
 
 // ---------- Onboarding & progressive discovery ----------
 
-/** Whether the intro tour opens itself on a first visit. OFF while the tour
- *  is rewritten — see the note at its call site. */
-const ONBOARDING_AUTOSHOW = false;
+/** Whether the intro tour opens itself on a first visit.
+ *
+ *  BACK ON (§7.3). It was turned off "while the tour is rewritten", and the
+ *  rewrite has landed: the two screens describing a UI that moved are rewritten,
+ *  and the CTA lands on a real question instead of clicking an element Phase 6
+ *  deleted. The point of this being one line is that turning it on is a
+ *  decision, not a revert. */
+const ONBOARDING_AUTOSHOW = true;
 
-// The seven-screen tour (onboarding.ts) auto-shows once per browser and is
-// replayable from the About drawer. Its final CTA hands the user straight to
-// Find-a-ride — center on location and ranked picks are the wizard's own
-// consent flow — plus the map's rideability/icon legend and the one-time
-// "tap any scooter" nudge, so nobody is left wondering what to do next.
+// The tour (onboarding.ts) auto-shows once per browser and is replayable from
+// the About drawer.
+//
+// ITS FINAL CTA OPENS THE HOME BAR'S OWN QUESTION — "where are you going?" —
+// rather than putting the map into find-wheels mode. The tour has just spent
+// eight screens explaining what the app knows about scooters; the useful next
+// move is the one question the app needs from the rider, and answering it now
+// reaches the plan list. Find-wheels mode is a map state, not a question, so
+// ending there left the rider looking at dots and working out what to do.
+//
+// `openForTrip`, NOT `openForDestination`: the latter answers one question for
+// another surface and dispatches nothing, so a tour ending there would collect
+// a destination and quietly drop it.
+//
+// The legend and the one-time "tap any scooter" nudge stay — they are about
+// reading the map, which the rider is about to do either way.
 function wireOnboarding(): void {
   const hooks: OnboardingHooks = {
     onStartExploring: () => {
-      enterFindWheels();
+      homeBar?.openForTrip();
       const legend = document.getElementById(
         "legend-toggle",
       ) as HTMLInputElement | null;
