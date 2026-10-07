@@ -201,6 +201,48 @@ export const LEGAL_LINKS: readonly { label: string; href: string }[] = [
   },
 ];
 
+// ---------- Billing queries (Phase 8 §8.5) ----------
+
+/** Where a fare query goes, in one place beside the rate plans it is about.
+ *
+ *  THE RIDER SENDS IT, from their own address, and the app never does. That is
+ *  not a limitation to route around: sending it would mean this project
+ *  asserting a contract claim on somebody's behalf, from an address they do not
+ *  control. So this is a `mailto:` recipient, not an API the app posts to.
+ *
+ *  It sits here rather than in `receipt-panel.ts` for the same reason
+ *  `VEO_ZENDESK_PARKING` does: the address is a fact about Veo, the panel is a
+ *  surface, and a surface that owns an address is a surface somebody has to go
+ *  and edit when the address changes.
+ *
+ *  EMPTY, AND DELIBERATELY NOT GUESSED. Every other Veo endpoint in this file
+ *  was verified against something Veo publishes — the Zendesk form's own field
+ *  ids, the Adjust deep-link token. A plausible-looking address is worse than no
+ *  address here: the complaint path's whole value is that it reaches somebody,
+ *  and a wrong recipient produces a rider who believes they filed a billing
+ *  query and did not. `complaintReady()` below is what keeps that from shipping
+ *  silently. Fill it from Veo's own published support contact. */
+export const VEO_SUPPORT_EMAIL = "";
+
+/** Whether §8.5's complaint path can be offered at all.
+ *
+ *  A `mailto:` with an empty `to` opens a blank draft, which looks like the
+ *  feature working. So the panel asks this instead of assuming, and offers the
+ *  rider the copyable body with no recipient rather than a draft addressed to
+ *  nobody. */
+export function complaintReady(): boolean {
+  return VEO_SUPPORT_EMAIL.includes("@");
+}
+
+/** The contract row a fare query cites. Verbatim and under the facts, never
+ *  woven into them — at the single-receipt level an overcharge is
+ *  indistinguishable from a bug, and the complaint should read like the billing
+ *  query it is. Adjectives are what make it read like an accusation. */
+export const EQUITY_DISCOUNT_CITATION =
+  "Veo's contract with the City and County of Denver (Exhibit A §5.2) requires " +
+  "a fare discount for any trip that starts or ends within a designated Equity " +
+  "Area, priced by Exhibit C at $1.00 + $0.13/minute.";
+
 // ---------- Report improperly-parked vehicle to Veo ----------
 // A rider who spots a badly-parked Veo (blocking a sidewalk, ADA ramp,
 // transit stop…) can file it with Veo directly. Veo takes those reports

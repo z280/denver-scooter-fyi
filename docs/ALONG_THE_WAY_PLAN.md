@@ -1666,6 +1666,14 @@ should stop moving first (master plan §4).
 two effects (switch the legend on, fire the one-time "tap any scooter" nudge)
 are still fine and stay.
 
+> **Already fixed by the time this phase ran.** Phase 6 replaced the click with
+> `enterFindWheels()`, and `mode-bar-gone.test.ts` is why — it asserts that no
+> code anywhere looks for `#mode-switch`. §7.3 moved the CTA once more, from a
+> map STATE to the home bar's own question; the dead-click bug itself was
+> already gone. The failure is still the one §7.4's audit test is built around,
+> because it is the shape that recurs: a tour making a claim about a control
+> that no longer resolves.
+
 **Editorially:** two of seven screens describe a UI that moved. `ride-mode`
 sells "Ride Mode" as a place you go — the mode vocabulary this app has spent
 several PRs removing. `models` promises "save your favorite combos and reuse
@@ -1681,6 +1689,26 @@ is wrong, the screen changes — never the other way round. No surface survives
 in this app because the walkthrough mentions it.
 
 ### 7.3 What ships
+
+**Shipped.** The audit left behind as `onboarding-audit.test.ts`, per §7.4.
+
+Two notes on what the list below turned out to mean:
+
+- **"Phases 1 and 4 earn a screen or a sentence each" — Phase 4 is moot.**
+  `my-scooters.ts` was built and deleted as the wrong feature, so there is no
+  "My Scooters" to tell a rider about. What earned the sentence instead is
+  **Phase 2's hand-off plan**, which is the largest thing the app does that no
+  screen mentioned. It went on the `routing` screen rather than a ninth screen:
+  a hand-off IS routing, and the tour's own success criterion is five ideas in
+  under 60 seconds.
+- **The `models` screen also had to drop a filter that no longer exists.** It
+  offered "standing or seated", which §6.3.3 deleted — posture is a property of
+  the model, so the model is the filter. The plan listed only the saved
+  view/spec problem on that screen.
+
+One more drift, recorded because it is the same class of error one layer out:
+the module header described a **seven**-screen tour and there are eight.
+
 
 - The CTA lands on the home bar's "where are you going?" instead of clicking
   a deleted element.
@@ -1758,6 +1786,40 @@ notice, and a misread total is a rider sent to lose an argument in public.
 
 ### 8.4 The bar, and why "cannot tell" is a feature
 
+**Shipped as `receipt-verdict.ts`**, ahead of the rest of the phase: it is pure,
+it is the part that decides whether this app sends a rider to argue with Veo,
+and it does not depend on the OCR question §8.1 leaves open.
+
+Three things the section did not settle, decided here and flagged as decisions:
+
+- **Confirmation is enforced by a TYPE, not a boolean.** `receiptVerdict` takes
+  a `ConfirmedReceipt`, and only `confirmRead()` produces one. §8.4's third
+  condition then cannot be forgotten by a caller, and it is why the reason enum
+  needs no code for "unconfirmed" — such a receipt never reaches the verdict.
+- **`inside_margin` and `matches_expected` are different answers.** A charge a
+  few cents OVER lands on `cannot_tell` / `inside_margin`; one at or below the
+  expected figure is `correct` / `matches_expected`. The alternative — calling
+  the whole margin "correct" — would have the verdict assert a charge is right
+  when all we know is that we cannot prove otherwise.
+- **`veoplus_unmodelled` is an interpretation, and the opposite reading is
+  recorded beside it.** `expected` includes the area's $1 under the worse
+  reading, so a Pass rider whose charge matches it may have paid a dollar they
+  did not owe. We will not claim it (unprovable) and do not bless it either:
+  `cannot_tell`, because "correct" would tell them to stop looking. A Pass rider
+  a full unlock LIGHT is `correct` — that is the better reading having been
+  applied, not an ambiguity.
+
+**`config.ts`'s support address ships EMPTY, on purpose.** Every other Veo
+endpoint in that file was verified against something Veo publishes; a
+plausible-looking address is worse than none, because the complaint path's whole
+value is that it reaches somebody. `complaintReady()` is what stops a blank
+`mailto:` shipping as a working feature, and a test pins it.
+
+**Still to build:** `receipt-read.ts` (§8.1's OCR decision is still open, and
+manual entry is the stated fallback), `receipt-panel.ts`, `account-confirm.ts`,
+and §8.6's three API clients.
+
+
 All three, or no claim is made:
 
 1. the trip **demonstrably** starts or ends inside an Equity Area polygon;
@@ -1790,6 +1852,26 @@ and use its geometry; when none does, check the arithmetic only and return
 overcharge.
 
 ### 8.5 The complaint
+
+**Shipped as `receipt-complaint.ts`** — the draft and the routing decision, pure.
+The panel that renders it, and the clipboard write itself, are still to build.
+
+Two notes:
+
+- **The gate is a type, and it covers both paths at once.** §8.7 warns that
+  "gating only one of them means an unconfirmed complaint can still be opened
+  and sent", and a boolean checked in two places is the shape that gets checked
+  in one. So both routes take an `OverchargeFinding`, only
+  `overchargeFinding()` makes one, and it only accepts an `overcharged`
+  verdict — which only a `ConfirmedReceipt` can produce. The chain is
+  confirm → verdict → finding → complaint and no link is skippable.
+- **The recipient is injected, not read from `config.ts`.** The module reached
+  for `VEO_SUPPORT_EMAIL` first, and that made the length-threshold branch
+  untestable: the address ships empty, so the route always took its no-address
+  path and §8.7's "both sides of 1,800" could not be asserted at all. A hidden
+  dependency that only one branch can be reached through is a hidden dependency
+  that hides a branch.
+
 
 **The rider sends it**, from their own address, to the support address in
 `config.ts`. The app never sends it, and this is not a limitation to route

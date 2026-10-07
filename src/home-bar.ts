@@ -110,6 +110,15 @@ export interface HomeBarHandle {
    *  where they're headed before any route is computed. `onPicked` fires
    *  once, on a choice; backing out simply never calls it. */
   openForDestination(onPicked: (place: TripPlace) => void): void;
+  /** Open the WHOLE flow — "where are you going?", then the wheels question,
+   *  then a dispatched trip. What a tap on the resting pill does.
+   *
+   *  Exposed for the walkthrough's closing CTA (Phase 7), which has to land on
+   *  a real question rather than somewhere the rider then has to leave. NOT
+   *  `openForDestination`: that one answers for another surface and dispatches
+   *  nothing, so a tour ending there would collect a destination and quietly
+   *  drop it. */
+  openForTrip(): void;
   isOpen(): boolean;
   destroy(): void;
 }
@@ -714,6 +723,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
 
   return {
     collapse,
+    openForTrip: open,
     openForDestination(onPicked) {
       open();
       // After `open`, which clears it — this is the one caller that wants it
