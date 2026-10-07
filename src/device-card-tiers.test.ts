@@ -23,19 +23,32 @@ const devicesSrc = readFileSync(
 );
 
 describe("the card consults the table rather than its own numbers", () => {
-  it("has no literal proximity radius of its own left", () => {
+  it("has no proximity radius of its own at all", () => {
     // The three the card used to carry were 75, 100 and a 1125 computed inline.
-    // Each was defensible alone; together they were the drift §12.2 names. A
-    // literal here is how a fourth appears.
-    const consts = devicesSrc.match(/^const (?:UNLOCK_PROXIMITY_M|PARKING_REPORT_PROXIMITY_M|RIDE_MAX_WALK_M) = .*$/gm);
-    expect(consts).toHaveLength(3);
-    for (const line of consts ?? []) {
-      expect(line).toMatch(/AT_THE_VEHICLE_M|IN_REACH_M/);
-      // No bare number in the VALUE. Comments are stripped first: the `IN_REACH_M`
-      // line documents "~1125 m" for the reader, which is the figure's meaning
-      // and not a second source for it.
-      const value = line.split("=").slice(1).join("=").split("//")[0];
-      expect(value, line).not.toMatch(/\b\d{2,}\b/);
+    // Each was defensible alone; together they were the drift §12.2 names.
+    //
+    // THEY BRIEFLY SURVIVED AS ALIASES for the tier constants, and that was a
+    // half-measure this assertion used to bless: an alias keeps the shape of the
+    // thing that drifted, and it let the unlock and ride gates go on computing
+    // their own proximity while ACTION_RULES declared rules nothing read. Now
+    // there is nowhere here for a fourth radius to appear.
+    expect(devicesSrc).not.toMatch(/^const UNLOCK_PROXIMITY_M\b/m);
+    expect(devicesSrc).not.toMatch(/^const RIDE_MAX_WALK_M\b/m);
+    expect(devicesSrc).not.toMatch(/^const PARKING_REPORT_PROXIMITY_M\b/m);
+  });
+
+  it("asks the table for EVERY gate, leaving no rule declared and unread", () => {
+    // The finding this closes: `ACTION_RULES.open_in_veo` and `.ride` were in
+    // the table and never consulted, so two entries in the single source of
+    // truth were decorative. The radii happened to match, so nothing was
+    // broken — which is exactly why it would have survived.
+    for (const action of ["open_in_veo", "ride", "report_parking", "report_device", "take_photo", "show_photos", "confirm_features"]) {
+      expect(devicesSrc, action).toContain(`allow("${action}")`);
+    }
+    // Every at_the_vehicle and in_reach rule is consulted — `anywhere` rules
+    // that gate nothing (details, dibs) need no call site.
+    for (const action of [...actionsInTier("at_the_vehicle"), ...actionsInTier("in_reach")]) {
+      expect(devicesSrc, action).toContain(`allow("${action}")`);
     }
   });
 
@@ -52,7 +65,16 @@ describe("the card consults the table rather than its own numbers", () => {
 
   it("runs the parking report at the same radius as everything else", () => {
     expect(AT_THE_VEHICLE_M).toBe(75);
-    expect(devicesSrc).toMatch(/const PARKING_REPORT_PROXIMITY_M = AT_THE_VEHICLE_M;/);
+    expect(ACTION_RULES.report_parking.tier).toBe("at_the_vehicle");
+    expect(devicesSrc).toContain('allow("report_parking")');
+  });
+
+  it("words the distance per tier, since the right unit differs", () => {
+    // Feet for "are you standing at it", walk MINUTES for "will you walk there".
+    // The pace that converts them lives in locate.ts beside the walk router that
+    // quotes it, so the card supplies the wording and the tier module stays pure.
+    expect(devicesSrc).toMatch(/describeDistance: \(meters, tier\) =>/);
+    expect(devicesSrc).toMatch(/tier === "in_reach" \? formatWalk\(meters\)/);
   });
 });
 

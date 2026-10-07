@@ -288,7 +288,17 @@ export function planListView(input: PlanListInput): PlanListView {
   const rows = result.plans.map((plan): PlanRow => {
     const saving = baseline ? startInAreaSaving(plan, baseline, rate) : null;
     const first = rideLegs(plan)[0];
-    const isWalkOnly = plan === result.walkOnly;
+    // THE PLAN'S OWN SHAPE, not `plan === result.walkOnly`.
+    //
+    // Identity happens to hold today — `searchOnce` pushes the same object into
+    // `complete` and `rankPlans` returns both from the same call — and it is the
+    // wrong thing to depend on. Anything that copies or re-wraps a plan on the
+    // way out turns this false, and the failure is not that a label goes missing:
+    // the panel then renders a "Take this one" button on a row whose
+    // `firstVehicle` is null, which is precisely the button-that-goes-nowhere
+    // this row exists to avoid. A plan with no ride leg IS the walk, by
+    // definition and by any route through the search.
+    const isWalkOnly = first === undefined;
     return {
       plan,
       headline: planHeadline(plan),

@@ -210,12 +210,19 @@ export function createPlanListPanel(
       card.append(details);
     }
 
-    if (row.isWalkOnly) {
+    // `isWalkOnly` OR nothing to walk to: two conditions for one button because
+    // the consequence of getting it wrong is the thing this row exists to avoid.
+    // A row with no `firstVehicle` has nowhere to send the rider, and
+    // `onChoose` would return silently — a button that does nothing when tapped,
+    // which is worse than no button and indistinguishable from a broken app.
+    if (row.isWalkOnly || row.firstVehicle === null) {
       card.append(
         el(
           "p",
           "planlist__note planlist__note--quiet",
-          "No scooter needed — set off whenever you like.",
+          row.isWalkOnly
+            ? "No scooter needed — set off whenever you like."
+            : "We cannot point you at this one's first scooter — try Look again.",
         ),
       );
       return card;

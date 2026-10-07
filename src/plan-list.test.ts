@@ -201,6 +201,21 @@ describe("savingBaseline", () => {
 });
 
 describe("planListView", () => {
+  it("identifies the walk row by its SHAPE, not by object identity", () => {
+    // `plan === result.walkOnly` happens to hold today and is the wrong thing to
+    // depend on: anything that copies or re-wraps a plan on the way out turns it
+    // false, and the symptom is not a missing label — the panel then renders a
+    // "Take this one" button on a row with no vehicle to walk to.
+    const copy = { ...walkOnly, legs: [...walkOnly.legs] };
+    const v = planListView({
+      result: result({ plans: [copy], walkOnly }),
+      rate: rate("resident"),
+    });
+    expect(v.rows[0].plan).not.toBe(walkOnly);
+    expect(v.rows[0].isWalkOnly).toBe(true);
+    expect(v.rows[0].firstVehicle).toBeNull();
+  });
+
   it("returns exactly as many rows as there are plans — one is the floor", () => {
     // MAX_PLANS is a cap, never a quota. A list padded to two either
     // fabricates the second or implies one exists.

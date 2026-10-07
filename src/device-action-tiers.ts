@@ -121,10 +121,12 @@ export const ACTION_RULES: Record<DeviceAction, ActionRule> = {
   report_parking: {
     tier: "at_the_vehicle",
     requiresSignIn: false,
+    // The card's own words, kept — only the distance is new. §12.4's point is
+    // that these sentences are already good and the bug was that a phone never
+    // showed them, so a rewrite here would be solving a problem nobody had.
     tooFarHint:
-      "You're too far away to report this one ({distance}). Parking reports come from riders who can see the scooter.",
-    noFixHint:
-      "Turn on your location to report this one — reports carry weight because they come from somebody who was there.",
+      "Walk within sight of this scooter to report its parking — you're {distance} away.",
+    noFixHint: "Turn on your location to report bad parking.",
   },
   // A claim about whether it works — and the most consequential thing a rider
   // can do from this card: it flips `has_negative_report`, which overrides the
@@ -177,6 +179,17 @@ export interface GateContext {
   distanceMeters: number | null;
   signedIn: boolean;
   admin: boolean;
+  /** How to word the distance in a refusal, per tier. Optional, and the card
+   *  passes one.
+   *
+   *  BECAUSE THE RIGHT UNIT DIFFERS BY TIER, and this module should not be the
+   *  one deciding that. `at_the_vehicle` is about standing next to something, so
+   *  feet; `in_reach` is about whether you will walk there, so MINUTES — and the
+   *  pace that converts them lives in `locate.ts` beside the walk router that
+   *  quotes it. Importing that here to borrow the conversion would drag a module
+   *  that reads `navigator` into a pure one, and re-deriving the pace would give
+   *  the card two answers for one walk. */
+  describeDistance?(meters: number, tier: ActionTier): string;
 }
 
 export type Gate = { allowed: true } | { allowed: false; reason: string };
@@ -225,7 +238,9 @@ export function gate(action: DeviceAction, ctx: GateContext): Gate {
     };
   }
   if (ctx.distanceMeters <= radius) return ALLOWED;
-  const distance = formatDistance(ctx.distanceMeters);
+  const distance =
+    ctx.describeDistance?.(ctx.distanceMeters, rule.tier) ??
+    formatDistance(ctx.distanceMeters);
   const template =
     rule.tooFarHint ??
     (rule.tier === "in_reach"

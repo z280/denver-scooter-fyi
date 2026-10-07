@@ -56,8 +56,7 @@ import {
 } from "./dibs.ts";
 import { requestDibsNotifications } from "./dibs-notify.ts";
 import {
-  AT_THE_VEHICLE_M,
-  IN_REACH_M,
+  formatDistance,
   gate,
   type DeviceAction,
   type GateContext,
@@ -167,28 +166,24 @@ const PLACEMENT_CHAR: Record<GaugePlacement, string> = {
   biggap: "B",
 };
 
-/** §12.2's `at_the_vehicle` radius, under its old name. Both names point at the
- *  one constant now: this card used to carry THREE radii in three places (75 m
- *  unlock, 100 m parking report, ~1125 m walk) plus two actions with none at
- *  all, and the pattern that produced — the cheap actions gated and the
- *  expensive ones not — is what `device-action-tiers.ts` exists to replace.
- *
- *  Kept as an alias rather than deleted so the reads below stay legible at their
- *  call sites; it is no longer a number anyone can change here. */
-const UNLOCK_PROXIMITY_M = AT_THE_VEHICLE_M;
+// UNLOCK_PROXIMITY_M, RIDE_MAX_WALK_M and PARKING_REPORT_PROXIMITY_M ARE GONE.
+//
+// This card used to carry three radii in three places — 75 m unlock, 100 m
+// parking report, ~1125 m walk — plus two actions with no radius at all, and the
+// pattern that added up to (the cheap actions gated, the expensive ones not) is
+// what `device-action-tiers.ts` replaced. They briefly survived as aliases for
+// the tier constants, which was a half-measure: an alias keeps the shape of the
+// thing that drifted, and it let the unlock and ride gates go on computing their
+// own proximity while `ACTION_RULES` declared rules nothing read.
+//
+// Every gate on this card now asks `allow(<action>)`. The radii live in
+// `AT_THE_VEHICLE_M` and `IN_REACH_M`, and there is nowhere here for a fourth to
+// appear.
 
-/** How far away a scooter can be and still be worth claiming.
- *
- *  "I'll ride this one" used to share ▶️ Open in Veo's 75 m unlock proximity,
- *  because it used to mean "I am standing at this scooter". It doesn't any
- *  more — it starts a WALK to it — so that gate made the walk feature
- *  unreachable except from the one place you'd never need it.
- *
- *  The right limit is how far somebody will actually walk, which is already
- *  decided: dibs allows a fifteen-minute walk, and this is that distance at
- *  the 4.5 km/h pace the walk router quotes. Past it a claim is speculation
- *  and the walk is a hike. */
-const RIDE_MAX_WALK_M = IN_REACH_M; // ~1125 m, the `in_reach` tier
+// The reasoning that was here — "I'll ride this one" starts a WALK, so sharing
+// the unlock's tight radius made the walk feature unreachable except from the one
+// place you would never need it — moved to `IN_REACH_M`'s own doc, beside the
+// number it is about.
 
 // The photo buttons' sign-in sentence moved to `device-action-tiers.ts`, where it
 // sits on both photo actions' rules — the module that decides a button is blocked
@@ -200,15 +195,9 @@ const RIDE_MAX_WALK_M = IN_REACH_M; // ~1125 m, the `in_reach` tier
 const RIDE_LONGPRESS_MS = 450;
 const RIDE_TOOLTIP_MS = 2200;
 
-/** Was 100 m, now the one `at_the_vehicle` radius (§12.2).
- *
- *  THIS IS A TIGHTENING, AND THE ARGUMENT IT OVERRULES WAS A REAL ONE: you can
- *  see a badly-parked scooter from across the street, which is why 100 m was
- *  chosen. What wins is that a second radius for the same claim-type — "I can
- *  see this vehicle and here is what is wrong with it" — is a distinction no
- *  rider can perceive and nobody will maintain, and the drift it licensed is
- *  how this card ended up with four gates that nobody designed together. */
-const PARKING_REPORT_PROXIMITY_M = AT_THE_VEHICLE_M;
+// The parking report's 100 m is gone too, and the argument it overruled was a
+// real one — you can see a badly-parked scooter from across the street. It is
+// kept at `AT_THE_VEHICLE_M`, which is where the decision now lives.
 
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
@@ -1364,11 +1353,21 @@ export class Devices {
         distanceMeters: user === null ? null : distanceMeters(user, here),
         signedIn,
         admin: this.adminSession,
+        // Feet for "are you standing at it", walk MINUTES for "will you walk
+        // there" — `formatWalk` is what the rest of this card uses for a walk and
+        // carries the same pace the walk router quotes.
+        describeDistance: (meters, tier) =>
+          tier === "in_reach" ? formatWalk(meters) : formatDistance(meters),
       };
       const allow = (action: DeviceAction) => gate(action, gateCtx);
-      const nearEnough =
-        user !== null && distanceMeters(user, here) <= UNLOCK_PROXIMITY_M;
-      const startAllowed = signedIn && (this.adminSession || nearEnough);
+      // THROUGH THE TABLE, like every other action. This was the last gate
+      // computing its own proximity, which left `ACTION_RULES.open_in_veo`
+      // declared and never consulted — a rule in the single source of truth that
+      // nothing read. The radii already matched (both named the same constant),
+      // so no behaviour moved; what moved is that there is now no second place
+      // where the unlock's gate could drift from the table that documents it.
+      const startGate = allow("open_in_veo");
+      const startAllowed = startGate.allowed;
       // Vehicle-status gates come first: no proximity or session fixes a
       // scooter that Veo itself won't rent out. (The old unlock link never
       // checked these; promoted to the primary CTA, it has to.)
@@ -1379,12 +1378,10 @@ export class Devices {
         startHint = "This scooter is marked out of service.";
       } else if (reserved) {
         startHint = "Reserved by another rider right now.";
-      } else if (!signedIn) {
-        startHint = "Sign in (Account tab) to start rides here.";
-      } else if (!startAllowed) {
-        startHint = user
-          ? "You're too far away, sorry!"
-          : "Turn on your location to start at the scooter.";
+      } else if (!startGate.allowed) {
+        // One branch for sign-in, no fix and too far: the table's own sentences,
+        // which are the card's previous ones with the distance added.
+        startHint = startGate.reason;
       } else if (!effectivePlate) {
         startHint = "Looking up this scooter's plate — try again in a moment.";
       }
@@ -1408,9 +1405,8 @@ export class Devices {
       // Admins bypass it, as they do for Start, so the flows stay testable
       // from a desk. Sign-in is deliberately NOT required: ride mode runs
       // client-side, and Start enforces its own session gate downstream.
-      const walkMeters = user ? distanceMeters(user, here) : null;
-      const withinWalk = walkMeters !== null && walkMeters <= RIDE_MAX_WALK_M;
-      const rideAllowed = this.adminSession || withinWalk;
+      const rideGate = allow("ride");
+      const rideAllowed = rideGate.allowed;
 
       // Somebody else's live claim, if the lookup has answered. Null while it
       // is in flight or when there is none — the popup renders immediately
@@ -1423,10 +1419,8 @@ export class Devices {
         rideHint = "Reserved by another rider right now.";
       } else if (heldByOther) {
         rideHint = `${heldByOther.claimed_by} called dibs on this one.`;
-      } else if (!rideAllowed) {
-        rideHint = user
-          ? `Too far to walk — that's ${formatWalk(walkMeters ?? 0)} away.`
-          : "Turn on your location to ride this scooter.";
+      } else if (!rideGate.allowed) {
+        rideHint = rideGate.reason;
       }
       const rideOk = rideAllowed && !outOfService && !reserved && !heldByOther;
 
@@ -1766,9 +1760,8 @@ export class Devices {
       // a desk, which is the job — and requiring them to be standing next to
       // each scooter would make the queue unworkable while adding nothing to
       // the report. Same exemption `startAllowed` already grants for unlock.
-      const parkNearEnough =
-        this.adminSession ||
-        (user !== null && distanceMeters(user, here) <= PARKING_REPORT_PROXIMITY_M);
+      const parkGate = allow("report_parking");
+      const parkNearEnough = parkGate.allowed;
       // Hoisted so the async reverse-geocode below can rebuild the URL with a
       // street address once it resolves.
       let parkingInput: ParkingReportInput | null = null;
@@ -1795,9 +1788,8 @@ export class Devices {
             <span class="device-popup__veo-report-hint">Opens Veo's form with this vehicle &amp; location pre-filled — you review &amp; send.</span>
           </div>`;
       } else {
-        const why = user
-          ? "Walk within sight of this scooter to report its parking."
-          : "Turn on your location to report bad parking.";
+        // The table's sentence, which names the distance where this one did not.
+        const why = parkGate.allowed ? "" : parkGate.reason;
         veoParkReportBlock = `
           <div class="device-popup__veo-report">
             <span class="device-popup__veo-report-gate">🔒 ${escapeHtml(why)}</span>

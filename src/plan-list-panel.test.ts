@@ -28,7 +28,10 @@ function row(over: Partial<PlanRow> = {}): PlanRow {
     chips: [],
     disclosures: [],
     saving: null,
-    firstVehicle: null,
+    // A REAL ROW HAS A VEHICLE. The default was null, which made every fixture a
+    // plan the panel cannot act on — the case the guard below now catches, and
+    // which no test was asserting on purpose.
+    firstVehicle: { device_id: "d1", vehicle_identifier: "v1" } as PlanRow["firstVehicle"],
     isWalkOnly: false,
     ...over,
   };
@@ -68,7 +71,7 @@ describe("the plan list panel", () => {
 
   it("offers a way to take a plan that has a vehicle", () => {
     const onChoose = vi.fn();
-    const r = row({ firstVehicle: { device_id: "d1" } as PlanRow["firstVehicle"] });
+    const r = row();
     const { root } = mount(view({ rows: [r] }), { onChoose });
     const go = root.querySelector<HTMLButtonElement>(".planlist__go")!;
     expect(go).not.toBeNull();
@@ -255,9 +258,22 @@ describe("the plan list panel", () => {
     expect(root.querySelector(".planlist__freeinput")).toBeNull();
   });
 
+  it("offers no button on a row it cannot point anywhere", () => {
+    // Not reachable through `planListView` today, which sets `isWalkOnly` from
+    // the same fact. It is guarded anyway because the failure is the one thing
+    // this row exists to avoid: `onChoose` returns silently with no vehicle, so
+    // the rider gets a button that does nothing when tapped — worse than no
+    // button, and indistinguishable from a broken app.
+    const { root } = mount(view({ rows: [row({ firstVehicle: null })] }));
+    expect(root.querySelector(".planlist__go")).toBeNull();
+    expect(root.textContent).toContain("cannot point you");
+    // And it is NOT dressed as the walk, which would be a different lie.
+    expect(root.querySelector(".planlist__row--walk")).toBeNull();
+  });
+
   it("stops answering taps once destroyed", () => {
     const onChoose = vi.fn();
-    const r = row({ firstVehicle: { device_id: "d1" } as PlanRow["firstVehicle"] });
+    const r = row();
     const { root, handle } = mount(view({ rows: [r] }), { onChoose });
     const go = root.querySelector<HTMLButtonElement>(".planlist__go")!;
     handle.destroy();
