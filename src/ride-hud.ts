@@ -68,6 +68,14 @@ import type { RideSessionStore, RideState as RideSessionState } from "./ride-ses
 import type { TrackAddResult, TrackFix, TrackRecorder } from "./track-store.ts";
 import { createNavHud, decodePolyline, type NavHud } from "./ride-nav-hud.ts";
 import { colorForProfile } from "./ride-screen-routes.ts";
+import {
+  INITIAL_ANNOUNCE_STATE,
+  announce,
+  clampFreeMinutes,
+  type AnnounceState,
+} from "./ride-announce.ts";
+import type { NavHudManeuver } from "./ride-nav-hud.ts";
+import type { RideVoice } from "./ride-voice.ts";
 import type { RideRouteLineHandle } from "./ride-route-line.ts";
 import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
 
@@ -124,6 +132,24 @@ export interface RideHudDeps {
    *  for the same reason `trail` is. Omit it and navigation behaves exactly
    *  as before: instructions only, no line on the map. */
   routeLine?: RideRouteLineHandle;
+  /** Phase 11 §11.1's voice. Omit it and the HUD is exactly as quiet as before —
+   *  no utterances, no haptics, and no mute chip, rather than a chip that
+   *  silences nothing. */
+  voice?: RideVoice;
+  /** §11.3's free-minute cliff: the rider's remaining allowance AT RIDE START,
+   *  in minutes, or `null` for a tier with none and for a figure we cannot
+   *  resolve.
+   *
+   *  AT START, not now, because this HUD cannot know what the rider spent before
+   *  it opened — `free-minutes.ts` works from `/tracked-rides` and §2.2's control
+   *  owns the estimate. Taking the balance once and subtracting this ride's own
+   *  billable minutes keeps one source of truth for the hour.
+   *
+   *  OMITTING IT MEANS SILENCE, which is the right default: the only wrong
+   *  version of this warning is a late one, and guessing the balance from this
+   *  ride's elapsed time alone guesses HIGH — it would warn after the money
+   *  started. */
+  freeMinutesAtStart?: () => number | null;
 }
 
 /** What `beginHandoff` needs to put the HUD straight into `riding` for a ride
@@ -420,6 +446,22 @@ export class RideHud {
    *  clock you can't see. */
   private timerVisible = true;
 
+  /** §11.1's voice, and the state that keeps it from repeating itself. */
+  private readonly voice: RideVoice | null;
+  private announceState: AnnounceState = INITIAL_ANNOUNCE_STATE;
+  private readonly freeMinutesAtStart: (() => number | null) | null;
+  /** The rider's allowance when this ride began, resolved ONCE. Re-reading it
+   *  per fix would let the estimate move under the warning — a balance that
+   *  refreshes mid-ride can cross a threshold backwards and announce it twice. */
+  private freeAtStart: number | null = null;
+  /** The equity polygons, cached for the synchronous per-fix test.
+   *  `null` means not loaded, which the announcer reads as "unknown" and never as
+   *  "outside". */
+  private zoneIndex: IndexedFeature[] | null = null;
+  /** §11.1's turn cue input, as the nav overlay last reported it. Null when there
+   *  is no guidance, no maneuver left, or guidance was dismissed. */
+  private navManeuver: NavHudManeuver | null = null;
+
   constructor(
     container: HTMLElement,
     /** Lazily resolves the city's official Equity Area polygons for the
@@ -439,6 +481,8 @@ export class RideHud {
     this.session = deps.session ?? null;
     this.trail = deps.trail ?? null;
     this.routeLine = deps.routeLine ?? null;
+    this.voice = deps.voice ?? null;
+    this.freeMinutesAtStart = deps.freeMinutesAtStart ?? null;
     this.root.addEventListener("click", (e) => this.onClick(e));
     // Re-acquire the wake lock when the tab comes back (the browser
     // silently releases it on hide).
@@ -487,7 +531,24 @@ export class RideHud {
    *  identity and start time, this only wires the live view around it.
    *  Idempotent while already riding, so a redundant recovery call can't
    *  restart sensors mid-ride. */
+  /** §11.1 — unlock the speech queue, from inside the Start tap.
+   *
+   *  PUBLIC, AND THE CALLER MUST CALL IT FROM ITS OWN CLICK HANDLER. Safari will
+   *  not speak unless `speechSynthesis` has been touched inside a user gesture,
+   *  and `beginHandoff` below also calls it — but only that call is guaranteed to
+   *  be inside one, and only when the caller invokes it synchronously from the
+   *  button. A countdown that fires `enterRiding` from a timer is NOT a gesture,
+   *  so priming there would be too late. A second prime is harmless.
+   *
+   *  Without this the feature works for every tester on Android and for nobody on
+   *  iOS, and it fails silently — which is the worst way for an audio feature to
+   *  fail. */
+  primeVoice(): void {
+    this.voice?.prime();
+  }
+
   beginHandoff(handoff: TrackedRideHandoff): void {
+    this.primeVoice();
     if (this.state === "riding") return;
     void this.enterImmersive();
     this.enterRiding({
@@ -798,6 +859,10 @@ export class RideHud {
           on = this.speedoClassicVisible = !this.speedoClassicVisible;
         } else if (key === "digital") {
           on = this.speedoDigitalVisible = !this.speedoDigitalVisible;
+        } else if (key === "voice" && this.voice) {
+          // The chip reads "Voice ON", so pressing it when lit mutes.
+          this.voice.setMuted(!this.voice.muted());
+          on = !this.voice.muted();
         } else {
           break;
         }
@@ -855,6 +920,16 @@ export class RideHud {
       chip("classic", "Speedo classic", this.speedoClassicVisible),
       chip("digital", "Speedo digital", this.speedoDigitalVisible),
     );
+    // §11.1's hard mute. Only when a voice is actually wired: a chip that
+    // silences nothing is worse than no chip.
+    //
+    // LABELLED BY WHAT IT IS, NOT BY WHAT PRESSING IT DOES, like every other
+    // chip in this row — "Voice" lit means voice is on. A chip labelled "Mute"
+    // that lights up when muted reads as "muted is on" to half of readers and as
+    // "press to mute" to the other half.
+    if (this.voice) {
+      chips.push(chip("voice", "Voice", !this.voice.muted()));
+    }
     return chips.join("");
   }
 
@@ -1245,6 +1320,19 @@ export class RideHud {
     this.navHud = null;
     this.navHudContainer = null;
     this.navDismissed = false;
+    // §11.1/§11.3's voice, reset per ride.
+    //
+    // THE ALLOWANCE IS RESOLVED ONCE, HERE. Re-reading it per fix would let the
+    // estimate move under the warning — a balance that refreshes mid-ride can
+    // cross a threshold backwards and announce it a second time. Taking it at
+    // start and subtracting this ride's own billable minutes keeps one source of
+    // truth for the hour, which is §2.2's control.
+    this.announceState = INITIAL_ANNOUNCE_STATE;
+    this.navManeuver = null;
+    const atStart = this.freeMinutesAtStart?.() ?? null;
+    // Clamped on the way in: a figure above the hour, or a negative one, is not a
+    // number to count down from.
+    this.freeAtStart = atStart === null ? null : clampFreeMinutes(atStart);
     this.setState("riding");
     this.renderRiding();
     closeAllPopups();
@@ -1622,6 +1710,12 @@ export class RideHud {
       route,
       dest: { lat: dest.lat, lon: dest.lon },
       vehicleModel: selectedDevice(doc.device)?.model ?? null,
+      // §11.1 — the overlay reports the matched maneuver and its along-route
+      // distance; `ride-announce.ts` decides whether it is close enough to speak.
+      // The same numbers the card shows, so the cue and the screen agree.
+      onManeuver: (maneuver) => {
+        this.navManeuver = maneuver;
+      },
       onRouteUpdate: (update) => {
         // An off-route re-route swapped the guidance geometry in place —
         // redraw the drawn pathway to match, same color (a re-route only
@@ -1642,6 +1736,10 @@ export class RideHud {
         this.navDismissed = true;
         this.navHud = null;
         this.navHudContainer = null;
+        // No guidance, no turn cues. Without this the last reported maneuver
+        // would sit here and be spoken the moment the rider happened to come
+        // within range of a turn they are no longer being guided to.
+        this.navManeuver = null;
       },
       onCompress: () => {
         /* No other HUD chrome currently needs to react to the nav panel
@@ -1820,11 +1918,69 @@ export class RideHud {
       }
     }
     this.renderTick();
+    this.speakForFix();
+  }
+
+  /** §11.1 + §11.3 — say what is due for this fix.
+   *
+   *  ALL OF THE DECIDING IS IN `ride-announce.ts`. This gathers state and hands
+   *  the result to the voice; it holds no thresholds and no dedup of its own,
+   *  because "did it say the right thing at the right moment" is unanswerable in
+   *  a test that has to stand up a HUD, a map and a speech engine.
+   *
+   *  THE TURN CUE COMES FROM THE NAV OVERLAY, which is the only place that knows:
+   *  the matched shape index, the monotonic advance and the along-route distance
+   *  all live there. Rebuilding the match here would be a second answer to "which
+   *  turn is next", differing from the one on screen precisely when they disagree
+   *  — which is when it matters. The overlay reports; the announcer decides. */
+  private speakForFix(): void {
+    if (!this.voice) return;
+    const inside =
+      this.zoneIndex === null || !this.lastFix
+        ? null
+        : pointInAny(this.lastFix.pos.lng, this.lastFix.pos.lat, this.zoneIndex);
+
+    let freeLeft: number | null = null;
+    if (this.freeAtStart !== null) {
+      // Billable minutes of THIS ride, off the allowance it began with. Through
+      // `billableMinutes` and not a raw division, because Veo bills the started
+      // minute — a rider 61 seconds in has spent 2 of the hour, and rounding down
+      // would warn them a minute late.
+      const spent = billableMinutes(Date.now() - this.startedAt);
+      freeLeft = Math.max(0, this.freeAtStart - spent);
+    }
+
+    const { announcements, state } = announce(
+      {
+        // PAUSED IS NOT RIDING, for speaking purposes. A BRB with
+        // `continue_tracking` deliberately keeps the geolocation watch alive, so
+        // fixes keep arriving while the rider is parked and in a shop with the
+        // phone in a pocket — and a turn cue or a boundary announcement then is
+        // noise at best. The baseline keeps updating (the announcer does that
+        // while silent on purpose), so walking out of an area and back during a
+        // BRB does not produce a spurious crossing on resume.
+        status: this.state === "riding" && !this.paused ? "riding" : "paused",
+        speedMps: this.smoothedMps,
+        maneuver: this.navManeuver,
+        insideEquityArea: inside,
+        freeMinutesLeft: freeLeft,
+        // The same rule the follow-cam already follows: never speak over the
+        // device popup or a modal.
+        blocked: this.deviceCtl.hasOpenPopup(),
+        muted: this.voice.muted(),
+      },
+      this.announceState,
+    );
+    this.announceState = state;
+    if (announcements.length > 0) this.voice.deliver(announcements);
   }
 
   private async flagEquityStart(pos: LngLat): Promise<void> {
     try {
       const zones = await this.equityZones();
+      // Cached for §11.3's per-fix boundary test. The same polygons the start/end
+      // flags and the compliance numbers use, loaded once.
+      this.zoneIndex = zones;
       this.startedInZone = pointInAny(pos.lng, pos.lat, zones);
       const el = this.root.querySelector<HTMLElement>("#hud-zone");
       if (el) el.hidden = !this.startedInZone;

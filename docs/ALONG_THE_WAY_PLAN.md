@@ -2357,6 +2357,35 @@ step list. To use any of it the rider looks down — at the exact moment they ar
 moving, in traffic, on a vehicle with 8-inch wheels. The honest summary of
 turn-by-turn today is that it works while stopped.
 
+**Shipped**, as `ride-announce.ts` (pure: what to say and when) plus
+`ride-voice.ts` (the speech engine, the haptic, the remembered mute), wired into
+`ride-hud.ts`'s existing per-fix pass.
+
+**Turn cues are wired too**, by widening `NavHud`'s contract with an
+`onManeuver` report rather than by rebuilding the match. That overlay is the only
+place that knows — the matched shape index, the monotonic advance and the
+along-route distance all live there — and a second derivation would be a second
+answer to "which turn is next", differing from the one on screen precisely when
+they disagree. The report carries the SAME distance the instruction card shows,
+and it is cleared when guidance is dismissed: otherwise the last reported
+maneuver sits there and is spoken the moment the rider happens to come within
+range of a turn they are no longer being guided to.
+
+Three things the section did not settle:
+
+- **The free-minute figure is resolved ONCE per ride, at start**, and comes from
+  §2.2's own estimate rather than from the HUD's clock. The HUD cannot know what
+  the rider spent before it opened, and a balance that refreshes mid-ride can
+  cross a threshold backwards and announce it twice.
+- **A signed-out Access rider hears nothing.** Their estimate is the pessimistic
+  zero, which is right for PRICING and wrong to say aloud: "your free minutes are
+  used up", on every ride, to somebody who may have a full hour, is a confident
+  false statement that trains them to ignore the one warning that matters.
+- **Silence means "say nothing", never "stop watching".** A muted rider, or one
+  stopped at a light with a popup open, crosses boundaries like anybody else. The
+  announcer updates its baseline while silent, so a crossing missed under a popup
+  is not announced later at some arbitrary moment.
+
 **Voice and haptics, and they are the highest-value thing in this phase.**
 
 - `speechSynthesis`, local, free, no backend, no permission prompt. One
