@@ -144,6 +144,36 @@ describe("searchPlans", () => {
     expect(ridden.length).toBeGreaterThan(0);
   });
 
+  it("carries the free-minute figure it priced with, onto the view (§2.2)", () => {
+    // THIS TEST EXISTS BECAUSE THE WIRING WAS SILENTLY REVERTED ONCE and nothing
+    // failed. `PlanListInput.freeMinutes` is optional and `planListView` defaults
+    // it to null, so a `searchPlans` that stops passing it still typechecks, still
+    // returns four plans, and merely hides §2.2's control forever. The control is
+    // the only thing that tells an Access rider their trip is free, so losing it
+    // reinstates the exact pessimism §2.2 exists to correct.
+    const equity = searchPlans(
+      deps({
+        rate: () => rate("equity"),
+        signedIn: () => true,
+        rides: () => [{ startedAtMs: NOW - 20 * 60_000, endedAtMs: NOW - 5 * 60_000 }],
+      }),
+      DEST,
+    );
+    expect(equity.kind).toBe("ok");
+    if (equity.kind !== "ok") return;
+    expect(equity.freeMinutes?.remainingMinutes).toBe(45);
+    // And the same figure reaches the view, which is what the rider reads.
+    expect(equity.view.freeMinutes).not.toBeNull();
+    expect(equity.view.freeMinutes!.headline).toContain("45");
+  });
+
+  it("shows no control to a tier that has no free hour", () => {
+    const out = searchPlans(deps({ rate: () => rate("resident") }), DEST);
+    if (out.kind !== "ok") return;
+    expect(out.freeMinutes).toBeNull();
+    expect(out.view.freeMinutes).toBeNull();
+  });
+
   it("hands out a first vehicle the walk flow can be pointed at", () => {
     const out = searchPlans(deps(), DEST);
     if (out.kind !== "ok") return;

@@ -16,11 +16,17 @@
 // time as a comparison and says plainly that it needs nothing from us. When a
 // walking flow exists this is the one place to wire it.
 
+import { parseCorrection } from "./free-minutes-control.ts";
 import type { PlanListView, PlanRow } from "./plan-list.ts";
 
 export interface PlanListPanelDeps {
   /** The rider picked a plan with a vehicle to walk to. */
   onChoose(row: PlanRow): void;
+  /** §2.2 — "I've got about this many left". `null` clears the correction and
+   *  hands the figure back to the estimate. A caller that does not wire it gets
+   *  the figure as a read-only readout, which is still worth showing: knowing
+   *  the number the plans were priced with is most of the point. */
+  onCorrectFreeMinutes?(minutes: number | null): void;
   /** Dismissed — back to the map. */
   onCancel(): void;
   /** Search again against the current fleet. Optional: a caller that cannot
@@ -65,8 +71,12 @@ export function createPlanListPanel(
   close.addEventListener("click", () => deps.onCancel());
 
   const notes = el("div", "planlist__notes");
+  // ABOVE THE PLANS, not below them. The free-minute figure is an INPUT to every
+  // price in the list, so a rider who reads a price and then finds the control
+  // has read a number they are about to be told was a guess.
+  const free = el("div", "planlist__free");
   const body = el("div", "planlist__body");
-  panel.append(head, close, notes, body);
+  panel.append(head, close, notes, free, body);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -93,6 +103,68 @@ export function createPlanListPanel(
     notes.replaceChildren(
       ...lines.map((l) => el("p", `planlist__note ${l.cls}`, l.text)),
     );
+  }
+
+  function renderFree(v: PlanListView): void {
+    const copy = v.freeMinutes;
+    if (!copy) {
+      // Null means this tier has no free hour. Nothing to show and nothing for
+      // the rider to correct.
+      free.replaceChildren();
+      free.hidden = true;
+      return;
+    }
+    free.hidden = false;
+    const head2 = el("p", "planlist__freehead", copy.headline);
+    const note = el("p", "planlist__freenote", copy.basisNote);
+    const children: HTMLElement[] = [head2, note];
+
+    if (deps.onCorrectFreeMinutes) {
+      const row = el("div", "planlist__freerow");
+      const id = "planlist-free-input";
+      const label = el("label", "planlist__freelabel", copy.correctionLabel);
+      label.htmlFor = id;
+      const input = el("input", "planlist__freeinput");
+      input.id = id;
+      // `number` with bounds so a phone offers the numeric keypad and the
+      // browser refuses an impossible figure before we have to.
+      input.type = "number";
+      input.min = "0";
+      input.max = "60";
+      input.step = "1";
+      input.inputMode = "numeric";
+      input.placeholder = "min";
+      const save = el("button", "planlist__freesave", "Use this");
+      save.type = "button";
+      const commit = (): void => {
+        if (destroyed) return;
+        // `parseCorrection` owns the clamping and the refusal: an empty or
+        // non-numeric box clears the correction rather than becoming a zero,
+        // because "I did not answer" and "I have none left" are different
+        // answers and only one of them is the rider's.
+        deps.onCorrectFreeMinutes?.(parseCorrection(input.value));
+      };
+      save.addEventListener("click", commit);
+      input.addEventListener("keydown", (e) => {
+        if ((e as KeyboardEvent).key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      });
+      row.append(label, input, save);
+      children.push(row);
+
+      if (copy.corrected) {
+        const undo = el("button", "planlist__freeundo", "Use our estimate instead");
+        undo.type = "button";
+        undo.addEventListener("click", () => {
+          if (destroyed) return;
+          deps.onCorrectFreeMinutes?.(null);
+        });
+        children.push(undo);
+      }
+    }
+    free.replaceChildren(...children);
   }
 
   function renderRow(row: PlanRow): HTMLElement {
@@ -178,6 +250,7 @@ export function createPlanListPanel(
 
   function render(v: PlanListView): void {
     renderNotes(v);
+    renderFree(v);
     renderBody(v);
     if (deps.onRefresh) {
       const again = el("button", "planlist__again", "Look again");

@@ -50,7 +50,7 @@ import { Overlays } from "./overlays.ts";
 import { renderCompliance } from "./compliance.ts";
 import { renderFleetStats } from "./fleet-stats.ts";
 import { ensureRoverZoneLayers, setRoverZoneVisible } from "./rover-zone.ts";
-import { fetchSurveyOptions, submitRiderStory } from "./api.ts";
+import { fetchSurveyOptions, listTrackedRides, submitRiderStory } from "./api.ts";
 import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 import { openComplianceCalendar } from "./compliance-calendar.ts";
 import { Freshness } from "./freshness.ts";
@@ -181,6 +181,12 @@ import {
   takePendingTrip,
   type TripPlace,
 } from "./pending-trip.ts";
+import {
+  saveCorrection,
+  savedCorrection,
+  spansOf,
+} from "./free-minutes-control.ts";
+import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
 import { defaultSpec } from "./ride-spec.ts";
 import type { PlanRow } from "./plan-list.ts";
@@ -3854,6 +3860,15 @@ let enterFindWheels: () => void = () => {};
  *  two surfaces arguing about one decision. */
 let planListPanel: PlanListPanelHandle | null = null;
 
+/** Today's tracked rides, for §2.2's free-minute estimate.
+ *
+ *  `null` means WE HAVE NOT LOOKED, and `estimateFreeMinutes` reads that as the
+ *  pessimistic figure — the hour is gone, price every minute. An empty array
+ *  means we looked and the rider has taken none today, which is a much stronger
+ *  statement and a different sentence on the control. Conflating them would tell
+ *  a rider with a full hour that we cannot see their rides. */
+let todaysRides: readonly RideSpan[] | null = null;
+
 function closePlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
@@ -3887,11 +3902,15 @@ function planSearchDeps(): PlanSearchDeps {
     // that is visibly absent. `device-notify.ts`'s watch list is not a
     // substitute either: "tell me when this moves" is not "I prefer this one",
     // and ranking on it would read a rider's curiosity as a preference.
-    // Tracked rides are not read here, so an Access rider gets the pessimistic
-    // figure until §2.2's control ships. That is the honest default — it prices
-    // nothing as free rather than promising minutes we have not counted — and
-    // it is the ONE field of this context that is knowingly weaker than it
-    // could be. `planningFreeMinutes` is the single place to improve it.
+    // §2.2, both halves. `todaysRides` is null until the fetch lands, which the
+    // estimate reads as the pessimistic figure rather than as an empty day — so
+    // a list opened before the response arrives prices nothing as free, and
+    // re-prices upward when it does. The rider's own correction WINS over both,
+    // without being averaged against them: they can see their Veo app and this
+    // module cannot, and blending the two produces a number neither of us
+    // believes.
+    rides: () => todaysRides,
+    riderSaysRemaining: () => savedCorrection(Date.now()),
     signedIn: () => isAuthenticated(),
   };
 }
@@ -3917,14 +3936,56 @@ function openPlanList(dest: TripPlace): void {
   // stays on underneath: dismissing the list reveals a map that is already in
   // the right state rather than one that has to be put there.
   enterFindWheels();
+  const resolve = (): void => {
+    const again = searchPlans(deps, dest);
+    if (again.kind === "ok") planListPanel?.update(again.view);
+  };
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
     onCancel: () => closePlanList(),
-    onRefresh: () => {
-      const again = searchPlans(deps, dest);
-      if (again.kind === "ok") planListPanel?.update(again.view);
+    onRefresh: resolve,
+    onCorrectFreeMinutes: (minutes) => {
+      saveCorrection(Date.now(), minutes);
+      // Re-price rather than just re-label. The free-minute balance is SEARCH
+      // STATE — `searchOnce` makes a node `(location, free minutes consumed)`
+      // precisely because pricing a whole plan under one regime is unsound — so
+      // a corrected figure can change which plans exist and in what order, not
+      // only what the control says above them.
+      resolve();
     },
   });
+  // §2.2's estimate, fetched AFTER the list is on screen and never before it.
+  // A rider who asked for plans gets plans; the figure arrives and the list
+  // re-prices upward. "A failure degrades to the client tier and never blocks
+  // the list" is §2.3's rule for the routed tier and it applies here for the
+  // same reason.
+  void refreshTodaysRides().then((changed) => {
+    if (changed) resolve();
+  });
+}
+
+/** Today's tracked rides, for the free-minute estimate. Resolves to whether the
+ *  figure changed, so a caller can avoid re-pricing for nothing.
+ *
+ *  ONLY FOR THE ACCESS TIER, and only signed in. The other four have no free
+ *  hour — `searchOnce`'s budget is 0 for them regardless — so this would be a
+ *  request whose answer is discarded. A rider who has already given their own
+ *  figure does not need it either: their answer wins, so counting rides to
+ *  produce an estimate that loses is work with no consequence. */
+async function refreshTodaysRides(): Promise<boolean> {
+  if (todaysRides !== null) return false;
+  if (!isAuthenticated()) return false;
+  if ((savedRatePlan() ?? "resident") !== "equity") return false;
+  if (savedCorrection(Date.now()) !== null) return false;
+  try {
+    todaysRides = spansOf(await listTrackedRides({ limit: 40 }));
+    return true;
+  } catch {
+    // Left as null, which the estimate reads as the pessimistic figure. A failed
+    // count must not become an empty day: that would hand the rider a full hour
+    // on the strength of a network error.
+    return false;
+  }
 }
 
 /** Hand a chosen plan to the walk flow.

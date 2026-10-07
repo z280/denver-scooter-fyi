@@ -29,6 +29,7 @@ import type { RatePlan } from "./config.ts";
 import {
   estimateFreeMinutes,
   freeMinutesForPlanning,
+  type FreeMinuteEstimate,
   type RideSpan,
 } from "./free-minutes.ts";
 import type { TripPlace } from "./pending-trip.ts";
@@ -59,7 +60,16 @@ export interface PlanSearchDeps {
 }
 
 export type PlanSearchOutcome =
-  | { kind: "ok"; view: PlanListView; result: RankPlansResult }
+  | {
+      kind: "ok";
+      view: PlanListView;
+      result: RankPlansResult;
+      /** The free-minute figure this search was priced with, so §2.2's control
+       *  can show the rider the SAME number rather than deriving its own. Null
+       *  for the four tiers with no free hour, which is also what hides the
+       *  control for them. */
+      freeMinutes: FreeMinuteEstimate | null;
+    }
   /** No GPS fix. Reported rather than guessed: a plan list computed from a
    *  wrong origin is four wrong answers, and walking the rider to a scooter
    *  that is not near them is the one failure this surface can cause. */
@@ -72,16 +82,22 @@ export type PlanSearchOutcome =
  *  signed-out Resident's tracked rides to justify a zero is work with no
  *  consequence. Exported because the §2.2 control needs to show the same figure
  *  the planner used, and a second derivation is a second answer. */
+export function planningFreeMinuteEstimate(
+  deps: PlanSearchDeps,
+  rate: RatePlan,
+): FreeMinuteEstimate | null {
+  if (rate.key !== "equity") return null;
+  return estimateFreeMinutes({
+    rides: deps.rides?.() ?? null,
+    nowMs: deps.now(),
+    riderSaysRemaining: deps.riderSaysRemaining?.() ?? null,
+    signedIn: deps.signedIn?.() ?? false,
+  });
+}
+
 export function planningFreeMinutes(deps: PlanSearchDeps, rate: RatePlan): number {
-  if (rate.key !== "equity") return 0;
-  return freeMinutesForPlanning(
-    estimateFreeMinutes({
-      rides: deps.rides?.() ?? null,
-      nowMs: deps.now(),
-      riderSaysRemaining: deps.riderSaysRemaining?.() ?? null,
-      signedIn: deps.signedIn?.() ?? false,
-    }),
-  );
+  const estimate = planningFreeMinuteEstimate(deps, rate);
+  return estimate === null ? 0 : freeMinutesForPlanning(estimate);
 }
 
 export function buildContext(
@@ -111,9 +127,16 @@ export function searchPlans(
   if (!from) return { kind: "no_fix" };
   const ctx = buildContext(deps, from, dest);
   const result = rankPlans([...deps.fleet()], ctx);
+  const freeMinutes = planningFreeMinuteEstimate(deps, ctx.rate);
   return {
     kind: "ok",
     result,
-    view: planListView({ result, rate: ctx.rate, destinationLabel: dest.label }),
+    freeMinutes,
+    view: planListView({
+      result,
+      rate: ctx.rate,
+      destinationLabel: dest.label,
+      freeMinutes,
+    }),
   };
 }

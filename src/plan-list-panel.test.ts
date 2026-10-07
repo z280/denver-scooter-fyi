@@ -41,6 +41,7 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     relaxedLabels: [],
     capRelaxed: false,
     riskWarning: null,
+    freeMinutes: null,
     ...over,
   };
 }
@@ -52,6 +53,9 @@ function mount(v: PlanListView, deps: Partial<Parameters<typeof createPlanListPa
     onChoose: deps.onChoose ?? vi.fn(),
     onCancel: deps.onCancel ?? vi.fn(),
     ...(deps.onRefresh ? { onRefresh: deps.onRefresh } : {}),
+    ...(deps.onCorrectFreeMinutes
+      ? { onCorrectFreeMinutes: deps.onCorrectFreeMinutes }
+      : {}),
   });
   return { root, handle };
 }
@@ -153,6 +157,102 @@ describe("the plan list panel", () => {
     handle.update(view());
     handle.update(view());
     expect(root.querySelectorAll(".planlist__again")).toHaveLength(1);
+  });
+
+  it("hides the free-minute control entirely for a tier with no free hour", () => {
+    // Null is the mechanism, not a flag the panel has to remember: a control
+    // offering to adjust a budget that does not exist invites the rider to tell
+    // us something we will ignore.
+    const { root } = mount(view({ freeMinutes: null }));
+    expect(root.querySelector<HTMLElement>(".planlist__free")!.hidden).toBe(true);
+    expect(root.querySelector(".planlist__freeinput")).toBeNull();
+  });
+
+  it("shows the figure and which way it is wrong, above the plans", () => {
+    const { root } = mount(
+      view({
+        freeMinutes: {
+          headline: "About 45 free minutes left today",
+          basisNote: "…this is the most you have left, not the least.",
+          correctionLabel: "I've got about this many left:",
+          corrected: false,
+        },
+      }),
+    );
+    const free = root.querySelector<HTMLElement>(".planlist__free")!;
+    expect(free.hidden).toBe(false);
+    expect(free.textContent).toContain("About 45 free minutes left today");
+    expect(free.textContent).toContain("not the least");
+    // ABOVE the plans: the figure is an input to every price below it, so a
+    // rider who reads a price first has read a number they are about to be told
+    // was a guess.
+    const rows = root.querySelector<HTMLElement>(".planlist__body")!;
+    expect(free.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("takes the rider's correction, and an empty box clears it", () => {
+    const onCorrectFreeMinutes = vi.fn();
+    const { root } = mount(
+      view({
+        freeMinutes: {
+          headline: "h",
+          basisNote: "b",
+          correctionLabel: "l",
+          corrected: false,
+        },
+      }),
+      { onCorrectFreeMinutes },
+    );
+    const input = root.querySelector<HTMLInputElement>(".planlist__freeinput")!;
+    input.value = "12";
+    root.querySelector<HTMLButtonElement>(".planlist__freesave")!.click();
+    expect(onCorrectFreeMinutes).toHaveBeenCalledWith(12);
+
+    // "I did not answer" and "I have none left" are different answers, and only
+    // one of them is the rider's — so an empty box clears rather than becoming 0.
+    input.value = "";
+    root.querySelector<HTMLButtonElement>(".planlist__freesave")!.click();
+    expect(onCorrectFreeMinutes).toHaveBeenLastCalledWith(null);
+  });
+
+  it("accepts Enter in the box, since that is what a number field invites", () => {
+    const onCorrectFreeMinutes = vi.fn();
+    const { root } = mount(
+      view({
+        freeMinutes: { headline: "h", basisNote: "b", correctionLabel: "l", corrected: false },
+      }),
+      { onCorrectFreeMinutes },
+    );
+    const input = root.querySelector<HTMLInputElement>(".planlist__freeinput")!;
+    input.value = "7";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(onCorrectFreeMinutes).toHaveBeenCalledWith(7);
+  });
+
+  it("offers a way back to our estimate only once a correction is on record", () => {
+    const base = { headline: "h", basisNote: "b", correctionLabel: "l" };
+    const onCorrectFreeMinutes = vi.fn();
+    expect(
+      mount(view({ freeMinutes: { ...base, corrected: false } }), { onCorrectFreeMinutes }).root
+        .querySelector(".planlist__freeundo"),
+    ).toBeNull();
+    const { root } = mount(view({ freeMinutes: { ...base, corrected: true } }), {
+      onCorrectFreeMinutes,
+    });
+    root.querySelector<HTMLButtonElement>(".planlist__freeundo")!.click();
+    expect(onCorrectFreeMinutes).toHaveBeenCalledWith(null);
+  });
+
+  it("shows the figure read-only when the caller cannot take a correction", () => {
+    // Knowing the number the plans were priced with is most of the point, so the
+    // readout survives without the input rather than disappearing with it.
+    const { root } = mount(
+      view({
+        freeMinutes: { headline: "About 45 left", basisNote: "b", correctionLabel: "l", corrected: false },
+      }),
+    );
+    expect(root.textContent).toContain("About 45 left");
+    expect(root.querySelector(".planlist__freeinput")).toBeNull();
   });
 
   it("stops answering taps once destroyed", () => {

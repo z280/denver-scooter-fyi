@@ -9743,3 +9743,73 @@ input[data-ride-keypad="on"] {
   font-size: 13.5px;
   cursor: pointer;
 }
+
+/* §2.2's free-minute control. Above the plans, because the figure is an INPUT
+   to every price below it. Visually set apart but not boxed like a plan row —
+   it is not one of the options. */
+.planlist__free {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+}
+.planlist__free[hidden] {
+  display: none;
+}
+.planlist__freehead {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--fg);
+}
+.planlist__freenote {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+.planlist__freerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.planlist__freelabel {
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.planlist__freeinput {
+  width: 72px;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.planlist__freesave {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--metal-bg);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+}
+/* Quieter than "Use this": undoing a correction is the less common move, and
+   the rider has already told us their figure is the better one. */
+.planlist__freeundo {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}

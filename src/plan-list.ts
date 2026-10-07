@@ -31,6 +31,8 @@ import {
   type EquityDisclosure,
   type StartInAreaSaving,
 } from "./equity-savings.ts";
+import type { FreeMinuteEstimate } from "./free-minutes.ts";
+import { freeMinutesCopy, type FreeMinutesCopy } from "./free-minutes-control.ts";
 import { formatCents } from "./ride-cost.ts";
 import type { SpecField } from "./ride-spec.ts";
 import { vehicleDisplayName } from "./vehicle-name.ts";
@@ -106,6 +108,13 @@ export interface PlanListView {
    *  the legs, since the warning is conditioned on the fallback having fired,
    *  not on a tier appearing. */
   riskWarning: string | null;
+  /** §2.2's control, or null for the four tiers with no free hour.
+   *
+   *  NULL IS WHAT HIDES IT, and that is the right mechanism rather than a flag
+   *  the surface has to remember to check: a tier with no free minutes has
+   *  nothing for the rider to correct, and a control offering to adjust a budget
+   *  that does not exist invites them to tell us something we will ignore. */
+  freeMinutes: FreeMinutesCopy | null;
 }
 
 export const ESTIMATE_NOTE =
@@ -258,6 +267,9 @@ export interface PlanListInput {
   rate: RatePlan;
   /** What the rider typed into the home bar, echoed into the leg wording. */
   destinationLabel?: string | null;
+  /** The figure the search was priced with. Passed in rather than derived here,
+   *  so the control and the plans cannot disagree about the same hour. */
+  freeMinutes?: FreeMinuteEstimate | null;
 }
 
 /** Turn a search result into the rows §2.4 describes.
@@ -297,5 +309,6 @@ export function planListView(input: PlanListInput): PlanListView {
     relaxedLabels: result.relaxed.map((f) => RELAXED_FIELD_LABEL[f]),
     capRelaxed: result.capRelaxed,
     riskWarning: result.riskTierOffered ? RISK_WARNING : null,
+    freeMinutes: input.freeMinutes ? freeMinutesCopy(input.freeMinutes) : null,
   };
 }
