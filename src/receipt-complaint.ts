@@ -68,16 +68,6 @@ export function overchargeFinding(verdict: VerdictResult): OverchargeFinding | n
 }
 
 export interface ComplaintFacts {
-  /** Where the query goes. INJECTED rather than read from `config.ts`.
-   *
-   *  The module reached into `VEO_SUPPORT_EMAIL` at first, and that made the
-   *  length-threshold branch untestable: the address ships empty on purpose, so
-   *  `complaintRoute` always took the no-address route and §8.7's "both sides of
-   *  1,800" could not be asserted at all. A hidden dependency that only one
-   *  branch can be reached through is a hidden dependency that hides a branch.
-   *
-   *  The caller passes `VEO_SUPPORT_EMAIL`; this module just builds the draft. */
-  to: string;
   /** From §8.3's account-confirm step, and its only purpose: without it the
    *  complaint cannot credibly say whose trip this was. */
   accountId: string;
@@ -107,6 +97,15 @@ export interface ComplaintDraft {
 export function complaintDraft(
   finding: OverchargeFinding,
   facts: ComplaintFacts,
+  /** Where the query goes. A PARAMETER rather than a field of `facts`, because a
+   *  recipient is not a fact about the trip — and INJECTED rather than read from
+   *  `config.ts`, because the module reached for `VEO_SUPPORT_EMAIL` at first and
+   *  that made the length-threshold branch untestable: the address ships empty on
+   *  purpose, so `complaintRoute` always took its no-address path and §8.7's
+   *  "both sides of 1,800" could not be asserted at all. A hidden dependency that
+   *  only one branch can be reached through is a hidden dependency that hides a
+   *  branch. The caller passes `VEO_SUPPORT_EMAIL`. */
+  to: string,
 ): ComplaintDraft {
   const expected = finding.verdict.expected!;
   const where = facts.areaName ? ` (${facts.areaName})` : "";
@@ -125,7 +124,7 @@ export function complaintDraft(
     "Please review this trip's fare.",
   ];
   return {
-    to: facts.to,
+    to,
     ...(facts.cc ? { cc: facts.cc } : {}),
     subject: `Equity Area fare query — trip ${facts.tripDate}`,
     body: lines.join("\n"),

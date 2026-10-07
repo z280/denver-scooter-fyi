@@ -15,25 +15,20 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { functionBody, readSource } from "../tests/helpers/source-text.ts";
 import { ONBOARDING_SCREENS } from "./onboarding.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const html = readFileSync(join(ROOT, "index.html"), "utf8");
-const publicDir = join(ROOT, "public");
-const publicFiles = new Set(readdirSync(publicDir));
-const main = readFileSync(join(ROOT, "src", "main.ts"), "utf8");
+const publicFiles = new Set(readdirSync(join(ROOT, "public")));
+const main = readSource("src/main.ts");
 
 const allCopy = ONBOARDING_SCREENS.map((s) => `${s.headline} ${s.body}`).join("\n");
 
-/** `wireOnboarding`'s body alone. Slicing to the end of main.ts instead swept in
- *  every other `data-mode` in a 4000-line file and failed on code this test is
- *  not about — which is how a source-level assertion quietly becomes a test of
- *  the whole file. */
-const onboardingWiring = (() => {
-  const from = main.indexOf("function wireOnboarding(): void {");
-  const rest = main.slice(from);
-  return rest.slice(0, rest.indexOf("\n}\n"));
-})();
+/** `wireOnboarding`'s body, comments stripped — see
+ *  `tests/helpers/source-text.ts` for the two corrections baked into that
+ *  helper, both found by mutating the code these assertions are about. */
+const onboardingWiring = functionBody(main, "function wireOnboarding(): void {");
 
 describe("every element the tour names resolves", () => {
   it("names no DOM id that index.html does not have", () => {
@@ -116,6 +111,10 @@ describe("the tour is on, and still once per browser", () => {
     // dispatches nothing, so a tour ending there would collect a destination and
     // quietly drop it.
     expect(body).not.toContain("openForDestination");
-    expect(body).not.toContain("enterFindWheels()");
+    // find-wheels mode survives only as a FALLBACK, and only after the question.
+    // `homeBar` is nullable, so an optional-call alone would make this CTA do
+    // nothing if the init ordering changed — the §7.1 failure with a new cause
+    // and no symptom. The assertion is on primacy, not absence.
+    expect(body.indexOf("openForTrip()")).toBeLessThan(body.indexOf("enterFindWheels()"));
   });
 });

@@ -11,13 +11,26 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  functionBody,
+  readSource,
+  withoutComments,
+} from "../tests/helpers/source-text.ts";
+
 const ROOT = join(import.meta.dirname, "..");
 const html = readFileSync(join(ROOT, "index.html"), "utf8");
 const srcDir = join(ROOT, "src");
-const main = readFileSync(join(srcDir, "main.ts"), "utf8");
+const main = readSource("src/main.ts");
+// COMMENTS STRIPPED. These assertions are about what the code DOES, and this
+// repo's comments name the very identifiers under test — `plan-search.ts`'s own
+// header explains the `allFeatures()` / `visibleFeatures()` rule in prose, so a
+// naive scan would find "rankPlans(" in a comment and call the module a caller.
 const sources = readdirSync(srcDir)
   .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
-  .map((f) => ({ file: f, text: readFileSync(join(srcDir, f), "utf8") }));
+  .map((f) => ({
+    file: f,
+    text: withoutComments(readFileSync(join(srcDir, f), "utf8")),
+  }));
 
 describe("the plan list is wired to something", () => {
   it("has a mount point in index.html", () => {
@@ -28,7 +41,8 @@ describe("the plan list is wired to something", () => {
     // The whole point of the branch. Asserted on the call rather than on
     // `openPlanList` merely existing, since an unreferenced function is the
     // state this test exists to rule out.
-    const branch = main.slice(main.indexOf('if (wheels === "need")'));
+    const code = withoutComments(main);
+    const branch = code.slice(code.indexOf('if (wheels === "need")'));
     expect(branch.slice(0, 200)).toContain("openPlanList(dest)");
   });
 
@@ -46,8 +60,7 @@ describe("the plan list is wired to something", () => {
     // "Feed it the UNFILTERED fleet (devices.allFeatures(), never
     // visibleFeatures())." Passing the view instead returns plausible plans,
     // so nothing downstream can catch it.
-    const deps = main.slice(main.indexOf("function planSearchDeps()"));
-    const body = deps.slice(0, deps.indexOf("\n}"));
+    const body = functionBody(main, "function planSearchDeps()");
     expect(body).toContain("devices.allFeatures()");
     expect(body).not.toContain("visibleFeatures()");
   });
@@ -60,8 +73,8 @@ describe("the plan list is wired to something", () => {
     // stale the moment a scooter is picked out of it." Without the call there,
     // the list floats over the arrival panel offering four plans for a trip the
     // rider has already started walking.
-    const fn = main.slice(main.indexOf("function beginWalkToVehicle("));
-    const body = fn.slice(0, fn.indexOf("\n  const panel = createArrivalPanel"));
+    const fn = withoutComments(main.slice(main.indexOf("function beginWalkToVehicle(")));
+    const body = fn.slice(0, fn.indexOf("const panel = createArrivalPanel"));
     expect(body).toContain("closePlanList()");
     expect(body).toContain("exitFindWheels()");
   });
@@ -72,8 +85,6 @@ describe("the plan list is wired to something", () => {
     // nothing and silently disables the term — a dead ranking input that looks
     // wired. There is no favourite-vehicle store at all: my-scooters.ts was
     // built and then deleted.
-    const deps = main.slice(main.indexOf("function planSearchDeps()"));
-    const body = deps.slice(0, deps.indexOf("\n}"));
-    expect(body).not.toContain("loadFavorites");
+    expect(functionBody(main, "function planSearchDeps()")).not.toContain("loadFavorites");
   });
 });

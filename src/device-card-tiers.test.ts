@@ -14,13 +14,12 @@ import {
   AT_THE_VEHICLE_M,
   actionsInTier,
 } from "./device-action-tiers.ts";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readSource, withoutComments } from "../tests/helpers/source-text.ts";
 
-const devicesSrc = readFileSync(
-  join(import.meta.dirname, "devices.ts"),
-  "utf8",
-);
+// COMMENTS STRIPPED. devices.ts documents every one of these gates at length,
+// naming the actions and the constants, so a raw scan would find `allow("ride")`
+// in a paragraph explaining `allow("ride")` and call the gate wired.
+const devicesSrc = withoutComments(readSource("src/devices.ts"));
 
 describe("the card consults the table rather than its own numbers", () => {
   it("has no proximity radius of its own at all", () => {

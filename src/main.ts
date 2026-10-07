@@ -1820,8 +1820,10 @@ map.on("load", async () => {
   equityAreas.wire();
   startRefreshLoop();
 
-  // First-run tour + progressive discovery tips. Wired last: the tour's
-  // "Start Exploring" CTA drives the mode bar, so wireModes() must exist.
+  // First-run tour + progressive discovery tips. Wired last, and the reason has
+  // changed: the CTA used to drive the mode bar (gone), then find-wheels mode,
+  // and now opens the home bar's own question — so `homeBar` must be assigned,
+  // which it is, further up this same handler.
   wireOnboarding();
 });
 
@@ -1855,7 +1857,14 @@ const ONBOARDING_AUTOSHOW = true;
 function wireOnboarding(): void {
   const hooks: OnboardingHooks = {
     onStartExploring: () => {
-      homeBar?.openForTrip();
+      // FALLS BACK RATHER THAN NO-OPPING. `homeBar` is module-level and
+      // nullable, so `homeBar?.openForTrip()` alone would make this CTA do
+      // nothing at all if the ordering above ever changed — which is the exact
+      // failure §7.1 describes, reintroduced with a new cause and no symptom.
+      // Find-wheels mode is a worse ending than the question, and an infinitely
+      // better one than a button that does nothing.
+      if (homeBar) homeBar.openForTrip();
+      else enterFindWheels();
       const legend = document.getElementById(
         "legend-toggle",
       ) as HTMLInputElement | null;

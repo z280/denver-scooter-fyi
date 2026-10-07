@@ -37,7 +37,6 @@ function verdict(totalCents: number, key: RatePlanKey = "resident") {
 
 function facts(over: Partial<ComplaintFacts> = {}): ComplaintFacts {
   return {
-    to: "support@example.com",
     accountId: "rider@example.com",
     tripDate: "2026-10-06",
     minutes: MINUTES,
@@ -48,6 +47,7 @@ function facts(over: Partial<ComplaintFacts> = {}): ComplaintFacts {
 }
 
 const finding = () => overchargeFinding(verdict(BASE_FARE))!;
+const TO = "support@example.com";
 
 describe("the gate: neither path is reachable without a finding", () => {
   it("refuses every verdict but overcharged", () => {
@@ -79,7 +79,7 @@ describe("the gate: neither path is reachable without a finding", () => {
 });
 
 describe("the body carries the complaint's whole case", () => {
-  const draft = () => complaintDraft(finding(), facts());
+  const draft = () => complaintDraft(finding(), facts(), TO);
 
   it("names the account, the trip, both figures and the citation", () => {
     const body = draft().body;
@@ -106,7 +106,7 @@ describe("the body carries the complaint's whole case", () => {
   });
 
   it("omits the area name rather than guessing one", () => {
-    const body = complaintDraft(finding(), facts({ areaName: undefined })).body;
+    const body = complaintDraft(finding(), facts({ areaName: undefined }), TO).body;
     expect(body).toContain("designated Equity Area");
     expect(body).not.toContain("(undefined)");
   });
@@ -122,7 +122,7 @@ describe("the CC is a real recipient on BOTH paths", () => {
   it("is a mailto header, never body text", () => {
     // §10's CC is the reason the primary path is a mailto: at all — text in a
     // body cannot set a recipient.
-    const draft = complaintDraft(finding(), facts({ cc: "council@example.gov" }));
+    const draft = complaintDraft(finding(), facts({ cc: "council@example.gov" }), TO);
     expect(draft.cc).toBe("council@example.gov");
     expect(draft.body).not.toContain("council@example.gov");
     const uri = mailtoUri(draft);
@@ -132,7 +132,7 @@ describe("the CC is a real recipient on BOTH paths", () => {
   it("survives the clipboard fallback as its own field", () => {
     // "A fallback that drops the CC into prose is the bug this section exists to
     // prevent." Asserted on the fallback's own shape, not on the body.
-    const draft = complaintDraft(finding(), facts({ cc: "council@example.gov", accountId: "x".repeat(2200) }));
+    const draft = complaintDraft(finding(), facts({ cc: "council@example.gov", accountId: "x".repeat(2200) }), TO);
     const route = complaintRoute(draft);
     expect(route.kind).toBe("clipboard");
     if (route.kind !== "clipboard") return;
@@ -141,7 +141,7 @@ describe("the CC is a real recipient on BOTH paths", () => {
   });
 
   it("emits no cc parameter at all when the rider did not opt in", () => {
-    const uri = mailtoUri(complaintDraft(finding(), facts()));
+    const uri = mailtoUri(complaintDraft(finding(), facts(), TO));
     expect(uri).not.toContain("cc=");
   });
 });
@@ -150,7 +150,7 @@ describe("the fallback is decided on the ENCODED URI", () => {
   it("measures the URI, not the body — encoding can more than double it", () => {
     // A body of newlines and spaces encodes to three characters each. Measuring
     // the body would clear a threshold the URI blows straight past.
-    const draft = complaintDraft(finding(), facts({ accountId: "\n".repeat(500) }));
+    const draft = complaintDraft(finding(), facts({ accountId: "\n".repeat(500) }), TO);
     expect(draft.body.length).toBeLessThan(MAILTO_MAX_URI_CHARS);
     expect(mailtoUri(draft).length).toBeGreaterThan(MAILTO_MAX_URI_CHARS);
     expect(complaintRoute(draft).kind).toBe("clipboard");
@@ -163,14 +163,14 @@ describe("the fallback is decided on the ENCODED URI", () => {
     const atLength = (target: number) => {
       let pad = 0;
       for (let i = 0; i < 4000; i += 1) {
-        const d = complaintDraft(finding(), facts({ accountId: "a".repeat(i) }));
+        const d = complaintDraft(finding(), facts({ accountId: "a".repeat(i) }), TO);
         if (mailtoUri(d).length === target) {
           pad = i;
           break;
         }
       }
       expect(pad, `no padding produced a ${target}-char URI`).toBeGreaterThan(0);
-      return complaintDraft(finding(), facts({ accountId: "a".repeat(pad) }));
+      return complaintDraft(finding(), facts({ accountId: "a".repeat(pad) }), TO);
     };
 
     const exact = atLength(MAILTO_MAX_URI_CHARS);
@@ -199,7 +199,7 @@ describe("both paths carry the same content", () => {
   it("hands the clipboard route the very same draft", () => {
     // §8.5 made mailto: primary, and §8.7 notes that testing only the fallback
     // would let the normal draft omit everything. One draft, two ways out.
-    const draft = complaintDraft(finding(), facts());
+    const draft = complaintDraft(finding(), facts(), TO);
     const mail = complaintRoute(draft);
     expect(mail.kind).toBe("mailto");
     if (mail.kind !== "mailto") return;
@@ -215,7 +215,7 @@ describe("a missing support address is its own answer", () => {
     // config.ts's VEO_SUPPORT_EMAIL ships empty on purpose, so this is the LIVE
     // path today. A mailto: with an empty `to` opens a blank draft, which looks
     // like the feature working.
-    const route = complaintRoute(complaintDraft(finding(), facts({ to: "" })));
+    const route = complaintRoute(complaintDraft(finding(), facts(), ""));
     expect(route.kind).toBe("clipboard");
     if (route.kind !== "clipboard") return;
     expect(route.reason).toBe("no_address");
@@ -226,7 +226,7 @@ describe("a missing support address is its own answer", () => {
 
   it("is what config.ts's own gate reports, so the surface agrees", () => {
     expect(complaintReady()).toBe(VEO_SUPPORT_EMAIL.includes("@"));
-    expect(complaintRoute(complaintDraft(finding(), facts({ to: VEO_SUPPORT_EMAIL }))).kind).toBe(
+    expect(complaintRoute(complaintDraft(finding(), facts(), VEO_SUPPORT_EMAIL)).kind).toBe(
       complaintReady() ? "mailto" : "clipboard",
     );
   });
