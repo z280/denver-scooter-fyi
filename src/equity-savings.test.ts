@@ -248,6 +248,33 @@ describe("the disclosures that travel with an equity plan (§5.2)", () => {
     expect(line.text).toMatch(/charged/i);
   });
 
+  it("pluralises when a hand-off discounts BOTH legs", () => {
+    // Two legs inside a polygon is two area unlocks. "a $2.00 unlock for the
+    // Equity Area leg" reads as one leg charged double.
+    const both = plan([
+      walk(120),
+      ride({ equityArea: true, unlockCents: 100, minuteCents: 130 }),
+      ride({ equityArea: true, unlockCents: 100, minuteCents: 130 }),
+    ]);
+    const line = equityDisclosures(both, rate("resident"), null).find(
+      (x) => x.kind === "second_unlock",
+    )!;
+    expect(line.text).toContain("$2.00");
+    expect(line.text).toContain("2 Equity Area legs");
+    expect(line.text).not.toContain("the Equity Area leg.");
+  });
+
+  it("does not count a continuation leg's waived unlock as a charge", () => {
+    // A re-solve's continuation edge is priced with no unlock because it is
+    // already paid. Summing unlockCents blindly would be fine, but naming "1
+    // Equity Area leg" for a leg that costs nothing would invent a charge.
+    const continuation = plan([ride({ equityArea: true, unlockCents: 0, minuteCents: 130 })]);
+    const d = equityDisclosures(continuation, rate("resident"), null);
+    expect(d.some((x) => x.kind === "second_unlock")).toBe(false);
+    // The screenshot caveat still travels with it — it is still a discounted leg.
+    expect(d.some((x) => x.kind === "screenshot")).toBe(true);
+  });
+
   it("warns about re-rent only when the plan actually hands off", () => {
     const single = equityDisclosures(equityPlan, rate("resident"), null);
     expect(single.some((x) => x.kind === "re_rent")).toBe(false);

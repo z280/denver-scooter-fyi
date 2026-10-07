@@ -202,15 +202,19 @@ export function equityDisclosures(
   // `legRate` charges `EQUITY_AREA_RATE.unlockCents` whatever the tier, so
   // this reads the figure the plan was actually priced with rather than
   // asserting one beside it.
-  const equityUnlocks = plan.legs
-    .filter((l) => l.equityArea === true)
-    .reduce((n, l) => n + l.unlockCents, 0);
+  const charged = plan.legs.filter((l) => l.equityArea === true && l.unlockCents > 0);
+  const equityUnlocks = charged.reduce((n, l) => n + l.unlockCents, 0);
   if (equityUnlocks > 0) {
+    // PLURALISED, because a plan can have more than one equity leg: a hand-off
+    // whose BOTH legs start or end inside a polygon is two discounted legs and
+    // two area unlocks, and "a $2.00 unlock for the Equity Area leg" reads as one
+    // leg being charged double rather than as two legs being charged once.
+    const legs = charged.length === 1 ? "the Equity Area leg" : `${charged.length} Equity Area legs`;
     out.push({
       kind: "second_unlock",
       text:
-        `Includes a ${formatCents(equityUnlocks)} unlock for the Equity Area leg. ` +
-        `The contract does not say whether a VeoPlus Pass waives it, so this ` +
+        `Includes ${formatCents(equityUnlocks)} of unlocks for ${legs}. ` +
+        `The contract does not say whether a VeoPlus Pass waives them, so this ` +
         `assumes you are charged.`,
     });
   }
