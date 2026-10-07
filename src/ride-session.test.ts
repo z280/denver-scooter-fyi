@@ -1359,3 +1359,162 @@ describe("parseRideSession and the dropped theme option", () => {
     expect("theme" in (doc?.options ?? {})).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Option cascades, enforced by the reducer
+//
+// `applyCascades` has always told callers to run it "after any change that could
+// affect a cascade — a device pick landing `own_device: true`". The entry paths
+// in main.ts did. The reducer could not, because the rules lived in a DOM module
+// it must not import, and the reducer is the thing that actually flips `private`.
+// So a device pick made a ride private and left the 🏆 options it disables
+// standing. These are the tests that fail without the enforcement.
+// ---------------------------------------------------------------------------
+
+describe("option cascades on a device pick", () => {
+  /** A wizard doc whose 🏆 options are all on, as `defaultRideOptions` ships. */
+  const wizard = (over: Partial<RideSessionDoc> = {}): RideSessionDoc =>
+    docAt("wizard", "2", { options: { ...OPTIONS }, ...over });
+
+  it("drops nav_improvement when picking an own device makes the ride private", () => {
+    // THE REPORTED LEAK. `private` disables all three 🏆 options, and
+    // `nav_improvement` was the one that survived — the other two were already
+    // suppressed by `own_device` at the entry path. `ride-screen-routes.ts`
+    // reads it as consent to POST route feedback, for a ride that will never
+    // have a `tracked_rides` row to attach it to.
+    const t = reduceRideSession(wizard(), {
+      type: "setDevice",
+      device: { own: true },
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.private).toBe(true);
+    expect(t.doc.options.nav_improvement).toBe(false);
+    expect(t.doc.options.battery_modeling).toBe(false);
+    expect(t.doc.options.end_survey).toBe(false);
+  });
+
+  it("drops all three when a GUEST picks a real device", () => {
+    // Screen 2 passes `private` explicitly here: a guest has no account for
+    // `POST /tracked-rides` to attribute a row to, whichever scooter they chose.
+    const t = reduceRideSession(wizard(), {
+      type: "setDevice",
+      device: { vehicleIdentifier: VEHICLE, plate: null, model: null, batteryConfirmed: null },
+      private: true,
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.options.battery_modeling).toBe(false);
+    expect(t.doc.options.nav_improvement).toBe(false);
+    expect(t.doc.options.end_survey).toBe(false);
+  });
+
+  it("leaves a signed-in rider's real-device pick alone", () => {
+    // The cascades only ever SUPPRESS. Nothing here is private, so nothing is
+    // disabled, and a test that passed by clearing everything would be worthless.
+    const t = reduceRideSession(wizard(), {
+      type: "setDevice",
+      device: { vehicleIdentifier: VEHICLE, plate: null, model: null, batteryConfirmed: null },
+      private: false,
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.private).toBe(false);
+    expect(t.doc.options.battery_modeling).toBe(true);
+    expect(t.doc.options.nav_improvement).toBe(true);
+    expect(t.doc.options.end_survey).toBe(true);
+  });
+
+  it("keeps options.own_device in step with the device, both ways", () => {
+    // Screen 2's own-device option sets only the DEVICE — its panel has no
+    // `own_device` row — so these two used to disagree for every rider who did
+    // not come in from the home bar, which is why `ride-hud.ts` has to OR them.
+    const picked = reduceRideSession(wizard(), {
+      type: "setDevice",
+      device: { own: true },
+    });
+    expect(picked.doc.options.own_device).toBe(true);
+
+    const switchedBack = reduceRideSession(picked.doc, {
+      type: "setDevice",
+      device: { vehicleIdentifier: VEHICLE, plate: null, model: null, batteryConfirmed: null },
+      private: false,
+    });
+    expect(switchedBack.doc.options.own_device).toBe(false);
+  });
+
+  it("does not resurrect a suppressed option when the reason goes away", () => {
+    // Cascades force to false and never back to true: the rider's own answer is
+    // gone, and inventing a `true` they never gave would donate data on their
+    // behalf. Screen 2's panel re-enables the ROW; the value stays off until
+    // they say otherwise.
+    const own = reduceRideSession(wizard(), { type: "setDevice", device: { own: true } });
+    const back = reduceRideSession(own.doc, {
+      type: "setDevice",
+      device: { vehicleIdentifier: VEHICLE, plate: null, model: null, batteryConfirmed: null },
+      private: false,
+    });
+    expect(back.doc.options.nav_improvement).toBe(false);
+  });
+
+  it("cascades an own device named at open", () => {
+    const t = reduceRideSession(blankRideSession(OPTIONS), {
+      type: "open",
+      options: { ...OPTIONS },
+      device: { own: true },
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.private).toBe(true);
+    expect(t.doc.options.own_device).toBe(true);
+    expect(t.doc.options.nav_improvement).toBe(false);
+  });
+
+  it("cascades a guest baseline at open", () => {
+    const t = reduceRideSession(blankRideSession(OPTIONS), {
+      type: "open",
+      options: { ...OPTIONS },
+      private: true,
+    });
+    expect(t.doc.options.battery_modeling).toBe(false);
+    expect(t.doc.options.nav_improvement).toBe(false);
+    expect(t.doc.options.end_survey).toBe(false);
+  });
+});
+
+describe("option cascades on setOptions", () => {
+  it("refuses to store a 🏆 option the ride cannot honour", () => {
+    // The Usuals picker applies a whole saved blob, and a Usual saved while
+    // signed in on a real Veo device can carry options a later private ride
+    // must still suppress.
+    const doc = docAt("wizard", "2", { private: true, options: { ...OPTIONS } });
+    const t = reduceRideSession(doc, {
+      type: "setOptions",
+      options: { ...OPTIONS, battery_modeling: true, nav_improvement: true, end_survey: true },
+    });
+    expect(t.accepted).toBe(true);
+    expect(t.doc.options.battery_modeling).toBe(false);
+    expect(t.doc.options.nav_improvement).toBe(false);
+    expect(t.doc.options.end_survey).toBe(false);
+  });
+
+  it("suppresses what save_tracks off disables, and only that", () => {
+    const doc = docAt("wizard", "2", { options: { ...OPTIONS } });
+    const t = reduceRideSession(doc, {
+      type: "setOptions",
+      options: { ...OPTIONS, save_tracks: false },
+    });
+    // Battery modelling and nav improvement have no track to run on; the
+    // end-of-ride survey needs only a Veo device and a `tracked_rides` row.
+    expect(t.doc.options.battery_modeling).toBe(false);
+    expect(t.doc.options.nav_improvement).toBe(false);
+    expect(t.doc.options.end_survey).toBe(true);
+  });
+
+  it("stores everything else verbatim", () => {
+    const doc = docAt("wizard", "2", { options: { ...OPTIONS } });
+    const t = reduceRideSession(doc, {
+      type: "setOptions",
+      options: { ...OPTIONS, cost_hud: false, speedometer: "none", navigation: false },
+    });
+    expect(t.doc.options.cost_hud).toBe(false);
+    expect(t.doc.options.speedometer).toBe("none");
+    expect(t.doc.options.navigation).toBe(false);
+  });
+});

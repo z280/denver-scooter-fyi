@@ -110,6 +110,11 @@ import {
 } from "./api.ts";
 import { rideModalRoot } from "./ride-modal.ts";
 import { showsCostHud, speedometerStyle } from "./ride-display-prefs.ts";
+import {
+  applyCascades,
+  type DisableReason,
+  type OptionDisableState,
+} from "./ride-option-cascades.ts";
 import { savesTracks } from "./track-preference.ts";
 
 /** `${provider}` in the owner's copy — Veo today, written to be
@@ -186,80 +191,22 @@ export interface RideOptionsContext {
   authenticated: boolean;
 }
 
-export type TrophyOptionKey = "battery_modeling" | "nav_improvement" | "end_survey";
-
-export type DisableReason = "own_device" | "save_tracks_off" | "guest_or_private";
-
-export interface OptionDisableState {
-  disabled: boolean;
-  /** In priority order — `own_device` first, then `save_tracks_off`, then
-   *  `guest_or_private` — matching the order the master plan lists the three
-   *  rules and the order `trophyDisabledMessage` picks copy from. */
-  reasons: DisableReason[];
-}
+// The cascade rules themselves now live in `ride-option-cascades.ts` — pure
+// functions with no DOM and no API client, so `ride-session.ts`'s reducer can
+// import them and enforce them on every transition instead of each caller
+// remembering to. Re-exported here unchanged: this module is still where the
+// rest of the app reaches for them, and `trophyDisabledMessage` below (the COPY,
+// which needs `authenticated`) belongs with the other strings.
+export {
+  applyCascades,
+  trophyOptionDisableStates,
+  type CascadeContext,
+  type DisableReason,
+  type OptionDisableState,
+  type TrophyOptionKey,
+} from "./ride-option-cascades.ts";
 
 const NOT_DISABLED: OptionDisableState = { disabled: false, reasons: [] };
-
-/** The three independent rules from the master plan, verbatim:
- *   - own-device disables battery_modeling AND end_survey (not nav — a
- *     private own-device ride disables nav too, but via the THIRD rule below,
- *     since own-device rides are always private; own-device does not gate nav
- *     directly).
- *   - save_tracks off disables battery_modeling AND nav_improvement (not
- *     survey — the survey doesn't need a track, just a Veo device + a
- *     `tracked_rides` row).
- *   - guest/private sessions disable ALL THREE (no `tracked_rides` row to
- *     survey or donate against, and `POST /ride-routes` is session-authed).
- *  Each rule is evaluated independently of whether the others happen to be
- *  true in practice (own-device rides ARE private, via the reducer) — this is
- *  a pure function of the inputs given, not an assumption about how
- *  `ride-session.ts` produces them. */
-export function trophyOptionDisableStates(
-  options: RideOptions,
-  ctx: RideOptionsContext,
-): Record<TrophyOptionKey, OptionDisableState> {
-  const battery: DisableReason[] = [];
-  if (options.own_device) battery.push("own_device");
-  if (!options.save_tracks) battery.push("save_tracks_off");
-  if (ctx.private) battery.push("guest_or_private");
-
-  const nav: DisableReason[] = [];
-  if (!options.save_tracks) nav.push("save_tracks_off");
-  if (ctx.private) nav.push("guest_or_private");
-
-  const survey: DisableReason[] = [];
-  if (options.own_device) survey.push("own_device");
-  if (ctx.private) survey.push("guest_or_private");
-
-  return {
-    battery_modeling: { disabled: battery.length > 0, reasons: battery },
-    nav_improvement: { disabled: nav.length > 0, reasons: nav },
-    end_survey: { disabled: survey.length > 0, reasons: survey },
-  };
-}
-
-/** Force every disabled 🏆 field to `false`, leaving everything else (and any
- *  enabled 🏆 field) untouched. Run this after any change that could affect a
- *  cascade — a device pick landing `own_device: true`, a guest signing in, a
- *  Usual applied wholesale (a Usual saved while signed in on a real device
- *  can carry 🏆 options a later guest/own-device context must still
- *  suppress). */
-export function applyCascades(
-  options: RideOptions,
-  ctx: RideOptionsContext,
-): RideOptions {
-  const states = trophyOptionDisableStates(options, ctx);
-  return {
-    ...options,
-    battery_modeling: states.battery_modeling.disabled
-      ? false
-      : options.battery_modeling,
-    nav_improvement: states.nav_improvement.disabled
-      ? false
-      : options.nav_improvement,
-    end_survey: states.end_survey.disabled ? false : options.end_survey,
-  };
-}
 
 /** The disabled-state copy shown under a suppressed row. Reasons are checked
  *  in priority order so a row disabled for more than one reason at once shows
