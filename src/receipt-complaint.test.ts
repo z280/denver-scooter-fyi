@@ -125,8 +125,8 @@ describe("the CC is a real recipient on BOTH paths", () => {
     const draft = complaintDraft(finding(), facts({ cc: "council@example.gov" }), TO);
     expect(draft.cc).toBe("council@example.gov");
     expect(draft.body).not.toContain("council@example.gov");
-    const uri = mailtoUri(draft);
-    expect(uri).toContain(`cc=${encodeURIComponent("council@example.gov")}`);
+    // The `@` stays raw; see the encoding test below for why.
+    expect(mailtoUri(draft)).toContain("cc=council@example.gov");
   });
 
   it("survives the clipboard fallback as its own field", () => {
@@ -184,14 +184,33 @@ describe("the fallback is decided on the ENCODED URI", () => {
     if (route.kind === "clipboard") expect(route.reason).toBe("too_long");
   });
 
-  it("encodes the recipient too, since a + in an address is legal", () => {
-    // An unencoded `+` arrives as a space.
+  it("encodes a + in an address but leaves the @ raw", () => {
+    // `+` unencoded in a URI arrives as a SPACE, so the address silently becomes
+    // somebody else's. `@` is left raw because that is the form in every example
+    // and every client's test suite — `%40` is valid and decoded by everything
+    // mainstream, and this is not the place to be interesting.
+    const uri = mailtoUri({ to: "a+b@example.com", subject: "s", body: "b" });
+    expect(uri).toContain("a%2Bb@example.com");
+    expect(uri).not.toContain("%40");
+  });
+
+  it("encodes a + in the CC too, not just the recipient", () => {
     const uri = mailtoUri({
-      to: "a+b@example.com",
+      to: "s@example.com",
+      cc: "council+scooters@example.gov",
       subject: "s",
       body: "b",
     });
-    expect(uri).toContain("a%2Bb%40example.com");
+    expect(uri).toContain("cc=council%2Bscooters@example.gov");
+  });
+
+  it("never builds a complaint from a verdict missing either figure", () => {
+    // `complaintDraft` asserts both with `!`, so a verdict carrying one without
+    // the other would put the word "undefined" into a complaint to Veo.
+    const half = { ...verdict(BASE_FARE), differenceCents: null };
+    expect(overchargeFinding(half)).toBeNull();
+    const other = { ...verdict(BASE_FARE), expected: null };
+    expect(overchargeFinding(other)).toBeNull();
   });
 });
 

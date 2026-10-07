@@ -94,6 +94,17 @@ describe("the bar: all three conditions or no claim", () => {
 });
 
 describe("the comparison is ONE-SIDED — exceeds, never merely differs", () => {
+  it("never complains about an Access rider's short trip, which is cheaper at their own tier", () => {
+    // Worth pinning because it is counter-intuitive and the margin's bound leans
+    // on it: an Access rider has no unlock, so a one-minute trip billed at their
+    // own 15¢ comes to 15¢ against an expected $1.13 — nearly a dollar BELOW. For
+    // short trips the area rate is WORSE for them, so there is no overcharge to
+    // make provable and nothing to write to support about.
+    const r = receiptVerdict(confirmRead({ minutes: 1, totalCents: 15 }), ctx({ rate: rate("equity") }));
+    expect(r.verdict).toBe("correct");
+    expect(r.differenceCents).toBeLessThan(0);
+  });
+
   it("does not complain about a charge BELOW the expected figure", () => {
     // A promotional rate, a credit or a free Access trip all differ from
     // $1 + 13¢/min while leaving the rider better off. A tool that writes to
@@ -124,6 +135,11 @@ describe("the margin, and its ceiling", () => {
     // or above that swallows a one-minute overcharge, which is the opposite of
     // this phase's purpose.
     expect(SHORTEST_PROVABLE_CENTS).toBe(12);
+    // Derived from the Resident rate, so a rate change cannot leave the bound —
+    // or the paragraph documenting it — quietly wrong.
+    expect(SHORTEST_PROVABLE_CENTS).toBe(
+      rate("resident").perMinCents - EQUITY_AREA_RATE.perMinCents,
+    );
     expect(MARGIN_CENTS).toBeLessThan(SHORTEST_PROVABLE_CENTS);
   });
 

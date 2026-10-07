@@ -63,7 +63,11 @@ export interface OverchargeFinding {
  *  the rider spending their credibility on our uncertainty. */
 export function overchargeFinding(verdict: VerdictResult): OverchargeFinding | null {
   if (verdict.verdict !== "overcharged") return null;
-  if (verdict.expected === null) return null;
+  // BOTH figures, not just `expected`. They are set and cleared together today, so
+  // either check alone is sufficient — and `complaintDraft` asserts both with `!`,
+  // so a future verdict that carried one without the other would put the word
+  // "undefined" into a complaint to Veo rather than failing.
+  if (verdict.expected === null || verdict.differenceCents === null) return null;
   return { __overcharge: true, verdict };
 }
 
@@ -131,17 +135,28 @@ export function complaintDraft(
   };
 }
 
-/** The `mailto:` URI, fully encoded.
+/** Percent-encode an address for a `mailto:`, LEAVING `@` ALONE.
  *
- *  `encodeURIComponent` on every part, including `to` and `cc`: an address with a
- *  `+` in it is legal and common, and an unencoded one arrives as a space. */
+ *  `encodeURIComponent` alone turns `a@b.com` into `a%40b.com`. That is valid
+ *  (RFC 6068 permits percent-encoding, and `@` is also allowed raw) and every
+ *  mainstream client decodes it — but the raw form is the one in every example and
+ *  every client's test suite, and this is not the place to be interesting. What
+ *  does need encoding is `+`: a `+` in a local part is legal and common, and
+ *  unencoded in a URI it arrives as a space, so the address silently becomes
+ *  somebody else's. */
+function encodeAddress(address: string): string {
+  return encodeURIComponent(address).replace(/%40/g, "@");
+}
+
+/** The `mailto:` URI, fully encoded — which is the string the length threshold is
+ *  measured against, because that is the string the client's limit applies to. */
 export function mailtoUri(draft: ComplaintDraft): string {
   const params = [
-    ...(draft.cc ? [`cc=${encodeURIComponent(draft.cc)}`] : []),
+    ...(draft.cc ? [`cc=${encodeAddress(draft.cc)}`] : []),
     `subject=${encodeURIComponent(draft.subject)}`,
     `body=${encodeURIComponent(draft.body)}`,
   ];
-  return `mailto:${encodeURIComponent(draft.to)}?${params.join("&")}`;
+  return `mailto:${encodeAddress(draft.to)}?${params.join("&")}`;
 }
 
 export type ComplaintRoute =

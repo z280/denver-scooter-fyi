@@ -19,7 +19,11 @@
 // ---------------------------------------------------------------------------
 
 import { EQUITY_AREA_RATE, type RatePlan } from "./config.ts";
-import { equityAreaEstimateWithTax, type RideCostBreakdown } from "./ride-cost.ts";
+import {
+  equityAreaEstimateWithTax,
+  planFor,
+  type RideCostBreakdown,
+} from "./ride-cost.ts";
 
 /** How much a charge may exceed the expected figure before we will call it an
  *  overcharge. Cents.
@@ -36,9 +40,24 @@ import { equityAreaEstimateWithTax, type RideCostBreakdown } from "./ride-cost.t
 export const MARGIN_CENTS = 10;
 
 /** One minute of the discount, which is what bounds `MARGIN_CENTS`. Exported so
- *  the bound is assertable rather than described. */
+ *  the bound is assertable rather than described.
+ *
+ *  DERIVED, NOT WRITTEN DOWN. The plan states it as "25¢ base against 13¢", and
+ *  hardcoding the 25 would let a change to the Resident rate leave this constant
+ *  — and the paragraph above it — quietly wrong about the one thing it exists to
+ *  bound.
+ *
+ *  THE RESIDENT TIER IS THE RIGHT ONE and not just the one the plan happened to
+ *  name. A Visitor's discount is larger (39¢ − 13¢ = 26¢), so it is not the
+ *  binding case. The Access tier's per-minute gap is smaller (15¢ − 13¢ = 2¢) and
+ *  is still not the binding case, because the comparison is against the AREA rate
+ *  including its $1: an Access rider has no unlock, so a one-minute trip billed at
+ *  their own tier comes to 15¢ against an expected $1.13 — nearly a dollar BELOW,
+ *  which this verdict calls `correct` and never complains about. For short trips
+ *  the area rate is worse for an Access rider, so there is no overcharge to make
+ *  provable. */
 export const SHORTEST_PROVABLE_CENTS =
-  25 - EQUITY_AREA_RATE.perMinCents; // 12¢, resident base against the area rate
+  planFor("resident").perMinCents - EQUITY_AREA_RATE.perMinCents;
 
 export type ReceiptVerdict = "overcharged" | "correct" | "cannot_tell";
 
