@@ -41,16 +41,29 @@ export function withoutComments(source: string): string {
     .join("\n");
 }
 
-/** The body of a top-level `function name(...)`, comments stripped.
+/** The body of a function or method, comments stripped, closing at the brace that
+ *  matches the declaration's OWN indentation.
  *
- *  Slices to the first line that is exactly `}`, which is where a top-level
- *  function in this codebase ends. Slicing to the end of the file instead — the
- *  first version — swept in every other occurrence in a 4,000-line module and
- *  failed on code the test was not about. */
+ *  Two corrections, both found by mutation:
+ *
+ *  1. The first version sliced to the end of the file, which swept in every other
+ *     occurrence in a 4,000-line module and failed on code the test was not about.
+ *  2. The second closed on a line that is exactly `}`, which is right for a
+ *     top-level function and WRONG FOR A CLASS METHOD — a method closes on `  }`,
+ *     so the slice ran on to the end of the class and picked up every other
+ *     method's code. A `toContain` against such a slice is satisfied by anything
+ *     in the file below it, which is how an assertion about one method passed while
+ *     that method was gutted.
+ *
+ *  So the closing brace is derived from the signature's indentation, and a
+ *  signature that cannot be found throws rather than returning the whole file. */
 export function functionBody(source: string, signaturePrefix: string): string {
   const from = source.indexOf(signaturePrefix);
   if (from === -1) throw new Error(`no function matching ${signaturePrefix}`);
+  const lineStart = source.lastIndexOf("\n", from) + 1;
+  const indent = source.slice(lineStart, from).match(/^[ \t]*/)?.[0] ?? "";
   const rest = source.slice(from);
-  const end = rest.indexOf("\n}\n");
+  const closer = `\n${indent}}`;
+  const end = rest.indexOf(closer, 1);
   return withoutComments(end === -1 ? rest : rest.slice(0, end));
 }

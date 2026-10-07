@@ -11,6 +11,7 @@ import { functionBody, readSource, withoutComments } from "../tests/helpers/sour
 
 const main = withoutComments(readSource("src/main.ts"));
 const hud = withoutComments(readSource("src/ride-hud.ts"));
+const nav = withoutComments(readSource("src/ride-nav-hud.ts"));
 
 describe("the HUD actually speaks", () => {
   it("calls the announcer on every fix", () => {
@@ -39,6 +40,55 @@ describe("the HUD actually speaks", () => {
   it("reads the mute, rather than assuming it is off", () => {
     expect(functionBody(hud, "  private speakForFix(): void {")).toContain(
       "this.voice.muted()",
+    );
+  });
+});
+
+describe("the turn cue comes from the overlay that owns the match", () => {
+  it("is reported by ride-nav-hud, not re-derived by the HUD", () => {
+    // The matched shape index, the monotonic advance and the along-route distance
+    // all live in the overlay. Rebuilding the match in the HUD would be a second
+    // answer to "which turn is next", differing from the one on screen precisely
+    // when they disagree — which is when it matters.
+    expect(nav).toContain("function reportManeuver()");
+    // CALLED, not merely defined. The first version asserted only that the
+    // function existed, and passed with its call site removed — a reporter nobody
+    // invokes is a reporter that reports nothing.
+    expect(functionBody(nav, "    feedFix(lat, lng, accuracy) {")).toContain(
+      "reportManeuver()",
+    );
+    expect(hud).toContain("onManeuver: (maneuver) => {");
+    expect(functionBody(hud, "  private speakForFix(): void {")).toContain(
+      "maneuver: this.navManeuver",
+    );
+    // The HUD does none of the geometry itself.
+    expect(functionBody(hud, "  private speakForFix(): void {")).not.toMatch(
+      /distanceAlongCoords|currentManeuverIndex|advanceMonotonic/,
+    );
+  });
+
+  it("reports the SAME distance the card shows", () => {
+    // Two derivations would let the spoken cue and the screen disagree about how
+    // far the turn is.
+    const body = functionBody(nav, "  function reportManeuver(): void {");
+    expect(body).toContain("distanceAlongCoords(");
+    expect(body).toContain("maneuver.begin_shape_index");
+  });
+
+  it("is cleared when guidance is dismissed", () => {
+    // Otherwise the last reported maneuver sits there and is spoken the moment the
+    // rider comes within range of a turn they are no longer being guided to.
+    const dismiss = hud.slice(hud.indexOf("this.navDismissed = true;"));
+    expect(dismiss.slice(0, 300)).toContain("this.navManeuver = null");
+  });
+
+  it("is cleared per ride", () => {
+    // Asserted on the two statements being adjacent rather than on a function
+    // slice: the first version sliced `enterRiding`, a CLASS method, with a helper
+    // that closed on a bare `}` — so the slice ran to the end of the class, picked
+    // up the dismiss handler's identical line, and passed with this one deleted.
+    expect(hud).toMatch(
+      /this\.announceState = INITIAL_ANNOUNCE_STATE;\s*\n\s*this\.navManeuver = null;/,
     );
   });
 });

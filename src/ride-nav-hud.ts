@@ -497,6 +497,16 @@ export interface NavHudRouteUpdate {
   maneuvers: RouteManeuver[];
 }
 
+/** What the caller needs to speak a turn cue: which maneuver, what it says, and
+ *  how far along the route it is. Index included because dedup is BY INDEX — a
+ *  re-route or a GPS wobble re-reports the same turn, and matching on text would
+ *  let two identical instructions a mile apart collapse into one. */
+export interface NavHudManeuver {
+  index: number;
+  instruction: string;
+  metersAway: number;
+}
+
 export interface NavHudOptions {
   /** The Screen 4 choice, read directly off the session doc's `route`
    *  field (`ride-session.ts`'s `RideSessionRoute`) — `polyline` seeds the
@@ -534,6 +544,19 @@ export interface NavHudOptions {
   onCompress: (side: "left" | "right" | null) => void;
   /** Fired after a successful off-route re-route. See `NavHudRouteUpdate`. */
   onRouteUpdate?: (update: NavHudRouteUpdate) => void;
+  /** Phase 11 §11.1 — the upcoming maneuver and how far off it is, on every fix.
+   *  `null` once there is no maneuver left.
+   *
+   *  THIS MODULE IS THE ONLY PLACE THAT KNOWS. The matched shape index, the
+   *  monotonic advance and the along-route distance all live here, and a caller
+   *  that wanted to speak a turn cue would otherwise have to rebuild the match —
+   *  a second answer to "which turn is next", differing from the one on screen
+   *  precisely when they disagree, which is when it matters.
+   *
+   *  REPORTED, NOT SPOKEN. This module gained no voice: the cue's thresholds and
+   *  its dedup are `ride-announce.ts`'s business, and the distance here is the
+   *  same number the card shows. */
+  onManeuver?: (maneuver: NavHudManeuver | null) => void;
   /** Injected for tests; defaults to `api.ts`'s `fetchRoute`. */
   fetchRoute?: (
     q: Parameters<typeof apiFetchRoute>[0],
@@ -767,6 +790,26 @@ export function createNavHud(
     iconArrow.style.transform = `rotate(${maneuverGlyphRotationDeg(maneuver.type)}deg)`;
   }
 
+  /** §11.1's report. Reads the SAME maneuver and the SAME along-route distance
+   *  the card just rendered, so the cue and the screen cannot disagree. */
+  function reportManeuver(): void {
+    if (!opts.onManeuver) return;
+    const maneuver = maneuvers[currentManeuverIdx] ?? null;
+    if (!maneuver) {
+      opts.onManeuver(null);
+      return;
+    }
+    opts.onManeuver({
+      index: currentManeuverIdx,
+      instruction: maneuver.instruction || "Continue",
+      metersAway: distanceAlongCoords(
+        coords,
+        lastMatchedIndex,
+        maneuver.begin_shape_index,
+      ),
+    });
+  }
+
   function renderPanel(): void {
     stepsList.replaceChildren();
     maneuvers.forEach((m, i) => {
@@ -908,6 +951,7 @@ export function createNavHud(
 
       renderCard();
       renderPanel();
+      reportManeuver();
 
       if (decision.shouldReroute) void doReroute({ lat, lng });
     },

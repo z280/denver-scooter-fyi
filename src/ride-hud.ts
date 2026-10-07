@@ -74,6 +74,7 @@ import {
   clampFreeMinutes,
   type AnnounceState,
 } from "./ride-announce.ts";
+import type { NavHudManeuver } from "./ride-nav-hud.ts";
 import type { RideVoice } from "./ride-voice.ts";
 import type { RideRouteLineHandle } from "./ride-route-line.ts";
 import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
@@ -457,6 +458,9 @@ export class RideHud {
    *  `null` means not loaded, which the announcer reads as "unknown" and never as
    *  "outside". */
   private zoneIndex: IndexedFeature[] | null = null;
+  /** §11.1's turn cue input, as the nav overlay last reported it. Null when there
+   *  is no guidance, no maneuver left, or guidance was dismissed. */
+  private navManeuver: NavHudManeuver | null = null;
 
   constructor(
     container: HTMLElement,
@@ -1324,6 +1328,7 @@ export class RideHud {
     // start and subtracting this ride's own billable minutes keeps one source of
     // truth for the hour, which is §2.2's control.
     this.announceState = INITIAL_ANNOUNCE_STATE;
+    this.navManeuver = null;
     const atStart = this.freeMinutesAtStart?.() ?? null;
     // Clamped on the way in: a figure above the hour, or a negative one, is not a
     // number to count down from.
@@ -1705,6 +1710,12 @@ export class RideHud {
       route,
       dest: { lat: dest.lat, lon: dest.lon },
       vehicleModel: selectedDevice(doc.device)?.model ?? null,
+      // §11.1 — the overlay reports the matched maneuver and its along-route
+      // distance; `ride-announce.ts` decides whether it is close enough to speak.
+      // The same numbers the card shows, so the cue and the screen agree.
+      onManeuver: (maneuver) => {
+        this.navManeuver = maneuver;
+      },
       onRouteUpdate: (update) => {
         // An off-route re-route swapped the guidance geometry in place —
         // redraw the drawn pathway to match, same color (a re-route only
@@ -1725,6 +1736,10 @@ export class RideHud {
         this.navDismissed = true;
         this.navHud = null;
         this.navHudContainer = null;
+        // No guidance, no turn cues. Without this the last reported maneuver
+        // would sit here and be spoken the moment the rider happened to come
+        // within range of a turn they are no longer being guided to.
+        this.navManeuver = null;
       },
       onCompress: () => {
         /* No other HUD chrome currently needs to react to the nav panel
@@ -1913,10 +1928,11 @@ export class RideHud {
    *  because "did it say the right thing at the right moment" is unanswerable in
    *  a test that has to stand up a HUD, a map and a speech engine.
    *
-   *  THE TURN CUE IS NOT FED FROM HERE YET. The nav overlay owns the matched
-   *  maneuver and does not report it outward, so wiring it means widening
-   *  `NavHud`'s contract. The two money moments need nothing from it and are the
-   *  two §11.11 puts first, so they ship first. */
+   *  THE TURN CUE COMES FROM THE NAV OVERLAY, which is the only place that knows:
+   *  the matched shape index, the monotonic advance and the along-route distance
+   *  all live there. Rebuilding the match here would be a second answer to "which
+   *  turn is next", differing from the one on screen precisely when they disagree
+   *  — which is when it matters. The overlay reports; the announcer decides. */
   private speakForFix(): void {
     if (!this.voice) return;
     const inside =
@@ -1938,7 +1954,7 @@ export class RideHud {
       {
         status: this.state === "riding" ? "riding" : this.state,
         speedMps: this.smoothedMps,
-        maneuver: null,
+        maneuver: this.navManeuver,
         insideEquityArea: inside,
         freeMinutesLeft: freeLeft,
         // The same rule the follow-cam already follows: never speak over the

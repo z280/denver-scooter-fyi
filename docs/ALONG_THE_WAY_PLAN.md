@@ -2361,11 +2361,15 @@ turn-by-turn today is that it works while stopped.
 `ride-voice.ts` (the speech engine, the haptic, the remembered mute), wired into
 `ride-hud.ts`'s existing per-fix pass.
 
-**TURN CUES ARE NOT WIRED YET, and this is the one part held back.** The nav
-overlay owns the matched maneuver and does not report it outward, so feeding the
-cue means widening `NavHud`'s contract — and the two money moments (§11.3) need
-nothing from it and are what §11.11 puts first. `announce()` takes the maneuver
-already and is tested on it; the HUD passes `null` until that contract widens.
+**Turn cues are wired too**, by widening `NavHud`'s contract with an
+`onManeuver` report rather than by rebuilding the match. That overlay is the only
+place that knows — the matched shape index, the monotonic advance and the
+along-route distance all live there — and a second derivation would be a second
+answer to "which turn is next", differing from the one on screen precisely when
+they disagree. The report carries the SAME distance the instruction card shows,
+and it is cleared when guidance is dismissed: otherwise the last reported
+maneuver sits there and is spoken the moment the rider happens to come within
+range of a turn they are no longer being guided to.
 
 Three things the section did not settle:
 
