@@ -50,6 +50,15 @@ jobs:
       # cannot silently desynchronise.
       - run: npm run vectors:check
 
+      # Boot the BUILT site in headless Chromium and fail on any uncaught
+      # error (scripts/smoke.mjs). tsc, vitest and the build all passed on
+      # 2026-10-07 while main.ts threw at startup and the map was blank for
+      # ~11 hours; nothing had ever loaded the page. Offline by design: every
+      # non-localhost request is blocked. Runs BEFORE the deploy step, so a
+      # site that cannot start never reaches Pages.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run smoke
+
       # Direct Upload of dist/. Push to main -> production deploy. A PR deploys
       # to a stable per-PR preview URL. The --branch value is built only from
       # the PR number (an integer) and the literal "main", never from the
