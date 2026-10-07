@@ -31,6 +31,7 @@
 // here needed to change.
 // ---------------------------------------------------------------------------
 
+import { orderedFavorites } from "./favorite-slots.ts";
 import {
   registerRideScreen,
   type RideScreen,
@@ -265,7 +266,7 @@ function buildDestScreen(
   let saved: HomeWorkPoints = { home: null, work: null };
   /** Locally saved places — available immediately and to everyone, unlike the
    *  profile's home/work, which need an account and a round trip. */
-  let favorites: Favorite[] = loadFavorites();
+  let favorites: Favorite[] = orderedFavorites(loadFavorites());
   /** The place currently being named, or null. Non-null takes over the list:
    *  naming is a decision, and leaving the search results visible underneath
    *  invites the rider to tap one and lose what they were saving. */
@@ -472,12 +473,14 @@ function buildDestScreen(
         field.focus();
         return;
       }
-      favorites = recordFavorite({
-        emoji: place.emoji,
-        label: name,
-        lat: place.lat,
-        lon: place.lon,
-      });
+      favorites = orderedFavorites(
+        recordFavorite({
+          emoji: place.emoji,
+          label: name,
+          lat: place.lat,
+          lon: place.lon,
+        }),
+      );
       naming = null;
       // Back to an empty input, where the new favorite is now a row: the
       // rider saved it in order to use it, and making them retype the search
@@ -577,7 +580,7 @@ function buildDestScreen(
             glyph: "✕",
             title: `Forget ${f.label}`,
             onClick: () => {
-              favorites = forgetFavorite(f.id);
+              favorites = orderedFavorites(forgetFavorite(f.id));
               render();
             },
           },

@@ -71,6 +71,17 @@ function isValidFavorite(f: unknown): f is Favorite {
  *  the rider had just watched appear. Found by Copilot on PR #74. */
 let sessionFavs: Favorite[] | null = null;
 
+/** Drop the session mirror. TEST-ONLY, and it exists because `sessionFavs` is
+ *  module state that outlives a test: one case exercising a storage failure
+ *  leaves the mirror set, and every later test in the same file then reads the
+ *  mirror instead of the storage it just arranged. Found exactly that way —
+ *  `favorite-slots.test.ts`'s corrupt-blob case passed a non-empty list because
+ *  the preceding quota-failure case had populated it. Same shape and same
+ *  reasoning as `telemetry.ts`'s `_resetTelemetryForTests`. */
+export function _resetFavoritesForTests(): void {
+  sessionFavs = null;
+}
+
 export function loadFavorites(): Favorite[] {
   if (sessionFavs !== null) return sessionFavs.slice();
   try {
@@ -82,6 +93,16 @@ export function loadFavorites(): Favorite[] {
   } catch {
     return [];
   }
+}
+
+/** Write the list. Exported because `favorite-slots.ts` composes its own
+ *  list changes out of `addFavorite`/`removeFavorite` and then has to store the
+ *  result — the same two-step `recordFavorite` and `forgetFavorite` below do,
+ *  which are just the common cases of it. Returns false when storage refused
+ *  the write (private mode or quota), in which case the session mirror above
+ *  has taken over and the list is still correct for this visit. */
+export function saveFavorites(favs: readonly Favorite[]): boolean {
+  return persistFavorites(favs.slice());
 }
 
 function persistFavorites(favs: Favorite[]): boolean {
