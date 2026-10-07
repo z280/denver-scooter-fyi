@@ -635,6 +635,46 @@ about walking:
 
 ### 2.4 Where it appears
 
+**Shipped, and it was the missing half of Phase 2.** That phase landed
+engine-first: `rankPlans` was tested, priced, bounded — and wholly unreachable.
+Nothing in the app called it, and no behavioural test could say so, because
+every test it had passed. `wheels: "need"` went to the map chooser, which
+predates this program.
+
+Four modules, split so each decision is assertable: `plan-list.ts` (pure
+derivation), `plan-search.ts` (the `RankPlansContext` assembly), and
+`plan-list-panel.ts` (DOM), with one branch in `main.ts`.
+
+`plan-search.ts` is its own module rather than a block in `main.ts` because
+every field of that context has a documented wrong answer and **none of them
+changes anything visible when it is wrong** — the list still renders four
+plausible plans. The fleet must be unfiltered, free minutes must be resolved
+before the call and only exist for one tier, the tax rate must be the server's,
+`now` must be passed in.
+
+Three decisions taken while building it:
+
+- **The walk-only row is shown and cannot be chosen.** It earns its place as
+  the thing riding is compared against, and there is no walk-to-destination
+  flow in this app to hand the rider to — the arrival panel walks them to a
+  SCOOTER. A button that goes nowhere is worse than none.
+- **Only the first leg is acted on.** Honouring a hand-off end to end needs
+  Phase 3's living plan. A walk flow that silently forgot legs two and three
+  would be worse than one that never claimed to have them.
+- **No GPS fix means no list.** A plan list from a guessed origin is four wrong
+  answers, and walking a rider to a scooter that is not near them is the one
+  failure this surface can cause by itself. They get the map chooser, which
+  needs no fix to be useful.
+
+**`FAVORITE_BONUS_SECONDS` HAS NO LIVE INPUT, and this is where that became
+visible.** The planner's favourite bonus wants vehicle keys; there is no
+favourite-vehicle store in the app, because `my-scooters.ts` was built and then
+deleted (see the module map). `favorites.ts` holds saved PLACES, so wiring it
+would pass place ids as vehicle keys, match nothing, and silently disable the
+term — a dead ranking input that looks wired. Nothing is passed, deliberately.
+The watch list is not a substitute: "tell me when this moves" is not "I prefer
+this one".
+
 The home bar already asks the two questions this needs — *where are you going*
 and *need wheels or got your own* — and hands the answer to `pending-trip.ts`,
 whose contract is unchanged. `wheels: "need"` opens the **plan list**: **one to four**
@@ -932,6 +972,43 @@ section is only what the frontend builds.
 
 ### 5.1 `equity-savings.ts`
 
+**Shipped, minus one of its three entry points — and that omission is the
+finding.** `equityLegRate` was not built, because it already existed:
+`along-the-way.ts`'s exported `legRate(rate, from, to)` is the same function
+under another name, with the same inputs this section reasons its way to (the
+leg's own endpoints and the rider's `RatePlan`), the same worse-reading view of
+the area's $1, and the same "unknown polygons count as outside" rule. It is
+what Phase 2's `priceRide` already calls on every ride edge.
+
+Building a second copy here would have been the Phase 6 seam-2 mistake moved
+into the money layer — and worse than the general case, because this copy would
+be the one the DISCLOSURE reads while the planner kept using its own. That is
+precisely the "planner and disclosure disagree about the same leg, with the
+planner on the optimistic side" failure the paragraphs below spend three
+paragraphs forbidding. So the rate rule has one home and it is the planner's.
+
+**`startInAreaSaving`'s signature changed, because the one below cannot work.**
+`(candidate, spec, plan)` carries nothing to compare against, and both halves of
+the chip are comparatives: "saves $1.80" against what, and "2 min more walking"
+than what? A spec does not bear on money at all. The sketch predates revision
+3b, which made the PLAN the unit the rider chooses between (§2.4's list); with
+two plans in hand the comparison is plan-to-plan and needs nothing else. It
+ships as `startInAreaSaving(plan, baseline, rate)`, where the caller picks the
+baseline because the caller holds the ranked list.
+
+**`TripLeg` gained `equityArea`.** `priceRide` had `legRate`'s answer in hand
+and discarded it, which left the UI no way to name the discounted leg except by
+re-testing the polygons itself — the second copy again, arriving by the back
+door.
+
+**A test here proved nothing, and it is worth recording how.** The existing
+"prices an equity-area leg at the area rate" case guarded its assertions behind
+`if (r.equityArea)` and never loaded the polygons, so `isInEquityArea` answered
+`null`, `legRate` took its outside path, and the guard never opened. Its
+coordinate was also outside every area in the city's map, so loading them alone
+would not have saved it. Verified by mutation: with the area rate replaced by
+999¢/min it still passed.
+
 Pure. Imports `equityAreaEstimateWithTax` / `estimateWithTax` from
 `ride-cost.ts` for money, and `isInEquityArea` from `equity-areas.ts` for
 geometry — and owns neither. Three answers:
@@ -993,6 +1070,16 @@ and `config.ts` deliberately declines to infer it. Advice we cannot price is
 advice we do not give.
 
 ### 5.2 Where it surfaces
+
+**Shipped on the plan list (§2.4), which is the surface this section was
+waiting for.** "A chip on a candidate row" reads, after revision 3b, as a chip
+on a PLAN row — the plan is what the rider chooses between, and the
+disambiguation screen (`ride-screen-select.ts`) is explicitly not a discovery
+surface, so a cost chip has no business there.
+
+The four disclosures ship as `equityDisclosures()`, in a `<details>` on the
+plan's own row. Collapsed, not hidden: a `<details>` is still in the document
+and still findable, which an off-screen drawer is not.
 
 Phase 5a is a **chip on a candidate row** — *"starts in an Equity Area · saves
 $1.80 · 2 min more walking"* — because that is where the rider is choosing.
@@ -2362,6 +2449,16 @@ button and no reason — on the primary CTA. Some paths route through
 **(d) The proximity rules are three different radii and two of them are
 missing.** Measured, not guessed:
 
+> **Re-measured at implementation time, and this table was out of date on one
+> row.** The `Report a problem` chips are listed here as ungated; they were
+> gated at 100 m — admin-exempt, with a sentence, blocked rather than hidden —
+> some time after this was written. The two genuinely open ones were
+> `📷 Take Photo` and `☑️ Confirm Features`. The row is left as written rather
+> than quietly corrected, because the *shape* of the finding survives the
+> correction intact: the cheap actions were gated and the expensive ones were
+> not, and nobody chose that.
+
+
 | Action | Sign-in | Proximity | Admin exempt |
 |---|---|---|---|
 | `▶️ Open in Veo` | yes | **75 m** (`UNLOCK_PROXIMITY_M`) | proximity only |
@@ -2383,6 +2480,28 @@ is a complaint about a thing you can see — is correctly gated at 100 m. The
 cheap actions are gated and the expensive ones are not.
 
 ### 12.2 The rule to adopt
+
+**Shipped** as `device-action-tiers.ts`. An action with no rule in
+`ACTION_RULES` is a type error, which is §12.5's "no action may ship without
+declaring a tier" enforced by the compiler rather than by a reviewer
+remembering.
+
+Two departures from the text below, both deliberate:
+
+- **Each rule keeps its own sentence**, rather than one per tier. "This comes
+  from riders at the scooter" is right for a report and wrong for the unlock,
+  which is not a report about anything — and §12.4's own point is that the
+  existing sentences are already good. They are kept verbatim where they
+  existed, with the distance substituted in.
+- **`🖼️ Show Photos` stays `anywhere` while `📷 Take Photo` becomes
+  `at_the_vehicle`.** The asymmetry is the point: uploading is evidence about a
+  scooter you can see, reading is not, and gating the read would be symmetry for
+  its own sake at the cost of most of the feature's value.
+
+**The 100 m → 75 m tightening is the one change here with a real argument
+against it**, and it is recorded at the constant in `devices.ts` rather than
+dropped: you can see a badly-parked scooter from across the street. The
+counter-argument stands anyway, and it is this section's own.
 
 **Three tiers, named, and every action declares which one it is in.**
 
@@ -2444,6 +2563,15 @@ Order by what the rider decides on, then what they can do:
 - **The secondary row is text-sized**, not three more full-width bars.
 
 ### 12.4 Blocked is a sentence, in the card
+
+**Shipped, and the mechanism matters more than the text predicted.** Every
+blocked action button carries its reason in `data-blocked` and ONE handler
+delivers it on tap. That is not tidiness: the three hand-wired handlers it
+replaced each passed a **captured variable**, which is how `📷 Take Photo` came
+to announce a sign-in hint to a rider who was signed in and merely 400 m away.
+Reading the attribute makes the rendered reason and the spoken reason the same
+string by construction.
+
 
 Every gated action renders enabled-looking and, on tap, writes the reason into
 the existing `.device-popup__actionhint` live region — which already exists,
