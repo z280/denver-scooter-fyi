@@ -52,6 +52,20 @@ describe("the plan list is wired to something", () => {
     expect(body).not.toContain("visibleFeatures()");
   });
 
+  it("closes the list whenever a walk begins, by any route", () => {
+    // `beginWalkToVehicle` is the single funnel for every way of starting a walk
+    // — the plan list, a tap on the map, resuming a dibs claim from a toast — and
+    // its own comment is already about this: "leaving the chooser open behind the
+    // walk is two surfaces arguing about one decision, and the ranked list is
+    // stale the moment a scooter is picked out of it." Without the call there,
+    // the list floats over the arrival panel offering four plans for a trip the
+    // rider has already started walking.
+    const fn = main.slice(main.indexOf("function beginWalkToVehicle("));
+    const body = fn.slice(0, fn.indexOf("\n  const panel = createArrivalPanel"));
+    expect(body).toContain("closePlanList()");
+    expect(body).toContain("exitFindWheels()");
+  });
+
   it("never hands the planner saved PLACES as favourite vehicles", () => {
     // favorites.ts stores Home and Work, keyed by a place id. The planner's
     // favourite bonus wants vehicle keys. Passing one as the other matches

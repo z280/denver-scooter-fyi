@@ -4056,6 +4056,13 @@ function beginWalkToVehicle(info: {
   // surfaces arguing about one decision, and the ranked list is stale the
   // moment a scooter is picked out of it.
   exitFindWheels();
+  // THE PLAN LIST IS A CHOOSER TOO, and the sentence above is about it as much
+  // as about find-wheels mode. `takePlanRow` closes it on its own way through,
+  // but that is not the only way in: a rider can leave the list open and tap a
+  // scooter on the map, or resume a dibs claim from a toast, and both land here.
+  // Without this the list floats over the arrival panel offering four plans for
+  // a trip the rider has already started walking.
+  closePlanList();
   document.body.classList.add("arrival-open");
 
   const panel = createArrivalPanel(need("arrival-panel"), {
