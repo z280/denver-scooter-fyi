@@ -601,6 +601,33 @@ disqualified like anything else.
 
 ### 2.2 The free-minutes control
 
+**Shipped**, as `free-minutes-control.ts` (the copy and the correction store)
+plus the readout above the plan list. The arithmetic stayed in
+`free-minutes.ts`, where it already was.
+
+Three things the section did not say and the build had to settle:
+
+- **There are THREE states, not two.** "We have not looked" (the fetch has not
+  landed — the pessimistic hour), "we looked and you have taken none today", and
+  "signed out, so we cannot look" are three different sentences. Conflating the
+  middle two tells a rider with a full hour that we cannot see their rides, and
+  they then correct a figure that was already right.
+- **The correction is scoped to the Denver billing day.** A figure from
+  yesterday is worse than none: it is stated with confidence, it WINS over the
+  estimate by design, and it is certainly wrong. A stated `0` is kept, because
+  "I have none left" is an answer and "I did not say" is not — so an empty box
+  clears the correction rather than becoming a zero.
+- **Correcting re-prices, it does not just re-label.** The balance is search
+  state (`searchOnce` makes a node `(location, free minutes consumed)` precisely
+  because one regime for a whole plan is unsound), so a corrected figure can
+  change which plans exist and in what order.
+
+The fetch happens AFTER the list is on screen, per §2.3's rule for the routed
+tier and for the same reason: a rider who asked for plans gets plans, and the
+figure re-prices them upward when it arrives. A failed fetch stays `null` — the
+pessimistic figure — and never becomes an empty day, which would hand the rider
+a full hour on the strength of a network error.
+
 The one new piece of UI this phase owes, and it exists because of an honest
 admission already in `config.ts`: the cost ticker *"can't know how much of
 today's free hour is left, so it prices minutes beyond 60"*. Pessimism is
