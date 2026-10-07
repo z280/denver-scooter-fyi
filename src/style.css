@@ -1863,6 +1863,7 @@ body.ride-active .arrival {
    and padding-derived roundness drifts into an oval the moment one of them
    uses a different ×. */
 .arrival__close,
+.planlist__close,
 .home-bar__close,
 .qr-scan__close,
 .device-features__close,
@@ -9551,4 +9552,194 @@ input[data-ride-keypad="on"] {
   padding: 8px 10px;
   border-radius: 8px;
   line-height: 1.45;
+}
+
+/* ---------------------------------------------------------------------------
+   The plan list (§2.4) — one to four ways to get there, over the map they are
+   drawn on. Shares the arrival panel's frame deliberately: they are the two
+   halves of one journey (choose a plan, then walk to its scooter) and a rider
+   who has seen one should recognise the other.
+
+   Taller than the arrival panel, and scrollable, because four plans with legs
+   and a details block do not fit a phone — capped against the viewport rather
+   than a fixed height so it does not grow past the home bar it floats above.
+   --------------------------------------------------------------------------- */
+.planlist {
+  position: fixed;
+  left: 50%;
+  bottom: calc(
+    calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
+      var(--float-inset)
+  );
+  transform: translateX(-50%);
+  z-index: 29;
+  width: min(94vw, 460px);
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 12px;
+  background: var(--metal-bg);
+  color: var(--metal-fg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--shadow);
+}
+.planlist__head {
+  padding-right: 52px;
+}
+.planlist__title {
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.planlist__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  cursor: pointer;
+}
+.planlist__notes {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.planlist__note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.planlist__note--warn {
+  background: var(--warn-soft);
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: var(--fg);
+}
+.planlist__note--quiet {
+  color: var(--fg-muted);
+}
+.planlist__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.planlist__row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+}
+/* The comparison row, not an option: quieter, and it carries no action. */
+.planlist__row--walk {
+  background: transparent;
+  border-style: dashed;
+}
+.planlist__rowhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.planlist__headline {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
+}
+.planlist__figures {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.planlist__mins {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.planlist__cost {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.planlist__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.planlist__chip {
+  font-size: 11.5px;
+  line-height: 1.3;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+/* The one chip that is good news, in the equity layer's own colour so it reads
+   as the same thing as the map's Equity Area indicator. */
+.planlist__chip--equity_saving {
+  border-color: #6a1b9a;
+  color: #6a1b9a;
+  font-weight: 600;
+}
+.planlist__chip--risk {
+  background: var(--warn-soft);
+  color: var(--fg);
+  font-weight: 600;
+}
+.planlist__legs {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.planlist__leg {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.planlist__why {
+  font-size: 12.5px;
+}
+.planlist__whysummary {
+  cursor: pointer;
+  color: var(--fg-muted);
+  padding: 2px 0;
+}
+.planlist__whylist {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.planlist__whyitem {
+  line-height: 1.45;
+  color: var(--fg);
+}
+.planlist__go {
+  min-height: 44px;
+  margin-top: 2px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.planlist__again {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13.5px;
+  cursor: pointer;
 }
