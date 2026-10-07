@@ -62,7 +62,12 @@ await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const origin = `http://127.0.0.1:${server.address().port}`;
 
 const errors = [];
-const browser = await chromium.launch();
+// SMOKE_CHANNEL=chrome in CI: GitHub's Ubuntu runners ship Google Chrome, so
+// nothing is downloaded (`playwright install --with-deps` hung for 15+ min in
+// apt on the first run). Locally, Playwright's bundled Chromium.
+const browser = await chromium.launch(
+  process.env.SMOKE_CHANNEL ? { channel: process.env.SMOKE_CHANNEL } : {},
+);
 let exitCode = 0;
 try {
   const page = await browser.newPage({ viewport: { width: 412, height: 860 } });
