@@ -2454,6 +2454,31 @@ Three endings, one of which corrupts data:
    offer: *"did your ride end at 4:12pm?"*, using the last fix's timestamp,
    which is the honest answer and one tap. Today the rider has to reconstruct
    it themselves, and a ride ended hours late is worse data than no ride.
+
+   > **Shipped** as `ride-end-recovery.ts` plus a third button on
+   > `ride-resume-prompt.ts`. `TrackTip.lastPointMs` is the source — when this
+   > device last recorded a position for that ride.
+   >
+   > **IT CANNOT RECOVER *WHERE*, and the offer says so.** `EndRideIn` requires
+   > `end_lat`/`end_lon`, so something has to go in them, and the only position
+   > available at recovery time is where the rider is standing now. Quietly
+   > sending that under a recovered timestamp would trade one wrong field for
+   > another and call it a fix — so the copy names the limit, and the `metadata`
+   > marks both fields' sources so a consumer can tell a recovered end from a
+   > witnessed one.
+   >
+   > Three guards, each a case where the offer would be a guess dressed as a
+   > recollection: a gap under two minutes (where "now" is the same answer and a
+   > third button is noise), a last point before the ride began or in the future
+   > (a clock problem), and a non-finite figure (`Intl.DateTimeFormat` throws on
+   > one, and a prompt that throws while rendering leaves the rider unable to end
+   > their ride at all — the one outcome worse than a late timestamp).
+   >
+   > It reads the track store only when `outcome.resume` exists, which is both
+   > correct and free: that field means this device HAS a local track, so without
+   > it `readTip` answers null anyway. It also carries the right key — `trackId`
+   > is `ride.id` for a server ride today, and reading the plan's own id is
+   > correct by construction rather than by coincidence.
 3. **Something went wrong — a crash, a fall, a stop.** Nothing. There is no
    detection and no check-in. This is worth stating as a deliberate decision
    rather than an omission: a false "are you OK?" is alarming, and a missed
