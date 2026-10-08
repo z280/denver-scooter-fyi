@@ -1,12 +1,18 @@
-// The Account drawer's first tab: what the ride screen shows, and where the
-// rider goes often.
+// The Account drawer's first tab: what the ride screen shows while you are on
+// it, and what Veo is charging you for being there.
 //
 // EVERY CONTROL HERE WORKS SIGNED OUT, which is why this is its own module
 // rather than another section inside `account.ts`. That file builds the
-// signed-in surface and is only ever constructed with a token; these four
-// controls are device preferences in localStorage and have no account to wait
-// for. A signed-out rider opening the drawer lands here and can actually change
-// something.
+// signed-in surface and is only ever constructed with a token; these are device
+// preferences in localStorage and have no account to wait for. A signed-out
+// rider opening the drawer lands here and can actually change something.
+//
+// TRIP PLANS AND FAVOURITE DESTINATIONS USED TO BE HERE and are now the
+// Navigation tab (`account-nav.ts`). They are about where a route goes, not
+// about what the ride screen draws, and they sat here only because this was the
+// one ungated tab at the time. What is left is the screen, the rate plan that
+// feeds its cost readout, and what the receipts have taught that estimate —
+// which is one subject rather than two.
 //
 // The rate plan is the one with a server half, and it is handled the way
 // `ride-cost.ts` already designed for: this panel calls `saveRatePlan()`, which
@@ -17,28 +23,7 @@
 // on the handle are how the account side reports back.
 
 import { RATE_PLANS, type RatePlanKey } from "./config.ts";
-import {
-  FAVORITE_SLOT_IDS,
-  assignSlotPlace,
-  clearSlot,
-  readSlots,
-  renameSlot,
-  type FavoriteSlot,
-  type FavoriteSlotId,
-} from "./favorite-slots.ts";
 import { calibrationSentence, clearCalibration } from "./cost-calibration.ts";
-import {
-  IDEAL_SPLIT_OPTIONS,
-  idealSplit,
-  setIdealSplit,
-} from "./ideal-share.ts";
-import {
-  HAND_OFF_CAP_OPTIONS,
-  handOffCap,
-  setHandOffCap,
-  type HandOffCap,
-} from "./plan-prefs.ts";
-import { reverseGeocode } from "./geocode.ts";
 import {
   DEFAULT_RATE_PLAN,
   savedRatePlan,
@@ -52,38 +37,6 @@ import {
   speedometerStyle,
 } from "./ride-display-prefs.ts";
 import type { SpeedometerStyle } from "./api.ts";
-
-export interface InRidePanelDeps {
-  /** Let the rider drop a pin for a favourite. Absent means the row offers
-   *  only "Use my location" and "Clear" — which is also what keeps this module
-   *  free of any map import, exactly as `account.ts`'s home/work rows are. */
-  pickLocation?(label: string): Promise<{ lat: number; lng: number } | null>;
-  /** A favourite was added, renamed or cleared. The destination lists read the
-   *  store on open, so this is only for anything holding a rendered copy. */
-  onFavoritesChanged?(): void;
-  /** The Home or Work slot was set or cleared. Those two have a server half —
-   *  the profile's `home_lat`/`work_lat` columns, which draw the map pins and
-   *  count towards the profile-completion award — and this is the seam to it,
-   *  for the same reason the rate plan has one: this module never imports the
-   *  API client, so the host decides whether anything is listening. Absent, or
-   *  signed out, and the slot is simply device-local, which is the whole point
-   *  of the slots. Never fired for the two custom slots: they have no column.
-   *
-   *  Fired AFTER the local write, so the rider's row is already correct and a
-   *  failed round trip costs them nothing they can see. */
-  onHomeWorkChanged?(
-    kind: "home" | "work",
-    place: { lat: number; lon: number } | null,
-  ): void;
-  /** Whether the rider has configured an "ideal scooter".
-   *
-   *  Asked rather than imported: the spec lives behind a panel in another
-   *  drawer, and this module has no business reaching into it. Absent reads as
-   *  "not configured", which is the safe answer — it produces a row saying the
-   *  split preference has nothing to prefer yet, which is true of a build that
-   *  never wired this. */
-  hasIdealSpec?(): boolean;
-}
 
 export interface InRidePanelHandle {
   /** The account resolved a plan from the server — show it without firing a
@@ -137,11 +90,13 @@ function section(title: string): HTMLElement {
  *  and a rider who is told "Saved." has been lied to. */
 const NOT_PERSISTED = "Applied, but not saved on this device (private browsing?).";
 
-export function buildInRidePanel(
-  host: HTMLElement,
-  deps: InRidePanelDeps = {},
-): InRidePanelHandle {
-  let disposed = false;
+/** No deps object. Everything this panel needs is either a localStorage
+ *  preference it reads directly or the rate plan's server half, which reaches
+ *  it through the handle rather than through a callback — the map picker and
+ *  the favourite seams went to `account-nav.ts` with the sections that used
+ *  them. An empty `deps = {}` left behind would be a parameter every caller
+ *  has to supply and nothing reads. */
+export function buildInRidePanel(host: HTMLElement): InRidePanelHandle {
   const cleanups: (() => void)[] = [];
 
   // ---------------------------------------------------------------------
@@ -202,92 +157,6 @@ export function buildInRidePanel(
   });
 
   display.append(speedoWrap, costLabel, costHint, costStatus.node);
-
-  // ---------------------------------------------------------------------
-  // Trip planning
-  // ---------------------------------------------------------------------
-
-  // WHY A SETTING AND NOT A CLEVERNESS. `rankPlans` prices a hand-off honestly,
-  // so a two-scooter plan that comes out cheaper really is cheaper. What the
-  // arithmetic cannot price is whether the rider WANTS to park one scooter,
-  // find another and start a second rental mid-trip — for plenty of people the
-  // answer is no at any price. Until this existed, their only way to decline
-  // was to notice the hand-off in the list and pick a different row, every
-  // single time.
-  const planning = section("Trip plans");
-  planning.append(
-    el(
-      "p",
-      "account-hint",
-      "When you ask \u201cWhere to?\u201d we look for the quickest and cheapest ways there \u2014 sometimes that means riding one scooter, parking it, and taking another.",
-    ),
-  );
-  const capStatus = makeStatus();
-  const capWrap = el("div", "account-field");
-  capWrap.append(el("span", "control-label", "Switching scooters"));
-  const capSelect = el("select", "select");
-  capSelect.setAttribute("aria-label", "Switching scooters");
-  for (const option of HAND_OFF_CAP_OPTIONS) {
-    const opt = el("option", undefined, option.label);
-    opt.value = option.value === null ? "any" : String(option.value);
-    capSelect.append(opt);
-  }
-  // Same reasoning as the speedometer's hint: three short labels that do not
-  // describe themselves, and the consequence of each is what the rider is
-  // actually choosing between.
-  const capHint = el("p", "account-hint");
-  const paintCapHint = (): void => {
-    const chosen = HAND_OFF_CAP_OPTIONS.find(
-      (o) => (o.value === null ? "any" : String(o.value)) === capSelect.value,
-    );
-    capHint.textContent = chosen?.hint ?? "";
-  };
-  capSelect.addEventListener("change", () => {
-    const next: HandOffCap = capSelect.value === "any" ? null : capSelect.value === "0" ? 0 : 1;
-    paintCapHint();
-    capStatus.set(setHandOffCap(next) ? "Saved." : NOT_PERSISTED);
-  });
-  capWrap.append(capSelect, capHint, capStatus.node);
-  planning.append(capWrap);
-
-  // HOW a split trip divides, once the rider has accepted one. Separate from
-  // the cap above because they answer different questions: the cap is "will I
-  // switch at all", this is "given that I am switching, which one do I want to
-  // be on for most of it". A rider who capped hand-offs at zero never sees
-  // this one fire, and that is fine — it costs them one row they can ignore,
-  // where folding the two into a single control would mean neither said what
-  // it meant.
-  const splitStatus = makeStatus();
-  const splitWrap = el("div", "account-field");
-  splitWrap.append(el("span", "control-label", "When a trip is split"));
-  const splitSelect = el("select", "select");
-  splitSelect.setAttribute("aria-label", "When a trip is split");
-  for (const option of IDEAL_SPLIT_OPTIONS) {
-    const opt = el("option", undefined, option.label);
-    opt.value = option.value;
-    splitSelect.append(opt);
-  }
-  const splitHint = el("p", "account-hint");
-  const paintSplitHint = (): void => {
-    const chosen = IDEAL_SPLIT_OPTIONS.find((o) => o.value === splitSelect.value);
-    splitHint.textContent = chosen?.hint ?? "";
-  };
-  splitSelect.addEventListener("change", () => {
-    const next = splitSelect.value === "cheapest" ? "cheapest" : "prefer_ideal";
-    paintSplitHint();
-    splitStatus.set(setIdealSplit(next) ? "Saved." : NOT_PERSISTED);
-  });
-  splitWrap.append(splitSelect, splitHint, splitStatus.node);
-  planning.append(splitWrap);
-
-  // IT DOES NOTHING UNTIL AN IDEAL SCOOTER EXISTS, and saying so here is the
-  // difference between a control that looks broken and one that is waiting.
-  // Rendered unconditionally rather than hidden when a spec is configured: the
-  // drawer is built once and a rider can set a spec up without this panel
-  // hearing about it, so a hidden-when-set row would be stale more often than
-  // it was right. `refresh()` repaints it on reopen.
-  const splitNeedsSpec = el("p", "account-hint");
-  planning.append(splitNeedsSpec);
 
   // ---------------------------------------------------------------------
   // Rate plan
@@ -363,171 +232,7 @@ export function buildInRidePanel(
   }
   renderCalibration();
 
-  // ---------------------------------------------------------------------
-  // Favourite destinations
-  // ---------------------------------------------------------------------
-
-  const favs = section("Favorite destinations");
-  favs.append(
-    el(
-      "p",
-      "account-hint",
-      "Four places, one tap away whenever you open “Where to?”. Home and Work keep their names; the other two are yours to label.",
-    ),
-  );
-
-  const slotRows = new Map<FavoriteSlotId, { render(slot: FavoriteSlot): void }>();
-
-  const rerenderSlots = (): void => {
-    for (const slot of readSlots()) slotRows.get(slot.id)?.render(slot);
-  };
-
-  const buildSlotRow = (id: FavoriteSlotId): HTMLElement => {
-    const wrap = el("div", "account-field account-favslot");
-    const labelSpan = el("span", "control-label");
-    const hint = el("p", "account-hint");
-    const rowEl = el("div", "account-field__row account-location");
-    const value = el("span", "account-location__value");
-    const status = makeStatus();
-
-    const renameBtn = el("button", "text-btn", "Rename");
-    renameBtn.type = "button";
-    const pickBtn = el("button", "text-btn", "Pick on map");
-    pickBtn.type = "button";
-    pickBtn.hidden = !deps.pickLocation;
-    const useBtn = el("button", "text-btn", "Use my location");
-    useBtn.type = "button";
-    const clearBtn = el("button", "text-btn", "Clear");
-    clearBtn.type = "button";
-
-    // A rename box that replaces the row's buttons while it is open, so the
-    // drawer never shows two ways to change the same name at once.
-    const renameForm = el("form", "account-field__row");
-    const renameInput = el("input", "input");
-    renameInput.type = "text";
-    renameInput.maxLength = 40;
-    renameInput.setAttribute("aria-label", "Name for this favorite");
-    const renameSave = el("button", "text-btn", "Save");
-    renameSave.type = "submit";
-    const renameCancel = el("button", "text-btn", "Cancel");
-    renameCancel.type = "button";
-    renameForm.append(renameInput, renameSave, renameCancel);
-    renameForm.hidden = true;
-
-    let current: FavoriteSlot | null = null;
-
-    const render = (slot: FavoriteSlot): void => {
-      current = slot;
-      labelSpan.textContent = `${slot.emoji} ${slot.label}`;
-      hint.textContent = slot.hint;
-      renameBtn.hidden = !slot.renameable || slot.place === null;
-      clearBtn.hidden = slot.place === null;
-      if (slot.place === null) {
-        value.textContent = "Not set";
-        return;
-      }
-      const { lat, lon } = slot.place;
-      value.textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
-      // The address is nicer to read than a coordinate pair, but it arrives
-      // late and the row may have moved on by then — re-check before painting,
-      // the same guard `account.ts`'s home/work rows use.
-      void reverseGeocode(lat, lon).then((addr) => {
-        if (disposed || !addr) return;
-        const now = current?.place;
-        if (now && now.lat === lat && now.lon === lon) value.textContent = addr;
-      });
-    };
-
-    const place = (lat: number, lon: number): void => {
-      const { persisted } = assignSlotPlace(id, { lat, lon });
-      status.set(persisted ? "Saved." : NOT_PERSISTED, !persisted);
-      rerenderSlots();
-      deps.onFavoritesChanged?.();
-      if (id === "home" || id === "work") {
-        deps.onHomeWorkChanged?.(id, { lat, lon });
-      }
-    };
-
-    useBtn.addEventListener("click", () => {
-      if (!("geolocation" in navigator)) {
-        status.set("This browser can't share your location.", true);
-        return;
-      }
-      useBtn.disabled = true;
-      status.set("Locating…");
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          useBtn.disabled = false;
-          place(
-            Number(pos.coords.latitude.toFixed(5)),
-            Number(pos.coords.longitude.toFixed(5)),
-          );
-        },
-        () => {
-          useBtn.disabled = false;
-          status.set("Couldn't get your location.", true);
-        },
-      );
-    });
-
-    pickBtn.addEventListener("click", () => {
-      const picker = deps.pickLocation;
-      if (!picker) return;
-      status.set("Tap the map…");
-      void picker(current?.label ?? id).then((point) => {
-        if (disposed) return;
-        if (!point) {
-          status.set("");
-          return;
-        }
-        place(point.lat, point.lng);
-      });
-    });
-
-    clearBtn.addEventListener("click", () => {
-      const { persisted } = clearSlot(id);
-      status.set(persisted ? "Cleared." : NOT_PERSISTED, !persisted);
-      rerenderSlots();
-      deps.onFavoritesChanged?.();
-      if (id === "home" || id === "work") deps.onHomeWorkChanged?.(id, null);
-    });
-
-    const openRename = (): void => {
-      renameInput.value = current?.label ?? "";
-      renameForm.hidden = false;
-      rowEl.hidden = true;
-      renameInput.focus();
-      renameInput.select();
-    };
-    const closeRename = (): void => {
-      renameForm.hidden = true;
-      rowEl.hidden = false;
-      renameBtn.focus();
-    };
-    renameBtn.addEventListener("click", openRename);
-    renameCancel.addEventListener("click", closeRename);
-    renameForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const { persisted, applied } = renameSlot(id, renameInput.value);
-      if (!applied) {
-        status.set("Give it a name first.", true);
-        return;
-      }
-      status.set(persisted ? "Saved." : NOT_PERSISTED, !persisted);
-      closeRename();
-      rerenderSlots();
-      deps.onFavoritesChanged?.();
-    });
-
-    rowEl.append(value, pickBtn, useBtn, renameBtn, clearBtn);
-    wrap.append(labelSpan, hint, rowEl, renameForm, status.node);
-    slotRows.set(id, { render });
-    return wrap;
-  };
-
-  for (const id of FAVORITE_SLOT_IDS) favs.append(buildSlotRow(id));
-
-  host.append(display, planning, rate, calib, favs);
+  host.append(display, rate, calib);
 
   const refresh = (): void => {
     speedoSelect.value = speedometerStyle();
@@ -536,18 +241,8 @@ export function buildInRidePanel(
     const saved = savedRatePlan();
     rateSelect.value = saved ?? DEFAULT_RATE_PLAN;
     rateDefaultNote.hidden = saved !== null;
-    const cap = handOffCap();
-    capSelect.value = cap === null ? "any" : String(cap);
-    paintCapHint();
-    splitSelect.value = idealSplit();
-    paintSplitHint();
-    const hasSpec = deps.hasIdealSpec?.() ?? false;
-    splitNeedsSpec.textContent = hasSpec
-      ? "Your ideal scooter is set up — Filters → My ideal scooter to change it."
-      : "You haven't set up an ideal scooter yet, so this has nothing to prefer. Filters → My ideal scooter.";
     // A receipt filed since the drawer was last open can have changed this.
     renderCalibration();
-    rerenderSlots();
   };
   refresh();
 
@@ -564,7 +259,6 @@ export function buildInRidePanel(
     },
     refresh,
     dispose() {
-      disposed = true;
       for (const fn of cleanups.splice(0)) fn();
     },
   };

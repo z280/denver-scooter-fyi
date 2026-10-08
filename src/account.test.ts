@@ -37,7 +37,6 @@ vi.mock("./map-auth.js", () => ({ signOut: vi.fn().mockResolvedValue(undefined) 
 vi.mock("./geocode.ts", () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
 
 import { renderSignedInAccount, type AccountPanelMounts } from "./account.ts";
-import { readSlot } from "./favorite-slots.ts";
 import { saveRatePlan } from "./ride-cost.ts";
 import type { Profile } from "./api.ts";
 
@@ -136,7 +135,10 @@ describe("panel mounting", () => {
     expect(mounts.profile.querySelector(".account-profile")).not.toBeNull();
     const profileText = mounts.profile.textContent ?? "";
     expect(profileText).toContain("Edit Profile");
-    expect(profileText).toContain("Home location");
+    // The home/work EDITORS are the Navigation tab's four slots now, so what
+    // this panel carries is a pointer to them rather than a second copy.
+    expect(profileText).toContain("Navigation");
+    expect(profileText).not.toContain("Home location");
     expect(profileText).not.toContain("Rate plan");
 
     // Community: everything public-facing.
@@ -531,98 +533,11 @@ describe("phone verification gating", () => {
 
 // ---------- picking a location ----------
 
-describe("home and work locations", () => {
-  const rowFor = (mounts: AccountPanelMounts, label: string): HTMLElement =>
-    [...mounts.profile.querySelectorAll<HTMLElement>(".account-field")].find(
-      (r) => r.textContent?.includes(label),
-    )!;
-  const button = (row: HTMLElement, text: string) =>
-    [...row.querySelectorAll("button")].find((b) => b.textContent === text);
-
-  it("only offers 'Pick on map' when a picker was supplied", async () => {
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
-    await settle();
-    expect(button(rowFor(mounts, "Home location"), "Pick on map")?.hidden).toBe(
-      true,
-    );
-
-    document.body.replaceChildren();
-    const next = makeMounts();
-    const body2 = document.createElement("section");
-    document.body.append(body2);
-    renderSignedInAccount(body2, AUTH, {
-      ...deps(),
-      panels: next,
-      pickLocation: async () => null,
-    });
-    await settle();
-    expect(button(rowFor(next, "Home location"), "Pick on map")?.hidden).toBe(
-      false,
-    );
-  });
-
-  it("saves the picked point as a pair, rounded to five decimals", async () => {
-    const mounts = makeMounts();
-    const pickLocation = vi
-      .fn()
-      .mockResolvedValue({ lat: 39.739215678, lng: -104.987612345 });
-    renderSignedInAccount(body, AUTH, {
-      ...deps(),
-      panels: mounts,
-      pickLocation,
-    });
-    await settle();
-
-    api.updateProfile.mockClear();
-    button(rowFor(mounts, "Work location"), "Pick on map")!.click();
-    await settle();
-
-    expect(pickLocation).toHaveBeenCalledWith("work");
-    // Both halves together, per the API contract; ~1 m of precision, which is
-    // finer than any of these sources actually resolve.
-    expect(api.updateProfile).toHaveBeenCalledWith({
-      work_lat: 39.73922,
-      work_lng: -104.98761,
-    });
-  });
-
-  it("mirrors the saved location down into the Home favourite slot", async () => {
-    // The profile column is canonical — it survives a new device and feeds the
-    // map pins — but the two "Where to?" surfaces read the favourite store and
-    // nothing else, so without the mirror a rider sets their doorstep here and
-    // is never offered it when they go somewhere.
-    const mounts = makeMounts();
-    const onFavoritesChanged = vi.fn();
-    renderSignedInAccount(body, AUTH, {
-      ...deps(),
-      panels: mounts,
-      pickLocation: async () => ({ lat: 39.7, lng: -104.9 }),
-      onFavoritesChanged,
-    });
-    await settle();
-
-    button(rowFor(mounts, "Home location"), "Pick on map")!.click();
-    await settle();
-
-    expect(readSlot("home").place).toEqual({ lat: 39.7, lon: -104.9 });
-    expect(onFavoritesChanged).toHaveBeenCalled();
-  });
-
-  it("writes nothing when the rider cancels the pick", async () => {
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, {
-      ...deps(),
-      panels: mounts,
-      pickLocation: async () => null,
-    });
-    await settle();
-
-    api.updateProfile.mockClear();
-    button(rowFor(mounts, "Home location"), "Pick on map")!.click();
-    await settle();
-    expect(api.updateProfile).not.toHaveBeenCalled();
-  });
+describe("where home and work are", () => {
+  // The EDITORS are gone from this panel: Home and Work are the Navigation
+  // tab's slots now (`account-nav.ts`), which own their own tests. What is
+  // still this module's job is reading the two columns off a loaded profile
+  // and telling the map where to put the pins.
 
   it("reports where home and work are so the map can pin them", async () => {
     const onLocationsChanged = vi.fn();

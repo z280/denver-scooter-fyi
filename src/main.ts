@@ -11,7 +11,9 @@ import {
   fetchProfile,
   liveDibs,
   releaseDibs,
-  updateProfile,} from "./api.ts";
+  updateProfile,
+  type SavedPlace,
+} from "./api.ts";
 import { createMap } from "./map.ts";
 import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
 import {
@@ -234,10 +236,17 @@ import {
   type InRidePanelHandle,
 } from "./account-inride.ts";
 import {
+  buildNavPanel,
+  type NavPanelHandle,
+} from "./account-nav.ts";
+import {
+  startSavedPlacesSync,
+  syncSavedPlacesFromProfile,
+} from "./saved-places-sync.ts";
+import {
   ACCOUNT_TAB_IDS,
   createAccountTabs,
   takeTabHint,
-  writeTabHint,
 } from "./account-tabs.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, RATE_PLANS, REFRESH_MS } from "./config.ts";
@@ -5155,6 +5164,21 @@ function wireFreshnessCollapse(): void {
 
 // Renders the Account drawer body based on map-auth state and keeps the
 // expiry countdown live. Also wires sign-in / sign-out handlers.
+/** The saved-places mirror's two seams: is there a session, and how to send.
+ *
+ *  Module-level rather than inside `wireAccount` because the hook it registers
+ *  outlives any one render of the drawer — a rider editing a favourite from the
+ *  "Where to?" sheet is not in the drawer at all. */
+const savedPlacesDeps = {
+  signedIn: () => isAuthenticated(),
+  push: (places: SavedPlace[]) => updateProfile({ saved_places: places }),
+};
+
+// Registered once, signed in or not: the hook asks `signedIn()` on every write,
+// so a session starting or ending re-wires nothing. Signed out this is inert
+// and the favourites store behaves exactly as it always has.
+startSavedPlacesSync(savedPlacesDeps);
+
 function wireAccount(): void {
   const body = document.getElementById("account-body");
   if (!body) return;
@@ -5199,6 +5223,16 @@ function wireAccount(): void {
   loginHost.className = "account-login-host";
   body.append(loginHost);
 
+  // AND SO DOES THE PROFILE, directly under it. Who you are signed in as and
+  // the profile you are signed in WITH are one block; splitting them put half
+  // above the strip and half behind a tab the rider had to go looking for. Like
+  // `loginHost` it is built once and never torn down — `render()` replaces its
+  // CONTENTS — and it is simply empty when signed out, because there is no
+  // profile to display until there is a session.
+  const profileHost = document.createElement("div");
+  profileHost.className = "account-profile-host";
+  body.append(profileHost);
+
   // DECLARED BEFORE THE STRIP, AND NOT AS A `const` BELOW IT. `createAccountTabs`
   // calls `onShow` for the initial tab synchronously, from inside its own
   // constructor — that is deliberate, so lazily-built panels get their first
@@ -5208,6 +5242,10 @@ function wireAccount(): void {
   // lands inside `createAccountTabs`, aborts `wireAccount`, and the In-Ride panel
   // is never built at all — a tab that opens empty.
   let inRide: InRidePanelHandle | null = null;
+  // Declared here for the same reason, and it is not hypothetical: `onShow`
+  // below reads this one too, and the Navigation tab can be the initial tab
+  // via `takeTabHint()`.
+  let nav: NavPanelHandle | null = null;
 
   // The strip is built ONCE and never torn down: render() below replaces
   // panel CONTENTS, so the rider's chosen tab survives both the auth-config
@@ -5224,9 +5262,12 @@ function wireAccount(): void {
       // settings copy of it is re-read every time this tab is shown rather
       // than trusted to be current from when it was built.
       if (id === "inride") inRide?.refresh();
+      // Same reasoning: a sign-in can have merged places in from the account,
+      // and the ideal-scooter spec lives behind a panel in another drawer.
+      if (id === "nav") nav?.refresh();
     },
     onBlocked: (id) => {
-      const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
+      const what = id === "local" ? "Local Data" : "Community";
       gateHint.textContent = `Sign in to use ${what}.`;
       gateHint.hidden = false;
     },
@@ -5240,7 +5281,13 @@ function wireAccount(): void {
   // rebuilt on sign-in or sign-out: every control on it is a device preference
   // in localStorage, so none of them changes when a session does, and
   // rebuilding would throw away an open rename box for no reason.
-  inRide = buildInRidePanel(tabs.panel("inride"), {
+  inRide = buildInRidePanel(tabs.panel("inride"));
+
+  // Navigation preferences. Built once, outside render(), for exactly the same
+  // reason In-Ride is: every control on it is a device preference, none of them
+  // changes when a session does, and rebuilding would throw away an open rename
+  // box for no reason.
+  nav = buildNavPanel(tabs.panel("nav"), {
     pickLocation: (label) =>
       mapPick.pick({ hint: `Tap the map to set ${label}` }),
     // The destination lists read the store when they open, so nothing has to
@@ -5256,6 +5303,12 @@ function wireAccount(): void {
     // columns, and the profile-completion award counts one of them. Without
     // this, a rider could set Home here and still be told to complete their
     // profile.
+    //
+    // This is NARROWER than the saved-places sync registered at boot, and both
+    // run: that one carries all four slots (and every other saved place) into
+    // the encrypted `saved_places` blob, while these two plaintext columns
+    // exist because the map pins and the award read them. Dropping them is an
+    // API migration, not a client edit.
     //
     // Signed out it does nothing, by design — the slot stays device-local,
     // which is the point of the slots. Failures are swallowed: the local write
@@ -5289,10 +5342,11 @@ function wireAccount(): void {
       cfg: authCfg,
       state: signedOutState,
       // The session is persisted by the door itself; reload so every fetch
-      // picks up the bearer token — landing on Profile, which is what a
-      // brand-new account most needs filled in.
+      // picks up the bearer token. No tab hint any more: the profile a new
+      // account most needs to fill in is above the strip now, visible from
+      // whichever tab the reload lands on, so naming one would only move the
+      // rider away from wherever they were.
       onSignedIn: () => {
-        writeTabHint("profile");
         location.reload();
       },
     });
@@ -5319,20 +5373,24 @@ function wireAccount(): void {
       loginPanel = null;
       localData?.dispose();
       localData = null;
-      // Every panel EXCEPT In-Ride: that one is built once and owns nothing
-      // session-shaped, so emptying it here would delete a live panel and
-      // leave the tab blank.
+      // Every panel EXCEPT In-Ride and Navigation: those two are built once and
+      // own nothing session-shaped, so emptying them here would delete a live
+      // panel and leave the tab blank.
       for (const id of ACCOUNT_TAB_IDS) {
-        if (id !== "inride") tabs.panel(id).replaceChildren();
+        if (id !== "inride" && id !== "nav") tabs.panel(id).replaceChildren();
       }
       loginHost.replaceChildren();
+      profileHost.replaceChildren();
       gateHint.hidden = true;
 
       const on = !!auth;
-      tabs.setEnabled("profile", on);
+      // Navigation is NOT gated, where the Profile tab it replaced was: every
+      // control on it is a localStorage preference, so a signed-out rider can
+      // set all of it. The profile that needed the session moved above the
+      // strip, where it is simply absent when there is nothing to show.
       tabs.setEnabled("community", on);
       tabs.setEnabled("local", on || !GATE_LOCAL_TAB_ON_AUTH);
-      // In-Ride is never gated — it is all device preferences — so it is also
+      // In-Ride is never gated either — it is all device preferences — so it is
       // the safe place to land when a session ends underneath a tab that just
       // became unavailable.
       if (!tabs.isEnabled(tabs.selected())) tabs.select("inride", { force: true });
@@ -5349,19 +5407,17 @@ function wireAccount(): void {
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
-          pickLocation: (kind) =>
-            mapPick.pick({
-              hint:
-                kind === "home"
-                  ? "Tap the map to set your home"
-                  : "Tap the map to set your work",
-            }),
           onLocationsChanged: (points) => homeWorkPins.set(points),
-          // A profile home/work write mirrors down into the favourite slots,
-          // so the In-Ride tab's rows are stale until they re-read.
-          onFavoritesChanged: () => inRide?.refresh(),
-          onCompletenessChanged: (complete) =>
-            tabs.setFlagged("profile", !complete),
+          // The saved places arrived with the profile. Merging them into the
+          // device's own store is `saved-places-sync.ts`'s job; `undefined`
+          // (an older deployment) is passed straight through, because only
+          // that module should decide what silence means.
+          onSavedPlaces: (places) => {
+            syncSavedPlacesFromProfile(places, savedPlacesDeps);
+            // The slot rows are rendered from the store, and a merge can have
+            // changed them.
+            nav?.refresh();
+          },
           // Null until /auth/config resolves — the row treats unknown as
           // "don't offer yet" rather than flashing a button that may vanish.
           smsEnabled: () => authCfg?.smsEnabled ?? null,
@@ -5373,7 +5429,7 @@ function wireAccount(): void {
             inRide?.setRateStatus(message, isError),
           panels: {
             login: loginHost,
-            profile: tabs.panel("profile"),
+            profile: profileHost,
             community: tabs.panel("community"),
           },
         });

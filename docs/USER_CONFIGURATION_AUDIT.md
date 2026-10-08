@@ -83,15 +83,17 @@ Server-side, `GET`/`PUT /api/v1/profile`.
 |---|---|
 | `email`, `phone_number`, `phone_verified`, `sms_opted_out` | Edit Profile modal |
 | `rate_plan` | In-Ride tab (was Profile tab) |
-| `home_lat/lng`, `work_lat/lng` | Profile tab; draws map pins |
+| `home_lat/lng`, `work_lat/lng` | **Navigation tab's Home/Work slots**; draws map pins |
+| `saved_places` | **New.** Navigation tab's four slots and every other saved place. Encrypted at rest server-side (API `src/place_crypto.py`) |
 | `public_username`, `royalty_title`, `ruling_color`, `ruling_border_color` | Community tab |
 | `show_public_username`, `show_in_leaderboards` | Community tab |
 | `badges`, `display_name`, `ride_totals` | Read-only |
 | `theme` | **Stored, never read.** The app themes from `scooter-fyi-theme` locally. |
-| `favorites` | **Typed `unknown[]`, never read or written.** Favourites are local. |
+| `favorites` | **Superseded by `saved_places`.** The original plaintext column; the server folds it in on read and the client never touches it. |
 
-`theme` and `favorites` are dead columns from the client's side. Not touched —
-removing a server field is a cross-repo change, and both are harmless.
+`theme` is a dead column from the client's side; `favorites` is a draining one.
+Neither is written. Removing a server field is a cross-repo change, and the
+`favorites` fold-in has to run over live traffic before its column can go.
 
 ---
 
@@ -105,7 +107,7 @@ Thirty-three keys. The ones that are genuinely rider preferences:
 | `scooter-fyi-cost-hud` | **New.** Standing cost-readout toggle |
 | `scooter-fyi-save-tracks` | Standing save-tracks answer (the precedent) |
 | `scooter_fyi.rate_plan` + `scooter_fyi.veoplus` | Rate plan cache; Pass refinement the server cannot hold |
-| `scooter-fyi-favorites` | Saved places, including the four slots |
+| `scooter-fyi-favorites` | Saved places, including the four slots. Mirrored to `saved_places` while signed in (`saved-places-sync.ts`) |
 | `scooter-fyi-recent-dests` | Recent destinations |
 | `scooter-fyi-theme`, `scooter-fyi-theme-sun` | Theme and sun-sync |
 | `scooter_fyi.ride_voice_muted` | Voice mute |
@@ -143,11 +145,13 @@ for one ride.
 
 - **`RideOptions.theme`** is in the blob and resolved from localStorage instead.
   Harmless, but two sources of truth for one idea.
-- **Profile `home`/`work` vs the Home/Work favourite slots.** Deliberately
-  coexisting, as `favorites.ts` already documented for the profile columns: the
-  destination lists dedupe by position (`SAME_PLACE_DEGREES`), so a rider who
-  sets both sees one row. If they should be one value, the slot rows are where
-  to put the write.
+- **Profile `home`/`work` vs the Home/Work favourite slots.** Now one control,
+  not two: the profile panel's own location editors are gone and the Navigation
+  tab's slots are the single place a rider sets either. The two plaintext
+  columns are still written, from the slot rows, because the map pins and the
+  profile-completion award read them — dropping them is an API migration, not a
+  client edit. The slots also reach `saved_places`, which is the encrypted
+  replacement, through `favorites.ts`'s sync hook.
 - **`cost_hud` as a fully standing setting**, which needs the `autoStart`
   decision above.
 Both of the bugs this audit originally listed here are now fixed:

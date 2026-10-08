@@ -1,11 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./geocode.ts", () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
-
 import { buildInRidePanel } from "./account-inride.ts";
-import { _resetFavoritesForTests, loadFavorites } from "./favorites.ts";
-import { readSlot } from "./favorite-slots.ts";
+import { _resetFavoritesForTests } from "./favorites.ts";
 import { savedRatePlan } from "./ride-cost.ts";
 import { showsCostHud, speedometerStyle } from "./ride-display-prefs.ts";
 
@@ -37,16 +34,6 @@ const select = (label: string): HTMLSelectElement =>
 const change = (node: HTMLSelectElement | HTMLInputElement): void => {
   node.dispatchEvent(new Event("change", { bubbles: true }));
 };
-
-const slotRow = (label: string): HTMLElement =>
-  [...host.querySelectorAll<HTMLElement>(".account-favslot")].find((r) =>
-    r.querySelector(".control-label")?.textContent?.includes(label),
-  )!;
-
-const button = (root: HTMLElement, text: string) =>
-  [...root.querySelectorAll<HTMLButtonElement>("button")].find(
-    (b) => b.textContent === text,
-  );
 
 describe("the speedometer control", () => {
   it("offers exactly Classic, Digital and Hidden", () => {
@@ -172,116 +159,6 @@ describe("the rate plan control", () => {
   });
 });
 
-describe("favourite destinations", () => {
-  it("shows all four rows, unset, with Home and Work named for us", () => {
-    buildInRidePanel(host);
-    const labels = [...host.querySelectorAll<HTMLElement>(".account-favslot .control-label")]
-      .map((n) => n.textContent ?? "");
-    expect(labels).toHaveLength(4);
-    expect(labels[0]).toContain("Home");
-    expect(labels[1]).toContain("Work");
-    expect(labels[2]).toContain("Custom 1");
-    expect(labels[3]).toContain("Custom 2");
-    expect(host.textContent).toContain("Not set");
-  });
-
-  it("only offers Rename on the two custom rows, and only once set", () => {
-    buildInRidePanel(host);
-    // Nothing is set yet, so there is nothing to name.
-    for (const label of ["Home", "Work", "Custom 1", "Custom 2"]) {
-      expect(button(slotRow(label), "Rename")?.hidden).not.toBe(false);
-    }
-  });
-
-  it("hides 'Pick on map' when no picker was supplied", () => {
-    buildInRidePanel(host);
-    expect(button(slotRow("Home"), "Pick on map")!.hidden).toBe(true);
-  });
-
-  it("stores a picked place against the slot and redraws the row", async () => {
-    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    buildInRidePanel(host, { pickLocation });
-
-    button(slotRow("Home"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(readSlot("home").place).toEqual({ lat: 39.7, lon: -104.9 });
-    });
-    expect(slotRow("Home").textContent).not.toContain("Not set");
-    // One store: it is an ordinary favourite, which is how "Where to?" finds it.
-    expect(loadFavorites().some((f) => f.id === "slot:home")).toBe(true);
-  });
-
-  it("reports Home and Work up to the server half, and only those two", async () => {
-    // The seam exists so the profile's home_lat/work_lat columns — which draw
-    // the map pins and count towards the profile-completion award — do not
-    // disagree with the slot the rider just set. The two custom slots have no
-    // column, so firing for them would be a patch with nothing in it.
-    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    const onHomeWorkChanged = vi.fn();
-    buildInRidePanel(host, { pickLocation, onHomeWorkChanged });
-
-    button(slotRow("Work"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(onHomeWorkChanged).toHaveBeenCalledWith("work", {
-        lat: 39.7,
-        lon: -104.9,
-      });
-    });
-
-    // Clearing is a write too: the column has to go null with the slot.
-    button(slotRow("Work"), "Clear")!.click();
-    expect(onHomeWorkChanged).toHaveBeenLastCalledWith("work", null);
-
-    onHomeWorkChanged.mockClear();
-    button(slotRow("Custom 2"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(readSlot("custom2").place).not.toBeNull();
-    });
-    expect(onHomeWorkChanged).not.toHaveBeenCalled();
-  });
-
-  it("renames a custom slot once it has a place", async () => {
-    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    buildInRidePanel(host, { pickLocation });
-    const row = slotRow("Custom 1");
-    button(row, "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(readSlot("custom1").place).not.toBeNull();
-    });
-
-    const rename = button(slotRow("Custom 1"), "Rename")!;
-    expect(rename.hidden).toBe(false);
-    rename.click();
-    const input = slotRow("Custom 1").querySelector<HTMLInputElement>('input[type="text"]')!;
-    input.value = "Gym";
-    input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-
-    expect(readSlot("custom1").label).toBe("Gym");
-    expect(slotRow("Gym").textContent).toContain("Gym");
-  });
-
-  it("clearing empties the slot but keeps the row", async () => {
-    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    buildInRidePanel(host, { pickLocation });
-    button(slotRow("Home"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(readSlot("home").place).not.toBeNull();
-    });
-
-    button(slotRow("Home"), "Clear")!.click();
-    expect(readSlot("home").place).toBeNull();
-    expect(host.querySelectorAll(".account-favslot")).toHaveLength(4);
-    expect(slotRow("Home").textContent).toContain("Not set");
-  });
-
-  it("tells the host when a favourite changed", async () => {
-    const onFavoritesChanged = vi.fn();
-    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    buildInRidePanel(host, { pickLocation, onFavoritesChanged });
-    button(slotRow("Home"), "Pick on map")!.click();
-    await vi.waitFor(() => expect(onFavoritesChanged).toHaveBeenCalled());
-  });
-});
 
 describe("refresh", () => {
   it("re-reads every control, since the HUD can change the plan mid-ride", () => {

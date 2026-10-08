@@ -49,9 +49,9 @@ describe("structure and aria", () => {
     const tabs = createAccountTabs(host);
     expect(tabs.selected()).toBe("inride");
     expect(tabs.panel("inride").hidden).toBe(false);
-    expect(tabs.panel("profile").hidden).toBe(true);
+    expect(tabs.panel("nav").hidden).toBe(true);
     expect(tabFor("inride").getAttribute("aria-selected")).toBe("true");
-    expect(tabFor("profile").getAttribute("aria-selected")).toBe("false");
+    expect(tabFor("nav").getAttribute("aria-selected")).toBe("false");
   });
 
   it("honours the initial tab", () => {
@@ -65,8 +65,8 @@ describe("structure and aria", () => {
     const stops = () =>
       ACCOUNT_TAB_IDS.filter((id) => tabFor(id).tabIndex === 0);
     expect(stops()).toEqual(["inride"]);
-    tabs.select("profile");
-    expect(stops()).toEqual(["profile"]);
+    tabs.select("nav");
+    expect(stops()).toEqual(["nav"]);
   });
 });
 
@@ -78,13 +78,13 @@ describe("selection", () => {
     const tabs = createAccountTabs(host, { onShow });
     onShow.mockClear(); // the constructor announces the initial panel
 
-    tabFor("profile").click();
-    expect(tabs.selected()).toBe("profile");
+    tabFor("nav").click();
+    expect(tabs.selected()).toBe("nav");
     expect(onShow).toHaveBeenCalledTimes(1);
-    expect(onShow).toHaveBeenCalledWith("profile");
+    expect(onShow).toHaveBeenCalledWith("nav");
 
     // Re-selecting the same tab is not a change.
-    tabFor("profile").click();
+    tabFor("nav").click();
     expect(onShow).toHaveBeenCalledTimes(1);
   });
 
@@ -100,8 +100,8 @@ describe("selection", () => {
 describe("disabled tabs", () => {
   it("marks them aria-disabled but leaves them focusable", () => {
     const tabs = createAccountTabs(host);
-    tabs.setEnabled("profile", false);
-    const tab = tabFor("profile");
+    tabs.setEnabled("nav", false);
+    const tab = tabFor("nav");
     expect(tab.getAttribute("aria-disabled")).toBe("true");
     expect(tab.classList.contains("is-disabled")).toBe(true);
     // Crucially NOT the `disabled` property, which would make it unfocusable.
@@ -126,20 +126,20 @@ describe("disabled tabs", () => {
 
   it("force overrides the gate", () => {
     const tabs = createAccountTabs(host);
-    tabs.setEnabled("profile", false);
-    tabs.select("profile", { force: true });
-    expect(tabs.selected()).toBe("profile");
+    tabs.setEnabled("nav", false);
+    tabs.select("nav", { force: true });
+    expect(tabs.selected()).toBe("nav");
   });
 
   it("re-enabling restores normal selection", () => {
     const tabs = createAccountTabs(host);
-    tabs.setEnabled("profile", false);
-    tabs.select("profile");
+    tabs.setEnabled("nav", false);
+    tabs.select("nav");
     expect(tabs.selected()).toBe("inride");
-    tabs.setEnabled("profile", true);
-    tabs.select("profile");
-    expect(tabs.selected()).toBe("profile");
-    expect(tabFor("profile").getAttribute("aria-disabled")).toBe("false");
+    tabs.setEnabled("nav", true);
+    tabs.select("nav");
+    expect(tabs.selected()).toBe("nav");
+    expect(tabFor("nav").getAttribute("aria-disabled")).toBe("false");
   });
 });
 
@@ -155,7 +155,7 @@ describe("keyboard", () => {
   it("moves and selects with arrows, wrapping at both ends", () => {
     const tabs = createAccountTabs(host);
     key("ArrowRight");
-    expect(tabs.selected()).toBe("profile");
+    expect(tabs.selected()).toBe("nav");
     key("ArrowLeft");
     expect(tabs.selected()).toBe("inride");
     // wraps backwards from the first tab to the last
@@ -167,7 +167,7 @@ describe("keyboard", () => {
   });
 
   it("jumps with Home and End", () => {
-    const tabs = createAccountTabs(host, { initial: "profile" });
+    const tabs = createAccountTabs(host, { initial: "nav" });
     key("End");
     expect(tabs.selected()).toBe("local");
     key("Home");
@@ -177,11 +177,11 @@ describe("keyboard", () => {
   it("moves focus onto a disabled tab without selecting it", () => {
     const onBlocked = vi.fn();
     const tabs = createAccountTabs(host, { onBlocked });
-    tabs.setEnabled("profile", false);
+    tabs.setEnabled("nav", false);
     key("ArrowRight");
     expect(tabs.selected()).toBe("inride");
-    expect(document.activeElement).toBe(tabFor("profile"));
-    expect(onBlocked).toHaveBeenCalledWith("profile");
+    expect(document.activeElement).toBe(tabFor("nav"));
+    expect(onBlocked).toHaveBeenCalledWith("nav");
   });
 
   it("ignores keys it does not handle", () => {
@@ -197,7 +197,7 @@ describe("teardown", () => {
   it("stops responding to clicks after dispose", () => {
     const tabs = createAccountTabs(host);
     tabs.dispose();
-    tabFor("profile").click();
+    tabFor("nav").click();
     expect(tabs.selected()).toBe("inride");
   });
 
