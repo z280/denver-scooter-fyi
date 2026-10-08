@@ -79,6 +79,14 @@ export interface AccountSignedInDeps {
    *  from the payload — an older deployment — and is passed through as such,
    *  because the listener has to tell that apart from an account with none. */
   onSavedPlaces?(places: SavedPlace[] | undefined): void;
+  /** Whether this profile has a PROVED phone number — a number somebody typed
+   *  a texted code back for, not merely one on file.
+   *
+   *  Published because a surface outside this module gates an SMS feature on
+   *  it, and `phone_verified` is only knowable from the profile this module
+   *  loads. Fired on load and after any save that could change it, since saving
+   *  a DIFFERENT number drops its verification server-side. */
+  onPhoneVerified?(verified: boolean): void;
   /** The rate-plan control lives on the In-Ride tab now, outside this module,
    *  because it has to work signed out. These two are the seam back to it:
    *  `onRatePlanResolved` fires once the profile GET has reconciled the
@@ -377,6 +385,9 @@ export function renderSignedInAccount(
     const updated = await updateProfile(patch);
     if (!disposed && seq === saveSeq) {
       profile = updated;
+      // Saving a DIFFERENT number drops its verification server-side, so the
+      // SMS gate has to hear about every write and not only the first load.
+      deps.onPhoneVerified?.(updated.phone_verified === true);
       refreshHint();
       onProfileSaved?.();
     }
@@ -1771,6 +1782,7 @@ export function renderSignedInAccount(
         // and the rows that render them should be built from the merged list
         // rather than repainted a frame later.
         deps.onSavedPlaces?.(p.saved_places);
+        deps.onPhoneVerified?.(p.phone_verified === true);
         // Tabbed: contact/rate/location on Profile, everything public-facing
         // on Community. Untabbed: one stack, as before. Both branches build
         // in the same synchronous turn, so the Points section's

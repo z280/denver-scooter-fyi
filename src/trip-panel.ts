@@ -146,6 +146,19 @@ export interface TripPanelDeps {
    *  hand-off actually is. Absent means the rows are text only, which keeps
    *  this module free of any map import. */
   showOnMap?(dest: TripDest): void;
+  /** "I'm not going anywhere — just reset the map." Throw away the
+   *  destination, the ledger, the plan and the pins.
+   *
+   *  Absent means no Clear button: the host owns all four of those stores,
+   *  and a button that cleared only what this module can reach (nothing)
+   *  would be a lie. */
+  onClear?(): void;
+  /** Why clearing is refused right now, in the rider's words, or null when it
+   *  is allowed. A LIVE RIDE is the case this exists for: "clear my trip"
+   *  cannot mean "silently discard the ride you are on", and a button that
+   *  disappeared while riding would read as a missing feature rather than as
+   *  a deliberate refusal. */
+  clearBlockedReason?(): string | null;
 }
 
 export interface TripPanelHandle {
@@ -164,6 +177,8 @@ export function buildTripPanel(
    *  a valid index, so a rider reading step 3 does not get yanked back to the
    *  current leg because a tick re-rendered underneath them. */
   let shown: number | null = null;
+  /** The Clear button has been tapped once and is asking. */
+  let confirming = false;
 
   const body = el("div", "trippanel");
   host.replaceChildren(body);
@@ -187,6 +202,9 @@ export function buildTripPanel(
       // The preference still shows: a rider who came here to check it before
       // planning anything should find it rather than an empty page.
       body.append(preferenceRow());
+      // No Clear row here, and this is the one place it is right to omit it:
+      // there is no destination, so there is nothing to clear, and an enabled
+      // button that does nothing teaches the rider it does nothing.
       return;
     }
 
@@ -274,7 +292,67 @@ export function buildTripPanel(
     }
 
     body.append(preferenceRow());
+    const clear = clearRow();
+    if (clear) body.append(clear);
   };
+
+  /** "Clear my trip" — behind one confirm, because it throws away a
+   *  destination the rider typed and a plan they chose, and there is no undo.
+   *
+   *  The confirm is IN THE PANEL rather than a `window.confirm`: this drawer
+   *  is open on a phone over a map, and a native dialog there is a different
+   *  surface with its own dismissal rules. `refresh()` disarms it, so closing
+   *  the drawer and coming back never lands on a primed button. */
+  function clearRow(): HTMLElement | null {
+    if (!deps.onClear) return null;
+    const wrap = el("div", "trippanel__clear");
+    const blocked = deps.clearBlockedReason?.() ?? null;
+    if (blocked !== null) {
+      const btn = el("button", "text-btn", "Clear my trip");
+      btn.type = "button";
+      btn.disabled = true;
+      wrap.append(btn, el("p", "account-hint", blocked));
+      return wrap;
+    }
+    if (!confirming) {
+      const btn = el("button", "text-btn", "Clear my trip");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        confirming = true;
+        render();
+      });
+      wrap.append(
+        btn,
+        el(
+          "p",
+          "account-hint",
+          "Forget where you were going and put the map back to just the scooters.",
+        ),
+      );
+      return wrap;
+    }
+    const go = el("button", "text-btn is-danger", "Yes, clear it");
+    go.type = "button";
+    go.addEventListener("click", () => {
+      confirming = false;
+      deps.onClear?.();
+      // Re-render from the host's NEW state rather than assuming the clear
+      // worked: whatever it did or did not manage to drop, this panel shows
+      // what is actually there afterwards.
+      render();
+    });
+    const keep = el("button", "text-btn", "Keep it");
+    keep.type = "button";
+    keep.addEventListener("click", () => {
+      confirming = false;
+      render();
+    });
+    wrap.append(go, keep);
+    wrap.append(
+      el("p", "account-hint", "This cannot be undone. The trip is not saved anywhere else."),
+    );
+    return wrap;
+  }
 
   /** The routing preference, read-only, saying where it lives.
    *
@@ -298,6 +376,11 @@ export function buildTripPanel(
 
   return {
     refresh() {
+      // The Clear confirm IS disarmed here, unlike the stepper below. The
+      // asymmetry is deliberate: a half-answered "are you sure?" found on
+      // re-opening is one tap from throwing the trip away, and the rider's
+      // answer to it was for the moment they were asked, not for later.
+      confirming = false;
       // The stepper's position is NOT reset here. A rider who opened the
       // drawer, read ahead to step 3 and left it open should find step 3 when
       // they look back, not wherever the ride has got to.

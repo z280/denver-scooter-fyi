@@ -26,6 +26,10 @@ import {
   distanceToLineString,
   nearestShapeIndex,
   noteOffRouteSample,
+  TURN_PREVIEW_BACK_METERS,
+  TURN_PREVIEW_PITCH,
+  TURN_PREVIEW_ZOOM,
+  turnPreview,
   type NavHudOptions,
 } from "./ride-nav-hud.ts";
 
@@ -788,6 +792,186 @@ describe("createNavHud — turn completion + tap-to-jump", () => {
     btns[1].click();
     expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
       "Turn right onto A St",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. The per-step turn preview (🔍)
+// ---------------------------------------------------------------------------
+
+/** Meters between adjacent BASE_COORDS vertices (0.0002° of latitude). */
+const BASE_SPACING_M = 22.2;
+
+describe("turnPreview — the camera for one step", () => {
+  // BASE_COORDS runs due north, so every bearing here should be ~0. A due-north
+  // line is the one case where a sign error in the bearing math is invisible,
+  // so the east-west route below exists purely to catch that.
+  const coords = BASE_COORDS;
+
+  it("sits the camera back up the route from the junction, facing it", () => {
+    const m = [maneuver(0, 2, "Head north"), maneuver(4, 4, "Turn left")];
+    const p = turnPreview(coords, m, 1)!;
+    expect(p).not.toBeNull();
+    expect(p.index).toBe(1);
+    // The junction is the maneuver's begin vertex, untouched.
+    expect(p.turn).toEqual(coords[4]);
+    // ...and the camera is TURN_PREVIEW_BACK_METERS short of it, which on
+    // this spacing lands between vertices 2 and 3 — interpolated, not
+    // snapped to whichever vertex was nearest.
+    expect(p.center[1]).toBeGreaterThan(coords[2][1]);
+    expect(p.center[1]).toBeLessThan(coords[3][1]);
+    // Facing the turn: due north on this route.
+    expect(p.bearing).toBeCloseTo(0, 1);
+    expect(p.zoom).toBe(TURN_PREVIEW_ZOOM);
+    expect(p.pitch).toBe(TURN_PREVIEW_PITCH);
+  });
+
+  it("backs off the requested distance, not a vertex count", () => {
+    const m = [maneuver(4, 4, "Turn left")];
+    const p = turnPreview(coords, m, 0)!;
+    const back = (coords[4][1] - p.center[1]) * 111_320;
+    expect(back).toBeCloseTo(TURN_PREVIEW_BACK_METERS, 0);
+  });
+
+  it("gets the bearing's sign right on an east-west route", () => {
+    // Running EAST, so the approach bearing is 90°. With the two terms of the
+    // bearing formula swapped this reads 0 on BASE_COORDS and 0 here too —
+    // hence an axis the due-north fixture cannot hide.
+    const east: LngLatCoord[] = [
+      [-104.99, 39.7],
+      [-104.9895, 39.7],
+      [-104.989, 39.7],
+      [-104.9885, 39.7],
+    ];
+    const p = turnPreview(east, [maneuver(3, 3, "Turn right")], 0)!;
+    expect(p.bearing).toBeCloseTo(90, 0);
+    expect(p.center[0]).toBeLessThan(east[3][0]);
+  });
+
+  it("looks FORWARD for the first maneuver, which has no approach", () => {
+    // The rider is standing on vertex 0. There is nothing behind them, so
+    // "the rider's perspective" can only mean the heading they are about to
+    // take — and the alternative, a bearing computed from a zero-length
+    // vector, is NaN, which MapLibre takes and renders as a blank map.
+    // On an EASTBOUND route, so "looked forward" (90) is distinguishable from
+    // "gave up and returned 0" — which on the due-north fixture it is not.
+    const east: LngLatCoord[] = [
+      [-104.99, 39.7],
+      [-104.9895, 39.7],
+      [-104.989, 39.7],
+    ];
+    const p = turnPreview(east, [maneuver(0, 2, "Head east on 20th")], 0)!;
+    expect(p.center).toEqual(east[0]);
+    expect(p.turn).toEqual(east[0]);
+    expect(p.bearing).toBeCloseTo(90, 0);
+  });
+
+  it("stops at the route's start when the junction is closer than the look-back", () => {
+    // Vertex 1 is ~22m along, less than the 35m look-back: there is simply
+    // not that much route behind the turn.
+    expect(BASE_SPACING_M).toBeLessThan(TURN_PREVIEW_BACK_METERS);
+    const p = turnPreview(coords, [maneuver(1, 2, "Turn right")], 0)!;
+    expect(p.center).toEqual(coords[0]);
+    expect(p.bearing).toBeCloseTo(0, 1);
+  });
+
+  it("clamps a begin_shape_index past the end of the shape", () => {
+    // Reachable for real: a re-route replaces `coords` and `maneuvers`
+    // together, but renderPanel and a tap can interleave with that swap.
+    const p = turnPreview(coords, [maneuver(99, 99, "Arrive")], 0)!;
+    expect(p.turn).toEqual(coords[coords.length - 1]);
+  });
+
+  it("survives duplicate vertices without dividing by zero", () => {
+    const dupes: LngLatCoord[] = [
+      [-104.99, 39.7],
+      [-104.99, 39.7],
+      [-104.99, 39.7002],
+    ];
+    const p = turnPreview(dupes, [maneuver(2, 2, "Turn")], 0)!;
+    expect(Number.isFinite(p.center[0])).toBe(true);
+    expect(Number.isFinite(p.bearing)).toBe(true);
+  });
+
+  it("returns null with no shape and with no such step", () => {
+    expect(turnPreview([], [maneuver(0, 1)], 0)).toBeNull();
+    expect(turnPreview(coords, [], 0)).toBeNull();
+    expect(turnPreview(coords, [maneuver(0, 1)], 7)).toBeNull();
+  });
+
+  it("gives a one-vertex shape north-up rather than a NaN bearing", () => {
+    const p = turnPreview([[-104.99, 39.7]], [maneuver(0, 0, "Arrive")], 0)!;
+    expect(p.bearing).toBe(0);
+  });
+});
+
+describe("createNavHud — the 🔍 on each directions row", () => {
+  const maneuvers: RouteManeuver[] = [
+    maneuver(0, 2, "Head north on Blake St"),
+    maneuver(4, 4, "Turn right onto 20th St"),
+  ];
+
+  it("reports the camera for the row that was tapped", () => {
+    const onPreviewStep = vi.fn();
+    const { container } = setup({ route: makeRoute({ maneuvers }), onPreviewStep });
+    const peeks = container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-peek");
+    expect(peeks.length).toBe(2);
+
+    peeks[1].click();
+    expect(onPreviewStep).toHaveBeenCalledTimes(1);
+    expect(onPreviewStep.mock.calls[0][0].index).toBe(1);
+    expect(onPreviewStep.mock.calls[0][0].turn).toEqual(BASE_COORDS[4]);
+  });
+
+  it("does not make the previewed step the current one", () => {
+    // The row's own tap means "I am here"; the 🔍 means "let me look". Sharing
+    // one handler, or routing the 🔍 through jumpToStep, would rewrite which
+    // turn the rider is approaching — and the distance on the center card
+    // with it — every time they peeked ahead.
+    const onPreviewStep = vi.fn();
+    const { container } = setup({ route: makeRoute({ maneuvers }), onPreviewStep });
+    container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-peek")[1].click();
+
+    const steps = container.querySelectorAll(".nav-hud__step");
+    expect(steps[0].classList.contains("is-current")).toBe(true);
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Head north on Blake St",
+    );
+  });
+
+  it("closes the panel it was tapped in, and says so", () => {
+    // The list covers the map. A rider who asked to SEE the turn should not
+    // have it hidden behind the thing they asked from.
+    const onPreviewStep = vi.fn();
+    const { container, onCompress } = setup({
+      route: makeRoute({ maneuvers }),
+      onPreviewStep,
+    });
+    const left = container.querySelector<HTMLButtonElement>(".nav-hud__arrow--left")!;
+    left.click();
+    expect(onCompress).toHaveBeenLastCalledWith("left");
+
+    container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-peek")[0].click();
+    expect(onCompress).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector<HTMLElement>(".nav-hud__panel")!.hidden).toBe(true);
+  });
+
+  it("omits the button entirely when the host wired no handler", () => {
+    // A magnifier that does nothing is worse than none, and a host with no
+    // map cannot honor one.
+    const { container } = setup({ route: makeRoute({ maneuvers }) });
+    expect(container.querySelector(".nav-hud__step-peek")).toBeNull();
+    expect(container.querySelectorAll(".nav-hud__step-btn").length).toBe(2);
+  });
+
+  it("still lets the row itself set the current maneuver", () => {
+    const onPreviewStep = vi.fn();
+    const { container } = setup({ route: makeRoute({ maneuvers }), onPreviewStep });
+    container.querySelectorAll<HTMLButtonElement>(".nav-hud__step-btn")[1].click();
+    expect(onPreviewStep).not.toHaveBeenCalled();
+    expect(container.querySelector(".nav-hud__instruction")!.textContent).toBe(
+      "Turn right onto 20th St",
     );
   });
 });

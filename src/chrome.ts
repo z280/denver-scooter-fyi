@@ -66,20 +66,67 @@ function persistRibbon(open: boolean): void {
 
 let hamburger: HTMLButtonElement | null = null;
 
-function applyRibbon(open: boolean): void {
+/** Screens where the ribbon and an open surface fight over the same pixels.
+ *  The same 640px breakpoint the ribbon's own default uses: above it the
+ *  strip and a drawer sit side by side and nothing has to give way. */
+function tightScreen(): boolean {
+  // No matchMedia (an older embedded webview, a test that stubbed it away)
+  // reads as a wide screen on purpose: the failure mode of a wrong `true`
+  // is a menu that vanishes for no visible reason.
+  return window.matchMedia?.("(max-width: 640px)").matches === true;
+}
+
+function applyRibbon(open: boolean, opts?: { keepDrawer?: boolean }): void {
   document.body.classList.toggle("ribbon-open", open);
   hamburger?.setAttribute("aria-expanded", String(open));
   // Anyone anchored to the ribbon (the icon legend) re-measures on this.
   window.dispatchEvent(new CustomEvent<boolean>("scooter:ribbon", { detail: open }));
-  if (!open) {
+  if (!open && !opts?.keepDrawer) {
     // A drawer without its tab strip has no visible origin — close it.
     // Left-ribbon drawers only: the right (profile) drawer hangs off the
     // top bar's own button and survives a ribbon collapse.
+    //
+    // `keepDrawer` is the yield below: there the strip is standing aside FOR
+    // an open drawer, so closing that drawer is exactly backwards.
     const active = document.querySelector<HTMLButtonElement>(
       "#drawer-tabs .drawer-tab.is-active",
     );
     active?.click();
   }
+  if (open && tightScreen()) {
+    // The other direction. On a phone the profile drawer is full height and
+    // the ribbon slides out underneath it, so the strip appearing has to
+    // dismiss it — the rider asked for the menu, and two full-height
+    // surfaces over one screen leaves neither usable.
+    document
+      .querySelector<HTMLButtonElement>(".drawer-tab--topbar.is-active")
+      ?.click();
+  }
+}
+
+/** True while the ribbon is collapsed because a surface wanted the room,
+ *  rather than because the rider collapsed it. Only the first case is
+ *  restored: someone who tucked the strip away themselves should not find
+ *  it back when a popup closes. */
+let yielded = false;
+
+/** Stand the ribbon aside for a drawer or popup that needs the screen.
+ *
+ *  A no-op on a wide screen (nothing is in anyone's way) and when the strip
+ *  is already closed (the phone default), which is also why this does not
+ *  persist: yielding is not a preference, and restoring it has to put back
+ *  exactly the state we took away. */
+export function yieldRibbonToDrawer(): void {
+  if (!tightScreen() || !isRibbonOpen()) return;
+  yielded = true;
+  applyRibbon(false, { keepDrawer: true });
+}
+
+/** Give the ribbon back, if we were the ones who took it. */
+export function restoreRibbonAfterDrawer(): void {
+  if (!yielded) return;
+  yielded = false;
+  if (!isRibbonOpen()) applyRibbon(true);
 }
 
 /** Programmatic ribbon control — setDrawer() opens the ribbon before it
@@ -92,6 +139,9 @@ export function setRibbonOpen(
   opts?: { persist?: boolean },
 ): void {
   if (document.body.classList.contains("ribbon-open") === open) return;
+  // A deliberate open or close settles the question: whatever we had
+  // borrowed is no longer ours to give back.
+  yielded = false;
   applyRibbon(open);
   if (opts?.persist) persistRibbon(open);
 }

@@ -293,6 +293,131 @@ function distanceAlongCoords(
 }
 
 // ---------------------------------------------------------------------------
+// Turn preview — the 🔍 on each directions row.
+//
+// "Show the turn from the map perspective of the rider, zoomed in just before
+// the turn." So the camera is NOT placed on the junction looking down: it is
+// placed where the rider will be a few seconds short of it, facing the way
+// they will be facing. That makes the preview answer the question a rider
+// actually has ("which way do I go when I get there?") rather than the one a
+// top-down pin answers ("where is it on the map?").
+//
+// Pure, and separated from the DOM below, because every interesting case is
+// geometric: the first maneuver (no approach to look back along), a junction
+// closer to the route's start than the look-back distance, a degenerate
+// one-vertex shape, and a `begin_shape_index` past the end of a re-routed
+// polyline.
+// ---------------------------------------------------------------------------
+
+/** How far back up the route the preview camera sits. About three seconds of
+ *  scooter travel: far enough that the junction and both of its streets are
+ *  in frame, near enough that the rider is looking at the turn rather than
+ *  at the block before it. */
+export const TURN_PREVIEW_BACK_METERS = 35;
+/** Street-level. The turn is a single intersection, not a neighborhood. */
+export const TURN_PREVIEW_ZOOM = 17.5;
+/** Tilted, which is the whole point of "the rider's perspective" — a flat
+ *  overhead view with a bearing is a rotated map, not a view down a street. */
+export const TURN_PREVIEW_PITCH = 55;
+
+/** A camera, ready to hand to MapLibre's `easeTo`. */
+export interface TurnPreview {
+  /** Which step this previews — the caller may want to mark the row. */
+  index: number;
+  /** Where the camera sits: the rider's eye, short of the junction. */
+  center: LngLatCoord;
+  /** The junction itself, so a caller can drop a marker on it. */
+  turn: LngLatCoord;
+  /** Map bearing (degrees from north): the direction of travel INTO the
+   *  turn, so "left" on the instruction is left on the screen. */
+  bearing: number;
+  zoom: number;
+  pitch: number;
+}
+
+/** Initial great-circle bearing, degrees clockwise from north, normalized to
+ *  [0, 360). */
+function bearingDeg(from: LngLatCoord, to: LngLatCoord): number {
+  const rad = (d: number): number => (d * Math.PI) / 180;
+  const lat1 = rad(from[1]);
+  const lat2 = rad(to[1]);
+  const dLng = rad(to[0] - from[0]);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** Walk back up the polyline from vertex `turnIdx` until `meters` have been
+ *  covered, interpolating within the final segment so the result is the exact
+ *  distance back rather than whichever vertex happens to be near it (a sparse
+ *  shape's previous vertex can be a whole block away). Runs out of route at
+ *  vertex 0 and stops there. */
+function pointBackAlong(
+  coords: readonly LngLatCoord[],
+  turnIdx: number,
+  meters: number,
+): LngLatCoord {
+  let remaining = meters;
+  for (let i = turnIdx; i > 0; i--) {
+    const a = coords[i - 1];
+    const b = coords[i];
+    const seg = distanceMeters(
+      { lat: a[1], lng: a[0] },
+      { lat: b[1], lng: b[0] },
+    );
+    if (seg >= remaining) {
+      // Fraction of this segment to travel BACKWARD from b toward a. A
+      // zero-length segment (duplicate vertices happen) contributes nothing
+      // and would divide by zero.
+      const t = seg === 0 ? 0 : remaining / seg;
+      return [b[0] + (a[0] - b[0]) * t, b[1] + (a[1] - b[1]) * t];
+    }
+    remaining -= seg;
+  }
+  return coords[0];
+}
+
+/** The camera for step `index`, or `null` when there is nothing to show (no
+ *  shape, or no such maneuver — both reachable mid-re-route). */
+export function turnPreview(
+  coords: readonly LngLatCoord[],
+  maneuvers: readonly RouteManeuver[],
+  index: number,
+): TurnPreview | null {
+  if (coords.length === 0) return null;
+  const maneuver = maneuvers[index];
+  if (!maneuver) return null;
+  const turnIdx = Math.max(
+    0,
+    Math.min(maneuver.begin_shape_index, coords.length - 1),
+  );
+  const turn = coords[turnIdx];
+  const center = pointBackAlong(coords, turnIdx, TURN_PREVIEW_BACK_METERS);
+  // The first maneuver has no approach: the rider is standing on the first
+  // vertex. Look FORWARD along the route instead — that is the heading they
+  // are about to take, which is still "the rider's perspective", and is the
+  // only non-arbitrary answer available. A one-vertex shape has neither, and
+  // gets north-up rather than a NaN bearing.
+  const degenerate = center[0] === turn[0] && center[1] === turn[1];
+  const ahead = coords[Math.min(turnIdx + 1, coords.length - 1)];
+  const bearing = !degenerate
+    ? bearingDeg(center, turn)
+    : ahead === turn
+      ? 0
+      : bearingDeg(turn, ahead);
+  return {
+    index,
+    center,
+    turn,
+    bearing,
+    zoom: TURN_PREVIEW_ZOOM,
+    pitch: TURN_PREVIEW_PITCH,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Off-route detection + re-route rate cap — a pure reducer over a tiny state
 // shape, so the sustain/cooldown timing is testable without real timers, a
 // DOM, or a mocked `fetch`.
@@ -544,6 +669,13 @@ export interface NavHudOptions {
   onCompress: (side: "left" | "right" | null) => void;
   /** Fired after a successful off-route re-route. See `NavHudRouteUpdate`. */
   onRouteUpdate?: (update: NavHudRouteUpdate) => void;
+  /** Fired when the rider taps a directions row's 🔍. The camera is computed
+   *  here (see `turnPreview`) because this module owns the shape and the
+   *  maneuvers; moving the map is the caller's, because this module owns no
+   *  map. OMITTING THIS HIDES THE BUTTON — a magnifier that does nothing is
+   *  worse than no magnifier, and a caller with no map to fly (a test, an
+   *  embedded HUD) has no way to honor it. */
+  onPreviewStep?: (preview: TurnPreview) => void;
   /** Phase 11 §11.1 — the upcoming maneuver and how far off it is, on every fix.
    *  `null` once there is no maneuver left.
    *
@@ -837,6 +969,22 @@ export function createNavHud(
         btn.appendChild(streets);
       }
       li.appendChild(btn);
+      // 🔍 — "where exactly do I turn?". A SIBLING of the row button, not a
+      // child: nested buttons are invalid, and the row's own tap means
+      // something quite different (make this the current maneuver), so the
+      // two must not be one target.
+      if (opts.onPreviewStep) {
+        const peek = document.createElement("button");
+        peek.type = "button";
+        peek.className = "nav-hud__step-peek";
+        peek.dataset.step = String(i);
+        peek.textContent = "🔍";
+        peek.setAttribute(
+          "aria-label",
+          `Show the ${m.instruction || "turn"} on the map`,
+        );
+        li.appendChild(peek);
+      }
       stepsList.appendChild(li);
     });
   }
@@ -857,13 +1005,34 @@ export function createNavHud(
     renderPanel();
   }
 
+  /** Fly the caller's map to step `i`'s junction, and get out of the way.
+   *
+   *  The panel closes itself: it covers a third of the screen, and a rider
+   *  who just asked to LOOK at something does not want the thing they asked
+   *  about hidden behind the list they asked from. `setPanelSide` reports the
+   *  change through `onCompress`, so the caller's compression class lifts too.
+   *  Deliberately NOT a `jumpToStep` — peeking ahead must not rewrite which
+   *  turn the rider is considered to be approaching. */
+  function previewStep(i: number): void {
+    if (destroyed) return;
+    const preview = turnPreview(coords, maneuvers, i);
+    if (!preview) return;
+    setPanelSide(null);
+    opts.onPreviewStep?.(preview);
+  }
+
   // One delegated listener rather than one per row: renderPanel rebuilds
   // the rows on every fix (replaceChildren), and per-row listeners would
   // have to be re-attached each time.
   const onStepClick = (e: Event): void => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
-      ".nav-hud__step-btn",
-    );
+    const target = e.target as HTMLElement;
+    const peek = target.closest<HTMLButtonElement>(".nav-hud__step-peek");
+    if (peek && stepsList.contains(peek)) {
+      const i = Number(peek.dataset.step);
+      if (Number.isInteger(i)) previewStep(i);
+      return;
+    }
+    const btn = target.closest<HTMLButtonElement>(".nav-hud__step-btn");
     if (!btn || !stepsList.contains(btn)) return;
     const i = Number(btn.dataset.step);
     if (Number.isInteger(i)) jumpToStep(i);

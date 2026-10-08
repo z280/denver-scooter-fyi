@@ -26,7 +26,7 @@ import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
 import { openDibsCertificate, showDibsAlertToast } from "./dibs-certificate.ts";
-import { createDibsNotifier } from "./dibs-notify.ts";
+import { createDibsNotifier, requestDibsNotifications } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -69,7 +69,7 @@ import {
   openConfirmFeatures,
   type FeatureFilterKey,
 } from "./device-features.ts";
-import { Locate } from "./locate.ts";
+import { Locate, distanceMeters } from "./locate.ts";
 import {
   MicromobilityZones,
   type ZoneGroup,
@@ -149,7 +149,7 @@ import { submitDeviceReport } from "./reports.ts";
 import { learnFromReceipt } from "./cost-calibration.ts";
 import { precheckReceipt } from "./receipt-precheck.ts";
 import { buildTripPanel, type TripPanelHandle } from "./trip-panel.ts";
-import { peekPendingTrip } from "./pending-trip.ts";
+import { clearPendingTrip, peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
   endTrip,
@@ -179,6 +179,7 @@ import {
   type RideSpecPanelHandle,
 } from "./ride-spec-panel.ts";
 import {
+  callDibs,
   dibsExpiresAt,
   dibsOn,
   dropDibs,
@@ -187,6 +188,7 @@ import {
   type Dibs,
   loadDibs,
 } from "./dibs.ts";
+import { autoDibs } from "./dibs-prefs.ts";
 import {
   setPendingTrip,
   takePendingTrip,
@@ -260,6 +262,8 @@ import {
   initChrome,
   installBrandMark,
   setRibbonOpen,
+  yieldRibbonToDrawer,
+  restoreRibbonAfterDrawer,
   closeAllPopups,
   registerPopupCloser,
 } from "./chrome.ts";
@@ -4159,6 +4163,14 @@ let interviewAnswers: InterviewAnswers | null = null;
  *  journey. */
 let useIdealSpec = true;
 
+/** Whether the signed-in profile carries a PROVED phone number.
+ *
+ *  Null until the profile answers, and null again when there is no session —
+ *  which the Navigation tab renders as "sign in and verify a phone", not as
+ *  "you have no phone". Conflating the two tells a rider with a verified number
+ *  to go and verify it. */
+let phoneVerified: boolean | null = null;
+
 
 /** Drop the plan list, leaving the rider on the ranked scooters below it.
  *
@@ -4177,6 +4189,36 @@ let useIdealSpec = true;
 function closePlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
+}
+
+/** "Clear my trip" — throw away everywhere the trip is written down.
+ *
+ *  THE WHOLE POINT IS THAT IT IS ONE BUTTON. The destination lives on the ride
+ *  session doc, the pending trip lives in its own store, the hand-offs live in
+ *  the trip ledger, and the pins and the route line live on the map. A rider
+ *  who says "I'm not going anywhere" means all five, and before this they had
+ *  no way to say it at all: the only exits were arriving and starting a
+ *  different trip.
+ *
+ *  Called only when `clearBlockedReason` says it may be (no live ride) — the
+ *  guard lives beside the button, which is where the rider is told about it.
+ *  `rideSession.replace(null)` is the pre-ride doc, the one the wizard built
+ *  to hold a destination; dropping it is what makes the home bar go back to
+ *  asking "Where to?". */
+function clearTrip(): void {
+  clearPendingTrip();
+  endTrip();
+  rideSession.replace(null);
+  tripPins.clear();
+  rideRouteLine.clear();
+  // The plan and the answers that shaped it. Keeping an interview answer past
+  // the trip it was given for is the bug the plan-list restructure fixed —
+  // last trip's "I want a Cosmo" has no business steering the next one.
+  closePlanList();
+  interviewAnswers = null;
+  recommended?.clear();
+  exitFindWheels();
+  track("trip_cleared", {});
 }
 
 /** What `rankPlans` needs, gathered from the live app.
@@ -4630,6 +4672,44 @@ function beginWalkToVehicle(info: {
   // a trip the rider has already started walking.
   closePlanList();
   document.body.classList.add("arrival-open");
+
+  // CLAIMING IS PART OF GOING, and this is where every route into a walk meets.
+  //
+  // The device popup's "I'll ride this one" has always called dibs — the
+  // sentence that picks a scooter is the sentence that claims it. A scooter
+  // picked off a PLAN said the same thing and claimed nothing, because that
+  // route into the walk went through here instead. So it claims here too, which
+  // also covers the two other ways in (a tap on the map, resuming a claim from
+  // a toast) rather than leaving each to remember.
+  //
+  // `callDibs` is idempotent on the vehicle identifier, so the popup's own
+  // claim a moment earlier is returned rather than duplicated — the two paths
+  // can both run without fighting.
+  //
+  // Guarded on the rider's answer (`autoDibs`, default on) and on there BEING
+  // an identifier: dibs is keyed on it, and a private scooter or a payload
+  // without one has nothing to claim.
+  if (info.vehicleIdentifier && autoDibs()) {
+    const here = locate.current();
+    const claim = callDibs({
+      vehicleIdentifier: info.vehicleIdentifier,
+      vehicleName: info.name,
+      plate: info.plate,
+      claimedBy: dibsClaimant,
+      startMeters: here
+        ? distanceMeters(here, { lat: info.lat, lng: info.lng })
+        : 0,
+      lat: info.lat,
+      lon: info.lng,
+    });
+    // The watch rides along, exactly as it does from the popup: a rider being
+    // told they have dibs is the same breath in which to say we will warn them
+    // if it goes. Both are best-effort — `armDibsWatch` refuses past its own
+    // slot limits and `requestDibsNotifications` can be denied — and neither
+    // may stop the walk starting.
+    armDibsWatch(claim);
+    void requestDibsNotifications();
+  }
 
   const panel = createArrivalPanel(need("arrival-panel"), {
     vehicle: { name: info.name, plate: info.plate ?? undefined },
@@ -5126,6 +5206,14 @@ function wireDrawers(): void {
       drawer.classList.toggle("is-open", open);
       drawer.setAttribute("aria-hidden", String(!open));
     }
+    // SCREEN SPACE. On a phone an open drawer covers the map and the ribbon
+    // slides out on top of it, so the strip stands aside while a drawer is
+    // up and comes back when it closes. This loop is also what makes the
+    // profile drawer and the map drawers mutually exclusive — the top bar's
+    // profile button carries `.drawer-tab`, so it is one of `tabs` and
+    // `setActive` shuts every other drawer to open it, and vice versa.
+    if (id) yieldRibbonToDrawer();
+    else restoreRibbonAfterDrawer();
     // "(live)" has to mean it: re-fetch the tally every time the panel is
     // shown rather than once at boot, and drop the in-flight fetch when it
     // is hidden again.
@@ -5176,6 +5264,21 @@ function wireDrawers(): void {
         showOnMap: (target) => {
           map.easeTo({ center: [target.lon, target.lat], zoom: 16 });
         },
+        // "I'm not going anywhere, just reset the map."
+        //
+        // A live ride is the one case this refuses. "Clear my trip" is a
+        // tidy-up, and silently ending a ride in progress — with its clock,
+        // its cost and, on a tracked ride, its recording — is not a tidy-up.
+        // It says so rather than hiding the button, so the refusal reads as a
+        // refusal.
+        clearBlockedReason: () => {
+          const doc = rideSession.current();
+          if (doc !== null && isRideLive(doc)) {
+            return "You're on a ride. End it first and this will clear everything that's left.";
+          }
+          return null;
+        },
+        onClear: clearTrip,
       });
       tripPanel.refresh();
     }
@@ -5411,6 +5514,7 @@ function wireAccount(): void {
     // Whether an "ideal scooter" exists, so the split preference can say
     // plainly that it has nothing to prefer yet.
     hasIdealSpec: () => rideSpecPanel?.activeSpec() != null,
+    phoneVerified: () => phoneVerified,
     // Redraw the map's home/work pins. The pins follow the SLOTS now, not the
     // profile's `home_lat`/`work_lat` columns — which is what makes them
     // appear for a signed-out rider, and what stops them disagreeing with the
@@ -5450,6 +5554,10 @@ function wireAccount(): void {
       renderedKey = key;
       signedIn?.dispose();
       signedIn = null;
+      // Back to "we have not looked", not to "no phone": the next render must
+      // not tell a signed-out rider their verified number is missing.
+      phoneVerified = null;
+      nav?.refresh();
       loginPanel?.dispose();
       loginPanel = null;
       localData?.dispose();
@@ -5492,6 +5600,13 @@ function wireAccount(): void {
           // device's own store is `saved-places-sync.ts`'s job; `undefined`
           // (an older deployment) is passed straight through, because only
           // that module should decide what silence means.
+          // The SMS dibs alert needs a number we have proved. Pushed rather
+          // than fetched by the Navigation tab, which has no API client and is
+          // built once, outside render().
+          onPhoneVerified: (verified) => {
+            phoneVerified = verified;
+            nav?.refresh();
+          },
           onSavedPlaces: (places) => {
             syncSavedPlacesFromProfile(places, savedPlacesDeps);
             // The slot rows are rendered from the store, and a merge can have

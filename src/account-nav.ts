@@ -43,6 +43,12 @@ import {
   setHandOffCap,
   type HandOffCap,
 } from "./plan-prefs.ts";
+import {
+  autoDibs,
+  dibsSmsAlerts,
+  setAutoDibs,
+  setDibsSmsAlerts,
+} from "./dibs-prefs.ts";
 import { reverseGeocode } from "./geocode.ts";
 
 export interface NavPanelDeps {
@@ -69,6 +75,17 @@ export interface NavPanelDeps {
    *  split preference has nothing to prefer yet, which is true of a build that
    *  never wired this. */
   hasIdealSpec?(): boolean;
+  /** Whether the rider has a PROVED phone number on their profile.
+   *
+   *  Three-valued on purpose. `true` and `false` are what they say; `null` is
+   *  "we have not looked yet" — the profile fetch is in flight, or there is no
+   *  session to fetch for. A null must not be rendered as "you have no phone",
+   *  because that sentence tells a rider with a verified number to go and
+   *  verify it. Absent dep reads as null for the same reason.
+   *
+   *  Asked rather than imported: this module never touches the API client, the
+   *  same rule that keeps the rate plan and the map picker out of it. */
+  phoneVerified?(): boolean | null;
 }
 
 export interface NavPanelHandle {
@@ -210,6 +227,73 @@ export function buildNavPanel(
   // it was right. `refresh()` repaints it on reopen.
   const splitNeedsSpec = el("p", "account-hint");
   planning.append(splitNeedsSpec);
+
+  // ---------------------------------------------------------------------
+  // Calling dibs
+  // ---------------------------------------------------------------------
+
+  const dibs = section("Calling dibs");
+  dibs.append(
+    el(
+      "p",
+      "account-hint",
+      "Dibs is a public claim on a scooter while you walk to it \u2014 a certificate anyone standing at it can read, so they know somebody is on the way.",
+    ),
+  );
+
+  const autoStatus = makeStatus();
+  const autoLabel = el("label", "switch account-switch");
+  const autoInput = el("input");
+  autoInput.type = "checkbox";
+  autoLabel.append(autoInput, el("span", undefined, "Automatically call dibs"));
+  const autoHint = el(
+    "p",
+    "account-hint",
+    "On by default. When you pick a scooter off a route we claim it and start watching it, so you don\u2019t have to press anything while you\u2019re walking.",
+  );
+  autoInput.addEventListener("change", () => {
+    autoStatus.set(setAutoDibs(autoInput.checked) ? "Saved." : NOT_PERSISTED);
+  });
+  dibs.append(autoLabel, autoHint, autoStatus.node);
+
+  const smsStatus = makeStatus();
+  const smsLabel = el("label", "switch account-switch");
+  const smsInput = el("input");
+  smsInput.type = "checkbox";
+  smsLabel.append(
+    smsInput,
+    el("span", undefined, "Notify me via SMS if my dibs are disrespected"),
+  );
+  // Two hints, and which one shows is the whole of the gating. The reason a
+  // control is disabled has to sit next to the control — a greyed switch with
+  // no explanation reads as a broken app, and a rider cannot guess that the fix
+  // is on a different tab.
+  const smsHint = el("p", "account-hint");
+  smsInput.addEventListener("change", () => {
+    smsStatus.set(setDibsSmsAlerts(smsInput.checked) ? "Saved." : NOT_PERSISTED);
+  });
+  dibs.append(smsLabel, smsHint, smsStatus.node);
+
+  /** Enable or disable the SMS switch, and say why.
+   *
+   *  `null` — the profile has not answered yet, or there is no session — is
+   *  treated as "cannot offer this", NOT as "you have no phone". The difference
+   *  matters: the second sentence tells a rider with a verified number to go
+   *  and verify it, which is the app contradicting itself. */
+  const paintSms = (): void => {
+    const verified = deps.phoneVerified?.() ?? null;
+    smsInput.disabled = verified !== true;
+    smsLabel.classList.toggle("is-disabled", verified !== true);
+    if (verified === true) {
+      smsHint.textContent =
+        "We\u2019ll text you if somebody rides off on a scooter you called dibs on.";
+      return;
+    }
+    smsHint.textContent =
+      verified === false
+        ? "Needs a verified phone number \u2014 add one under Profile, above these tabs, and verify it with the code we text you."
+        : "Sign in and verify a phone number to turn this on.";
+  };
 
   // ---------------------------------------------------------------------
   // Favourite destinations
@@ -385,7 +469,7 @@ export function buildNavPanel(
 
   for (const id of FAVORITE_SLOT_IDS) favs.append(buildSlotRow(id));
 
-  host.append(planning, favs);
+  host.append(planning, dibs, favs);
 
   const refresh = (): void => {
     const cap = handOffCap();
@@ -397,6 +481,9 @@ export function buildNavPanel(
     splitNeedsSpec.textContent = hasSpec
       ? "Your ideal scooter is set up — Filters → My ideal scooter to change it."
       : "You haven't set up an ideal scooter yet, so this has nothing to prefer. Filters → My ideal scooter.";
+    autoInput.checked = autoDibs();
+    smsInput.checked = dibsSmsAlerts();
+    paintSms();
     rerenderSlots();
   };
   refresh();

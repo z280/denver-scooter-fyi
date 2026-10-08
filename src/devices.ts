@@ -27,6 +27,10 @@ import {
 import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
+import {
+  yieldRibbonToDrawer,
+  restoreRibbonAfterDrawer,
+} from "./chrome.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
   computeBatteryThresholds,
@@ -2049,6 +2053,10 @@ export class Devices {
         )
         .addTo(map);
       this.popup = popup;
+      // The device card is the other surface that needs the whole phone:
+      // it is nearly full-width, and the ribbon slides out across it. Same
+      // borrow-and-return as a drawer.
+      yieldRibbonToDrawer();
       nudgePopupIntoView(map, popup);
       // Remembered so setAdminSession can rebuild this popup if the admin
       // flag lands while it is open — its gates captured the old value.
@@ -2059,6 +2067,7 @@ export class Devices {
         if (this.popup === popup) {
           this.popup = null;
           this.openPopupFor = null;
+          restoreRibbonAfterDrawer();
         }
       });
 

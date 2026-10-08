@@ -49,6 +49,10 @@ export const TELEMETRY_EVENTS = [
   // The watched scooter went while the rider was walking to it, and why.
   "device_gone",
   "drawer_open",
+  // "Clear my trip" — the rider saying they are not going anywhere after all.
+  // Worth its own name because it is the only measure of trips ABANDONED
+  // between planning and arriving; everything else here counts trips taken.
+  "trip_cleared",
   // The founder's note on the About page is collapsed by default; this is
   // the OPEN only, never the close, so the count reads as "people who chose
   // to read it" rather than "people who poked at it".

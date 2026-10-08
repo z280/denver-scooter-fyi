@@ -5592,9 +5592,12 @@ body.is-map-picking .ride-modal {
   padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.04);
+  /* A ROW now: the step button takes the width it can and the 🔍 sits at the
+     end of it. The text stack that used to be this element's job moved down
+     to .nav-hud__step-btn, which is the flex child that owns it. */
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 :root[data-theme="dark"] .nav-hud__step { background: rgba(255, 255, 255, 0.06); }
 .nav-hud__step.is-current {
@@ -5613,6 +5616,23 @@ body.is-map-picking .ride-modal {
   width: 100%;
 }
 .nav-hud__step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 🔍 Show me this turn. `min-width`/`flex-shrink` because the instruction
+   beside it is long and would otherwise squeeze the glyph to nothing; 32px
+   square is the smallest comfortable tap target that still fits the row. */
+.nav-hud__step-peek {
+  all: unset;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 15px;
+  background: rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="dark"] .nav-hud__step-peek { background: rgba(255, 255, 255, 0.1); }
+.nav-hud__step-peek:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav-hud__step-text { font-weight: 700; font-size: 13.5px; }
 .nav-hud__step-streets { font-size: 12px; opacity: 0.75; }
 
@@ -10537,6 +10557,24 @@ input[data-ride-keypad="on"] {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+/* "Clear my trip", below the preference and divided off from it: it is the
+   one destructive control on a reading surface, and it should not read as
+   another row of information. The two confirm buttons sit side by side. */
+.trippanel__clear {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+}
+.trippanel__clear .account-hint { flex: 1 1 100%; margin: 0; }
+.trippanel__clear .text-btn:disabled { opacity: 0.5; cursor: default; }
+/* `--fail` and not `--danger`: --danger is referenced in three older rules
+   but defined nowhere, so it resolves to inherited text. --fail is the real
+   token, and it has a dark-mode value. */
+.text-btn.is-danger { color: var(--fail); }
 .trippanel__prefvalue {
   margin: 0;
   font-size: 15px;
