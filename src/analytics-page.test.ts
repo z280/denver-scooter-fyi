@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dwellTable, formatMinutes, mountAnalytics, undercountPlacement } from "./analytics-page.ts";
+import { dwellTable, erasDetails, formatMinutes, mountAnalytics, undercountBand } from "./analytics-page.ts";
 import { bucketSlots } from "./analytics-data.ts";
 
 const W = { window_start: "2026-09-30T22:00:00+00:00", window_end: "2026-10-07T22:00:00+00:00", timezone: "America/Denver" };
@@ -101,19 +101,28 @@ const FIX: Record<string, unknown> = {
   },
 };
 
+const CHANGES = [
+  { at: "2026-08-10T04:15:00+00:00", commit: "8a51d4d", affects: ["rides", "dwell"], summary: "One rental, one trip." },
+  { at: "2026-10-06T01:36:00+00:00", commit: "dc292b6", affects: ["rides", "dwell", "failed_starts"], summary: "GPS drift is no longer a trip." },
+];
+const ERAS = { counting_changes: CHANGES, comparable_since: "2026-10-06T01:36:00+00:00" };
+
 let calls: string[] = [];
 let failing = new Set<string>();
+/** Per-test field overrides, merged over FIX[path]. */
+let extra: Record<string, Record<string, unknown>> = {};
 
 beforeEach(() => {
   calls = [];
   failing = new Set();
+  extra = {};
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string) => {
       const u = new URL(String(input), "http://x");
       calls.push(u.pathname + u.search);
       if (failing.has(u.pathname)) return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
-      const body = FIX[u.pathname];
+      const body = FIX[u.pathname] && { ...(FIX[u.pathname] as object), ...(extra[u.pathname] ?? {}) };
       if (!body) return new Response("{}", { status: 404 });
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }),
@@ -163,7 +172,8 @@ describe("the analytics page", () => {
     expect(caveat.textContent).toContain("under-reported since 2026-08-10");
     expect(caveat.getAttribute("role")).toBe("note");
     // Sep 30 – Oct 7 is entirely after Aug 10
-    expect(text("an-failed")).toContain("This whole window is after Aug 10, 2026");
+    // an older API: no undercount_until, so the undercount is open-ended
+    expect(text("an-failed")).toContain("This whole window falls in the undercount (since Aug 10, 2026)");
     expect(text("an-failed")).toContain("Counted through");
   });
 
@@ -276,13 +286,107 @@ describe("API #121 follow-ups", () => {
   });
 });
 
+describe("counting eras (API #122)", () => {
+  const withEras = () => {
+    extra["/api/v1/analytics/rides"] = { ...ERAS, caveat: "How rides are counted changed on 2026-08-10 and 2026-10-06." };
+    extra["/api/v1/analytics/failed-starts"] = {
+      counting_changes: [CHANGES[1]],
+      comparable_since: ERAS.comparable_since,
+      undercount_until: ERAS.comparable_since,
+      caveat: "Failed starts were under-reported from 2026-08-10 until the counting fix of 2026-10-06.",
+    };
+    extra["/api/v1/analytics/dwell"] = { ...ERAS, caveat: "How stops are counted changed on 2026-08-10 and 2026-10-06." };
+  };
+
+  it("marks each change inside the window and mutes the buckets before comparable_since", async () => {
+    withEras();
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    const rides = card("an-rides");
+    // Sep 30 – Oct 7: only the Oct 6 01:36Z change (Oct 5, 7:36 PM Denver) is inside
+    const labels = [...rides.querySelectorAll(".viz-marker__label")].map((n) => n.textContent);
+    expect(labels).toEqual(["Counting change Oct 5"]);
+    expect(rides.querySelectorAll(".viz-seg--older").length).toBeGreaterThan(0);
+    expect(rides.querySelectorAll(".viz-bars rect:not(.viz-seg--older):not(.viz-nodata):not(.viz-partial-outline)").length).toBeGreaterThan(0);
+    expect(text("an-rides")).toContain("Older counting method — not comparable");
+    expect(rides.querySelector(".an-caveat")!.textContent).toContain("How rides are counted changed");
+    expect(rides.querySelectorAll(".an-eras li")).toHaveLength(2);
+    // the banner, once, at the top
+    const banner = document.querySelector<HTMLElement>(".an-banner")!;
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toContain("before Oct 5, 2026, 7:36 PM Denver time were counted differently");
+  });
+
+  it("shades the failed-start undercount up to the fix, with its own change list", async () => {
+    withEras();
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    const failed = card("an-failed");
+    expect(failed.querySelectorAll(".viz-band")).toHaveLength(1);
+    expect([...failed.querySelectorAll(".viz-marker__label")].map((n) => n.textContent)).toEqual(["Counting change Oct 5"]);
+    expect(failed.querySelectorAll(".an-eras li")).toHaveLength(1);
+    expect(text("an-failed")).toContain("The tinted span is the undercount (Aug 10, 2026 – Oct 5, 2026, 7:36 PM)");
+    expect(failed.querySelector(".an-caveat")!.textContent).toContain("were under-reported");
+  });
+
+  it("shows the dwell caveat, its change list and that the window mixes methods", async () => {
+    withEras();
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    expect(card("an-dwell").querySelector(".an-caveat")!.textContent).toContain("How stops are counted changed");
+    expect(card("an-dwell").querySelector(".an-eras summary")!.textContent).toBe("Why the history jumps");
+    expect(text("an-dwell")).toContain("its averages mix counting methods");
+  });
+
+  it("raises no banner and mutes nothing when the window is all current-method", async () => {
+    withEras();
+    const late = "2026-09-01T00:00:00+00:00";
+    for (const k of ["/api/v1/analytics/rides", "/api/v1/analytics/failed-starts", "/api/v1/analytics/dwell"]) {
+      extra[k] = { ...extra[k], comparable_since: late };
+    }
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    expect(document.querySelector<HTMLElement>(".an-banner")!.hidden).toBe(true);
+    expect(card("an-rides").querySelectorAll(".viz-seg--older")).toHaveLength(0);
+    expect(text("an-rides")).not.toContain("Older counting method");
+  });
+
+  it("copes with an older API that sends none of the era fields", async () => {
+    mountAnalytics(document.getElementById("root")!, { search: "" });
+    await settle();
+    for (const id of ["an-rides", "an-failed", "an-dwell"]) {
+      expect(card(id).querySelector(".an-state--error"), id).toBeNull();
+      expect(card(id).querySelector(".an-eras"), id).toBeNull();
+    }
+    expect(card("an-rides").querySelectorAll(".viz-marker")).toHaveLength(0);
+    expect(card("an-rides").querySelector(".an-caveat")).toBeNull();
+    expect(card("an-dwell").querySelector(".an-caveat")).toBeNull();
+    expect(document.querySelector<HTMLElement>(".an-banner")!.hidden).toBe(true);
+  });
+});
+
 describe("helpers", () => {
-  it("places the undercount marker inside, before or after the window", () => {
+  it("shades the undercount span, clipped to the window, open-ended without undercount_until", () => {
     const slots = bucketSlots("2026-08-01T06:00:00Z", "2026-08-20T06:00:00Z", "day");
-    const inside = undercountPlacement(slots, "2026-08-20T06:00:00Z", "2026-08-10");
-    expect(inside).toEqual({ index: 9 });
-    expect(undercountPlacement(slots, "2026-08-20T06:00:00Z", "2026-07-01")).toBe("whole");
-    expect(undercountPlacement(slots, "2026-08-20T06:00:00Z", "2026-09-01")).toBeNull();
+    // Aug 10 (Denver) → Aug 15 00:00 MDT
+    expect(undercountBand(slots, "day", "2026-08-10", "2026-08-15T06:00:00Z")).toEqual({ from: 9, to: 14, whole: false });
+    expect(undercountBand(slots, "day", "2026-08-10")).toEqual({ from: 9, to: 19, whole: false });
+    expect(undercountBand(slots, "day", "2026-07-01")).toEqual({ from: 0, to: 19, whole: true });
+    expect(undercountBand(slots, "day", "2026-07-01", "2026-07-20T00:00:00Z")).toBeNull();
+    expect(undercountBand(slots, "day", "2026-09-01")).toBeNull();
+  });
+
+  it("lists counting changes collapsed, and nothing when there are none", () => {
+    expect(erasDetails(undefined)).toBeNull();
+    expect(erasDetails([])).toBeNull();
+    const d = erasDetails(CHANGES)! as HTMLDetailsElement;
+    expect(d.tagName).toBe("DETAILS");
+    expect(d.open).toBe(false);
+    expect(d.querySelector("summary")!.textContent).toBe("Why the history jumps");
+    const items = [...d.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items[0]).toContain("Aug 9, 2026, 10:15 PM Denver time — One rental, one trip.");
+    expect(items[0]).toContain("(8a51d4d)");
+    expect(items[1]).toContain("Oct 5, 2026, 7:36 PM Denver time");
   });
 
   it("keeps counts where the dwell average is null, and merges Trike into Rover", () => {

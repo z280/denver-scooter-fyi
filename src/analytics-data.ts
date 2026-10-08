@@ -17,6 +17,7 @@
 import type { BoundaryLayer } from "./api.ts";
 import {
   ANALYTICS_MAX_DAYS,
+  type CountingChange,
   type AnalyticsGranularity,
   type AnalyticsModelBucket,
   type AnalyticsRegionType,
@@ -289,6 +290,9 @@ export interface SlotChart {
   /** Per slot: the API marked the bucket `partial` — it runs past what the
    *  data covers, so its value is a count so far. Drawn lighter / dashed. */
   partial: boolean[];
+  /** Per slot: counted (wholly or partly) under an older counting method,
+   *  so not comparable with the current era. Drawn muted. Optional. */
+  older?: boolean[];
 }
 
 /** Index API rows by their bucket instant. Rows whose bucket is not on the
@@ -548,4 +552,72 @@ export function windowOptionLabel(days: number): string {
   if (days === 1) return "24 hours";
   if (days === 365) return "1 year";
   return `${days} days`;
+}
+
+// ---------------------------------------------------------------------------
+// Counting eras (API #122): where the method changed, and what to mute
+// ---------------------------------------------------------------------------
+
+function slotEnd(slots: number[], i: number, g: AnalyticsGranularity): number {
+  return i + 1 < slots.length ? slots[i + 1] : nextBucket(slots[i], g);
+}
+
+/** Fractional slot position of an instant: 3.5 = halfway through slot 3.
+ *  Null when the instant is not strictly inside the axis (a change at or
+ *  before the first bucket start is not "in" the window). */
+export function slotPosition(slots: number[], g: AnalyticsGranularity, ms: number): number | null {
+  if (!slots.length || !Number.isFinite(ms) || ms <= slots[0]) return null;
+  for (let i = 0; i < slots.length; i++) {
+    const end = slotEnd(slots, i, g);
+    if (ms < end) return i + (ms - slots[i]) / (end - slots[i]);
+  }
+  return null;
+}
+
+/** Per slot: does any of it fall before `comparable_since`? A bucket that
+ *  straddles the change mixes two methods, so it counts as older too. All
+ *  false when the field is absent. */
+export function olderMask(slots: number[], comparableSince: string | null | undefined): boolean[] {
+  const since = comparableSince ? Date.parse(comparableSince) : NaN;
+  return slots.map((t) => Number.isFinite(since) && t < since);
+}
+
+/** Whether any slot is older — the window starts before comparable_since. */
+export const anyOlder = (mask: boolean[] | undefined): boolean => !!mask?.some(Boolean);
+
+/** A vertical marker for each counting change inside the window. */
+export function changeMarkers(
+  slots: number[],
+  g: AnalyticsGranularity,
+  changes: CountingChange[] | undefined,
+): { index: number; label: string; at: string }[] {
+  const out: { index: number; label: string; at: string }[] = [];
+  for (const c of changes ?? []) {
+    const pos = slotPosition(slots, g, Date.parse(c.at));
+    if (pos !== null) out.push({ index: pos, at: c.at, label: `Counting change ${F_MONTH_DAY.format(Date.parse(c.at))}` });
+  }
+  return out;
+}
+
+/** A shaded span [fromMs, toMs) in slot units, clipped to the axis; null
+ *  when it misses the window entirely. `toMs` may be Infinity (open-ended). */
+export function spanBand(
+  slots: number[],
+  g: AnalyticsGranularity,
+  fromMs: number,
+  toMs: number,
+): { from: number; to: number } | null {
+  if (!slots.length) return null;
+  const axisEnd = slotEnd(slots, slots.length - 1, g);
+  if (!(toMs > slots[0]) || !(fromMs < axisEnd)) return null;
+  const from = fromMs <= slots[0] ? 0 : slotPosition(slots, g, fromMs) ?? 0;
+  const to = toMs >= axisEnd ? slots.length : slotPosition(slots, g, toMs) ?? slots.length;
+  return to > from ? { from, to } : null;
+}
+
+/** "Oct 5, 2026, 7:36 PM Denver time" — when a counting change happened. */
+export function changeWhen(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  return `${F_MONTH_DAY_YEAR.format(ms)}, ${fmt({ hour: "numeric", minute: "2-digit" }).format(ms)} Denver time`;
 }

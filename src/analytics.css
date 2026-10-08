@@ -352,6 +352,59 @@ a {
   color: var(--fg-muted);
   font-style: italic;
 }
+/* Counting eras: buckets counted under an older method are muted, and the
+   failed-start undercount span is a tinted band behind the bars. */
+.viz-seg--older {
+  filter: grayscale(0.85);
+  fill-opacity: 0.55;
+}
+.viz-band {
+  fill: var(--warn-soft);
+}
+.viz-band__label {
+  fill: var(--warn-fg);
+  font-size: 11px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg-elev);
+  stroke-width: 3px;
+}
+.viz-table tr.is-older td {
+  color: var(--fg-muted);
+}
+.viz-swatch--older {
+  background: repeating-linear-gradient(135deg, var(--viz-unknown) 0 2px, transparent 2px 4px) !important;
+  outline: 1px solid var(--viz-unknown);
+  outline-offset: -1px;
+}
+.an-eras {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.an-eras summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.an-eras ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--fg-muted);
+}
+.an-eras li {
+  margin-bottom: 4px;
+}
+.an-eras time {
+  color: var(--fg);
+  font-weight: 600;
+}
+.an-banner {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  color: var(--warn-fg);
+  font-size: 13px;
+}
 .viz-nodata {
   fill: var(--viz-nodata);
 }

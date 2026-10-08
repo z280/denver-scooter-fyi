@@ -31,9 +31,17 @@ import {
   type AnalyticsGranularity,
   type AnalyticsRegionLayer,
   type AnalyticsRegionType,
+  type AnalyticsCountingEras,
+  type CountingChange,
 } from "./analytics-api.ts";
 import {
+  anyOlder,
   asOfLabel,
+  changeMarkers,
+  changeWhen,
+  olderMask,
+  spanBand,
+  type SlotChart,
   clampDays,
   commas,
   controlsFromSearch,
@@ -50,7 +58,6 @@ import {
   REGION_TYPE_LABELS,
   REGION_TYPES,
   regionLabel,
-  slotIndexOf,
   sortRegionNames,
   updateControls,
   WINDOW_OPTIONS,
@@ -67,7 +74,11 @@ import {
   renderLines,
   renderRankedBars,
   renderStackedBars,
+  type Marker,
 } from "./analytics-charts.ts";
+
+/** Drop the nulls from a list of optional nodes. */
+const present = (...nodes: (HTMLElement | null)[]): HTMLElement[] => nodes.filter((n): n is HTMLElement => !!n);
 
 // ---------------------------------------------------------------------------
 // A chart card: title, window/sample line, body, legend, definition, caveat
@@ -257,20 +268,56 @@ function throughLine(dataThrough: string | null, windowEnd: string): string[] {
   return [];
 }
 
-/** The undercount marker: a line inside the window, a note when the whole
- *  window is after the date, nothing when it is before. */
-export function undercountPlacement(
+/** The failed-start undercount as a shaded span: from the Denver date
+ *  `since` to the fix (`until`, UTC ISO). An older API sends no `until`, and
+ *  then the span is open-ended, as the undercount then was. `whole` = it
+ *  covers every bucket on the axis. */
+export function undercountBand(
   slots: number[],
-  windowEnd: string,
+  g: AnalyticsGranularity,
   since: string,
-): { index: number } | "whole" | null {
+  until?: string,
+): { from: number; to: number; whole: boolean } | null {
   const [y, m, d] = since.split("-").map(Number);
-  const at = denverLocalToUtc(y, m, d);
-  if (!slots.length || !Number.isFinite(at)) return null;
-  if (at <= slots[0]) return "whole";
-  if (at >= Date.parse(windowEnd)) return null;
-  const i = slotIndexOf(slots, at);
-  return i < 0 ? null : { index: i };
+  const from = denverLocalToUtc(y, m, d);
+  const toParsed = until ? Date.parse(until) : NaN;
+  const to = Number.isFinite(toParsed) ? toParsed : Infinity;
+  if (!Number.isFinite(from)) return null;
+  const band = spanBand(slots, g, from, to);
+  return band ? { ...band, whole: band.from === 0 && band.to === slots.length } : null;
+}
+
+/** "Why the history jumps": the counting changes, collapsed by default.
+ *  Null when the response carries none (an older API, or none apply). */
+export function erasDetails(changes: CountingChange[] | undefined): HTMLElement | null {
+  if (!changes?.length) return null;
+  const d = h("details", "an-eras");
+  d.append(h("summary", undefined, "Why the history jumps"));
+  const ol = h("ol");
+  for (const c of changes) {
+    const li = h("li");
+    const t = h("time", undefined, changeWhen(c.at));
+    t.setAttribute("datetime", c.at);
+    li.append(t, document.createTextNode(` — ${c.summary}${c.commit ? ` (${c.commit})` : ""}`));
+    ol.append(li);
+  }
+  d.append(ol);
+  return d;
+}
+
+/** Legend entry for muted, older-method buckets; null when none are shown. */
+function olderLegend(chart: SlotChart): HTMLElement | null {
+  if (!anyOlder(chart.older)) return null;
+  return legend([{ name: "Older counting method — not comparable", color: "transparent", swatchClass: "viz-swatch--older" }]);
+}
+
+/** Era fields onto a bar chart: the muted mask and one marker per change. */
+function withEras(chart: SlotChart, eras: AnalyticsCountingEras): { chart: SlotChart; markers: Marker[] } {
+  const older = olderMask(chart.slots, eras.comparable_since);
+  return {
+    chart: { ...chart, older },
+    markers: changeMarkers(chart.slots, chart.granularity, eras.counting_changes),
+  };
 }
 
 function modelLegend(series: { name: string; color: string; values: (number | null)[] }[], unit: string) {
@@ -432,7 +479,25 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
 
   const grid = h("div", "an-grid");
   grid.append(rides.root, failed.root, status.root, equity.root, byRegion.root, dwell.root);
-  root.replaceChildren(bar, countsCard, grid);
+  // One line for the whole page when the window reaches back past the
+  // current counting method (API comparable_since). Fed by the three
+  // affected cards as they render; absent fields never raise it.
+  const banner = h("p", "an-banner");
+  banner.setAttribute("role", "note");
+  banner.hidden = true;
+  const eraFlags = new Map<string, string | null>();
+  const eraFlag = (card: string, windowStart: string, comparableSince: string | null | undefined): boolean => {
+    const since = comparableSince ? Date.parse(comparableSince) : NaN;
+    const before = Number.isFinite(since) && Date.parse(windowStart) < since;
+    eraFlags.set(card, before ? comparableSince! : null);
+    const first = [...eraFlags.values()].find((v) => v);
+    banner.hidden = !first;
+    banner.textContent = first
+      ? `Rides, dwell and failed starts before ${changeWhen(first)} were counted differently; compare within one counting era only (older-method bars are muted).`
+      : "";
+    return before;
+  };
+  root.replaceChildren(bar, banner, countsCard, grid);
 
   const regionReady = (s: ControlsState) => s.regionType === "city" || !!s.regionName;
   const q = (s: ControlsState) => ({
@@ -466,18 +531,21 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
       regionKey,
       (s, sig) => (regionReady(s) ? fetchAnalyticsRides(q(s), sig) : null),
       (d) => {
-        const chart = modelStacks(d);
+        const stacks = modelStacks(d);
+        const { chart, markers } = withEras(stacks, d);
+        eraFlag("rides", d.window_start, d.comparable_since);
         rides.setTitle(`Rides per ${gName(d.granularity)}, by model`);
         rides.show(
           {
             window: windowLabel(d.window_start, d.window_end),
             sample: `${plural(d.rides, "ride")} · ${regionPhrase(d.region.type, d.region.name)}`,
             definition: d.definition,
-            notes: [...throughNote(d.data_through, d.window_end, chart.unplaced), ...partialNote(chart, "bar")],
+            caveat: d.caveat,
+            notes: [...throughNote(d.data_through, d.window_end, stacks.unplaced), ...partialNote(chart, "bar")],
           },
           (body, foot) => {
-            renderStackedBars(body, chart, { ariaLabel: `Rides per ${d.granularity} by model`, totalLabel: "All models" });
-            foot.append(modelLegend(chart.series, "rides"), dataTable(chart, plainNum, "All models"));
+            renderStackedBars(body, chart, { ariaLabel: `Rides per ${d.granularity} by model`, totalLabel: "All models", markers });
+            foot.append(...present(modelLegend(chart.series, "rides"), olderLegend(chart), erasDetails(d.counting_changes), dataTable(chart, plainNum, "All models")));
           },
         );
       },
@@ -488,12 +556,16 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
       regionKey,
       (s, sig) => (regionReady(s) ? fetchAnalyticsFailedStarts(q(s), sig) : null),
       (d) => {
-        const chart = modelStacks(d);
-        const place = undercountPlacement(chart.slots, d.window_end, d.undercount_since);
+        const stacks = modelStacks(d);
+        const { chart, markers } = withEras(stacks, d);
+        eraFlag("failed", d.window_start, d.comparable_since);
+        const band = undercountBand(chart.slots, chart.granularity, d.undercount_since, d.undercount_until);
         const since = dateLabel(d.undercount_since);
+        const span = d.undercount_until ? `${since} – ${changeWhen(d.undercount_until).replace(/ Denver time$/, "")}` : `since ${since}`;
         failed.setTitle(`Failed starts per ${gName(d.granularity)}, by model`);
-        const notes = [...throughNote(d.data_through, d.window_end, chart.unplaced), ...partialNote(chart, "bar")];
-        if (place === "whole") notes.unshift(`This whole window is after ${since}, so every bucket is affected by the undercount.`);
+        const notes = [...throughNote(d.data_through, d.window_end, stacks.unplaced), ...partialNote(chart, "bar")];
+        if (band?.whole) notes.unshift(`This whole window falls in the undercount (${span}), so every bucket is affected.`);
+        else if (band) notes.unshift(`The tinted span is the undercount (${span}).`);
         failed.show(
           {
             window: windowLabel(d.window_start, d.window_end),
@@ -506,9 +578,10 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
             renderStackedBars(body, chart, {
               ariaLabel: `Failed starts per ${d.granularity} by model`,
               totalLabel: "All models",
-              marker: place && place !== "whole" ? { index: place.index, label: `Undercount since ${since.replace(/, \d{4}$/, "")}` } : undefined,
+              markers,
+              band: band && !band.whole ? { from: band.from, to: band.to, label: "Undercounted" } : undefined,
             });
-            foot.append(modelLegend(chart.series, "failed starts"), dataTable(chart, plainNum, "All models"));
+            foot.append(...present(modelLegend(chart.series, "failed starts"), olderLegend(chart), erasDetails(d.counting_changes), dataTable(chart, plainNum, "All models")));
           },
         );
       },
@@ -637,14 +710,23 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
       (s, sig) => fetchAnalyticsDwell(s.dwellLayer, clampDays(s.days, "day"), sig),
       (d) => {
         const t = dwellTable(d);
+        const mixed = eraFlag("dwell", d.window_start, d.comparable_since);
         dwell.show(
           {
             window: windowLabel(d.window_start, d.window_end),
             sample: `${plural(t.dwells, "closed stop")} · averages need ${d.min_dwells_for_average}+ stops`,
             definition: d.definition,
-            notes: d.data_through ? [`Stops closed through ${asOfLabel(d.data_through)}.`] : [],
+            caveat: d.caveat,
+            notes: [
+              ...(mixed && d.comparable_since
+                ? [`This window starts before ${changeWhen(d.comparable_since)}, so its averages mix counting methods.`]
+                : []),
+              ...(d.data_through ? [`Stops closed through ${asOfLabel(d.data_through)}.`] : []),
+            ],
           },
-          (body) => {
+          (body, foot) => {
+            const why = erasDetails(d.counting_changes);
+            if (why) foot.append(why);
             if (!t.rows.length) {
               body.append(h("div", "an-state", "No closed stops in this window."));
               return;
