@@ -26,6 +26,13 @@ import {
   type FavoriteSlot,
   type FavoriteSlotId,
 } from "./favorite-slots.ts";
+import { calibrationSentence, clearCalibration } from "./cost-calibration.ts";
+import {
+  HAND_OFF_CAP_OPTIONS,
+  handOffCap,
+  setHandOffCap,
+  type HandOffCap,
+} from "./plan-prefs.ts";
 import { reverseGeocode } from "./geocode.ts";
 import {
   DEFAULT_RATE_PLAN,
@@ -49,6 +56,20 @@ export interface InRidePanelDeps {
   /** A favourite was added, renamed or cleared. The destination lists read the
    *  store on open, so this is only for anything holding a rendered copy. */
   onFavoritesChanged?(): void;
+  /** The Home or Work slot was set or cleared. Those two have a server half —
+   *  the profile's `home_lat`/`work_lat` columns, which draw the map pins and
+   *  count towards the profile-completion award — and this is the seam to it,
+   *  for the same reason the rate plan has one: this module never imports the
+   *  API client, so the host decides whether anything is listening. Absent, or
+   *  signed out, and the slot is simply device-local, which is the whole point
+   *  of the slots. Never fired for the two custom slots: they have no column.
+   *
+   *  Fired AFTER the local write, so the rider's row is already correct and a
+   *  failed round trip costs them nothing they can see. */
+  onHomeWorkChanged?(
+    kind: "home" | "work",
+    place: { lat: number; lon: number } | null,
+  ): void;
 }
 
 export interface InRidePanelHandle {
@@ -170,6 +191,53 @@ export function buildInRidePanel(
   display.append(speedoWrap, costLabel, costHint, costStatus.node);
 
   // ---------------------------------------------------------------------
+  // Trip planning
+  // ---------------------------------------------------------------------
+
+  // WHY A SETTING AND NOT A CLEVERNESS. `rankPlans` prices a hand-off honestly,
+  // so a two-scooter plan that comes out cheaper really is cheaper. What the
+  // arithmetic cannot price is whether the rider WANTS to park one scooter,
+  // find another and start a second rental mid-trip — for plenty of people the
+  // answer is no at any price. Until this existed, their only way to decline
+  // was to notice the hand-off in the list and pick a different row, every
+  // single time.
+  const planning = section("Trip plans");
+  planning.append(
+    el(
+      "p",
+      "account-hint",
+      "When you ask \u201cWhere to?\u201d we look for the quickest and cheapest ways there \u2014 sometimes that means riding one scooter, parking it, and taking another.",
+    ),
+  );
+  const capStatus = makeStatus();
+  const capWrap = el("div", "account-field");
+  capWrap.append(el("span", "control-label", "Switching scooters"));
+  const capSelect = el("select", "select");
+  capSelect.setAttribute("aria-label", "Switching scooters");
+  for (const option of HAND_OFF_CAP_OPTIONS) {
+    const opt = el("option", undefined, option.label);
+    opt.value = option.value === null ? "any" : String(option.value);
+    capSelect.append(opt);
+  }
+  // Same reasoning as the speedometer's hint: three short labels that do not
+  // describe themselves, and the consequence of each is what the rider is
+  // actually choosing between.
+  const capHint = el("p", "account-hint");
+  const paintCapHint = (): void => {
+    const chosen = HAND_OFF_CAP_OPTIONS.find(
+      (o) => (o.value === null ? "any" : String(o.value)) === capSelect.value,
+    );
+    capHint.textContent = chosen?.hint ?? "";
+  };
+  capSelect.addEventListener("change", () => {
+    const next: HandOffCap = capSelect.value === "any" ? null : capSelect.value === "0" ? 0 : 1;
+    paintCapHint();
+    capStatus.set(setHandOffCap(next) ? "Saved." : NOT_PERSISTED);
+  });
+  capWrap.append(capSelect, capHint, capStatus.node);
+  planning.append(capWrap);
+
+  // ---------------------------------------------------------------------
   // Rate plan
   // ---------------------------------------------------------------------
 
@@ -216,6 +284,32 @@ export function buildInRidePanel(
   });
   rateWrap.append(rateSelect, rateDefaultNote, rateStatus.node);
   rate.append(rateWrap);
+
+  // ---------------------------------------------------------------------
+  // §11.2 — what the receipts taught the cost estimate
+  // ---------------------------------------------------------------------
+
+  // ONLY VISIBLE WHEN THERE IS SOMETHING TO SAY. A section explaining that we
+  // have learned nothing yet is a settings row about our own internals, and
+  // the rider cannot act on it — the way to make it appear is to file a
+  // receipt, which is a thing they do for their own reasons.
+  const calib = section("Cost estimate");
+  const calibLine = el("p", "account-hint");
+  const calibClear = el("button", "text-btn", "Reset this");
+  calibClear.type = "button";
+  const calibStatus = makeStatus();
+  calib.append(calibLine, calibClear, calibStatus.node);
+  calibClear.addEventListener("click", () => {
+    clearCalibration();
+    calibStatus.set("Reset — estimates start from our own clock again.");
+    renderCalibration();
+  });
+  function renderCalibration(): void {
+    const sentence = calibrationSentence();
+    calib.hidden = sentence === null;
+    if (sentence !== null) calibLine.textContent = sentence;
+  }
+  renderCalibration();
 
   // ---------------------------------------------------------------------
   // Favourite destinations
@@ -297,6 +391,9 @@ export function buildInRidePanel(
       status.set(persisted ? "Saved." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
+      if (id === "home" || id === "work") {
+        deps.onHomeWorkChanged?.(id, { lat, lon });
+      }
     };
 
     useBtn.addEventListener("click", () => {
@@ -340,6 +437,7 @@ export function buildInRidePanel(
       status.set(persisted ? "Cleared." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
+      if (id === "home" || id === "work") deps.onHomeWorkChanged?.(id, null);
     });
 
     const openRename = (): void => {
@@ -377,7 +475,7 @@ export function buildInRidePanel(
 
   for (const id of FAVORITE_SLOT_IDS) favs.append(buildSlotRow(id));
 
-  host.append(display, rate, favs);
+  host.append(display, planning, rate, calib, favs);
 
   const refresh = (): void => {
     speedoSelect.value = speedometerStyle();
@@ -386,6 +484,11 @@ export function buildInRidePanel(
     const saved = savedRatePlan();
     rateSelect.value = saved ?? DEFAULT_RATE_PLAN;
     rateDefaultNote.hidden = saved !== null;
+    const cap = handOffCap();
+    capSelect.value = cap === null ? "any" : String(cap);
+    paintCapHint();
+    // A receipt filed since the drawer was last open can have changed this.
+    renderCalibration();
     rerenderSlots();
   };
   refresh();

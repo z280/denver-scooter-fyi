@@ -99,6 +99,13 @@ export function createPlanListPanel(
         cls: "planlist__note--warn",
       });
     }
+    // The rider's own cap, said plainly. Not a warning — nothing went wrong and
+    // nothing was given up by the search; they asked for this. But it goes
+    // ABOVE the estimate note, because the question it answers ("why am I not
+    // being shown the cheap one") is one somebody is asking right now.
+    if (v.capNote) {
+      lines.push({ text: v.capNote, cls: "planlist__note--quiet" });
+    }
     lines.push({ text: v.estimateNote, cls: "planlist__note--quiet" });
     notes.replaceChildren(
       ...lines.map((l) => el("p", `planlist__note ${l.cls}`, l.text)),
@@ -255,6 +262,25 @@ export function createPlanListPanel(
     body.replaceChildren(...v.rows.map((row) => renderRow(row)));
   }
 
+  /** Tell the card whether anything is below the fold.
+   *
+   *  The card fades its last few pixels so a half-scrolled row reads as "there
+   *  is more" rather than as a button clipped flat by the card's edge — which
+   *  is what it looked like, and what prompted this. But a fade over the FINAL
+   *  button makes a live control look disabled, and a card too short to scroll
+   *  has nothing to hint at, so both of those turn it off.
+   *
+   *  CSS cannot ask whether a box overflows, so this is the one thing only the
+   *  panel can answer. The 2px slack absorbs sub-pixel scroll positions, which
+   *  otherwise leave the fade on at the very bottom on a fractional-DPR
+   *  display. */
+  function syncScrollEdge(): void {
+    const atEnd =
+      panel.scrollHeight - panel.clientHeight - panel.scrollTop <= 2;
+    panel.classList.toggle("is-at-end", atEnd);
+  }
+  panel.addEventListener("scroll", syncScrollEdge, { passive: true });
+
   function render(v: PlanListView): void {
     renderNotes(v);
     renderFree(v);
@@ -265,6 +291,11 @@ export function createPlanListPanel(
       again.addEventListener("click", () => deps.onRefresh?.());
       body.append(again);
     }
+    // After the rows exist, because the answer depends on how tall they made
+    // it. A re-render can also shorten the list past the point of scrolling at
+    // all — a cap applied in the drawer does exactly that — so this runs on
+    // every render and not only the first.
+    syncScrollEdge();
   }
 
   render(view);
@@ -276,6 +307,7 @@ export function createPlanListPanel(
     },
     destroy() {
       destroyed = true;
+      panel.removeEventListener("scroll", syncScrollEdge);
       root.replaceChildren();
     },
   };

@@ -246,6 +246,8 @@ afterEach(() => {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
+import { activeTrip, recordLeg, startTrip } from "./trip-legs.ts";
+
 describe("frozenElapsedMs", () => {
   it("floors at 0 and never goes negative", () => {
     expect(frozenElapsedMs(1_000, 500)).toBe(0);
@@ -853,5 +855,92 @@ describe("Screen 8 — the move-watch offer", () => {
       locate: fakeLocate(null),
     });
     expect(armBtn()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.9 — Screen 8 closes a leg, not just a ride
+// ---------------------------------------------------------------------------
+
+describe("Screen 8 and the trip ledger", () => {
+  afterEach(() => localStorage.clear());
+
+  it("says nothing about trips on an ordinary one-scooter ride", () => {
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+    expect(queryRoot()?.querySelector(".ride-post-s8__trip")).toBeNull();
+    unwire();
+  });
+
+  it("names the leg it is closing and the trip's cost including it", () => {
+    startTrip({ plannedRides: 3 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 900,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+    const trip = queryRoot()!.querySelector(".ride-post-s8__trip")!;
+    // The leg this screen is closing has NOT been recorded yet — that happens
+    // on the end report — so it is still the current one.
+    expect(trip.querySelector(".ride-post-s8__trip-leg")?.textContent).toBe(
+      "Leg 2 of 3",
+    );
+    expect(trip.querySelector(".ride-post-s8__trip-total")?.textContent).toMatch(
+      /^Trip ≈ \$\d+\.\d\d so far$/,
+    );
+    // No "next scooter" button here: the first one is still rented to them.
+    expect(trip.textContent).toMatch(/End this ride in Veo first/);
+    unwire();
+  });
+
+  it("says so when this is the last leg", () => {
+    startTrip({ plannedRides: 2 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 900,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+    expect(queryRoot()!.querySelector(".ride-post-s8__trip")!.textContent).toMatch(
+      /last leg of your trip/,
+    );
+    unwire();
+  });
+
+  it("banks the leg when the end is reported", async () => {
+    startTrip({ plannedRides: 2 });
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+
+    buttonWithText("I ended my ride in Veo").click();
+    await flush();
+
+    const legs = activeTrip()!.completed;
+    expect(legs).toHaveLength(1);
+    expect(legs[0].rideId).toBe(RIDE_ID);
+    expect(legs[0].seconds).toBe(125);
+    expect(legs[0].costCents).toBeGreaterThan(0);
+    // Distance is honestly absent rather than a confident zero: the measured
+    // figure is in the track store, which this screen has no handle on.
+    expect(legs[0].meters).toBeNull();
+    unwire();
+  });
+
+  it("does NOT bank a leg for [New Destination] — same ride, new destination", () => {
+    // That button keeps the rideId and the vehicle. Counting it would inflate
+    // the badge every time a rider changed their mind mid-ride.
+    startTrip({ plannedRides: 2 });
+    const session = sessionAtEnding();
+    const { unwire } = wire(session);
+    buttonWithText("New Destination").click();
+    expect(activeTrip()?.completed).toEqual([]);
+    unwire();
   });
 });

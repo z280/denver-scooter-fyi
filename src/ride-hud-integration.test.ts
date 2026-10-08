@@ -64,6 +64,8 @@ import {
 import type { RideOptions, RouteManeuver, TrackSigning } from "./api.ts";
 import type { RideSessionDoc, RideSessionRoute } from "./ride-session.ts";
 import { encodePolyline } from "./polyline-encode.ts";
+import { saveRatePlan } from "./ride-cost.ts";
+import { recordLeg, startTrip } from "./trip-legs.ts";
 import {
   admits,
   sameSelection,
@@ -738,7 +740,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
     hud.setAttachedSpecName(() => "Commuter");
     // Re-render the panel so the note is built with the name registered.
     container
-      .querySelector<HTMLButtonElement>('[data-hud="adjust"]')
+      .querySelector<HTMLButtonElement>('[data-hud="more"]')
       ?.click();
     const text = container.textContent ?? "";
     expect(text).toContain("Commuter");
@@ -757,7 +759,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
     const ctl = statefulDeviceCtl(selectionOf(["cosmo"]));
     const { container, hud } = mountWith(ownDeviceDoc(), ctl);
     hud.setAttachedSpecName(() => '<img src=x onerror="boom()">');
-    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="more"]')?.click();
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("#hud-spec-note")?.textContent).toContain("img src");
   });
@@ -769,7 +771,7 @@ describe("RideHud own-device cost fix + Display chips", () => {
     const { container, hud } = mountWith(ownDeviceDoc(), ctl);
     let attached: string | null = "Commuter";
     hud.setAttachedSpecName(() => attached);
-    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')?.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="more"]')?.click();
     expect(container.querySelector("#hud-spec-note")?.textContent).toContain("Commuter");
     // The host detaches off the device layer's filter-change signal, which a
     // pill tap triggers; model that by clearing the source, then tap.
@@ -1212,48 +1214,211 @@ describe("RideHud follow-cam: re-center and the display panel", () => {
     expect(map.gestureListenerCount()).toBe(0);
   });
 
-  it("puts the readout toggles in their own panel, one tap from the ride", () => {
+  it("puts every secondary control in ONE sheet, one tap from the ride", () => {
+    // §11.7: the glanceable readout, one primary action, everything else
+    // behind a single control. The two sheets this replaced could each be
+    // open while the other was shut, and each had its own door in the thumb
+    // cluster — five round buttons for a surface with one question on it.
     const { container } = mount();
-    const panel = () => container.querySelector<HTMLElement>(".hud-display-panel");
-    const wrench = () => container.querySelector<HTMLElement>(".hud-adjust-panel");
-    expect(panel()?.hidden).toBe(true);
+    const sheet = () => container.querySelector<HTMLElement>(".hud-more-panel");
+    const doors = () =>
+      container.querySelectorAll(".hud-cutout-btns .hud-round-btn");
+    expect(sheet()?.hidden).toBe(true);
+    // End, re-center, and the one door. Nothing else reaches the thumb.
+    expect([...doors()].map((b) => b.getAttribute("data-hud"))).toEqual([
+      "end",
+      "recenter",
+      "more",
+    ]);
 
-    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
-    expect(panel()?.hidden).toBe(false);
-    // The chips moved OUT of the wrench panel; they must not be in both, or
-    // the two copies drift.
+    container.querySelector<HTMLButtonElement>('[data-hud="more"].hud-round-btn')!.click();
+    expect(sheet()?.hidden).toBe(false);
+    // Both of the old sheets' contents are in it: the readout chips and the
+    // clock the rider reconciles against the Veo app.
     expect(
-      wrench()?.querySelectorAll('[data-hud="display"]').length,
-    ).toBe(0);
-    expect(
-      panel()!.querySelectorAll('[data-hud="display"]').length,
+      sheet()!.querySelectorAll('[data-hud="display"]').length,
     ).toBeGreaterThan(0);
+    expect(sheet()!.querySelector("#hud-adjust-clock")).not.toBeNull();
+    // And leaving the ride view is in there too, as a text button — it is the
+    // one action a handlebar thumb must not hit by accident.
+    expect(sheet()!.querySelector('[data-hud="exit"]')).not.toBeNull();
+    expect(container.querySelector('.hud-cutout-btns [data-hud="exit"]')).toBeNull();
   });
 
-  it("never stacks the two panels over a moving map", () => {
+  it("the one door reports whether it is open", () => {
+    // A round glyph button with a sheet behind it, and the sheet covers the
+    // map: a reader who cannot see that has to be told.
     const { container } = mount();
-    const panel = () => container.querySelector<HTMLElement>(".hud-display-panel");
-    const wrench = () => container.querySelector<HTMLElement>(".hud-adjust-panel");
+    const door = container.querySelector<HTMLButtonElement>(
+      '[data-hud="more"].hud-round-btn',
+    )!;
+    expect(door.getAttribute("aria-expanded")).toBe("false");
+    door.click();
+    expect(door.getAttribute("aria-expanded")).toBe("true");
+    // "Done" inside the sheet is the same action, so it has to report too.
+    container
+      .querySelector<HTMLButtonElement>('.hud-more-panel [data-hud="more"]')!
+      .click();
+    expect(container.querySelector<HTMLElement>(".hud-more-panel")?.hidden).toBe(true);
+    expect(door.getAttribute("aria-expanded")).toBe("false");
+  });
 
-    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
-    container.querySelector<HTMLButtonElement>('[data-hud="adjust"]')!.click();
-    expect(wrench()?.hidden).toBe(false);
-    expect(panel()?.hidden).toBe(true);
-
-    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
-    expect(panel()?.hidden).toBe(false);
-    expect(wrench()?.hidden).toBe(true);
+  it("shuts the sheet before putting a prompt over the map", () => {
+    // Both prompts are now opened from INSIDE the sheet — "Leave ride view"
+    // and "Stop tracking" are rows in it — so without this a dialog stacks on
+    // a scrolling sheet on a moving map, which is exactly the confusion the
+    // two old panels' one-at-a-time rule existed to prevent.
+    const { container } = mount();
+    const door = container.querySelector<HTMLButtonElement>(
+      '[data-hud="more"].hud-round-btn',
+    )!;
+    door.click();
+    container
+      .querySelector<HTMLButtonElement>('.hud-more-panel [data-hud="exit"]')!
+      .click();
+    expect(container.querySelector('[data-hud-prompt="exit"]')).not.toBeNull();
+    expect(container.querySelector<HTMLElement>(".hud-more-panel")?.hidden).toBe(true);
+    expect(door.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("the chips still work from their new home", () => {
     const { container } = mount();
-    container.querySelector<HTMLButtonElement>('[data-hud="display-panel"]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-hud="more"].hud-round-btn')!.click();
     const timer = container.querySelector<HTMLButtonElement>(
-      '.hud-display-panel [data-hud="display"][data-display="timer"]',
+      '.hud-more-panel [data-hud="display"][data-display="timer"]',
     )!;
     timer.click();
     expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(true);
     timer.click();
     expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.9 — the HUD can finally say which leg this is
+// ---------------------------------------------------------------------------
+
+describe("RideHud: trip legs", () => {
+  let hud: RideHud | null = null;
+
+  afterEach(() => {
+    hud = null;
+    localStorage.clear();
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  function mount(own = false) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    // The cost readout — and so the trip total beneath it — shows nothing
+    // until a rate plan is known, which is the HUD's existing rule and not
+    // this feature's: a price computed against a plan the rider never chose
+    // would be a guess at their bill.
+    saveRatePlan("visitor");
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const doc: RideSessionDoc = {
+      ...buildDoc("ride-leg-1", Date.now() - 600_000),
+      options: { ...OPTIONS, speedometer: "classic" },
+      device: own ? { own: true } : buildDoc("x", 0).device,
+      route: null,
+    };
+    hud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session: { current: () => doc, dispatch: vi.fn() } },
+    );
+    hud.beginHandoff({
+      rideId: doc.rideId,
+      startedAtMs: doc.startedAtMs as number,
+      recorder: null,
+    });
+    return container;
+  }
+
+  const legEl = (c: HTMLElement) => c.querySelector<HTMLElement>("#hud-leg");
+  const tripEl = (c: HTMLElement) => c.querySelector<HTMLElement>("#hud-trip");
+
+  it("shows neither line on an ordinary one-scooter ride", () => {
+    // Most rides are one ride, and "Leg 1 of 1" is chrome telling a rider
+    // something they knew.
+    const c = mount();
+    expect(legEl(c)?.hidden).toBe(true);
+    expect(tripEl(c)?.hidden).toBe(true);
+  });
+
+  it("names the leg, counting the legs already banked", () => {
+    startTrip({ plannedRides: 3 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 1_000,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    expect(legEl(c)?.hidden).toBe(false);
+    expect(legEl(c)?.textContent).toBe("Leg 2 of 3");
+  });
+
+  it("adds THIS leg to the settled ones in the trip total", () => {
+    // The ledger's own totals are over settled legs only — a stored sum that
+    // silently included a moving number would read differently every time
+    // anything looked at it. The live half is added here, where the clock is.
+    startTrip({ plannedRides: 2 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: null,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    const text = tripEl(c)?.textContent ?? "";
+    // "≥", not "≈": that leg had no distance, so every total is a floor.
+    expect(text).toMatch(/^Trip ≥ \$\d+\.\d\d so far$/);
+    // And it is strictly more than the banked $3.00 alone, because ten
+    // minutes of this leg are in it.
+    const cents = Number(/\$(\d+\.\d\d)/.exec(text)![1].replace(".", ""));
+    expect(cents).toBeGreaterThan(300);
+  });
+
+  it("says ≈ when every banked leg carried every figure", () => {
+    startTrip({ plannedRides: 2 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 900,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    expect(tripEl(c)?.textContent ?? "").toMatch(/^Trip ≈ /);
+  });
+
+  it("keeps the leg badge but drops the money line on an own-device ride", () => {
+    // The badge is a position in a journey; the total is a price. An
+    // own-device ride has no Veo billing clock to picture, so a running total
+    // of it would be a number about nothing.
+    startTrip({ plannedRides: 2 });
+    const c = mount(true);
+    expect(legEl(c)?.hidden).toBe(false);
+    expect(tripEl(c)?.hidden).toBe(true);
+  });
+
+  it("drops the money line when the rider turned the cost readout off", () => {
+    startTrip({ plannedRides: 2 });
+    const c = mount();
+    expect(tripEl(c)?.hidden).toBe(false);
+    c.querySelector<HTMLButtonElement>('[data-hud="more"].hud-round-btn')!.click();
+    c.querySelector<HTMLButtonElement>(
+      '.hud-more-panel [data-hud="display"][data-display="cost"]',
+    )!.click();
+    expect(tripEl(c)?.hidden).toBe(true);
+    // The badge is unaffected: they turned off a price, not a journey.
+    expect(legEl(c)?.hidden).toBe(false);
   });
 });

@@ -1844,9 +1844,47 @@ plausible-looking address is worse than none, because the complaint path's whole
 value is that it reaches somebody. `complaintReady()` is what stops a blank
 `mailto:` shipping as a working feature, and a test pins it.
 
-**Still to build:** `receipt-read.ts` (§8.1's OCR decision is still open, and
-manual entry is the stated fallback), `receipt-panel.ts`, `account-confirm.ts`,
-and §8.6's three API clients.
+**Still to build:** `receipt-panel.ts`, `account-confirm.ts`, and §8.6's three
+API clients.
+
+> **`receipt-read.ts` IS NO LONGER OWED, and that is a decision rather than a
+> deferral.** §8.1's OCR question was answered by not needing an answer: the
+> rider types the minutes and the cost (§8.3's own conclusion, because receipt
+> layouts change without notice), so the figures are already in hand and there
+> is nothing for a reader to read. The module would have existed to produce
+> what the form already collects. `equity-receipt-form.ts` is the capture
+> surface and `receipt-precheck.ts` is what consumes it.
+
+> **THE BAR NOW HAS A FIRST SURFACE, and it is a cost saving rather than a new
+> screen.** The owner's answer on §8.1 (2026-10-08) was to *"repurpose it as a
+> local pre-check, and try to avoid server-side OCR costs if possible"* —
+> `receipt-precheck.ts`, wired into the "didn't get the discount?" form.
+>
+> **There is no OCR in it, and that is the point.** The rider has already typed
+> the minutes and the cost, which is what §8.3 settled on because *"receipt
+> layouts change without notice, and a misread total is a rider sent to lose an
+> argument in public"*. So the figures are already in hand; what was missing was
+> anybody asking the verdict before spending an upload. Every report used to
+> send a photograph of a receipt over a phone connection, to be stored for
+> eighteen months and read on a server, including the ones whose own typed
+> figures said the charge was right.
+>
+> **It can only ever HOLD a report back for confirmation; it cannot refuse
+> one.** `send` is the default for every uncertainty, and the asymmetry is the
+> whole design: a report we did not need costs an upload, while a report we
+> talked the rider out of costs them the claim. So `nothing_to_claim` requires a
+> positive `correct` — geography established, tier known, arithmetic done and
+> matching — and every `cannot_tell` sends, including the Pass rider whose
+> charge matches, whose unproven dollar §8.4 already refuses to bless. A failed
+> pre-check sends too.
+>
+> "Send it anyway" is a real button, first, not a link under a paragraph: our
+> polygons, our copy of the rider's tier and our reading of the contract are
+> each one thing that could be wrong, and the rider came here because they
+> believe they were overcharged.
+>
+> The image still goes up when a report is actually sent, because that is the
+> evidence. What this saves is the ones that never needed sending.
 
 
 All three, or no claim is made:
@@ -2444,10 +2482,54 @@ when the ride is not `riding`.
 The HUD offers ±15s/±1m nudges and a reset because we cannot see Veo's billing
 clock. That is an honest workaround, and it has become the rider's job.
 
-> **NOT BUILT, AND BOTH HALVES NEED THE OWNER.** This section rests on two
-> premises, and each has been overtaken by a later decision in this same
-> codebase. Recorded rather than worked around, because forcing either would
-> reverse a change that was made deliberately and for good reasons.
+> **BOTH HALVES NOW BUILT, on the owner's answer (2026-10-08): take the scan
+> timestamp, and feed the calibration from the receipt reader rather than from
+> a form.** The analysis below stands as written — it is why the build looks
+> the way it does — and what shipped is recorded after it.
+>
+> **The scan.** `RideModalEntry.scannedAtMs` carries the moment of the scan to
+> Screen 6, which prefers it over its own clock. The §6.7.3 tension resolves on
+> one word: there the rider SAYS they already started and the unlock time is
+> unknown, so we would be guessing; here it is measured. Three guards, because
+> an invented start time is the one thing this must not produce — a scan older
+> than five minutes is about a scooter they looked at and walked away from, a
+> scan from the future means a jumped clock, and a scan that postdates the
+> server row is not evidence of anything. The direction is deliberate: the scan
+> precedes the unlock, so our clock runs LONG, which is the safe way for a cost
+> estimate to be wrong.
+>
+> **The calibration.** `cost-calibration.ts`, learned from receipts and never
+> from a form — reinstating Screen 8's form would have bought a better estimate
+> at the price of every ride reaching the donation flow, which is the trade the
+> friction rewrite already refused. The offset is in TIME, not money: Veo's
+> rates are published and ours are right; what we cannot see is when the meter
+> started.
+>
+> It is a MEDIAN of five samples, because the one ride where the rider took a
+> phone call between the scan and the unlock is exactly the sample a mean would
+> carry forever. Nothing at all below two samples — one receipt is an anecdote.
+> A gap beyond ten minutes is dropped on the way in AND on the way out, so a
+> blob from an older build cannot put a twenty-minute "calibration" into every
+> estimate. And it never SHORTENS an estimate: learning that we run long stops
+> the figure drifting further, but an offset that discounted would under-quote
+> a rider against the bill they are about to be charged.
+>
+> Matching a receipt to a ride refuses ambiguity. A receipt carries a plate and
+> a charge date and no time of day; the rides we recorded carry timestamps and
+> no plate. So the match is on the Denver day, and two rides that day means we
+> cannot tell. Learning nothing is free; learning a four-minute offset from
+> somebody else's trip is not.
+>
+> The rider sees it in one sentence on the In-Ride tab and can reset it. The
+> sentence is about their rides, never about our arithmetic — the section only
+> exists when there is something to say, because a settings row explaining that
+> we have learned nothing yet is the app talking to itself.
+>
+> ---
+>
+> **The original analysis, which is why the above looks like it does.** This
+> section rested on two premises, and each had been overtaken by a later
+> decision in this same codebase.
 >
 > **"Screen 8 already collects the truth" is no longer true.** `ride-post-s8.ts`
 > stopped asking for battery, cost and minutes entirely, in a documented
@@ -2568,6 +2650,36 @@ confidence floor: no warning at all unless the model has a range observation
 for that vehicle class, because "you might not make it" said wrongly teaches
 the rider to ignore it.
 
+> **BOTH HALVES SHIPPED.** `ride-reach.ts` holds the arithmetic and the
+> confidence floor; `ride-announce.ts` speaks the During warning once; Screen 6
+> renders the Before line.
+>
+> **The Before half landed on Screen 6 alone, not "Screen 2/6".** Screen 2 was
+> checked and cannot do it: it knows neither the destination nor the battery —
+> it is disambiguation, and on the common flow the destination is not chosen
+> yet. Screen 4 has both facts but renders only when navigation is on, which is
+> off by default, so a warning living there would be absent from most rides —
+> the same reason this feature does not depend on a route. Screen 6 is the one
+> seat every ride passes through holding both.
+>
+> **It is the During verdict with nothing travelled, not a second rule.** A
+> rider told nothing on Screen 6 and then warned eight metres into the ride
+> would rightly conclude the warning is noise. Only the sentence differs, and
+> only because "range left" is the wrong words for a ride that has not started.
+>
+> **It refuses quietly, which means a line of copy and never a gate.** The
+> rider is standing at the scooter looking at its own gauge, both figures are
+> estimates (a straight line standing in for a road, an operator's projection
+> standing in for a model), and a wizard that refused to proceed on this
+> evidence would be wrong often enough to be worth defeating. It names the fact
+> and the destination and gives no instruction — we do not know whether the
+> answer is a different scooter, a shorter trip, or riding it and walking the
+> last block.
+>
+> Silent for an own-device ride, for a ride with no destination, before the
+> first fix, inside the 400 m warnability floor, and whenever the feed gave no
+> range. Every gate fails to silence.
+
 ### 11.6 Out of the zone, and the data we do not have
 
 The expensive ending is parking somewhere that costs a fee. The app cannot warn
@@ -2603,6 +2715,41 @@ The fix is not deleting features, it is admitting a hierarchy: the glanceable
 readout, one primary action, everything else behind a single control. And the
 controls belong at the **bottom** — a phone on a handlebar mount is reached
 with a thumb from below, and the current cluster is at the top.
+
+> **SHIPPED, with one deliberate departure and one correction to the text.**
+>
+> The thumb cluster is three controls: **End**, **Re-center**, and one
+> neutral door to a single sheet. It was five (leave, end, wrench, display,
+> re-center) across two identically-positioned popovers, each of which could
+> be open while the other was shut — the dispatch spent most of its lines
+> closing one to open the other.
+>
+> **`Leave ride view` moved INSIDE the sheet**, as a text button. On a
+> handlebar mount the one action a rider must never hit by accident does not
+> belong beside the one they aim for.
+>
+> **Re-center stays out, on the owner's call**, against this section's own
+> "everything else behind a single control": it is the recovery from a gesture
+> the map itself invites, and a recovery two taps deep is not one.
+>
+> **The door is named for where it goes, not for what it is about**, and that
+> is load-bearing. The display chips had already been moved out of the wrench
+> panel once, because *"adjust time and rate"* was the wrong filing cabinet
+> for the controls over what the rider is LOOKING AT. A neutral control cannot
+> be the wrong cabinet, so both rows are now one tap from the same sheet
+> rather than three taps into different ones. The sheet is ordered by how
+> often a rider in motion reaches for it: On screen, then Clock and rate, then
+> the map's filter, then the things you do once.
+>
+> **The text was out of date on the position.** The cluster had already moved
+> to the bottom-left cutout by the time this was built; the paragraph's
+> handlebar-thumb argument is why it is there, and it is left as written
+> because the argument is still the reason.
+>
+> Both prompts that used to be reached from the cluster — the exit prompt and
+> Stop tracking — are now opened from inside the sheet, so opening either
+> shuts it first. A dialog stacked on a scrolling sheet on a moving map is the
+> same confusion the two old panels' one-at-a-time rule existed to prevent.
 
 ### 11.8 The ride ends and nothing accumulates
 
@@ -2680,6 +2827,45 @@ restarts, the cost restarts, the trail is a new trail. Phases 2 and 3 own the
 planning; what this phase owes is a HUD that can show "leg 2 of 3" and a
 total. Until it can, "along the way" is a planning feature the ride itself
 cannot represent.
+
+> **SHIPPED as `trip-legs.ts`, and it needed one distinction the text does not
+> draw.**
+>
+> **Screen 8's [New Destination] is NOT a leg.** It keeps the same `rideId`,
+> the same signing chain and the same vehicle — it is "I changed my mind about
+> where I am going", and the session doc already handles it. A LEG is a
+> hand-off: park this vehicle, unlock the next one, which is a new
+> `tracked_rides` row and a new session doc. Counting the former as the latter
+> would have inflated the badge every time a rider changed their mind mid-ride.
+>
+> That is also why the ledger is its own device-local store and not a field on
+> the session doc: the doc is per-ride by construction and the reducer enforces
+> it, so a trip spanning legs would be erased by exactly the transition it
+> exists to survive.
+>
+> **It stores a destination, not a route.** By the time leg two starts the fleet
+> has moved and the vehicle the plan named may be gone, so the rest of the way
+> is RE-SOLVED through `rankPlans` rather than replayed from a stored promise.
+> What the ledger keeps is the count the rider was told ("two hand-offs") and
+> somewhere to solve towards.
+>
+> **The HUD's two lines sit in the top-left stack**, above the clock and below
+> the cost, rather than as a badge of their own: the top centre is the
+> equity-area badge's seat, and two things fighting for the middle of a moving
+> map is how a rider learns to ignore both. The leg badge is a position in a
+> journey and shows on an own-device ride; the trip total is a price and does
+> not, nor when the rider has turned the cost readout off.
+>
+> **Three places refuse to overstate.** The badge clamps, so a rider who
+> re-solved mid-trip and took three hops instead of two never reads "leg 4 of
+> 3" — the honest reading of the last slot is "the last leg". Any leg missing a
+> figure turns every total from "≈" into "≥". And `tripTotals` covers settled
+> legs only, with the live leg added by the surface that already has a live
+> clock, so a stored sum never silently includes a moving number.
+>
+> **The hand-off into leg two happens after Screens 9/10, not on Screen 8.** The
+> first vehicle is still rented to the rider while Screen 8 is up, and a flow
+> that handed them a second one there would be charging them for two.
 
 ### 11.10 What NOT to build
 
@@ -2858,7 +3044,33 @@ Order by what the rider decides on, then what they can do:
   > compliance signal this whole app exists to publish, so it is one tap
   > further from the decision and not gone.
   >
-  > The **single facts strip** itself has not shipped — it depends on the
+  > **The single facts strip HAS NOW SHIPPED**, built around the header's
+  > glyph pills rather than against them. The recommendation the owner accepted
+  > (2026-10-08) was to let the later, reasoned decision stand: the pills keep
+  > their glyphs, the words stay in the `aria-label`, the tapped explanation and
+  > the stat list's prose row, and `docs/DECISION_FEATURE_PILL_LABELS.md` holds
+  > the whole question if it is ever reopened.
+  >
+  > The strip carries **battery and the remaining range together**, full-bleed
+  > between the verdict bar and the actions, in type you can read at arm's
+  > length. Together because neither answers the question alone: 40% means
+  > nothing without knowing what 40% of this model goes, and a range figure with
+  > no charge behind it has no provenance. The feed gives us both and they were
+  > in different places — battery in a definition list UNDER eight full-width
+  > buttons at the same weight as `Vehicle ID`, which is §12.1(a)'s finding
+  > exactly, and the range estimate a further tap inside `ℹ️ Details`.
+  >
+  > "Show on map" came up with the range figure. It is the control for the
+  > number beside it and the two were a tap apart for no reason.
+  >
+  > Neither figure is left behind in the list it came out of: two renderings of
+  > one fact is the duplication §12.1(b) names, and the quieter copy always wins
+  > the argument about which one is stale. A vehicle the feed told us nothing
+  > about gets no strip at all rather than an empty rule across the card.
+  >
+  > ---
+  >
+  > *The original note, before the question was answered:* it depends on the
   > labelled-chips question above, and a strip built around glyph-only pills is
   > a different design from the one drawn here. Worth doing as one change once
   > that is settled, rather than half now.
@@ -2866,7 +3078,14 @@ Order by what the rider decides on, then what they can do:
   already have. A glyph is not a label (`emoji-scale.ts` had to learn the same
   thing).
 
-  > **NOT DONE, AND DELIBERATELY LEFT FOR THE OWNER.** The labels were taken
+  > **ANSWERED (2026-10-08): the pills keep their glyphs.** The owner accepted
+  > the recommendation to let the later, reasoned decision stand, and the facts
+  > strip was built around it — see the note on the bullet above, and
+  > `docs/DECISION_FEATURE_PILL_LABELS.md` for the whole question if it is ever
+  > reopened. §12.3 is closed. The reasoning that led here is kept below,
+  > because it is the record of why the two documents disagreed.
+  >
+  > The labels were taken
   > off the pills *after* this section was written, as a considered change with
   > its reasoning recorded in `style.css`: *"The names were three words of
   > chrome on the busiest line of the card; the icon is the recognisable part
@@ -2883,8 +3102,13 @@ Order by what the rider decides on, then what they can do:
   > So this is two documents disagreeing, the later one being the code, and the
   > question is a judgement call about a busy line rather than a correctness
   > bug. Flipping it back unilaterally would just be the newer document winning
-  > on recency. **Owner's call.** Everything else in §12.3 that does not depend
-  > on it has shipped.
+  > on recency. **Owner's call, now made: glyphs stay.** Everything else in
+  > §12.3 has shipped.
+  >
+  > The reference materials for this one — the drawn card, the CSS comment that
+  > reverses it, the `emoji-scale.ts` precedent both sides cite, and what each
+  > answer costs to build — are collected in
+  > `docs/DECISION_FEATURE_PILL_LABELS.md`.
 - **The secondary row is text-sized**, not three more full-width bars.
 
 ### 12.4 Blocked is a sentence, in the card

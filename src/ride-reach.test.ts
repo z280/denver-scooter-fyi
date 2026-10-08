@@ -5,6 +5,7 @@ import {
   MIN_WARNABLE_REMAINING_METERS,
   SHORTFALL_MARGIN_METERS,
   rangeLeftMeters,
+  preRideReachSentence,
   reachSentence,
   remainingRideMeters,
   rideReach,
@@ -226,5 +227,52 @@ describe("the sentence", () => {
   it("has nothing to say when the verdict is not short", () => {
     expect(reachSentence(rideReach(input()))).toBeNull();
     expect(reachSentence(rideReach(input({ startRangeMeters: null })))).toBeNull();
+  });
+});
+
+describe("the before-the-ride sentence", () => {
+  const short = () =>
+    rideReach(input({ startRangeMeters: 500, dest: far(5_000) }));
+
+  it("names the place the rider named, with both figures", () => {
+    const s = preRideReachSentence(short(), "Home");
+    expect(s).toContain("may not reach Home");
+    expect(s).toMatch(/miles of range/);
+    expect(s).toMatch(/to go/);
+  });
+
+  it("never tells the rider what to do about it", () => {
+    // We know the battery is probably short; we do not know whether the right
+    // answer is a different scooter, a shorter trip, or walking a block. The
+    // honest shape is the one that survives being wrong, which this will be.
+    const s = preRideReachSentence(short(), "Home") ?? "";
+    expect(s).not.toMatch(/should|instead|try |pick |choose /i);
+  });
+
+  it("falls back for an unnamed place rather than rendering a gap", () => {
+    // A destination saved from a map tap can have no name at all.
+    for (const label of [null, undefined, "", "   "]) {
+      expect(preRideReachSentence(short(), label)).toContain("your destination");
+    }
+  });
+
+  it("says nothing unless the verdict is short", () => {
+    expect(preRideReachSentence(rideReach(input()), "Home")).toBeNull();
+    expect(
+      preRideReachSentence(rideReach(input({ startRangeMeters: null })), "Home"),
+    ).toBeNull();
+    expect(
+      preRideReachSentence(rideReach(input({ dest: null })), "Home"),
+    ).toBeNull();
+  });
+
+  it("agrees with the during-ride verdict on the same numbers", () => {
+    // Two tiers of one question, twelve seconds apart. A rider told nothing on
+    // Screen 6 and then warned eight metres into the ride would rightly
+    // conclude the warning is noise — so the before case IS the during case
+    // with nothing travelled, not a second rule.
+    const i = { startRangeMeters: 500, travelledMeters: 0, at: HERE, dest: far(5_000) };
+    expect(preRideReachSentence(rideReach(i), "Home")).not.toBeNull();
+    expect(shouldWarnReach({ ...i, alreadyWarned: false })).toBe(true);
   });
 });

@@ -32,6 +32,10 @@
 // from their own profile and says so.
 
 import {
+  nothingToClaimSentence,
+  type PrecheckOutcome,
+} from "./receipt-precheck.ts";
+import {
   ApiError,
   fetchProfile,
   submitDiscountReport,
@@ -362,6 +366,43 @@ export interface ReceiptFormDeps {
   /** Injected for tests; defaults to the real POST. */
   submit?(input: DiscountReportIn): Promise<DiscountReportResult>;
   now?(): Date;
+  /** §11.2: a receipt the rider filed is the only place we ever see Veo's own
+   *  billed minutes, so this hands them up to whoever can match them against
+   *  the ride we recorded.
+   *
+   *  THIS FORM DOES NOT MATCH. It has a plate and a charge date; working out
+   *  which of a rider's rides that was means reading the local track store or
+   *  the rides list, and neither belongs in a module whose job is one POST.
+   *  The host matches, or does nothing — and doing nothing is fine, because the
+   *  calibration refuses to act on fewer than two samples anyway.
+   *
+   *  Fired AFTER a successful submit, never before: a receipt the server
+   *  refused is a receipt the rider is about to correct, and learning from a
+   *  figure they are still editing would teach us the typo. */
+  /** The local pre-check (`receipt-precheck.ts`), run on what the rider typed
+   *  BEFORE the receipt image is uploaded.
+   *
+   *  Injected rather than imported because answering it needs two things this
+   *  module has no business holding: the Equity Area polygons, and the tax
+   *  rate the expected charge is priced with. Omitted means every report
+   *  sends, which is exactly the behaviour before the pre-check existed.
+   *
+   *  It can only ever HOLD a report back for confirmation; it cannot refuse
+   *  one. See that module's own note on why a tool that overruled the person
+   *  it is for would be the wrong tool. */
+  precheck?(facts: {
+    minutes: number;
+    totalCents: number | null;
+    pinStart: PickedPoint | null;
+    pinEnd: PickedPoint | null;
+    declaredRatePlan: DeclaredRatePlan;
+  }): Promise<PrecheckOutcome>;
+  onReceiptFiled?(facts: {
+    plate: string;
+    veoMinutes: number;
+    chargeDate: string;
+    totalCents: number | null;
+  }): void;
   /** Where focus goes when the form closes. */
   returnFocusTo?: HTMLElement | null;
   onClose?(): void;
@@ -424,6 +465,10 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
   const cleanupFns: (() => void)[] = [];
   let closed = false;
   let sending = false;
+  /** The rider overruled the pre-check. One-way for the life of this sheet:
+   *  having said "send it anyway" once, they must not be asked again by a
+   *  re-submit of the same figures. */
+  let forceSend = false;
   /** Map pick or camera up: the form steps aside and lets that layer own
    *  focus and Escape. */
   let away = false;
@@ -770,6 +815,38 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     alertBox.scrollIntoView?.({ block: "nearest" });
   }
 
+  /** The pre-check's answer, with both ways out.
+   *
+   *  "Send it anyway" is first and is a real button, not a link buried under a
+   *  paragraph: a rider who disagrees with our arithmetic is the rider this
+   *  whole feature exists for, and our geography, our copy of their tier and
+   *  our reading of the contract are each one thing that could be wrong.
+   *
+   *  Their typed answers are untouched, so sending anyway is one tap and not a
+   *  re-entry. */
+  function showNothingToClaim(outcome: {
+    expectedCents: number;
+    chargeCents: number;
+  }): void {
+    const msg = el("p", `${ROOT_CLASS}__done`, nothingToClaimSentence(outcome));
+    msg.setAttribute("role", "status");
+    const anyway = el("button", "login-btn", "Send it anyway");
+    anyway.type = "button";
+    anyway.addEventListener("click", () => {
+      forceSend = true;
+      // Straight back through the same submit path, so there is exactly one
+      // place that validates, prices and sends.
+      form.requestSubmit?.() ?? form.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+    const done = el("button", "login-btn login-btn--secondary", "Close");
+    done.type = "button";
+    done.addEventListener("click", close);
+    const actions = el("div", `${ROOT_CLASS}__actions`);
+    actions.append(anyway, done);
+    body.replaceChildren(msg, actions);
+    anyway.focus();
+  }
+
   function showDone(): void {
     const msg = el("p", `${ROOT_CLASS}__done`, MSG_RECEIVED);
     msg.setAttribute("role", "status");
@@ -789,11 +866,74 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
       return;
     }
     showErrors({});
+    // THE LOCAL PRE-CHECK, before the upload and not after it. A receipt whose
+    // own typed figures already match the Equity Area rate has nothing to
+    // claim, and uploading it would spend the rider's connection and our
+    // storage to be told what the numbers on screen said. `forceSend` is how
+    // they overrule us — see `receipt-precheck.ts` on why they must be able
+    // to.
+    if (!forceSend && deps.precheck) {
+      // ASYNC because answering it needs the Equity Area polygons, which are
+      // fetched once and cached. A synchronous check would have to answer "we
+      // did not look" every time the cache was cold, which sends — correct,
+      // but it would mean the first report of every session always uploaded.
+      sending = true;
+      sendBtn.disabled = true;
+      status.textContent = "Checking…";
+      void deps
+        .precheck({
+          minutes: result.input.trip_minutes,
+          totalCents: result.input.total_cents ?? null,
+          pinStart: result.input.pin_start
+            ? { lat: result.input.pin_start.lat, lng: result.input.pin_start.lng }
+            : null,
+          pinEnd: result.input.pin_end
+            ? { lat: result.input.pin_end.lat, lng: result.input.pin_end.lng }
+            : null,
+          declaredRatePlan: result.input.declared_rate_plan ?? "unknown",
+        })
+        .then((outcome) => {
+          if (closed) return;
+          sending = false;
+          sendBtn.disabled = false;
+          status.textContent = "";
+          if (outcome.kind === "nothing_to_claim") {
+            showNothingToClaim(outcome);
+            return;
+          }
+          // Nothing to hold back: go on and send, through the one path that
+          // sends. `forceSend` rather than a second call site, so the submit
+          // handler stays the only thing that validates, prices and posts.
+          forceSend = true;
+          form.requestSubmit?.() ??
+            form.dispatchEvent(new Event("submit", { cancelable: true }));
+        })
+        .catch(() => {
+          if (closed) return;
+          // A failed pre-check must never cost the rider their report. Send it:
+          // the server is the thing that can actually look.
+          sending = false;
+          sendBtn.disabled = false;
+          forceSend = true;
+          form.requestSubmit?.() ??
+            form.dispatchEvent(new Event("submit", { cancelable: true }));
+        });
+      return;
+    }
     sending = true;
     sendBtn.disabled = true;
     status.textContent = "Sending…";
     submit(result.input)
       .then(() => {
+        // Before the `closed` guard: the rider closing the sheet the instant
+        // the POST lands must not cost them the one figure this ride can teach
+        // us, and the callback touches no DOM.
+        deps.onReceiptFiled?.({
+          plate: result.input.vehicle_plate,
+          veoMinutes: result.input.trip_minutes,
+          chargeDate: result.input.charge_date,
+          totalCents: result.input.total_cents ?? null,
+        });
         if (closed) return;
         showDone();
       })

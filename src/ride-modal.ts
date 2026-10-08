@@ -129,6 +129,24 @@ export interface RideModalEntry {
    *  legal seat for `rideStarted`; this is what keeps it from re-asking a
    *  question the rider already answered on the device card. */
   autoStart?: boolean;
+  /** §11.2: when the ride began, as a real timestamped event rather than as
+   *  "when our countdown finished".
+   *
+   *  Set only by the QR scan path, because that is the only entry where we
+   *  OBSERVED something: a rider holding a phone at a sticker is seconds away
+   *  from the unlock, and we have the moment they did it. Screen 6 prefers this
+   *  over its own clock when it is present and recent.
+   *
+   *  §6.7.3 states the opposite rule for the neighbouring case — *"inventing an
+   *  earlier start time on the rider's behalf would be guessing at the number
+   *  Veo is actually billing them on"* — and the two reconcile on exactly that
+   *  word. There, the rider says "I already started" and the unlock time is
+   *  genuinely unknown, so we would be guessing. Here it is measured. Worth
+   *  noting the direction: the scan PRECEDES the unlock, so a scan-time start
+   *  makes our clock run long, which is the safe way for a cost estimate to be
+   *  wrong — a rider who budgeted for more than Veo charges is not the rider
+   *  this feature can harm. */
+  scannedAtMs?: number;
   /** "Take me back to what I was doing", not "start something".
    *
    *  A session doc outlives the wizard that made it — a rider picks a

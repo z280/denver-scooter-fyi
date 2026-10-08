@@ -1868,6 +1868,25 @@ body.ride-active .arrival {
    is a circle at every font size — these carry a glyph, not a line of text,
    and padding-derived roundness drifts into an oval the moment one of them
    uses a different ×. */
+/* THE FACE IS HERE TOO, and it was not, which is the bug this block's own
+   comments described as already fixed. Three separate rules elsewhere say
+   "face, shape and ink come from the shared metal + round-✕ rules above" — but
+   no metal rule ever matched these selectors, and this one set geometry only.
+   So every one of these nine dismissals rendered with the USER AGENT's button
+   defaults: `#efefef`, a `2px outset` 3D bevel, hard black ink and Arial,
+   forced into a 34px circle. A 1990s OS button on a 2026 card, identical in
+   dark mode because none of it came from a token.
+
+   Every other × in the app (`.drawer-close`, `.ranks-modal__close`,
+   `.icon-lightbox__close`, `.dibs-cert__close`, …) resets `appearance`,
+   `border` and `background` itself. These nine are the ones that joined a
+   shared rule and so never did it individually — the consolidation that was
+   meant to stop six near-identical copies drifting left the face behind.
+
+   A SOFT FILLED CIRCLE rather than a transparent one: these sit on cards
+   floating over a moving map, where a bare glyph has nothing behind it to
+   prove it is a control. Quiet ink, because a dismiss should never compete
+   with the thing it dismisses. */
 .arrival__close,
 .planlist__close,
 .home-bar__close,
@@ -1888,6 +1907,58 @@ body.ride-active .arrival {
   justify-content: center;
   font-size: 18px;
   line-height: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  /* The UA default was Arial. Everything else on these cards is the app's
+     stack, and a × from a different family is visibly a different ×. */
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.arrival__close:hover,
+.planlist__close:hover,
+.home-bar__close:hover,
+.qr-scan__close:hover,
+.device-features__close:hover,
+.equity-receipt__close:hover,
+.ride-preflight__close:hover,
+.admin-analytics__close:hover,
+.ride-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* The focus ring is the ONLY thing on these that may be loud: it is the one
+   state a keyboard rider navigates by, and `appearance: none` above removed
+   the UA's. Offset outward so it reads as a ring around the circle rather
+   than as a second border inside it. */
+.arrival__close:focus-visible,
+.planlist__close:focus-visible,
+.home-bar__close:focus-visible,
+.qr-scan__close:focus-visible,
+.device-features__close:focus-visible,
+.equity-receipt__close:focus-visible,
+.ride-preflight__close:focus-visible,
+.admin-analytics__close:focus-visible,
+.ride-modal__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  color: var(--fg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .arrival__close,
+  .planlist__close,
+  .home-bar__close,
+  .qr-scan__close,
+  .device-features__close,
+  .equity-receipt__close,
+  .ride-preflight__close,
+  .admin-analytics__close,
+  .ride-modal__close {
+    transition: none;
+  }
 }
 
 /* ---------- Close buttons ---------- */
@@ -4988,6 +5059,38 @@ body.is-map-picking .ride-modal {
    good" and "will it get me there" are the two halves of one decision and a
    rider reads them together. Quiet by design — the verdict bar above it is
    the loud thing, and two shouting rows would leave neither read. */
+/* §12.3's ONE FACTS STRIP: battery and remaining range, full-bleed between
+   the verdict bar and the actions, in type you can read at arm's length.
+
+   The two numbers a rider picks between two nearby scooters with used to sit in
+   a definition list UNDER eight full-width buttons, at the same weight as
+   `Vehicle ID` — §12.1(a)'s finding — with the range figure a tap further
+   inside the details modal. This is the fix, and the size is the whole point:
+   bigger than the stat list it came out of, because it is what the controls
+   below it depend on. */
+.device-popup__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -14px;
+  padding: 9px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
+.device-popup__fact-sep {
+  opacity: 0.45;
+  font-weight: 400;
+}
+/* The control for the number beside it, so it reads as part of the fact rather
+   than as another action competing with the buttons below. */
+.device-popup__action--inline {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
 .device-popup__arrival {
   display: flex;
   flex-wrap: wrap;
@@ -5232,7 +5335,7 @@ body.is-map-picking .ride-modal {
 }
 .hud-corner {
   position: absolute;
-  z-index: 2; /* above .nav-hud (z-index: 1) — the Exit/End/wrench buttons in
+  z-index: 2; /* above .nav-hud (z-index: 1) — the End/Re-center/More buttons in
                  .hud-corner--bl must stay reachable even with the Screen 7
                  directions panel fully open over that corner. */
   display: flex;
@@ -5269,7 +5372,8 @@ body.is-map-picking .ride-modal {
 .hud-readout--mph b { font-size: clamp(26px, 6vh, 40px); font-weight: 800; }
 .hud-readout--mph i { font-size: 14px; font-weight: 600; font-style: normal; opacity: 0.75; }
 
-/* Bottom-left cutout buttons: stop (end) + wrench (adjust). */
+/* Bottom-left cutout buttons: §11.7's three — End, Re-center, and the one
+   door to the ride-controls sheet. */
 .hud-corner--bl { pointer-events: none; }
 .hud-cutout-btns { display: flex; gap: 8px; pointer-events: auto; }
 .hud-readout--clock { pointer-events: auto; }
@@ -5317,7 +5421,7 @@ body.is-map-picking .ride-modal {
 }
 
 /* ride-hud.ts — F3 corner re-layout: the ride clock moves BL -> TL with the
-   cost readout stacked just below it, plus the wrench panel's live clock. */
+   cost readout stacked just below it, plus the sheet's live clock. */
 .hud-tl-stack {
   display: flex;
   flex-direction: column;
@@ -5326,6 +5430,21 @@ body.is-map-picking .ride-modal {
 .hud-readout--cost-sub {
   font-size: clamp(15px, 3.2vh, 20px);
   opacity: 0.9;
+}
+/* §11.9's two trip lines, above and below the pair they belong to. Both are
+   smaller than the clock and the cost on purpose: which leg this is and what
+   the whole trip has cost are CONTEXT for the two live figures, not rivals to
+   them. A rider glancing at a handlebar mount reads the big numbers; these
+   answer the question they ask once, at a light. */
+.hud-readout--leg {
+  font-size: clamp(12px, 2.4vh, 15px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+.hud-readout--trip {
+  font-size: clamp(12px, 2.4vh, 15px);
+  opacity: 0.78;
 }
 .hud-adjust-clock {
   align-self: center;
@@ -5355,7 +5474,7 @@ body.is-map-picking .ride-modal {
    its own children's flow. `z-index: 1` keeps it under the HUD corners (see
    `.hud-corner`'s `z-index: 2`) so a fully-open directions panel — up to
    320px wide, full height — never covers the always-must-stay-reachable
-   Exit/End/wrench buttons in `.hud-corner--bl`. */
+   End/Re-center/More buttons in `.hud-corner--bl`. */
 .nav-hud {
   position: absolute;
   inset: 0;
@@ -5618,14 +5737,24 @@ body.is-map-picking .ride-modal {
   background: rgba(255, 255, 255, 0.35);
 }
 
-/* Adjust popover (wrench): time nudges + rate + theme. */
-.hud-adjust-panel {
+/* §11.7's ONE SHEET: everything that is not the readout, End or Re-center.
+   Replaces the two identically-positioned popovers it grew out of (the
+   wrench's clock/rate/pills and the display panel's chips), which is why the
+   geometry is theirs unchanged — the rider's thumb lands where it always did.
+
+   Tall now that it holds both, so it scrolls rather than growing past the top
+   of a phone: capped against the viewport, with the bottom gap matching the
+   button cluster it opens from. */
+.hud-more-panel {
   position: absolute;
   left: 50%;
   bottom: 84px;
   transform: translateX(-50%);
   pointer-events: auto;
   width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -5636,32 +5765,18 @@ body.is-map-picking .ride-modal {
   box-shadow: var(--shadow);
   color: var(--fg);
 }
-/* "On screen" — which readouts the rider wants, in its own sheet rather than
-   buried in the wrench panel's time-and-rate controls. Same geometry as that
-   panel (only one of the two is ever open), so the rider's thumb lands in the
-   same place whichever they opened. */
-.hud-display-panel {
-  position: absolute;
-  left: 50%;
-  bottom: 84px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-  width: min(420px, calc(100vw - 24px));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  color: var(--fg);
-}
-.hud-display-panel__title {
-  margin: 0;
+/* Section headings inside the sheet. The sheet is one scroll with three
+   groups in it, and without these it reads as one undifferentiated pile of
+   chips and buttons. Not the first child's top margin, so the heading sits
+   tight against its own row rather than floating between two. */
+.hud-more-panel__title {
+  margin: 6px 0 0;
   font-size: 13px;
   font-weight: 700;
   opacity: 0.75;
+}
+.hud-more-panel__title:first-child {
+  margin-top: 0;
 }
 .hud-adjust-row { display: flex; gap: 6px; }
 .hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
@@ -6071,6 +6186,13 @@ body.landscape-hint-dismissed .hud-note--landscape {
   margin: 0;
   font-size: 12px;
   color: var(--fg-muted);
+}
+/* §11.5's pre-ride battery note. Weighted and coloured like every other
+   warning in the app (`--warn-fg`, 600), but still a hint rather than a
+   banner: it refuses quietly, and it is not a gate on starting. */
+.ride-wizard__hint--warning {
+  color: var(--warn-fg);
+  font-weight: 600;
 }
 .ride-wizard__actions {
   display: flex;
@@ -8088,6 +8210,26 @@ input[data-ride-keypad="on"] {
   color: var(--fg-muted);
   text-align: center;
 }
+/* §11.9's trip context on Screen 8. Boxed, because it is about a DIFFERENT
+   thing from everything above it: those rows are this ride's cost, and this is
+   where that ride sits in a journey that is not over. */
+.ride-post-s8__trip {
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.ride-post-s8__trip-leg {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ride-post-s8__trip-total {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
 .ride-post-s8__note {
   margin: 2px 0;
   font-size: 12.5px;
@@ -9780,23 +9922,54 @@ input[data-ride-keypad="on"] {
    --------------------------------------------------------------------------- */
 .planlist {
   position: fixed;
-  left: 50%;
+  /* CENTRED IN WHAT IS LEFT, not in the viewport. At 94vw on a phone this card
+     ran clean under the open ribbon, which sits at z-index 32 and so covered
+     the left edge of every row: headlines read "o scooters, one hand-off" and
+     the leg lines lost their numbers. `--ribbon-gutter` is the variable the
+     drawers and chips already offset from and it collapses to 0 with the
+     strip, so a closed ribbon leaves this centred exactly as before. */
+  left: calc(50% + var(--ribbon-gutter) / 2);
   bottom: calc(
     calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
       var(--float-inset)
   );
   transform: translateX(-50%);
   z-index: 29;
-  width: min(94vw, 460px);
+  width: min(calc(94vw - var(--ribbon-gutter)), 460px);
   max-height: min(70vh, 620px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 14px 14px 12px;
+  /* The extra bottom padding is the other half of the fade below: it gives the
+     last row somewhere to end, so the card's own edge never cuts a button. */
+  padding: 14px 14px 22px;
   background: var(--metal-bg);
   color: var(--metal-fg);
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--shadow);
+  /* A SCROLL THAT LOOKS LIKE A SCROLL. Mid-scroll, the card clipped the next
+     row's blue action button flat against its bottom edge, which reads as a
+     rendering fault rather than as "there is more below" — the screenshot that
+     prompted this showed a stray blue bar and nothing to explain it. The mask
+     fades the last few pixels of content out instead.
+
+     `mask-image` rather than an overlay element: the card is a scroll
+     container, so an absolutely-positioned gradient inside it would scroll
+     away with the content, and one outside it would have to track the card's
+     rounded corners. */
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 18px),
+    transparent 100%
+  );
+}
+/* Scrolled to the end — or never scrollable at all — there is nothing below to
+   hint at, and a fade over the final button makes a live control look
+   disabled. The class is set by the panel, which is the only thing that can
+   know; CSS cannot ask whether a box overflows. */
+.planlist.is-at-end {
+  mask-image: none;
 }
 .planlist__head {
   padding-right: 52px;
@@ -10127,4 +10300,88 @@ input[data-ride-keypad="on"] {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
+}
+
+/* ---------- "Your trip" drawer (trip-panel.ts) ----------
+   A READING SURFACE. Everything here is sized to be read rather than tapped —
+   the one control is the stepper — so the type scale runs the other way from
+   the rest of the drawers: the destination is the biggest thing on the page
+   and the preference that shaped it is the quietest. */
+.trippanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Section eyebrow. Uppercase and small because it labels the line below it
+   rather than competing with it. */
+.trippanel__label {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.trippanel__label:first-child {
+  margin-top: 0;
+}
+.trippanel__dest {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--fg);
+}
+.trippanel__leg {
+  margin: 10px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+}
+/* The stepper. Back and Next sit at the edges with the count between them, so
+   the count does not move as the label beside it changes length. */
+.trippanel__stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.trippanel__stepcount {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.trippanel__step {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
+}
+/* Struck AND dimmed, never dimmed alone: at a glance on a phone in sunlight,
+   opacity is not a signal. Same rule the broken feature pills follow. */
+.trippanel__step.is-done {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+/* The current leg is the one the rider came here to find, so it keeps full
+   contrast while the finished ones recede. No colour of its own: on a panel
+   where everything else is already --fg, being the only un-dimmed, un-struck
+   line is the emphasis. */
+.trippanel__step.is-current {
+  font-weight: 700;
+}
+.trippanel__pref {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.trippanel__prefvalue {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
 }

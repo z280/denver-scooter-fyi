@@ -367,3 +367,54 @@ describe("the relaxation labels stay in step with the spec sheet's", () => {
     }
   });
 });
+
+describe("the rider's hand-off cap", () => {
+  const oneScooter = plan([walk(300), ride()]);
+  const twoScooters = plan([walk(300), ride(), ride()]);
+  const threeScooters = plan([walk(300), ride(), ride(), ride()]);
+  const allThree = () =>
+    result({ plans: [twoScooters, oneScooter, threeScooters], walkOnly });
+
+  it("shows everything when there is no cap, which is the default", () => {
+    const v = planListView({ result: allThree(), rate: rate("resident") });
+    expect(v.rows).toHaveLength(3);
+    expect(v.capNote).toBeNull();
+  });
+
+  it("'one scooter only' leaves the hand-off plans out and says so", () => {
+    const v = planListView({
+      result: allThree(),
+      rate: rate("resident"),
+      handOffCap: 0,
+    });
+    expect(v.rows.map((r) => r.plan.handOffs)).toEqual([0]);
+    expect(v.capNote).toContain("2 plans hidden");
+    expect(v.capNote).toContain("switching scooters");
+  });
+
+  it("'at most one switch' keeps the planner's order among what survives", () => {
+    const v = planListView({
+      result: allThree(),
+      rate: rate("resident"),
+      handOffCap: 1,
+    });
+    // The two-scooter plan was ranked first and stays first.
+    expect(v.rows.map((r) => r.plan.handOffs)).toEqual([1, 0]);
+    expect(v.capNote).toContain("1 plan hidden");
+  });
+
+  it("does not touch what the SEARCH gave up", () => {
+    // The cap is a preference about which plans to show, not a thing the
+    // search could not find — so it must not leak into `relaxedLabels` or
+    // `capRelaxed`, which exist to explain what the search itself conceded.
+    const v = planListView({
+      result: result({ plans: [threeScooters], walkOnly, capRelaxed: false }),
+      rate: rate("resident"),
+      handOffCap: 0,
+    });
+    expect(v.rows).toHaveLength(0);
+    expect(v.relaxedLabels).toEqual([]);
+    expect(v.capRelaxed).toBe(false);
+    expect(v.capNote).toContain("1 plan hidden");
+  });
+});

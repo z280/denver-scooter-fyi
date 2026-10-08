@@ -13,6 +13,7 @@ import type { GeocodeResult } from "./api.ts";
 import type { LngLat } from "./locate.ts";
 import { createHomeBar, type HomeBarDeps, type HomeBarHandle } from "./home-bar.ts";
 import { recordFavorite } from "./favorites.ts";
+import { assignSlotPlace, renameSlot } from "./favorite-slots.ts";
 import { RECENT_DESTS_KEY, loadRecentDests } from "./ride-screen-dest.ts";
 import type { GeocodeSearchClient, GeocodeSearchHandlers } from "./geocode-search.ts";
 
@@ -522,6 +523,35 @@ describe("pinned Home and Work", () => {
     // they are set in the profile, and prompting here would be a second
     // place to answer the same question.
     expect(grid()).toBeNull();
+  });
+
+  it("shows one row per doorstep when the Home SLOT holds the same place", async () => {
+    // The duplicate this guards against: a signed-in rider sets Home in the
+    // profile (the server columns, which feed the pinned pair) and the account
+    // drawer mirrors it into the Home favourite SLOT, which lands in
+    // `loadFavorites`. Both halves then render — Home pinned at the top and
+    // Home again under "Saved places" — unless the list drops it.
+    assignSlotPlace("home", { lat: HOME.lat, lon: HOME.lon });
+    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(1));
+    const texts = [...root.querySelectorAll(".home-bar__row")].map(
+      (r) => r.textContent ?? "",
+    );
+    expect(texts.filter((t) => t.includes("Home"))).toHaveLength(0);
+  });
+
+  it("still lists a saved place that is NOT the pinned one", async () => {
+    // The dedupe is by coordinates, not by label: a rider's gym stays listed.
+    assignSlotPlace("custom1", { lat: 39.76, lon: -104.88 });
+    renameSlot("custom1", "Gym");
+    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    pill().click();
+    await vi.waitFor(() => expect(pins()).toHaveLength(1));
+    const texts = [...root.querySelectorAll(".home-bar__row")].map(
+      (r) => r.textContent ?? "",
+    );
+    expect(texts.some((t) => t.includes("Gym"))).toBe(true);
   });
 
   it("picks the destination straight through, without a recents echo", async () => {

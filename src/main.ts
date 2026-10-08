@@ -10,7 +10,8 @@ import {
   type DeviceInclude,
   fetchProfile,
   liveDibs,
-  releaseDibs,} from "./api.ts";
+  releaseDibs,
+  updateProfile,} from "./api.ts";
 import { createMap } from "./map.ts";
 import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
 import {
@@ -147,7 +148,18 @@ import {
   type ScannedVehicle,
 } from "./qr-ride-scan.ts";
 import { submitDeviceReport } from "./reports.ts";
+import { learnFromReceipt } from "./cost-calibration.ts";
+import { precheckReceipt } from "./receipt-precheck.ts";
+import { buildTripPanel, type TripPanelHandle } from "./trip-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
+import {
+  activeTrip,
+  endTrip,
+  legDestination,
+  legEndsAtHandOff,
+  startTrip,
+  tripComplete,
+} from "./trip-legs.ts";
 import {
   showMovedToast,
   wireDeviceNotifyPanel,
@@ -218,8 +230,8 @@ import {
   takeTabHint,
   writeTabHint,
 } from "./account-tabs.ts";
-import { type IndexedFeature } from "./geo.ts";
-import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
+import { pointInAny, type IndexedFeature } from "./geo.ts";
+import { OVERLAY_BY_LAYER, OVERLAYS, RATE_PLANS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
 import { installUndoFreeTyping } from "./ios-shake-undo.ts";
@@ -404,8 +416,68 @@ function openEquityReceipt(): void {
       tab.click();
     },
     pickOnMap: (hint) => mapPick.pick({ hint }),
+    // §11.2: the receipt is the only place Veo's own billed minutes ever reach
+    // us, so a filed one is the chance to learn what our clock has been
+    // missing. The form has a plate and a charge date and cannot match either
+    // to a ride; this can, and refuses to guess when the day held more than
+    // one. Fire-and-forget: a rider filing a receipt is not waiting on our
+    // cost estimate, and a failed rides fetch must not turn into an error on
+    // a form that already succeeded.
+    // The local pre-check: run §8.4's bar over what the rider typed, before
+    // the receipt image is uploaded. A receipt whose own figures match the
+    // Equity Area rate has nothing to claim, so there is nothing to spend a
+    // phone connection and eighteen months of storage on — and nothing for a
+    // server to read, which is the cost this saves.
+    precheck: async (facts) => {
+      const start = facts.pinStart;
+      const end = facts.pinEnd;
+      let inArea: boolean | null = null;
+      if (start !== null || end !== null) {
+        try {
+          const zones = await equityAreaFeatures();
+          inArea =
+            (start !== null && pointInAny(start.lng, start.lat, zones)) ||
+            (end !== null && pointInAny(end.lng, end.lat, zones));
+        } catch {
+          // Left as null: "we did not look", which sends.
+        }
+      }
+      return precheckReceipt({
+        minutes: facts.minutes,
+        totalCents: facts.totalCents,
+        startedOrEndedInArea: inArea,
+        // The rider's own declared tier. `unknown` resolves to null, which is
+        // `tier_unresolved` — and that sends, because without a tier there is
+        // no expected charge to compare against.
+        rate: RATE_PLANS.find((p) => p.key === facts.declaredRatePlan) ?? null,
+        taxRate: currentTaxRate(),
+      });
+    },
+    onReceiptFiled: (facts) => void learnFromFiledReceipt(facts),
     returnFocusTo: document.getElementById("equity-indicator"),
   });
+}
+
+/** Turn a filed receipt into a calibration sample, or do nothing.
+ *
+ *  Signed out there is no rides list to match against, which is also when
+ *  there are no tracked rides to have a receipt for. */
+async function learnFromFiledReceipt(facts: {
+  veoMinutes: number;
+  chargeDate: string;
+}): Promise<void> {
+  if (!isAuthenticated()) return;
+  try {
+    const { rides } = await listTrackedRides({ limit: 40 });
+    learnFromReceipt({
+      spans: spansOf(rides),
+      chargeDate: facts.chargeDate,
+      veoMinutes: facts.veoMinutes,
+    });
+  } catch {
+    // Nothing to report and nothing to retry: the next receipt is another
+    // chance, and the calibration refuses to act on one sample anyway.
+  }
 }
 /** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
  *  See `micromobility-zones.ts` for the provenance and for what the city's
@@ -1234,6 +1306,9 @@ map.on("load", async () => {
   // the kind of flicker the header exists to avoid.
   mountThemeModes(need("theme-modes"));
   wireFreeRide();
+  // §11.9: the subscription that offers the rest of the way once a leg
+  // closes. Wired once at startup, like every other session watcher.
+  wireNextLegHandoff();
   // The founder's note is collapsed by default; opening it is a real signal
   // about what people read on the About page, so it goes through our own
   // telemetry like every other interaction. `toggle` fires on close too —
@@ -1663,10 +1738,17 @@ map.on("load", async () => {
       // still SHOWS — changing your mind about the destination is exactly
       // what that screen is for — but Next is live the moment it mounts.
       if (trip) {
-        rideSession.dispatch({
-          type: "setDest",
-          dest: { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon },
-        });
+        // §11.9: on a multi-leg plan THIS LEG ends at the next hand-off, not at
+        // the far end of the trip. Seeding the final destination here is what
+        // navigated a rider on leg one straight past the scooter they were
+        // meant to switch to — the app routing around its own plan.
+        const legTrip = activeTrip();
+        const legDest = legTrip === null ? null : legDestination(legTrip);
+        const dest =
+          legDest !== null && legTrip !== null && legEndsAtHandOff(legTrip)
+            ? legDest
+            : { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon };
+        rideSession.dispatch({ type: "setDest", dest });
         // AND THE DEVICE, for an own-device trip. `own_device: true` in the
         // OPTIONS is not the same as a device on the doc, and Screen 6 skips
         // itself on `doc.device === null` — so setting only the option made
@@ -1797,6 +1879,10 @@ map.on("load", async () => {
   wireRideScreenStart({
     session: rideSession,
     locate,
+    // §11.5's "Before": the same unfiltered range lookup the HUD takes for the
+    // during-ride warning, from the same object, so the two tiers of one
+    // question cannot be reading different numbers.
+    rangeMetersFor: (id) => devices.rangeMetersFor(id),
     // F3's other half of the Screen 6 → HUD handoff (see `onComplete` above):
     // a TRACKED ride's `track_signing` only exists in this hook's argument,
     // so this is the one place that can seed `track-store`. Fire-and-forget —
@@ -3680,6 +3766,12 @@ async function handleQrRideScan(rawValue: string): Promise<string> {
         plate: action.vehicle.plate,
         deviceConfirmed: true,
         fastForwardTo: "4",
+        // §11.2: the scan is a real timestamped event, and it is the only
+        // moment in this flow we actually observed. Screen 6 prefers it over
+        // its own clock, which runs from after the unlock — see
+        // `resolveStartedAtMs` for the direction and why long is the safe way
+        // to be wrong.
+        scannedAtMs: Date.now(),
       });
       break;
 
@@ -3957,6 +4049,8 @@ let enterFindWheels: () => void = () => {};
 /** The plan list, while it is on screen. One at a time: two of these would be
  *  two surfaces arguing about one decision. */
 let planListPanel: PlanListPanelHandle | null = null;
+/** §11.9's reading surface. Built on the drawer's first open, never at boot. */
+let tripPanel: TripPanelHandle | null = null;
 
 /** Today's tracked rides, for §2.2's free-minute estimate.
  *
@@ -4022,6 +4116,49 @@ function planSearchDeps(): PlanSearchDeps {
  *  the rider can see where they are — so that is where they go instead. Same on
  *  dismissal: closing the list should not leave them on a bare map with the
  *  question they just asked unanswered. */
+/** §11.9's hand-off: leg one is over, offer the rest of the way.
+ *
+ *  THE ONE PLACE THAT CAN DO IT. A leg boundary is a ride boundary, and the
+ *  ride does not finish on Screen 8 — it finishes after Screens 9 and 10, when
+ *  the doc leaves the post-ride states. Screen 8 itself must not offer a next
+ *  scooter: the first one is still rented to the rider at that point, and a
+ *  flow that handed them a second would be charging them for two.
+ *
+ *  IT RE-SOLVES, IT DOES NOT REPLAY. The vehicle the original plan named is
+ *  minutes old and the fleet has moved, so this asks `rankPlans` again from
+ *  where the rider is standing now to where they were always going. That is
+ *  also why the ledger stores a destination and not a route.
+ *
+ *  Watching for the TRANSITION rather than the state, because this subscription
+ *  fires on every dispatch and an offer that re-opened itself on each one would
+ *  be a plan list the rider cannot dismiss.
+ *
+ *  The trip is cleared on arrival, and also whenever the rider finishes a ride
+ *  with no destination left to solve — a ledger with nothing to offer is a
+ *  stale badge waiting to appear on an unrelated ride three days later. */
+function wireNextLegHandoff(): void {
+  let wasInFlight = false;
+  rideSession.subscribe(() => {
+    const doc = rideSession.current();
+    const inFlight = doc !== null && (isRideLive(doc) || isPostRide(doc));
+    const justFinished = wasInFlight && !inFlight;
+    wasInFlight = inFlight;
+    if (!justFinished) return;
+    const trip = activeTrip();
+    if (trip === null) return;
+    if (tripComplete(trip) || trip.dest === null) {
+      endTrip();
+      return;
+    }
+    // The FINAL destination, deliberately, not the next hand-off: this is the
+    // re-solve, and what it asks is "how do I get the rest of the way from
+    // here" — the planner picks the vehicles, which is the whole point of
+    // asking it again rather than replaying a stored route. The hand-offs the
+    // new plan names replace the old ones when the rider takes it.
+    openPlanList({ label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon });
+  });
+}
+
 function openPlanList(dest: TripPlace): void {
   const deps = planSearchDeps();
   const first = searchPlans(deps, dest);
@@ -4098,6 +4235,65 @@ async function refreshTodaysRides(): Promise<boolean> {
 function takePlanRow(row: PlanRow): void {
   const props = row.firstVehicle;
   if (!props) return;
+  // §11.9: open a trip ledger IFF the plan the rider chose has a hand-off in
+  // it. Before this, `takePlanRow` walked them to the first vehicle and threw
+  // the plan away, so the ride flow below had no idea a second leg was coming
+  // — the clock restarted, the cost restarted, and Screen 8 congratulated them
+  // on arriving while they stood at a hand-off point with a mile to go.
+  //
+  // `startTrip` refuses a single-ride plan itself, so this is not a guard so
+  // much as a declaration: a one-scooter plan is an ordinary ride, and a "leg 1
+  // of 1" badge would be chrome telling the rider something they knew. Done
+  // BEFORE the walk flow starts, so the arrival panel and everything after it
+  // see the trip on their first render.
+  const rideVehicles = row.plan.legs
+    .filter((l) => l.mode === "ride")
+    .map((l) => l.vehicle ?? null);
+  const rideLegs = rideVehicles.length;
+  if (rideLegs >= 2) {
+    const pending = peekPendingTrip()?.dest ?? null;
+    // WHERE EACH HAND-OFF HAPPENS: the pickup point of legs 2..N, which is
+    // simply where the vehicle each of those legs starts on is standing right
+    // now. Leg one's own pickup is the walk the rider is about to take, so it
+    // is not a hand-off and is skipped.
+    //
+    // `TripLeg.vehicle` is `DeviceProperties`, which carries no coordinates —
+    // the same feature lookup `takePlanRow` already does for the first vehicle
+    // is how a position is had. A vehicle that cannot be located TRUNCATES the
+    // list rather than leaving a gap, because these are positional and a gap
+    // would route leg two to leg three's pickup.
+    const handOffs: { label: string; lat: number; lon: number }[] = [];
+    for (const v of rideVehicles.slice(1)) {
+      if (!v) break;
+      const feat = devices
+        .allFeatures()
+        .find((f) => f.properties.device_id === v.device_id);
+      if (!feat) break;
+      const [hLng, hLat] = feat.geometry.coordinates;
+      handOffs.push({
+        label: vehicleDisplayName(
+          v.public_name,
+          null,
+          v.vehicle_model_name,
+          v.plate_suffix,
+        ),
+        lat: hLat,
+        lon: hLng,
+      });
+    }
+    startTrip({
+      plannedRides: rideLegs,
+      dest:
+        pending === null
+          ? null
+          : { label: pending.label, lat: pending.lat, lon: pending.lon },
+      handOffs,
+    });
+  } else {
+    // Choosing a one-scooter plan is also the rider saying this is the trip
+    // now, so any ledger from an abandoned multi-leg plan goes with it.
+    endTrip();
+  }
   const feature = devices
     .allFeatures()
     .find((f) => f.properties.device_id === props.device_id);
@@ -4681,6 +4877,36 @@ function wireDrawers(): void {
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.
     if (id === "tools") notifyPanel?.refresh();
+    // Same, for the same reason and more so: every figure on the trip panel —
+    // the destination, the route's own ETA, which leg is current, the planning
+    // preference — can change while this drawer is shut, and a ride changes
+    // all four. Built lazily on the first open so a rider who never asks
+    // "where am I going" pays nothing for the answer.
+    if (id === "trip") {
+      tripPanel ??= buildTripPanel(need("trip-panel"), {
+        state: () => {
+          const doc = rideSession.current();
+          const dest = doc?.dest ?? peekPendingTrip()?.dest ?? null;
+          return {
+            dest:
+              dest === null
+                ? null
+                : { label: dest.label, lat: dest.lat, lon: dest.lon },
+            // Only a CHOSEN route has an honest duration. Navigation is off by
+            // default, so most rides have none — and an arrival time derived
+            // from a straight line would be the one figure here a rider could
+            // check against their watch and find wrong.
+            routeSeconds: doc?.route?.durationS ?? null,
+            routeMeters: doc?.route?.distanceM ?? null,
+            nowMs: Date.now(),
+          };
+        },
+        showOnMap: (target) => {
+          map.easeTo({ center: [target.lon, target.lat], zoom: 16 });
+        },
+      });
+      tripPanel.refresh();
+    }
     // Rendered on open rather than at boot: the map does not need it, and a
     // rider who never opens the drawer should not pay for the fetch. Every
     // open re-fetches — the endpoint carries an ETag keyed to the counters,
@@ -4873,9 +5099,41 @@ function wireAccount(): void {
     pickLocation: (label) =>
       mapPick.pick({ hint: `Tap the map to set ${label}` }),
     // The destination lists read the store when they open, so nothing has to
-    // be pushed at them — except the map pins, which are drawn from the
-    // profile's own home/work columns and are a different thing entirely.
+    // be pushed at them.
     onFavoritesChanged: () => {},
+    // The Home and Work slots have a server half. Mirroring the write up to
+    // the profile is what keeps the two sides of a rider's doorstep from
+    // disagreeing: the account drawer's own location rows already mirror
+    // DOWNWARD into these slots, the map pins are drawn from the profile
+    // columns, and the profile-completion award counts one of them. Without
+    // this, a rider could set Home here and still be told to complete their
+    // profile.
+    //
+    // Signed out it does nothing, by design — the slot stays device-local,
+    // which is the point of the slots. Failures are swallowed: the local write
+    // already happened and the row already says "Saved", so a dead network
+    // must not retract it. The next profile GET reconciles.
+    onHomeWorkChanged: (kind, point) => {
+      if (!isAuthenticated()) return;
+      const patch =
+        kind === "home"
+          ? { home_lat: point?.lat ?? null, home_lng: point?.lon ?? null }
+          : { work_lat: point?.lat ?? null, work_lng: point?.lon ?? null };
+      void updateProfile(patch)
+        .then((p) => {
+          homeWorkPins.set({
+            home:
+              p.home_lat != null && p.home_lng != null
+                ? { lat: p.home_lat, lng: p.home_lng }
+                : null,
+            work:
+              p.work_lat != null && p.work_lng != null
+                ? { lat: p.work_lat, lng: p.work_lng }
+                : null,
+          });
+        })
+        .catch(() => {});
+    },
   });
 
   const buildSignedOut = (): void => {
@@ -4951,6 +5209,9 @@ function wireAccount(): void {
                   : "Tap the map to set your work",
             }),
           onLocationsChanged: (points) => homeWorkPins.set(points),
+          // A profile home/work write mirrors down into the favourite slots,
+          // so the In-Ride tab's rows are stale until they re-read.
+          onFavoritesChanged: () => inRide?.refresh(),
           onCompletenessChanged: (complete) =>
             tabs.setFlagged("profile", !complete),
           // Null until /auth/config resolves — the row treats unknown as

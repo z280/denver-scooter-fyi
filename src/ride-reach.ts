@@ -191,3 +191,48 @@ export function reachSentence(reach: RideReach): string | null {
     `range left, and roughly ${togoMi.toFixed(1)} to go.`
   );
 }
+
+// ---------------------------------------------------------------------------
+// §11.5's BEFORE half
+// ---------------------------------------------------------------------------
+//
+// "Screen 2/6 should refuse quietly rather than cheerfully. A 14% Astro and a
+// 6 km destination is a walk home, and we can see it coming."
+//
+// It is the same arithmetic as the during-ride question with `travelledMeters:
+// 0`, which is why there is no second verdict function here — two tiers of one
+// question must not disagree about what "made it" means, and that rule applies
+// hardest to the two tiers of the SAME question twelve seconds apart. A rider
+// told nothing on Screen 6 and then warned eight metres into the ride would
+// rightly conclude the warning is noise.
+//
+// WHAT IS DIFFERENT IS THE SENTENCE, and only because "range left" is the
+// wrong words for a ride that has not started. The shape is the same: name the
+// fact, name the destination so it is clear which trip is being talked about,
+// and give no instruction — we do not know whether the right answer is a
+// different scooter, a shorter trip, or riding it and walking the last block.
+//
+// REFUSE QUIETLY, NOT LOUDLY. This is a line of copy, never a block on
+// starting: the rider is standing at the scooter and can see their own battery
+// gauge, the figures are two estimates deep, and a wizard that refused to
+// proceed on this evidence would be wrong often enough to be worth defeating.
+
+/** The before-the-ride sentence, or null when there is nothing honest to say.
+ *
+ *  `destLabel` is what the rider called the place. Omitted or empty falls back
+ *  to "your destination" rather than rendering a bare dash — a destination
+ *  saved from a map tap can have no name at all. */
+export function preRideReachSentence(
+  reach: RideReach,
+  destLabel?: string | null,
+): string | null {
+  if (reach.verdict !== "short") return null;
+  if (reach.rangeLeftMeters === null || reach.remainingMeters === null) return null;
+  const where = destLabel && destLabel.trim() !== "" ? destLabel.trim() : "your destination";
+  const rangeMi = reach.rangeLeftMeters / 1609.344;
+  const togoMi = reach.remainingMeters / 1609.344;
+  return (
+    `This battery may not reach ${where} — about ${rangeMi.toFixed(1)} miles of ` +
+    `range, and roughly ${togoMi.toFixed(1)} to go.`
+  );
+}
