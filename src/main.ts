@@ -184,6 +184,7 @@ import {
   dibsExpiresAt,
   dibsOn,
   dropDibs,
+  registerClaim,
   setDibsReleaseHook,
   recordProgress,
   saveDibs,
@@ -4729,8 +4730,13 @@ function beginWalkToVehicle(info: {
     // Guarded on `registration`: `callDibs` is idempotent on the vehicle
     // identifier, so a claim the device popup already registered a moment
     // ago comes back with its row attached and must not be inserted twice.
-    if (claim.registration === null) {
-      void registerDibs({
+    // `registerClaim` owns what happens if the rider does not wait: it
+    // declines when the popup already has a POST in flight for this scooter,
+    // and on completion it only attaches the row if the SAME claim is still
+    // held — releasing it instead of resurrecting a claim the rider dropped
+    // mid-flight.
+    registerClaim(claim, async () => {
+      const reg = await registerDibs({
         vehicle_identifier: claim.vehicleIdentifier,
         vehicle_name: claim.vehicleName,
         plate: claim.plate,
@@ -4738,21 +4744,9 @@ function beginWalkToVehicle(info: {
         lat: info.lat,
         lon: info.lng,
         notify_sms: dibsSmsAlerts(),
-      })
-        .then((reg) => {
-          saveDibs({
-            ...claim,
-            registration: {
-              id: reg.id,
-              verifyUrl: reg.verify_url,
-              qrUrl: reg.qr_url,
-            },
-          });
-        })
-        .catch(() => {
-          /* the certificate falls back to this phone's own timestamp */
-        });
-    }
+      });
+      return { id: reg.id, verifyUrl: reg.verify_url, qrUrl: reg.qr_url };
+    });
   }
 
   const panel = createArrivalPanel(need("arrival-panel"), {

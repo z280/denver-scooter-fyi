@@ -49,10 +49,14 @@ describe("a claim reaches the server", () => {
   it("registers the claim the walk makes, not just the popup's", () => {
     const body = walkFunnel();
     expect(body).toContain("registerDibs(");
-    // Guarded, because `callDibs` is idempotent on the vehicle identifier:
-    // the popup may have registered this very claim a moment ago, and a
-    // second insert would be a second certificate for one claim.
-    expect(body).toContain("claim.registration === null");
+    // THROUGH `registerClaim`, which owns the guard that used to sit here
+    // (`callDibs` is idempotent, so the popup may already be registering this
+    // very claim) along with the two things an inline `.then(saveDibs(...))`
+    // got wrong: resurrecting a claim dropped mid-flight, and leaving the row
+    // it created live and unreleasable. Both call sites use it — asserted in
+    // `dibs.test.ts`, which can test the races properly.
+    expect(body).toContain("registerClaim(");
+    expect(body).not.toContain(".then((reg)");
   });
 
   it("carries the rider's SMS answer on every registration", () => {

@@ -22,7 +22,9 @@ import {
   dibsOn,
   dropDibs,
   loadDibs,
+  registerClaim,
   setDibsReleaseHook,
+  _resetDibsRegistrationsForTests,
 } from "./dibs.ts";
 
 const CLAIM = {
@@ -259,5 +261,173 @@ describe("giving a claim up tells the server", () => {
     setDibsReleaseHook(null);
     expect(() => dropDibs("abc123", T0)).not.toThrow();
     expect(loadDibs(T0)).toEqual([]);
+  });
+});
+
+
+describe("registration that lands after the rider has moved on", () => {
+  // REGISTRATION IS A ROUND TRIP, and riders do not wait for it. Drop, switch
+  // scooters, back out of the walk, "it won't ride" — any of them can happen
+  // while the POST is in flight, and at that moment the local claim has no row
+  // id, so `dropDibs`'s release hook has nothing to send. Whatever the
+  // completion then does decides whether a live, watched, unreleasable row is
+  // left behind.
+  afterEach(() => {
+    setDibsReleaseHook(null);
+    _resetDibsRegistrationsForTests();
+  });
+
+  const REG = { id: "reg-1", verifyUrl: "https://v", qrUrl: "https://q" };
+
+  /** A POST we resolve by hand, so the gap is a real one. */
+  function deferred() {
+    let settle: (r: typeof REG) => void = () => {};
+    const promise = new Promise<typeof REG>((ok) => {
+      settle = ok;
+    });
+    return { post: () => promise, settle };
+  }
+
+  it("attaches the row when the claim is still held", () => {
+    const claim = callDibs(CLAIM, T0);
+    const { post, settle } = deferred();
+    registerClaim(claim, post, () => T0);
+
+    settle(REG);
+    return Promise.resolve().then(() => {
+      expect(dibsOn(CLAIM.vehicleIdentifier, T0)?.registration).toEqual(REG);
+    });
+  });
+
+  it("does not resurrect a claim dropped while the request was in flight", async () => {
+    const claim = callDibs(CLAIM, T0);
+    const { post, settle } = deferred();
+    registerClaim(claim, post, () => T0);
+
+    dropDibs(CLAIM.vehicleIdentifier, T0);
+    expect(loadDibs(T0)).toEqual([]);
+
+    settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Still gone. The old shape wrote it straight back.
+    expect(loadDibs(T0)).toEqual([]);
+  });
+
+  it("releases the row it just created, since nothing else can", async () => {
+    // The drop could not release it — there was no id yet. This completion is
+    // the only moment the id and the knowledge that it is unwanted coexist.
+    const claim = callDibs(CLAIM, T0);
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+    const { post, settle } = deferred();
+    registerClaim(claim, post, () => T0);
+
+    dropDibs(CLAIM.vehicleIdentifier, T0);
+    expect(released).not.toHaveBeenCalled(); // no id to send yet
+
+    settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(released.mock.calls[0][0].registration).toEqual(REG);
+  });
+
+  it("does not hand a re-claim the old claim's certificate", async () => {
+    // Dropped and claimed again is a DIFFERENT claim with its own timestamp.
+    // Matching on the vehicle alone would staple this row to it.
+    const claim = callDibs(CLAIM, T0);
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+    const { post, settle } = deferred();
+    registerClaim(claim, post, () => T0);
+
+    dropDibs(CLAIM.vehicleIdentifier, T0);
+    const fresh = callDibs(CLAIM, T0 + 1_000);
+
+    settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dibsOn(CLAIM.vehicleIdentifier, T0 + 1_000)?.registration).toBeNull();
+    expect(dibsOn(CLAIM.vehicleIdentifier, T0 + 1_000)?.claimedAt).toBe(fresh.claimedAt);
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps progress recorded while the request was in flight", async () => {
+    // The old shape wrote back the snapshot captured at claim time, throwing
+    // away any `recordProgress` that landed during the round trip.
+    const claim = callDibs(CLAIM, T0);
+    const { post, settle } = deferred();
+    registerClaim(claim, post, () => T0);
+
+    saveDibs({ ...claim, bestMeters: 42, startedWalkingAt: T0 }, T0);
+
+    settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const held = dibsOn(CLAIM.vehicleIdentifier, T0)!;
+    expect(held.registration).toEqual(REG);
+    expect(held.bestMeters).toBe(42);
+    expect(held.startedWalkingAt).toBe(T0);
+  });
+
+  it("registers a scooter once, even when two paths both ask", async () => {
+    // The popup claims and registers; the walk's auto-dibs then calls
+    // `callDibs`, which is idempotent and hands back a claim whose
+    // registration has not landed. Both used to POST, and the loser's row was
+    // orphaned — live, watched, and releasable by nothing.
+    const claim = callDibs(CLAIM, T0);
+    const first = deferred();
+    const second = vi.fn();
+    registerClaim(claim, first.post, () => T0);
+    registerClaim(claim, second, () => T0);
+
+    expect(second).not.toHaveBeenCalled();
+
+    first.settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dibsOn(CLAIM.vehicleIdentifier, T0)?.registration).toEqual(REG);
+  });
+
+  it("lets a later attempt through once the first has settled", async () => {
+    const claim = callDibs(CLAIM, T0);
+    const first = deferred();
+    registerClaim(claim, first.post, () => T0);
+    first.settle(REG);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A claim with no registration (say the first POST had failed) must still
+    // be registerable afterwards — the in-flight guard is not a permanent one.
+    const bare = callDibs({ ...CLAIM, vehicleIdentifier: "other" }, T0);
+    const again = vi.fn().mockResolvedValue(REG);
+    registerClaim(bare, again, () => T0);
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
+  it("never registers a claim that already has a row", () => {
+    const claim = callDibs(CLAIM, T0);
+    saveDibs({ ...claim, registration: REG }, T0);
+    const post = vi.fn();
+    registerClaim(dibsOn(CLAIM.vehicleIdentifier, T0)!, post, () => T0);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("leaves the claim alone when the POST fails", async () => {
+    const claim = callDibs(CLAIM, T0);
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+    registerClaim(claim, () => Promise.reject(new Error("offline")), () => T0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dibsOn(CLAIM.vehicleIdentifier, T0)?.registration).toBeNull();
+    expect(released).not.toHaveBeenCalled();
   });
 });

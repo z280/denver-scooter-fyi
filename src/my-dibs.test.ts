@@ -17,7 +17,10 @@ function claim(over: Partial<Dibs> = {}): Dibs {
     claimedBy: "Resourceful 🌈",
     claimedAt: T0,
     startedWalkingAt: null,
-    registration: null,
+    // REGISTERED, which is the ordinary state of a claim this panel lists —
+    // and the state the release hook needs, since a claim with no server row
+    // has no id to release by (`registerClaim` covers that case instead).
+    registration: { id: "reg-1", verifyUrl: "https://v", qrUrl: "https://q" },
     // `isValid` (dibs.ts) requires all four of these to be finite numbers —
     // a fixture without them is silently dropped by `loadDibs`, which is
     // exactly what the first version of this file discovered.
