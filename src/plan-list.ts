@@ -23,6 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import type { RankPlansResult, TripPlan, TripLeg } from "./along-the-way.ts";
+import { capNote, capPlans, type HandOffCap } from "./plan-prefs.ts";
 import type { RatePlan } from "./config.ts";
 import {
   equityDisclosures,
@@ -115,6 +116,14 @@ export interface PlanListView {
    *  nothing for the rider to correct, and a control offering to adjust a budget
    *  that does not exist invites them to tell us something we will ignore. */
   freeMinutes: FreeMinutesCopy | null;
+  /** The rider's hand-off cap removed rows from this list, in their own words,
+   *  or null when it did not.
+   *
+   *  It names the SETTING rather than just the count, because the complaint it
+   *  answers is "why am I not being shown the cheap one" and a bare "2 plans
+   *  hidden" does not answer it. Null when nothing was hidden, which is the
+   *  common case and the default. */
+  capNote: string | null;
 }
 
 export const ESTIMATE_NOTE =
@@ -270,6 +279,17 @@ export interface PlanListInput {
   /** The figure the search was priced with. Passed in rather than derived here,
    *  so the control and the plans cannot disagree about the same hour. */
   freeMinutes?: FreeMinuteEstimate | null;
+  /** The rider's hand-off cap. Omitted means no cap, which is the default and
+   *  what every caller before this setting existed effectively passed.
+   *
+   *  Applied HERE rather than inside `rankPlans`, deliberately. The planner's
+   *  job is to find and price the ways of getting there; the rider's cap is
+   *  about which of them they are willing to be shown. Folding it into the
+   *  search would make a preference look like a property of the fleet, and
+   *  would silently change `relaxed` and `capRelaxed` — the honesty machinery
+   *  that explains what the SEARCH gave up — into something that also covers a
+   *  setting the rider could change in two taps. */
+  handOffCap?: HandOffCap;
 }
 
 /** Turn a search result into the rows §2.4 describes.
@@ -285,7 +305,7 @@ export function planListView(input: PlanListInput): PlanListView {
   const destinationLabel = input.destinationLabel ?? null;
   const baseline = savingBaseline(result);
 
-  const rows = result.plans.map((plan): PlanRow => {
+  const allRows = result.plans.map((plan): PlanRow => {
     const saving = baseline ? startInAreaSaving(plan, baseline, rate) : null;
     const first = rideLegs(plan)[0];
     // THE PLAN'S OWN SHAPE, not `plan === result.walkOnly`.
@@ -313,8 +333,16 @@ export function planListView(input: PlanListInput): PlanListView {
     };
   });
 
+  // The cap thins the finished rows rather than the raw plans, so a hidden row
+  // is one that was fully priced and explained — which is what lets the note
+  // below say how many, and what lets the walk-only row survive any cap by
+  // construction rather than by a special case.
+  const cap = input.handOffCap ?? null;
+  const { kept, hidden } = capPlans(allRows, cap);
+
   return {
-    rows,
+    rows: kept,
+    capNote: capNote(hidden, cap),
     estimateNote: ESTIMATE_NOTE,
     relaxedLabels: result.relaxed.map((f) => RELAXED_FIELD_LABEL[f]),
     capRelaxed: result.capRelaxed,

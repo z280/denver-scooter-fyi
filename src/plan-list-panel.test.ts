@@ -45,6 +45,7 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     capRelaxed: false,
     riskWarning: null,
     freeMinutes: null,
+    capNote: null,
     ...over,
   };
 }
@@ -279,5 +280,37 @@ describe("the plan list panel", () => {
     handle.destroy();
     go.click();
     expect(onChoose).not.toHaveBeenCalled();
+  });
+});
+
+describe("the card looks like a scroll when it is one", () => {
+  it("marks itself at-end when nothing is below the fold", () => {
+    // happy-dom reports zero for every layout figure, so `scrollHeight` and
+    // `clientHeight` are both 0 — which is exactly the un-scrollable case, and
+    // the one where a fade over the final button would make a live control
+    // look disabled.
+    const host = document.createElement("div");
+    document.body.append(host);
+    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
+    expect(host.querySelector(".planlist")?.classList.contains("is-at-end")).toBe(true);
+  });
+
+  it("drops the mark once there is content below, and restores it at the bottom", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
+    const card = host.querySelector<HTMLElement>(".planlist")!;
+
+    // Stand in for layout happy-dom will not do: a card twice as tall as its
+    // window, scrolled to the top.
+    Object.defineProperty(card, "scrollHeight", { value: 600, configurable: true });
+    Object.defineProperty(card, "clientHeight", { value: 300, configurable: true });
+    card.scrollTop = 0;
+    card.dispatchEvent(new Event("scroll"));
+    expect(card.classList.contains("is-at-end")).toBe(false);
+
+    card.scrollTop = 300;
+    card.dispatchEvent(new Event("scroll"));
+    expect(card.classList.contains("is-at-end")).toBe(true);
   });
 });

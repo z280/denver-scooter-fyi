@@ -18,6 +18,7 @@
 //     state, and the server must be using the same figure.
 //   * `now` IS PASSED, never defaulted to `Date.now()` inside the search.
 
+import { handOffCap } from "./plan-prefs.ts";
 import {
   rankPlans,
   type LngLat,
@@ -150,6 +151,9 @@ export function searchPlans(
       rate: ctx.rate,
       destinationLabel: dest.label,
       freeMinutes,
+      // Read at search time rather than captured, so a rider who changes it in
+      // the drawer and comes back gets the list they just asked for.
+      handOffCap: handOffCap(),
     }),
   };
 }

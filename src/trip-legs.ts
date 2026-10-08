@@ -79,6 +79,26 @@ export interface ActiveTrip {
    *  ledger still counts legs and totals and simply has nothing to offer at
    *  the end of each. */
   dest: TripDest | null;
+  /** Where each hand-off happens: the pickup point of legs 2..N, in order, as
+   *  the plan named them at the moment the rider took it.
+   *
+   *  THIS IS WHAT A LEG ACTUALLY ROUTES TO, and leaving it out was a real bug
+   *  rather than a simplification. Without it the wizard seeded every leg with
+   *  the FINAL destination, so a rider on leg one of a two-scooter plan was
+   *  navigated straight past the scooter they were supposed to switch to — the
+   *  app routing around its own plan.
+   *
+   *  STALE BY DESIGN, and that is survivable where routing to the wrong place
+   *  is not. The vehicle may well have moved or been taken by the time leg one
+   *  ends; what catches that is the re-solve at the end of each leg, which asks
+   *  the planner again from where the rider is actually standing. Until then,
+   *  "go to roughly where the next scooter was" is right and "go to the far end
+   *  of the trip" is wrong.
+   *
+   *  Shorter than `plannedRides - 1` is legal: a plan taken before this field
+   *  existed, or one whose vehicles could not be located on the map, simply
+   *  falls through to the final destination. */
+  handOffs: TripDest[];
   completed: TripLegRecord[];
   startedAtMs: number;
 }
@@ -158,10 +178,21 @@ function parseTrip(v: unknown): ActiveTrip | null {
     const leg = parseLeg(raw);
     if (leg !== null) completed.push(leg);
   }
+  const handOffs: TripDest[] = [];
+  for (const raw of Array.isArray(v.handOffs) ? v.handOffs : []) {
+    const dest = parseDest(raw);
+    // A hand-off that will not parse STOPS the list rather than being skipped,
+    // because these are positional: dropping the middle one would silently
+    // route leg two to leg three's pickup. Truncating falls through to the
+    // final destination, which is wrong in a way a rider can see.
+    if (dest === null) break;
+    handOffs.push(dest);
+  }
   return {
     id: typeof v.id === "string" ? v.id : "trip",
     plannedRides: planned,
     dest: parseDest(v.dest),
+    handOffs,
     completed,
     startedAtMs,
   };
@@ -212,6 +243,7 @@ function persist(trip: ActiveTrip): boolean {
 export function startTrip(input: {
   plannedRides: number;
   dest?: TripDest | null;
+  handOffs?: readonly TripDest[];
   nowMs?: number;
   id?: string;
 }): ActiveTrip | null {
@@ -221,6 +253,7 @@ export function startTrip(input: {
     id: input.id ?? `trip-${Math.random().toString(36).slice(2, 10)}`,
     plannedRides: planned,
     dest: input.dest ?? null,
+    handOffs: [...(input.handOffs ?? [])],
     completed: [],
     startedAtMs: input.nowMs ?? Date.now(),
   };
@@ -257,6 +290,26 @@ export function endTrip(): void {
     // Nothing to do and nothing to report: a trip that cannot be cleared is
     // cleared by the next `startTrip`, which replaces whatever is there.
   }
+}
+
+/** Where the leg being ridden right now should actually take the rider.
+ *
+ *  The next hand-off if there is one, else the trip's own destination. This is
+ *  the function the wizard seeds `dest` from, and the whole reason `handOffs`
+ *  exists: a rider on leg one of a two-scooter plan who is navigated to the far
+ *  end of the trip has been routed around the plan they chose.
+ *
+ *  Indexed by legs COMPLETED, not by `currentLeg`, which clamps — a rider who
+ *  re-solved and took an extra hop has already passed every hand-off the
+ *  original plan knew about, so they are heading for the destination now. */
+export function legDestination(trip: ActiveTrip): TripDest | null {
+  return trip.handOffs[trip.completed.length] ?? trip.dest;
+}
+
+/** True when this leg ends at a hand-off rather than at the destination, which
+ *  is what lets a surface say "to your next scooter" instead of "to Home". */
+export function legEndsAtHandOff(trip: ActiveTrip): boolean {
+  return trip.handOffs[trip.completed.length] !== undefined;
 }
 
 /** Totals over the legs finished SO FAR. Never includes the leg in progress:

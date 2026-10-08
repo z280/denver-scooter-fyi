@@ -9851,23 +9851,54 @@ input[data-ride-keypad="on"] {
    --------------------------------------------------------------------------- */
 .planlist {
   position: fixed;
-  left: 50%;
+  /* CENTRED IN WHAT IS LEFT, not in the viewport. At 94vw on a phone this card
+     ran clean under the open ribbon, which sits at z-index 32 and so covered
+     the left edge of every row: headlines read "o scooters, one hand-off" and
+     the leg lines lost their numbers. `--ribbon-gutter` is the variable the
+     drawers and chips already offset from and it collapses to 0 with the
+     strip, so a closed ribbon leaves this centred exactly as before. */
+  left: calc(50% + var(--ribbon-gutter) / 2);
   bottom: calc(
     calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
       var(--float-inset)
   );
   transform: translateX(-50%);
   z-index: 29;
-  width: min(94vw, 460px);
+  width: min(calc(94vw - var(--ribbon-gutter)), 460px);
   max-height: min(70vh, 620px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 14px 14px 12px;
+  /* The extra bottom padding is the other half of the fade below: it gives the
+     last row somewhere to end, so the card's own edge never cuts a button. */
+  padding: 14px 14px 22px;
   background: var(--metal-bg);
   color: var(--metal-fg);
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--shadow);
+  /* A SCROLL THAT LOOKS LIKE A SCROLL. Mid-scroll, the card clipped the next
+     row's blue action button flat against its bottom edge, which reads as a
+     rendering fault rather than as "there is more below" — the screenshot that
+     prompted this showed a stray blue bar and nothing to explain it. The mask
+     fades the last few pixels of content out instead.
+
+     `mask-image` rather than an overlay element: the card is a scroll
+     container, so an absolutely-positioned gradient inside it would scroll
+     away with the content, and one outside it would have to track the card's
+     rounded corners. */
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 18px),
+    transparent 100%
+  );
+}
+/* Scrolled to the end — or never scrollable at all — there is nothing below to
+   hint at, and a fade over the final button makes a live control look
+   disabled. The class is set by the panel, which is the only thing that can
+   know; CSS cannot ask whether a box overflows. */
+.planlist.is-at-end {
+  mask-image: none;
 }
 .planlist__head {
   padding-right: 52px;

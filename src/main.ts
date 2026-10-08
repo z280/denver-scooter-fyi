@@ -154,6 +154,8 @@ import { peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
   endTrip,
+  legDestination,
+  legEndsAtHandOff,
   startTrip,
   tripComplete,
 } from "./trip-legs.ts";
@@ -1735,10 +1737,17 @@ map.on("load", async () => {
       // still SHOWS — changing your mind about the destination is exactly
       // what that screen is for — but Next is live the moment it mounts.
       if (trip) {
-        rideSession.dispatch({
-          type: "setDest",
-          dest: { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon },
-        });
+        // §11.9: on a multi-leg plan THIS LEG ends at the next hand-off, not at
+        // the far end of the trip. Seeding the final destination here is what
+        // navigated a rider on leg one straight past the scooter they were
+        // meant to switch to — the app routing around its own plan.
+        const legTrip = activeTrip();
+        const legDest = legTrip === null ? null : legDestination(legTrip);
+        const dest =
+          legDest !== null && legTrip !== null && legEndsAtHandOff(legTrip)
+            ? legDest
+            : { label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon };
+        rideSession.dispatch({ type: "setDest", dest });
         // AND THE DEVICE, for an own-device trip. `own_device: true` in the
         // OPTIONS is not the same as a device on the doc, and Screen 6 skips
         // itself on `doc.device === null` — so setting only the option made
@@ -4138,6 +4147,11 @@ function wireNextLegHandoff(): void {
       endTrip();
       return;
     }
+    // The FINAL destination, deliberately, not the next hand-off: this is the
+    // re-solve, and what it asks is "how do I get the rest of the way from
+    // here" — the planner picks the vehicles, which is the whole point of
+    // asking it again rather than replaying a stored route. The hand-offs the
+    // new plan names replace the old ones when the rider takes it.
     openPlanList({ label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon });
   });
 }
@@ -4229,15 +4243,48 @@ function takePlanRow(row: PlanRow): void {
   // of 1" badge would be chrome telling the rider something they knew. Done
   // BEFORE the walk flow starts, so the arrival panel and everything after it
   // see the trip on their first render.
-  const rideLegs = row.plan.legs.filter((l) => l.mode === "ride").length;
+  const rideVehicles = row.plan.legs
+    .filter((l) => l.mode === "ride")
+    .map((l) => l.vehicle ?? null);
+  const rideLegs = rideVehicles.length;
   if (rideLegs >= 2) {
     const pending = peekPendingTrip()?.dest ?? null;
+    // WHERE EACH HAND-OFF HAPPENS: the pickup point of legs 2..N, which is
+    // simply where the vehicle each of those legs starts on is standing right
+    // now. Leg one's own pickup is the walk the rider is about to take, so it
+    // is not a hand-off and is skipped.
+    //
+    // `TripLeg.vehicle` is `DeviceProperties`, which carries no coordinates —
+    // the same feature lookup `takePlanRow` already does for the first vehicle
+    // is how a position is had. A vehicle that cannot be located TRUNCATES the
+    // list rather than leaving a gap, because these are positional and a gap
+    // would route leg two to leg three's pickup.
+    const handOffs: { label: string; lat: number; lon: number }[] = [];
+    for (const v of rideVehicles.slice(1)) {
+      if (!v) break;
+      const feat = devices
+        .allFeatures()
+        .find((f) => f.properties.device_id === v.device_id);
+      if (!feat) break;
+      const [hLng, hLat] = feat.geometry.coordinates;
+      handOffs.push({
+        label: vehicleDisplayName(
+          v.public_name,
+          null,
+          v.vehicle_model_name,
+          v.plate_suffix,
+        ),
+        lat: hLat,
+        lon: hLng,
+      });
+    }
     startTrip({
       plannedRides: rideLegs,
       dest:
         pending === null
           ? null
           : { label: pending.label, lat: pending.lat, lon: pending.lon },
+      handOffs,
     });
   } else {
     // Choosing a one-scooter plan is also the rider saying this is the trip

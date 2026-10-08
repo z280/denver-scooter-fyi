@@ -11,6 +11,8 @@ import {
   currentLeg,
   endTrip,
   legBadge,
+  legDestination,
+  legEndsAtHandOff,
   onFinalLeg,
   recordLeg,
   startTrip,
@@ -214,5 +216,65 @@ describe("the destination the rest of the way is solved against", () => {
       '{"v":1,"trip":{"plannedRides":2,"startedAtMs":1,"dest":{"lat":39.7,"lon":-104.9}}}',
     );
     expect(activeTrip()?.dest).toEqual({ label: "", lat: 39.7, lon: -104.9 });
+  });
+});
+
+describe("where THIS leg actually goes", () => {
+  const A = { label: "Liftoff 🍉 167", lat: 39.73, lon: -105.0 };
+  const B = { label: "Perseus 🎯 619", lat: 39.75, lon: -104.97 };
+
+  it("routes leg one to the first hand-off, not to the destination", () => {
+    // The bug this exists for: a rider on leg one of a two-scooter plan was
+    // navigated straight past the scooter they were meant to switch to,
+    // because the wizard seeded every leg with the final destination.
+    startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] });
+    const trip = activeTrip()!;
+    expect(legDestination(trip)).toEqual(A);
+    expect(legEndsAtHandOff(trip)).toBe(true);
+  });
+
+  it("advances to the next hand-off as legs land", () => {
+    startTrip({ plannedRides: 3, dest: HOME, handOffs: [A, B] });
+    recordLeg(leg({ rideId: "one" }));
+    expect(legDestination(activeTrip()!)).toEqual(B);
+    recordLeg(leg({ rideId: "two" }));
+    // Out of hand-offs: the last leg goes to the destination itself.
+    expect(legDestination(activeTrip()!)).toEqual(HOME);
+    expect(legEndsAtHandOff(activeTrip()!)).toBe(false);
+  });
+
+  it("falls through to the destination for a trip with no hand-offs stored", () => {
+    // A trip taken before the field existed, or one whose vehicles could not
+    // be found on the map.
+    startTrip({ plannedRides: 2, dest: HOME });
+    expect(legDestination(activeTrip()!)).toEqual(HOME);
+    expect(legEndsAtHandOff(activeTrip()!)).toBe(false);
+  });
+
+  it("sends an extra, re-solved hop to the destination rather than reusing a hand-off", () => {
+    // Indexed by legs COMPLETED and not by the clamped `currentLeg`: a rider
+    // who took three hops instead of two has already passed every hand-off the
+    // original plan knew about.
+    startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] });
+    recordLeg(leg({ rideId: "one" }));
+    recordLeg(leg({ rideId: "two" }));
+    expect(currentLeg(activeTrip()!)).toBe(2);
+    expect(legDestination(activeTrip()!)).toEqual(HOME);
+  });
+
+  it("TRUNCATES a stored hand-off list at the first unparseable entry", () => {
+    // These are positional. Skipping a bad middle entry would route leg two to
+    // leg three's pickup, which is wrong in a way nobody can see; truncating
+    // falls through to the destination, which is wrong in a way they can.
+    localStorage.setItem(
+      ACTIVE_TRIP_KEY,
+      '{"v":1,"trip":{"plannedRides":3,"startedAtMs":1,"dest":' +
+        '{"label":"Home","lat":39.72,"lon":-105.03},"handOffs":[' +
+        '{"label":"A","lat":39.73,"lon":-105.0},{"label":"B"},' +
+        '{"label":"C","lat":39.75,"lon":-104.97}]}}',
+    );
+    const trip = activeTrip()!;
+    expect(trip.handOffs).toHaveLength(1);
+    expect(legDestination(trip)).toEqual({ label: "A", lat: 39.73, lon: -105.0 });
   });
 });

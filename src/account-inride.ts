@@ -27,6 +27,12 @@ import {
   type FavoriteSlotId,
 } from "./favorite-slots.ts";
 import { calibrationSentence, clearCalibration } from "./cost-calibration.ts";
+import {
+  HAND_OFF_CAP_OPTIONS,
+  handOffCap,
+  setHandOffCap,
+  type HandOffCap,
+} from "./plan-prefs.ts";
 import { reverseGeocode } from "./geocode.ts";
 import {
   DEFAULT_RATE_PLAN,
@@ -183,6 +189,53 @@ export function buildInRidePanel(
   });
 
   display.append(speedoWrap, costLabel, costHint, costStatus.node);
+
+  // ---------------------------------------------------------------------
+  // Trip planning
+  // ---------------------------------------------------------------------
+
+  // WHY A SETTING AND NOT A CLEVERNESS. `rankPlans` prices a hand-off honestly,
+  // so a two-scooter plan that comes out cheaper really is cheaper. What the
+  // arithmetic cannot price is whether the rider WANTS to park one scooter,
+  // find another and start a second rental mid-trip — for plenty of people the
+  // answer is no at any price. Until this existed, their only way to decline
+  // was to notice the hand-off in the list and pick a different row, every
+  // single time.
+  const planning = section("Trip plans");
+  planning.append(
+    el(
+      "p",
+      "account-hint",
+      "When you ask \u201cWhere to?\u201d we look for the quickest and cheapest ways there \u2014 sometimes that means riding one scooter, parking it, and taking another.",
+    ),
+  );
+  const capStatus = makeStatus();
+  const capWrap = el("div", "account-field");
+  capWrap.append(el("span", "control-label", "Switching scooters"));
+  const capSelect = el("select", "select");
+  capSelect.setAttribute("aria-label", "Switching scooters");
+  for (const option of HAND_OFF_CAP_OPTIONS) {
+    const opt = el("option", undefined, option.label);
+    opt.value = option.value === null ? "any" : String(option.value);
+    capSelect.append(opt);
+  }
+  // Same reasoning as the speedometer's hint: three short labels that do not
+  // describe themselves, and the consequence of each is what the rider is
+  // actually choosing between.
+  const capHint = el("p", "account-hint");
+  const paintCapHint = (): void => {
+    const chosen = HAND_OFF_CAP_OPTIONS.find(
+      (o) => (o.value === null ? "any" : String(o.value)) === capSelect.value,
+    );
+    capHint.textContent = chosen?.hint ?? "";
+  };
+  capSelect.addEventListener("change", () => {
+    const next: HandOffCap = capSelect.value === "any" ? null : capSelect.value === "0" ? 0 : 1;
+    paintCapHint();
+    capStatus.set(setHandOffCap(next) ? "Saved." : NOT_PERSISTED);
+  });
+  capWrap.append(capSelect, capHint, capStatus.node);
+  planning.append(capWrap);
 
   // ---------------------------------------------------------------------
   // Rate plan
@@ -422,7 +475,7 @@ export function buildInRidePanel(
 
   for (const id of FAVORITE_SLOT_IDS) favs.append(buildSlotRow(id));
 
-  host.append(display, rate, calib, favs);
+  host.append(display, planning, rate, calib, favs);
 
   const refresh = (): void => {
     speedoSelect.value = speedometerStyle();
@@ -431,6 +484,9 @@ export function buildInRidePanel(
     const saved = savedRatePlan();
     rateSelect.value = saved ?? DEFAULT_RATE_PLAN;
     rateDefaultNote.hidden = saved !== null;
+    const cap = handOffCap();
+    capSelect.value = cap === null ? "any" : String(cap);
+    paintCapHint();
     // A receipt filed since the drawer was last open can have changed this.
     renderCalibration();
     rerenderSlots();
