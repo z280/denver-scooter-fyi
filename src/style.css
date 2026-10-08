@@ -10105,6 +10105,145 @@ input[data-ride-keypad="on"] {
   font-weight: 650;
   cursor: pointer;
 }
+/* "Proceed with my ideal scooter?" and the three interview answers, above the
+   plans because both are INPUTS to every row below. A rider who reads a short
+   list and only then finds the filter that shortened it has been told the city
+   is empty. */
+.planlist__controls:empty {
+  display: none;
+}
+.planlist__controls {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-subtle);
+}
+.planlist__specrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.planlist__specswitch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+}
+/* The sheet itself, quieter than the switch that governs it: it is there to be
+   recognised, not read word by word. Full width so a long sheet wraps under the
+   switch rather than shoving Configure off the row. */
+.planlist__specsummary {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.planlist__specedit {
+  appearance: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.planlist__specedit:hover {
+  background: var(--bg-panel);
+}
+.planlist__specedit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The heading is a flex ITEM of the wrapping group below (it is appended into
+   it so the label and its buttons are one element for a screen reader), so it
+   needs the full-width basis or it sits beside the first button instead of
+   above the row. */
+.planlist__priohead {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+/* Wrap rather than scroll: three short labels fit two-up on a phone, and a
+   horizontally scrolling row of three hides one of them behind a gesture
+   nothing announces. */
+.planlist__prio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.planlist__priobtn {
+  appearance: none;
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.planlist__priobtn.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.planlist__priobtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* "Take this one" and, on a split plan, the 🔍 beside it. */
+.planlist__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.planlist__actions .planlist__go {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+/* Square, so it reads as an icon button next to a wide labelled one rather than
+   as a second, smaller action competing with it. The glyph carries no meaning
+   for a screen reader — the aria-label does. */
+.planlist__peek {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 44px;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.planlist__peek:hover {
+  background: var(--bg-panel);
+}
+.planlist__peek:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* The way out of this section, and deliberately the quietest control in it: a
    rider who wants one of the plans above should not have their eye pulled down
    here. Full width because it is the last thing in the card and a half-width

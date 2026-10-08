@@ -18,6 +18,7 @@
 
 import { parseCorrection } from "./free-minutes-control.ts";
 import type { PlanListView, PlanRow } from "./plan-list.ts";
+import type { RidePriority } from "./recommend.ts";
 
 export interface PlanListPanelDeps {
   /** The rider picked a plan with a vehicle to walk to. */
@@ -38,6 +39,22 @@ export interface PlanListPanelDeps {
    *  still shown as a sentence: "the app can do this and you have not set it
    *  up" is worth knowing even where this surface cannot open it. */
   onConfigureSpec?(): void;
+  /** The rider stood their ideal scooter down for this search, or put it back.
+   *  Absent and the sheet is shown as a read-only statement, which is still
+   *  worth having: knowing a filter is in force explains a short list. */
+  onToggleIdealSpec?(inUse: boolean): void;
+  /** The three answers the find-wheels interview offers, so a rider can change
+   *  their mind without walking back through it. Same values and the same
+   *  words, because they are the same question.
+   *
+   *  `priority()` reads the current answer rather than capturing it: the wizard
+   *  may have set it a moment ago and this panel is rebuilt on every re-solve. */
+  priority?(): RidePriority | null;
+  onSetPriority?(priority: RidePriority): void;
+  /** "Show me where I swap." Minimises this drawer and puts the hand-off
+   *  vehicle on the map. Offered per row and only on a row that HAS a
+   *  hand-off. */
+  onShowSwitchover?(row: PlanRow): void;
 }
 
 export interface PlanListPanelHandle {
@@ -46,6 +63,21 @@ export interface PlanListPanelHandle {
   update(view: PlanListView): void;
   destroy(): void;
 }
+
+/** The interview's three answers, with the wizard's own wording — shortened
+ *  only where a button cannot carry a sentence. The SAME words matter: a rider
+ *  who answered "Least walking distance" a moment ago should recognise the
+ *  control that lets them change it.
+ *
+ *  Option 4 ("use existing map filters") is deliberately absent. It is not a
+ *  fourth priority — the wizard's own comment says nothing wipes the filters
+ *  any more, so it describes an intent with no behaviour behind it. Offering it
+ *  here would be a button that does nothing. */
+const PRIORITY_OPTIONS: readonly { value: RidePriority; label: string }[] = [
+  { value: "type", label: "Exact type" },
+  { value: "quality", label: "Condition" },
+  { value: "distance", label: "Least walking" },
+];
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -94,8 +126,12 @@ export function createPlanListPanel(
   // rider who sets a spec up wants the list to change under them.
   const specPrompt = el("div", "planlist__specprompt");
   specPrompt.hidden = true;
+  // ABOVE THE PLANS, with the free-minute figure, because both are INPUTS to
+  // every row below. A rider who reads a short list and only then finds the
+  // filter that shortened it has been told the city is empty.
+  const controls = el("div", "planlist__controls");
   const body = el("div", "planlist__body");
-  panel.append(head, notes, free, specPrompt, body, close);
+  panel.append(head, notes, free, controls, specPrompt, body, close);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -302,13 +338,39 @@ export function createPlanListPanel(
       return card;
     }
 
+    const actions = el("div", "planlist__actions");
     const go = el("button", "planlist__go", "Take this one");
     go.type = "button";
     go.addEventListener("click", () => {
       if (destroyed) return;
       deps.onChoose(row);
     });
-    card.append(go);
+    actions.append(go);
+
+    // 🔍 WHERE DO I SWAP. Only on a row that HAS a hand-off, and only when the
+    // host can act on it.
+    //
+    // The hand-off is the one part of a split plan the text cannot convey.
+    // "Park it and take another" names an action, not a PLACE — and the place
+    // is what decides whether the plan is acceptable at all: a swap on the
+    // rider's own route is nothing, a swap three blocks off it is the reason to
+    // pick a different row. So this is a LOOK and not a commitment: it puts the
+    // vehicle on the map and leaves the plan unchosen, which is why it sits
+    // beside "Take this one" rather than replacing it.
+    if (row.switchoverVehicle && deps.onShowSwitchover) {
+      const peek = el("button", "planlist__peek", "🔍");
+      peek.type = "button";
+      // The glyph is decorative and unreadable to a screen reader; the label
+      // carries the whole meaning, and names the SWAP rather than the icon.
+      peek.setAttribute("aria-label", "Show me where I swap scooters");
+      peek.title = "Show me where I swap scooters";
+      peek.addEventListener("click", () => {
+        if (destroyed) return;
+        deps.onShowSwitchover?.(row);
+      });
+      actions.append(peek);
+    }
+    card.append(actions);
     return card;
   }
 
@@ -338,8 +400,62 @@ export function createPlanListPanel(
   // cannot ask whether a box overflows, which is why this had to live here;
   // once the box stopped overflowing, so did the reason.
 
+  /** "Proceed with your ideal scooter?" and the three interview answers.
+   *
+   *  ONE BLOCK because they are one question asked twice over: the sheet is the
+   *  standing answer and the priority is this trip's. Separating them would put
+   *  two preference controls in one card with nothing saying how they relate.
+   *
+   *  Rendered only where there is something to decide — no sheet and no
+   *  `onSetPriority` wiring means an empty block, which `:empty` hides. */
+  function renderControls(v: PlanListView): void {
+    controls.replaceChildren();
+    if (v.idealSpec) {
+      const row = el("div", "planlist__specrow");
+      const label = el("label", "planlist__specswitch");
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = v.idealSpec.inUse;
+      // Disabled rather than hidden when the host cannot act on it: the
+      // SENTENCE is the useful part, and a live-looking switch that does
+      // nothing is worse than a plain statement.
+      box.disabled = !deps.onToggleIdealSpec;
+      box.addEventListener("change", () => deps.onToggleIdealSpec?.(box.checked));
+      label.append(box, el("span", undefined, "Use my ideal scooter"));
+      row.append(label);
+      row.append(el("p", "planlist__specsummary", v.idealSpec.summary));
+      if (deps.onConfigureSpec) {
+        const edit = el("button", "planlist__specedit", "Configure");
+        edit.type = "button";
+        edit.addEventListener("click", () => deps.onConfigureSpec?.());
+        row.append(edit);
+      }
+      controls.append(row);
+    }
+    if (deps.onSetPriority) {
+      const current = deps.priority?.() ?? null;
+      const group = el("div", "planlist__prio");
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", "What matters most");
+      group.append(el("p", "planlist__priohead", "What matters most"));
+      for (const opt of PRIORITY_OPTIONS) {
+        const btn = el("button", "planlist__priobtn", opt.label);
+        btn.type = "button";
+        const on = current === opt.value;
+        btn.classList.toggle("is-on", on);
+        // `aria-pressed` and not `aria-selected`: these are toggle buttons in a
+        // group, not tabs, and nothing here reveals a panel.
+        btn.setAttribute("aria-pressed", String(on));
+        btn.addEventListener("click", () => deps.onSetPriority?.(opt.value));
+        group.append(btn);
+      }
+      controls.append(group);
+    }
+  }
+
   function render(v: PlanListView): void {
     renderNotes(v);
+    renderControls(v);
     renderFree(v);
     renderSpecPrompt(v);
     renderBody(v);

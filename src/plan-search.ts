@@ -52,6 +52,12 @@ export interface PlanSearchDeps {
    *  null. Optional: a host that never asks the interview has nothing to say,
    *  and this module neither knows nor cares what the question was. */
   interviewNote?(relaxed: readonly SpecField[]): string | null;
+  /** The rider's ideal scooter in one line, for the "proceed with this?" row,
+   *  or null when there is nothing to confirm. */
+  idealSpecSummary?(): string | null;
+  /** Whether that sheet is in force for this search. Absent reads as true,
+   *  which is what every caller before the control existed meant. */
+  idealSpecInUse?(): boolean;
   /** The same spec, but NULL when the rider has not configured one.
    *
    *  A second accessor rather than a nullable `spec()`, because the two
@@ -179,6 +185,8 @@ export function searchPlans(
       // they answered. Absent in a caller that never ran the interview, which
       // reads as "nothing to say".
       interviewNote: deps.interviewNote?.(result.relaxed) ?? null,
+      idealSpecSummary: deps.idealSpecSummary?.() ?? null,
+      idealSpecInUse: deps.idealSpecInUse?.() ?? true,
       spec: deps.activeSpec ? deps.activeSpec() : null,
       // The SAME context the search matched with, so the share and the filter
       // cannot disagree about the same vehicle.

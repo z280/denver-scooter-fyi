@@ -199,7 +199,7 @@ import {
 } from "./free-minutes-control.ts";
 import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
-import { defaultSpec } from "./ride-spec.ts";
+import { defaultSpec, specSummary, type RideSpec } from "./ride-spec.ts";
 import {
   TWO_PASSENGER_MIN_BATTERY,
   TWO_PASSENGER_MODELS,
@@ -3418,6 +3418,7 @@ function wireModes(): void {
       sel.dispatchEvent(new Event("change"));
     }
   };
+  closeDrawer = () => setDrawer(null);
   const setDrawer = (id: string | null): void => {
     const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
     if (open && open.dataset.drawer !== id) open.click();
@@ -4112,6 +4113,12 @@ let exitFindWheels: () => void = () => {};
  *  to leave, and two modules had already had to learn about the seam. Assigned
  *  by `wireModes`; a no-op before it runs. */
 let enterFindWheels: () => void = () => {};
+/** Shut whichever drawer is open. Published for the same reason
+ *  `enterFindWheels` is: `setDrawer` is a closure inside `wireDrawers`, and
+ *  module-level code (here, the plan list's 🔍) needs to get the panel out of
+ *  the way of the map it is about to point at. Inert until that wiring runs,
+ *  which is before any of this is reachable. */
+let closeDrawer: () => void = () => {};
 
 /** The plan list, while it is on screen. One at a time: two of these would be
  *  two surfaces arguing about one decision. */
@@ -4142,6 +4149,16 @@ let todaysRides: readonly RideSpan[] | null = null;
  *  the other way. */
 let interviewAnswers: InterviewAnswers | null = null;
 
+/** Whether the rider's ideal scooter is applied to THIS search.
+ *
+ *  Standing state asked about per trip. The sheet binds every search once it is
+ *  filled in, which is right for a preference and wrong for the trip where the
+ *  rider is in a hurry and would take the scruffy scooter they normally
+ *  decline. Defaults true — it is their sheet and they meant it — and resets
+ *  with the rest of the flow, because standing it down is a decision about one
+ *  journey. */
+let useIdealSpec = true;
+
 
 /** Drop the plan list, leaving the rider on the ranked scooters below it.
  *
@@ -4168,6 +4185,17 @@ function closePlanList(): void {
  *  rather than a lookup — in particular that the fleet is `allFeatures()` and
  *  never the filtered view, because a rider's leftover map filters are a view
  *  and the SPEC is what says what they will ride. */
+/** The sheet this search should run on.
+ *
+ *  One function so the spec, the interview note and the ideal share cannot
+ *  disagree about whether the rider's sheet is in force — three readings of the
+ *  same question is how a list gets filtered by something its own explanation
+ *  says is off. */
+function activeSpecForSearch(): RideSpec {
+  if (!useIdealSpec) return defaultSpec();
+  return rideSpecPanel?.activeSpec() ?? defaultSpec();
+}
+
 function planSearchDeps(): PlanSearchDeps {
   return {
     fleet: () => devices.allFeatures(),
@@ -4187,22 +4215,30 @@ function planSearchDeps(): PlanSearchDeps {
     // one-seater cannot carry two people at any ranking.
     spec: () =>
       applyTwoPassengers(
-        applyInterview(rideSpecPanel?.activeSpec() ?? defaultSpec(), interviewAnswers),
+        applyInterview(activeSpecForSearch(), interviewAnswers),
       ),
     // The same value WITHOUT the default, which is the only way to tell "no
     // preference" from "a preference that happens to accept everything". The
     // list uses it to decide whether a share is worth computing and whether to
     // offer to set one up.
-    activeSpec: () => rideSpecPanel?.activeSpec() ?? null,
+    // Null when the rider stood the sheet down, which is what makes the ideal
+    // SHARE stop being computed and the chip stop being shown: a share against
+    // a sheet that is not in force is a number about nothing.
+    activeSpec: () => (useIdealSpec ? rideSpecPanel?.activeSpec() ?? null : null),
     // Written against the spec BEFORE the interview narrowed it, which is the
     // only comparison that can tell whether the answer changed anything — and
     // the only honest basis for claiming it did.
     // `relaxed` comes from the search that just ran, so the sentence cannot
     // claim an answer was honoured when the ladder gave it up to find anything
     // at all — which it did, sitting directly under "we had to give up: Model".
+    idealSpecSummary: () => {
+      const sheet = rideSpecPanel?.activeSpec();
+      return sheet ? specSummary(sheet, (key) => MODEL_NAMES[key]) : null;
+    },
+    idealSpecInUse: () => useIdealSpec,
     interviewNote: (relaxed) =>
       interviewNote(
-        rideSpecPanel?.activeSpec() ?? defaultSpec(),
+        activeSpecForSearch(),
         interviewAnswers,
         (key) => MODEL_NAMES[key],
         relaxed,
@@ -4362,6 +4398,30 @@ function openPlanList(dest: TripPlace): void {
       }
     },
     onRefresh: resolve,
+    // Standing the sheet down, or putting it back. Re-solves rather than just
+    // re-labelling: the sheet is a FILTER, so turning it off can change which
+    // plans exist and in what order, not only what the row above them says.
+    onToggleIdealSpec: (on) => {
+      useIdealSpec = on;
+      resolve();
+    },
+    // The same three answers the interview offers, changeable in place. Also a
+    // re-solve, for the same reason, and it writes the same state the wizard
+    // wrote — so a rider who changes their mind here and then re-enters the
+    // flow finds their new answer, not the one they abandoned.
+    priority: () => interviewAnswers?.priority ?? null,
+    onSetPriority: (priority) => {
+      interviewAnswers = {
+        // The model only matters to the "type" answer, and the wizard already
+        // asked it. Keeping the previous choice means switching to Condition
+        // and back does not silently forget which model they wanted.
+        typeChoice: interviewAnswers?.typeChoice ?? "cosmo",
+        priority,
+      };
+      resolve();
+    },
+    // 🔍 — put the hand-off on the map and get out of the way.
+    onShowSwitchover: (row) => showSwitchover(row),
     onCorrectFreeMinutes: (minutes) => {
       saveCorrection(Date.now(), minutes);
       // Re-price rather than just re-label. The free-minute balance is SEARCH
@@ -4380,6 +4440,35 @@ function openPlanList(dest: TripPlace): void {
   void refreshTodaysRides().then((changed) => {
     if (changed) resolve();
   });
+}
+
+/** Put the scooter the rider SWAPS TO on the map, and minimise the drawer.
+ *
+ *  WHY THE DRAWER HAS TO GO. The point of the tap is to see a place, and on a
+ *  phone the drawer is most of the screen — leaving it open would centre the
+ *  map on a vehicle behind the panel the rider tapped. So the drawer closes and
+ *  the plans stay built: re-opening the Recommended tab brings the list back
+ *  exactly as it was, because `closePlanList` was not called.
+ *
+ *  `DeviceProperties` carries no coordinates, so the feature is looked up by
+ *  `device_id` against `allFeatures()` — the unfiltered fleet, and deliberately
+ *  so. The planner searches unfiltered, so a plan can legitimately hand off to
+ *  a vehicle the rider's map filters are hiding; looking it up in the filtered
+ *  view would make the button do nothing on exactly those plans.
+ *
+ *  `jumpToDevice` centres it either way and opens the popup only for a vehicle
+ *  the display filters keep, which is the honest outcome: the rider is shown
+ *  where the swap is even when the scooter itself is filtered off the map. */
+function showSwitchover(row: PlanRow): void {
+  const props = row.switchoverVehicle;
+  if (!props) return;
+  const feat = devices
+    .allFeatures()
+    .find((f) => f.properties.device_id === props.device_id);
+  if (!feat) return;
+  const [lng, lat] = feat.geometry.coordinates;
+  closeDrawer();
+  devices.jumpToDevice(props.device_id, lng, lat);
 }
 
 /** Today's tracked rides, for the free-minute estimate. Resolves to whether the

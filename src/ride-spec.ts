@@ -348,6 +348,33 @@ const FEATURE_LABEL: Record<FeatureFilterKey, string> = {
  *  candidate, it is not a candidate — trading that away would strand
  *  somebody, which is a different class of failure from disappointing them.
  */
+/** The sheet in one line, for a surface that has to ask "proceed with this?".
+ *
+ *  Null when the spec asks for nothing — a rider with an all-defaults sheet has
+ *  not expressed a preference, and offering to turn one off would invent a
+ *  choice. `maxWalkMinutes` is deliberately NOT listed: every search has a walk
+ *  cap, so naming it would make the default sheet look like a preference.
+ *
+ *  Short and in the rider's own terms, because the whole job is letting them
+ *  recognise their own sheet without opening it. */
+export function specSummary(
+  spec: RideSpec,
+  modelLabel: (key: ModelKey) => string,
+): string | null {
+  const parts: string[] = [];
+  if (spec.models !== null && spec.models.length > 0) {
+    parts.push(spec.models.map(modelLabel).join(" or "));
+  }
+  if (spec.minBattery > 0) parts.push(`${spec.minBattery}%+ battery`);
+  if (spec.minQuality === "no-risk") parts.push("nothing flagged");
+  if (spec.minQuality === "ok-only") parts.push("confirmed good condition");
+  if (spec.features.length > 0) {
+    parts.push(`${spec.features.length} feature${spec.features.length > 1 ? "s" : ""}`);
+  }
+  if (spec.mustReach) parts.push("can reach the destination");
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export function relaxationLadder(spec: RideSpec): Relaxation[] {
   const hard = new Set(spec.must);
   const out: Relaxation[] = [];
