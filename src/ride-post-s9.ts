@@ -1,5 +1,5 @@
 // Screen 9 — the dual survey panes (frontend plan, `ride-post.ts` row's S9
-// portion; master `docs/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 9" +
+// portion; master `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 9" +
 // Risk/Reconciliation 16 "Screen 9 pane gates"). 50/50 split: LEFT is
 // Scooter Feedback (+survey pts), RIGHT is Navigation Feedback (route rating
 // + qualitative + NPS, up to N pts + a distance bonus donation earns later).

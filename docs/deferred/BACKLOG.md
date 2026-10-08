@@ -69,9 +69,15 @@ own, the hedge is mostly noise.
 
 ## 4. Ride mode
 
-`docs/RIDE_MODE_OVERHAUL_PLAN.md` is on main and is a plan, not a build. It
-was delivered as a review of what ride mode is missing. Nothing in it has been
-implemented beyond what shipped in PR #89 and #90.
+Nothing deferred here any more; this section only points to where ride mode lives.
+
+- The ride-mode overhaul, `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` (phases
+  F1–F4), shipped in PR #43 on 2026-07-30, which is why it is in `implemented/`.
+- The later review of what ride mode is still missing is Phase 11 of
+  `docs/ALONG_THE_WAY_PLAN.md`, active and being built there.
+
+(Corrected 2026-10-08 during the docs reorganisation. This section used to say the
+overhaul was "a plan, not a build", which git history contradicts.)
 
 ---
 

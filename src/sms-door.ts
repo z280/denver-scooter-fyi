@@ -1,7 +1,7 @@
 // The "text me a code" sign-in door, as a self-contained pair of forms.
 //
 // Lives in its own module rather than inline in main.ts's wireAccount() for
-// the reason docs/API_INTEGRATION_PLAN.md gives generally, and one specific
+// the reason docs/implemented/API_INTEGRATION_PLAN.md gives generally, and one specific
 // to this door: it is the only sign-in path with a failure mode that is not
 // an error — a recipient who has opted out of texts. That deserves its own
 // copy and its own visual treatment, and mixing it into the email door's

@@ -1,7 +1,7 @@
 // Signed-in body of the Account drawer. wireAccount() in main.ts keeps the
 // signed-out sign-in doors and top-level dispatch; the whole signed-in view
 // lives here so the profile surface can grow without growing main.ts (the
-// new-module split docs/API_INTEGRATION_PLAN.md prescribes).
+// new-module split docs/implemented/API_INTEGRATION_PLAN.md prescribes).
 
 import {
   ApiError,

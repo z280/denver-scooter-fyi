@@ -3,7 +3,7 @@
 // no DOM, no network, no imports of `main.ts` state. Every screen module and
 // the HUD read the doc from here rather than keeping their own copy.
 //
-// Spec: `docs/PLAN_RIDE_MODE_FRONTEND.md` § "Ride session state machine". The
+// Spec: `docs/implemented/PLAN_RIDE_MODE_FRONTEND.md` § "Ride session state machine". The
 // doc shape, the storage key, the state names and every non-linear transition
 // below are quoted from it.
 //

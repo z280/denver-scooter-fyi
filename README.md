@@ -298,7 +298,7 @@ Pushed to **Cloudflare Pages** via GitHub Actions
 Because `main` deploys itself, a frontend feature that depends on unshipped
 backend work reaches production the moment it merges — there is no separate
 "deploy" step in which to notice. Check
-[docs/API_INTEGRATION_PLAN.md](docs/API_INTEGRATION_PLAN.md) for the current
+[docs/implemented/API_INTEGRATION_PLAN.md](docs/implemented/API_INTEGRATION_PLAN.md) for the current
 cross-repo dependencies before merging anything that talks to a new
 endpoint.
 

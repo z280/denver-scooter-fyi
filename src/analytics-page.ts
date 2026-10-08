@@ -1,5 +1,5 @@
 // The /analytics page: how Veo's Denver fleet performs, for the owner and
-// anyone they send the link to (docs: the API repo's PLAN_FLEET_ANALYTICS.md).
+// anyone they send the link to (docs: the API repo's docs/implemented/PLAN_FLEET_ANALYTICS.md).
 //
 // Its own Vite entry (analytics.html), like embed/stats: no map, no account
 // state, nothing that adds a byte to the map's bundle.
