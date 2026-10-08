@@ -5328,6 +5328,21 @@ body.is-map-picking .ride-modal {
   font-size: clamp(15px, 3.2vh, 20px);
   opacity: 0.9;
 }
+/* §11.9's two trip lines, above and below the pair they belong to. Both are
+   smaller than the clock and the cost on purpose: which leg this is and what
+   the whole trip has cost are CONTEXT for the two live figures, not rivals to
+   them. A rider glancing at a handlebar mount reads the big numbers; these
+   answer the question they ask once, at a light. */
+.hud-readout--leg {
+  font-size: clamp(12px, 2.4vh, 15px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+.hud-readout--trip {
+  font-size: clamp(12px, 2.4vh, 15px);
+  opacity: 0.78;
+}
 .hud-adjust-clock {
   align-self: center;
   font-weight: 800;
@@ -8091,6 +8106,26 @@ input[data-ride-keypad="on"] {
   font-style: italic;
   color: var(--fg-muted);
   text-align: center;
+}
+/* §11.9's trip context on Screen 8. Boxed, because it is about a DIFFERENT
+   thing from everything above it: those rows are this ride's cost, and this is
+   where that ride sits in a journey that is not over. */
+.ride-post-s8__trip {
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.ride-post-s8__trip-leg {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ride-post-s8__trip-total {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
 }
 .ride-post-s8__note {
   margin: 2px 0;

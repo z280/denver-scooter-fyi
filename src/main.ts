@@ -150,6 +150,12 @@ import {
 import { submitDeviceReport } from "./reports.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
+  activeTrip,
+  endTrip,
+  startTrip,
+  tripComplete,
+} from "./trip-legs.ts";
+import {
   showMovedToast,
   wireDeviceNotifyPanel,
   type DeviceNotifyPanelHandle,
@@ -1235,6 +1241,9 @@ map.on("load", async () => {
   // the kind of flicker the header exists to avoid.
   mountThemeModes(need("theme-modes"));
   wireFreeRide();
+  // §11.9: the subscription that offers the rest of the way once a leg
+  // closes. Wired once at startup, like every other session watcher.
+  wireNextLegHandoff();
   // The founder's note is collapsed by default; opening it is a real signal
   // about what people read on the About page, so it goes through our own
   // telemetry like every other interaction. `toggle` fires on close too —
@@ -4027,6 +4036,44 @@ function planSearchDeps(): PlanSearchDeps {
  *  the rider can see where they are — so that is where they go instead. Same on
  *  dismissal: closing the list should not leave them on a bare map with the
  *  question they just asked unanswered. */
+/** §11.9's hand-off: leg one is over, offer the rest of the way.
+ *
+ *  THE ONE PLACE THAT CAN DO IT. A leg boundary is a ride boundary, and the
+ *  ride does not finish on Screen 8 — it finishes after Screens 9 and 10, when
+ *  the doc leaves the post-ride states. Screen 8 itself must not offer a next
+ *  scooter: the first one is still rented to the rider at that point, and a
+ *  flow that handed them a second would be charging them for two.
+ *
+ *  IT RE-SOLVES, IT DOES NOT REPLAY. The vehicle the original plan named is
+ *  minutes old and the fleet has moved, so this asks `rankPlans` again from
+ *  where the rider is standing now to where they were always going. That is
+ *  also why the ledger stores a destination and not a route.
+ *
+ *  Watching for the TRANSITION rather than the state, because this subscription
+ *  fires on every dispatch and an offer that re-opened itself on each one would
+ *  be a plan list the rider cannot dismiss.
+ *
+ *  The trip is cleared on arrival, and also whenever the rider finishes a ride
+ *  with no destination left to solve — a ledger with nothing to offer is a
+ *  stale badge waiting to appear on an unrelated ride three days later. */
+function wireNextLegHandoff(): void {
+  let wasInFlight = false;
+  rideSession.subscribe(() => {
+    const doc = rideSession.current();
+    const inFlight = doc !== null && (isRideLive(doc) || isPostRide(doc));
+    const justFinished = wasInFlight && !inFlight;
+    wasInFlight = inFlight;
+    if (!justFinished) return;
+    const trip = activeTrip();
+    if (trip === null) return;
+    if (tripComplete(trip) || trip.dest === null) {
+      endTrip();
+      return;
+    }
+    openPlanList({ label: trip.dest.label, lat: trip.dest.lat, lon: trip.dest.lon });
+  });
+}
+
 function openPlanList(dest: TripPlace): void {
   const deps = planSearchDeps();
   const first = searchPlans(deps, dest);
@@ -4103,6 +4150,32 @@ async function refreshTodaysRides(): Promise<boolean> {
 function takePlanRow(row: PlanRow): void {
   const props = row.firstVehicle;
   if (!props) return;
+  // §11.9: open a trip ledger IFF the plan the rider chose has a hand-off in
+  // it. Before this, `takePlanRow` walked them to the first vehicle and threw
+  // the plan away, so the ride flow below had no idea a second leg was coming
+  // — the clock restarted, the cost restarted, and Screen 8 congratulated them
+  // on arriving while they stood at a hand-off point with a mile to go.
+  //
+  // `startTrip` refuses a single-ride plan itself, so this is not a guard so
+  // much as a declaration: a one-scooter plan is an ordinary ride, and a "leg 1
+  // of 1" badge would be chrome telling the rider something they knew. Done
+  // BEFORE the walk flow starts, so the arrival panel and everything after it
+  // see the trip on their first render.
+  const rideLegs = row.plan.legs.filter((l) => l.mode === "ride").length;
+  if (rideLegs >= 2) {
+    const pending = peekPendingTrip()?.dest ?? null;
+    startTrip({
+      plannedRides: rideLegs,
+      dest:
+        pending === null
+          ? null
+          : { label: pending.label, lat: pending.lat, lon: pending.lon },
+    });
+  } else {
+    // Choosing a one-scooter plan is also the rider saying this is the trip
+    // now, so any ledger from an abandoned multi-leg plan goes with it.
+    endTrip();
+  }
   const feature = devices
     .allFeatures()
     .find((f) => f.properties.device_id === props.device_id);

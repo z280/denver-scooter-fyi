@@ -59,6 +59,7 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
+import { activeTrip, legBadge, tripTotals } from "./trip-legs.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
 import {
   admits,
@@ -1570,10 +1571,17 @@ export class RideHud {
     ).join("");
     this.root.innerHTML = `
       <div class="hud-live">
+        <!-- §11.9's two lines, kept in the one column the rider already
+             glances at for time and money. Not a badge of their own in the top
+             centre: that is the equity-area badge's seat, and two things
+             fighting for the middle of a moving map is how a rider learns to
+             ignore both. -->
         <div class="hud-corner hud-corner--tl">
           <div class="hud-tl-stack">
+            <span id="hud-leg" class="hud-readout hud-readout--leg" hidden></span>
             <span id="hud-clock" class="hud-readout hud-readout--clock">0:00</span>
             <span id="hud-cost" class="hud-readout hud-readout--cost hud-readout--cost-sub"></span>
+            <span id="hud-trip" class="hud-readout hud-readout--trip" hidden></span>
           </div>
         </div>
         <div class="hud-corner hud-corner--tr">
@@ -1825,6 +1833,7 @@ export class RideHud {
         cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
       }
     }
+    this.renderTripLines(elapsed, rate);
     const mphValue = this.smoothedMps * MPS_TO_MPH;
     const mph = this.root.querySelector("#hud-mph");
     if (mph) mph.textContent = String(Math.round(mphValue));
@@ -1834,6 +1843,51 @@ export class RideHud {
       const deg = SPEEDO_START + (clamped / SPEEDO_MAX_MPH) * SPEEDO_SWEEP;
       this.needleEl.style.transform = `rotate(${deg}deg)`;
     }
+  }
+
+  /** §11.9: which leg this is, and what the trip has cost so far.
+   *
+   *  BOTH LINES ARE ABSENT unless a trip ledger exists, which is the common
+   *  case — most rides are one ride, and a "Leg 1 of 1" badge is chrome that
+   *  tells a rider something they knew. Read from storage on every tick rather
+   *  than captured at ride start, because the ledger is written by Screen 8 of
+   *  the PREVIOUS leg: a captured copy would be one leg stale for the whole
+   *  ride, which is the one way this badge can actively mislead.
+   *
+   *  THE TRIP FIGURE ADDS THIS LEG, and `tripTotals` deliberately does not.
+   *  The ledger's totals are over settled legs, because a stored sum that
+   *  silently included a moving number would be a different figure every time
+   *  anything read it. Adding the live leg HERE, where the elapsed time already
+   *  is live, keeps the arithmetic visible: this leg's cost is on the line
+   *  above, and the trip line is that plus what is already spent.
+   *
+   *  Hidden on an own-device ride and whenever the cost readout is off: the
+   *  trip line is a money line, and a rider who turned the money off did not
+   *  ask for a running total of it. The leg badge stays either way — it is a
+   *  position in a journey, not a price. */
+  private renderTripLines(elapsedMs: number, rate: RatePlanKey | null): void {
+    const legEl = this.root.querySelector<HTMLElement>("#hud-leg");
+    const tripEl = this.root.querySelector<HTMLElement>("#hud-trip");
+    const trip = activeTrip();
+    if (legEl) {
+      legEl.hidden = trip === null;
+      if (trip) legEl.textContent = legBadge(trip);
+    }
+    if (!tripEl) return;
+    const showMoney =
+      trip !== null && !this.ownDeviceRide && this.costHudVisible && rate !== null;
+    tripEl.hidden = !showMoney;
+    if (!showMoney || trip === null || rate === null) return;
+    const settled = tripTotals(trip);
+    const cents = settled.costCents + rideCostCents(planFor(rate), elapsedMs);
+    // "≈" and "so far" both, because it is an estimate AND incomplete; and
+    // `partial` adds "at least", because a total summed over a leg that was
+    // missing a figure is a floor. Three hedges on one short line is more than
+    // this app usually allows itself, and every one of them is load-bearing:
+    // the alternative is a number a rider compares against their Veo bill and
+    // stops believing.
+    const prefix = settled.partial ? "Trip ≥" : "Trip ≈";
+    tripEl.textContent = `${prefix} ${formatCents(cents)} so far`;
   }
 
   private startSensors(): void {

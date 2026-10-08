@@ -64,6 +64,8 @@ import {
 import type { RideOptions, RouteManeuver, TrackSigning } from "./api.ts";
 import type { RideSessionDoc, RideSessionRoute } from "./ride-session.ts";
 import { encodePolyline } from "./polyline-encode.ts";
+import { saveRatePlan } from "./ride-cost.ts";
+import { recordLeg, startTrip } from "./trip-legs.ts";
 import {
   admits,
   sameSelection,
@@ -1289,5 +1291,134 @@ describe("RideHud follow-cam: re-center and the display panel", () => {
     expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(true);
     timer.click();
     expect(container.querySelector<HTMLElement>("#hud-clock")?.hidden).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.9 — the HUD can finally say which leg this is
+// ---------------------------------------------------------------------------
+
+describe("RideHud: trip legs", () => {
+  let hud: RideHud | null = null;
+
+  afterEach(() => {
+    hud = null;
+    localStorage.clear();
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  function mount(own = false) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    // The cost readout — and so the trip total beneath it — shows nothing
+    // until a rate plan is known, which is the HUD's existing rule and not
+    // this feature's: a price computed against a plan the rider never chose
+    // would be a guess at their bill.
+    saveRatePlan("visitor");
+    const { geo } = stubGeolocation();
+    vi.stubGlobal("navigator", { ...globalThis.navigator, geolocation: geo });
+    const doc: RideSessionDoc = {
+      ...buildDoc("ride-leg-1", Date.now() - 600_000),
+      options: { ...OPTIONS, speedometer: "classic" },
+      device: own ? { own: true } : buildDoc("x", 0).device,
+      route: null,
+    };
+    hud = new RideHud(
+      container,
+      async () => [],
+      fakeMap() as unknown as ConstructorParameters<typeof RideHud>[2],
+      fakeDeviceCtl(),
+      { session: { current: () => doc, dispatch: vi.fn() } },
+    );
+    hud.beginHandoff({
+      rideId: doc.rideId,
+      startedAtMs: doc.startedAtMs as number,
+      recorder: null,
+    });
+    return container;
+  }
+
+  const legEl = (c: HTMLElement) => c.querySelector<HTMLElement>("#hud-leg");
+  const tripEl = (c: HTMLElement) => c.querySelector<HTMLElement>("#hud-trip");
+
+  it("shows neither line on an ordinary one-scooter ride", () => {
+    // Most rides are one ride, and "Leg 1 of 1" is chrome telling a rider
+    // something they knew.
+    const c = mount();
+    expect(legEl(c)?.hidden).toBe(true);
+    expect(tripEl(c)?.hidden).toBe(true);
+  });
+
+  it("names the leg, counting the legs already banked", () => {
+    startTrip({ plannedRides: 3 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 1_000,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    expect(legEl(c)?.hidden).toBe(false);
+    expect(legEl(c)?.textContent).toBe("Leg 2 of 3");
+  });
+
+  it("adds THIS leg to the settled ones in the trip total", () => {
+    // The ledger's own totals are over settled legs only — a stored sum that
+    // silently included a moving number would read differently every time
+    // anything looked at it. The live half is added here, where the clock is.
+    startTrip({ plannedRides: 2 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: null,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    const text = tripEl(c)?.textContent ?? "";
+    // "≥", not "≈": that leg had no distance, so every total is a floor.
+    expect(text).toMatch(/^Trip ≥ \$\d+\.\d\d so far$/);
+    // And it is strictly more than the banked $3.00 alone, because ten
+    // minutes of this leg are in it.
+    const cents = Number(/\$(\d+\.\d\d)/.exec(text)![1].replace(".", ""));
+    expect(cents).toBeGreaterThan(300);
+  });
+
+  it("says ≈ when every banked leg carried every figure", () => {
+    startTrip({ plannedRides: 2 });
+    recordLeg({
+      rideId: "leg-one",
+      costCents: 300,
+      meters: 900,
+      seconds: 400,
+      endedAtMs: 1,
+    });
+    const c = mount();
+    expect(tripEl(c)?.textContent ?? "").toMatch(/^Trip ≈ /);
+  });
+
+  it("keeps the leg badge but drops the money line on an own-device ride", () => {
+    // The badge is a position in a journey; the total is a price. An
+    // own-device ride has no Veo billing clock to picture, so a running total
+    // of it would be a number about nothing.
+    startTrip({ plannedRides: 2 });
+    const c = mount(true);
+    expect(legEl(c)?.hidden).toBe(false);
+    expect(tripEl(c)?.hidden).toBe(true);
+  });
+
+  it("drops the money line when the rider turned the cost readout off", () => {
+    startTrip({ plannedRides: 2 });
+    const c = mount();
+    expect(tripEl(c)?.hidden).toBe(false);
+    c.querySelector<HTMLButtonElement>('[data-hud="more"].hud-round-btn')!.click();
+    c.querySelector<HTMLButtonElement>(
+      '.hud-more-panel [data-hud="display"][data-display="cost"]',
+    )!.click();
+    expect(tripEl(c)?.hidden).toBe(true);
+    // The badge is unaffected: they turned off a price, not a journey.
+    expect(legEl(c)?.hidden).toBe(false);
   });
 });

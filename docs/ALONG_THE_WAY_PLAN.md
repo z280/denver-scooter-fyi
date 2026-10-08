@@ -2746,6 +2746,45 @@ planning; what this phase owes is a HUD that can show "leg 2 of 3" and a
 total. Until it can, "along the way" is a planning feature the ride itself
 cannot represent.
 
+> **SHIPPED as `trip-legs.ts`, and it needed one distinction the text does not
+> draw.**
+>
+> **Screen 8's [New Destination] is NOT a leg.** It keeps the same `rideId`,
+> the same signing chain and the same vehicle — it is "I changed my mind about
+> where I am going", and the session doc already handles it. A LEG is a
+> hand-off: park this vehicle, unlock the next one, which is a new
+> `tracked_rides` row and a new session doc. Counting the former as the latter
+> would have inflated the badge every time a rider changed their mind mid-ride.
+>
+> That is also why the ledger is its own device-local store and not a field on
+> the session doc: the doc is per-ride by construction and the reducer enforces
+> it, so a trip spanning legs would be erased by exactly the transition it
+> exists to survive.
+>
+> **It stores a destination, not a route.** By the time leg two starts the fleet
+> has moved and the vehicle the plan named may be gone, so the rest of the way
+> is RE-SOLVED through `rankPlans` rather than replayed from a stored promise.
+> What the ledger keeps is the count the rider was told ("two hand-offs") and
+> somewhere to solve towards.
+>
+> **The HUD's two lines sit in the top-left stack**, above the clock and below
+> the cost, rather than as a badge of their own: the top centre is the
+> equity-area badge's seat, and two things fighting for the middle of a moving
+> map is how a rider learns to ignore both. The leg badge is a position in a
+> journey and shows on an own-device ride; the trip total is a price and does
+> not, nor when the rider has turned the cost readout off.
+>
+> **Three places refuse to overstate.** The badge clamps, so a rider who
+> re-solved mid-trip and took three hops instead of two never reads "leg 4 of
+> 3" — the honest reading of the last slot is "the last leg". Any leg missing a
+> figure turns every total from "≈" into "≥". And `tripTotals` covers settled
+> legs only, with the live leg added by the surface that already has a live
+> clock, so a stored sum never silently includes a moving number.
+>
+> **The hand-off into leg two happens after Screens 9/10, not on Screen 8.** The
+> first vehicle is still rented to the rider while Screen 8 is up, and a flow
+> that handed them a second one there would be charging them for two.
+
 ### 11.10 What NOT to build
 
 - **No crash detection.** See §11.4.

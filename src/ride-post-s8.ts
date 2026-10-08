@@ -112,6 +112,7 @@ import {
   type TrackedRide,
 } from "./api.ts";
 import type { RatePlanKey } from "./config.ts";
+import { activeTrip, legBadge, onFinalLeg, recordLeg, tripTotals } from "./trip-legs.ts";
 import type { Locate, LngLat } from "./locate.ts";
 import { openRideModal as defaultOpenRideModal } from "./ride-modal.ts";
 import {
@@ -521,6 +522,9 @@ function mountRideScreen8(
       wrap.append(el("p", "ride-modal__hint", "Working…"));
     }
 
+    const trip = tripTrailer();
+    if (trip) wrap.append(trip);
+
     const offer = moveWatchOffer();
     if (offer) wrap.append(offer);
 
@@ -662,9 +666,73 @@ function mountRideScreen8(
       // proceed exactly as on success.
     }
     if (destroyed) return;
+    // §11.9: this leg is over. Recorded HERE and not on [New Destination],
+    // because that button is the other thing entirely — same rideId, same
+    // vehicle, new destination — and counting it as a leg would inflate the
+    // badge every time a rider changed their mind. A leg boundary is a ride
+    // boundary: park this vehicle, unlock the next one.
+    //
+    // Before the dispatch, so the ledger is already right when Screen 9/10
+    // render off it; `recordLeg` is a no-op when there is no trip, which is
+    // most rides, and it dedupes on rideId so a second pass through here (a
+    // 409 "already reported", a reload onto this doc) cannot count it twice.
+    recordLeg({
+      rideId,
+      costCents: screen8CostBreakdown(liveElapsedMs(), planKey, deps.taxRate())
+        .total,
+      // DISTANCE IS DELIBERATELY NULL. The measured figure lives in the track
+      // store, which this module has no handle on, and the server's own
+      // `distance_meters` is not settled at the moment the end is reported.
+      // A null reads as "we do not know" and makes the trip total say so;
+      // inventing a zero here would make a two-leg trip look like a one-leg
+      // trip that went nowhere.
+      meters: null,
+      seconds: Math.round(liveElapsedMs() / 1000),
+      endedAtMs: deps.now(),
+    });
     const facts = await deps.getGateFacts(rideId);
     if (destroyed) return;
     deps.session.dispatch({ type: "endReported", facts });
+  }
+
+  /** §11.9's trip context, or null on an ordinary one-scooter ride.
+   *
+   *  THE LEG THIS SCREEN IS CLOSING has not been recorded yet — `recordLeg`
+   *  fires on the end report, which is the button below — so `legBadge` names
+   *  it correctly as the current one, and the total adds this leg's cost to
+   *  the settled ones exactly as the HUD's own trip line does.
+   *
+   *  It says what comes next without a button for it. The hand-off to leg two
+   *  happens where picking a vehicle already happens: the rider ends this ride
+   *  in Veo, the flow finishes, and the host offers the plan again for the rest
+   *  of the way. A "next scooter" button HERE would hand them a second vehicle
+   *  while the first one is still rented to them. */
+  function tripTrailer(): HTMLElement | null {
+    const trip = activeTrip();
+    if (trip === null) return null;
+    const settled = tripTotals(trip);
+    const cents =
+      settled.costCents +
+      screen8CostBreakdown(liveElapsedMs(), planKey, deps.taxRate()).total;
+    const wrap = el("div", "ride-post-s8__trip");
+    wrap.append(el("p", "ride-post-s8__trip-leg", legBadge(trip)));
+    wrap.append(
+      el(
+        "p",
+        "ride-post-s8__trip-total",
+        `${settled.partial ? "Trip ≥" : "Trip ≈"} ${formatCents(cents)} so far`,
+      ),
+    );
+    wrap.append(
+      el(
+        "p",
+        "ride-modal__hint",
+        onFinalLeg(trip)
+          ? "This is the last leg of your trip."
+          : "End this ride in Veo first — we'll offer the rest of the way once it's closed.",
+      ),
+    );
+    return wrap;
   }
 
   // ---------------- New Destination ----------------

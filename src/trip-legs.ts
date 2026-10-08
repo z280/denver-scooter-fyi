@@ -1,0 +1,317 @@
+// §11.9 — the trip that has legs, so the ride can represent what the planner
+// promised.
+//
+// THE GAP THIS CLOSES. `along-the-way.ts` ranks plans with hand-offs in them:
+// ride scooter A, park it, step onto scooter B, carry on. The plan list renders
+// those plans and a rider can pick one. But `takePlanRow` then walked them to
+// the first vehicle and threw the plan away, and the ride flow below it has no
+// idea a second leg was ever coming — the HUD's clock restarts, the cost
+// restarts, the trail is a new trail, and Screen 8 congratulates the rider on
+// arriving when they are standing at a hand-off point with a mile still to go.
+// "Along the way" was a planning feature the ride itself could not represent.
+//
+// WHY A SEPARATE STORE, AND NOT THE SESSION DOC. A leg IS a ride: a hand-off
+// means parking one Veo vehicle and unlocking another, which is a new
+// `tracked_rides` row, a new signing key, a new `RideSessionDoc`. The session
+// doc is per-ride by construction and `ride-session.ts`'s reducer is where that
+// is enforced, so a trip spanning legs cannot live in it — it would be erased
+// by exactly the transition it exists to survive. (The S8 [New Destination]
+// loop is the other thing entirely: same rideId, same vehicle, new
+// destination. That one the session doc handles already, and it is NOT a leg.)
+//
+// WHAT IS DELIBERATELY NOT HERE:
+//
+//   - No server round trip. A trip is a device-local intention, like a
+//     favourite or a filter. The legs it is made of are each a real server
+//     ride already; the ledger that groups them adds nothing the server needs
+//     and would need a migration, an endpoint and a sync story to add nothing.
+//   - No planned ROUTE. The ledger stores how many ride legs the chosen plan
+//     had and nothing about their shape, because by the time leg 2 starts the
+//     fleet has moved: the vehicle the plan named may be gone, and re-solving
+//     is `along-the-way.ts`'s job, not a stored promise's. The count is what
+//     the rider was told ("2 hand-offs") and the count is what we are honest
+//     about.
+//   - No auto-advance. Finishing leg 1 does not start leg 2. The rider is
+//     standing on a pavement deciding, and a flow that moved on for them would
+//     be guessing at the one moment they are certain.
+
+export const ACTIVE_TRIP_KEY = "scooter-fyi-trip";
+
+/** Blob version. A bump means "read as no trip", which is the right failure:
+ *  an abandoned half-trip costs a rider nothing, and carrying a shape we no
+ *  longer understand costs them a wrong badge for the rest of the ride. */
+const TRIP_BLOB_V = 1;
+
+/** One finished leg. Every figure is nullable because every figure can be
+ *  genuinely absent — a private ride has no `rideId`, a ride whose GPS never
+ *  resolved has no distance, and an own-device leg has no cost. A null is "we
+ *  do not know", and the totals below say so rather than reading it as zero. */
+export interface TripLegRecord {
+  /** The server ride id, or the local `trackKeyId` for a private leg. Null
+   *  only if neither existed, which should not happen and is not worth
+   *  throwing over. */
+  rideId: string | null;
+  /** Estimated cost in cents, as the ride's own summary computed it. Null on
+   *  an own-device leg: there is no Veo billing clock to picture. */
+  costCents: number | null;
+  /** Measured metres, null when the track has no distance. */
+  meters: number | null;
+  /** The leg's own span in seconds. */
+  seconds: number | null;
+  endedAtMs: number;
+}
+
+export interface ActiveTrip {
+  /** Local id, for nothing but telling two trips apart in a log. */
+  id: string;
+  /** How many RIDE legs the plan the rider chose had. Always ≥ 2 — a
+   *  single-ride plan is an ordinary ride and starts no trip, because a "leg 1
+   *  of 1" badge is chrome that tells a rider something they knew. */
+  plannedRides: number;
+  /** Where the trip is going, with coordinates and not just a name.
+   *
+   *  THE COORDINATES ARE THE POINT. Finishing leg one leaves the rider at a
+   *  hand-off spot with the rest of the way still to cover, and the rest of
+   *  the way has to be RE-SOLVED rather than replayed: the vehicle the
+   *  original plan named may be gone, and `along-the-way.ts` is the thing that
+   *  knows how to ask again. It needs a destination to ask about, so the trip
+   *  carries one. Null when the rider never named one, in which case the
+   *  ledger still counts legs and totals and simply has nothing to offer at
+   *  the end of each. */
+  dest: TripDest | null;
+  completed: TripLegRecord[];
+  startedAtMs: number;
+}
+
+/** Deliberately a bare shape rather than an import of `TripPlace`: that type
+ *  lives in a module full of DOM-adjacent trip plumbing, and the three fields
+ *  it shares with this one are the three a stored blob can validate. */
+export interface TripDest {
+  label: string;
+  lat: number;
+  lon: number;
+}
+
+export interface TripTotals {
+  /** Legs finished so far. */
+  legsDone: number;
+  plannedRides: number;
+  costCents: number;
+  meters: number;
+  seconds: number;
+  /** True when ANY finished leg was missing a figure, so every total above is
+   *  a floor rather than a sum. A total presented as complete over the legs
+   *  that happened to be measured is the kind of number that gets noticed once
+   *  and never trusted again — `ride-accumulation.ts` learned the same lesson
+   *  and this is the same rule. */
+  partial: boolean;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function parseLeg(v: unknown): TripLegRecord | null {
+  if (!isRecord(v)) return null;
+  const endedAtMs = numOrNull(v.endedAtMs);
+  if (endedAtMs === null) return null;
+  return {
+    rideId: typeof v.rideId === "string" ? v.rideId : null,
+    costCents: numOrNull(v.costCents),
+    meters: numOrNull(v.meters),
+    seconds: numOrNull(v.seconds),
+    endedAtMs,
+  };
+}
+
+function parseDest(v: unknown): TripDest | null {
+  if (!isRecord(v)) return null;
+  const lat = numOrNull(v.lat);
+  const lon = numOrNull(v.lon);
+  // A destination without coordinates is not a destination: the only thing
+  // the trip needs one FOR is re-solving the rest of the way, and a label
+  // alone cannot be solved against. Dropped rather than half-kept.
+  if (lat === null || lon === null) return null;
+  return { label: typeof v.label === "string" ? v.label : "", lat, lon };
+}
+
+/** Parse a stored trip, or null. Validated field by field rather than cast:
+ *  this blob survives a reload and a deploy, so a doc written by an older
+ *  build — or by nothing at all — must read as "no trip" instead of as a trip
+ *  with `NaN` legs. */
+function parseTrip(v: unknown): ActiveTrip | null {
+  if (!isRecord(v)) return null;
+  const planned = numOrNull(v.plannedRides);
+  const startedAtMs = numOrNull(v.startedAtMs);
+  if (planned === null || startedAtMs === null) return null;
+  // A trip with fewer than two ride legs is not a trip. Rejecting it on READ
+  // as well as on write means a hand-edited or truncated blob cannot put the
+  // app into a state `startTrip` refuses to create.
+  if (!Number.isInteger(planned) || planned < 2) return null;
+  const rawLegs = Array.isArray(v.completed) ? v.completed : [];
+  const completed: TripLegRecord[] = [];
+  for (const raw of rawLegs) {
+    const leg = parseLeg(raw);
+    if (leg !== null) completed.push(leg);
+  }
+  return {
+    id: typeof v.id === "string" ? v.id : "trip",
+    plannedRides: planned,
+    dest: parseDest(v.dest),
+    completed,
+    startedAtMs,
+  };
+}
+
+/** The trip in progress, or null.
+ *
+ *  Same storage discipline as `favorites.ts` and `filter-presets.ts`: a
+ *  versioned blob, every read validated, every read and write wrapped, and
+ *  anything unexpected degrading to "no trip" rather than throwing — this is
+ *  read on the ride surface, where an exception would take the HUD with it. */
+export function activeTrip(): ActiveTrip | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
+    if (!raw) return null;
+    const blob = JSON.parse(raw) as { v?: unknown; trip?: unknown };
+    if (!isRecord(blob) || blob.v !== TRIP_BLOB_V) return null;
+    return parseTrip(blob.trip);
+  } catch {
+    return null;
+  }
+}
+
+/** Returns false when storage refused the write (private mode, or quota).
+ *
+ *  NO SESSION MIRROR, unlike `favorites.ts`. That store mirrors a failed write
+ *  in memory so a rider does not watch a saved place vanish. A trip is
+ *  different: it is read by surfaces built fresh across a reload, and a mirror
+ *  would show a leg badge that the next reload contradicts. Better to have no
+ *  trip than one that exists on one screen. */
+function persist(trip: ActiveTrip): boolean {
+  try {
+    localStorage.setItem(
+      ACTIVE_TRIP_KEY,
+      JSON.stringify({ v: TRIP_BLOB_V, trip }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Begin a trip. Returns the trip, or null when the plan does not need one.
+ *
+ *  REPLACES ANY TRIP IN PROGRESS, on purpose: choosing a new multi-leg plan is
+ *  the rider saying where they are going now, and two live trips is a state
+ *  with no rider-facing meaning. */
+export function startTrip(input: {
+  plannedRides: number;
+  dest?: TripDest | null;
+  nowMs?: number;
+  id?: string;
+}): ActiveTrip | null {
+  const planned = input.plannedRides;
+  if (!Number.isInteger(planned) || planned < 2) return null;
+  const trip: ActiveTrip = {
+    id: input.id ?? `trip-${Math.random().toString(36).slice(2, 10)}`,
+    plannedRides: planned,
+    dest: input.dest ?? null,
+    completed: [],
+    startedAtMs: input.nowMs ?? Date.now(),
+  };
+  persist(trip);
+  return trip;
+}
+
+/** Record a finished leg. Returns the updated trip, or null when no trip is in
+ *  progress — which is the common case and not an error: most rides are one
+ *  ride.
+ *
+ *  IDEMPOTENT ON `rideId`, because Screen 8 can render more than once for one
+ *  ride (a re-render, a reload onto the same doc, the rider backing into it)
+ *  and a leg counted twice would both inflate the total and skip a leg in the
+ *  badge. A leg with no id cannot be deduped and is appended as-is; that is
+ *  the private-ride case, where there is nothing to double-count against. */
+export function recordLeg(leg: TripLegRecord): ActiveTrip | null {
+  const trip = activeTrip();
+  if (trip === null) return null;
+  if (leg.rideId !== null && trip.completed.some((l) => l.rideId === leg.rideId)) {
+    return trip;
+  }
+  const next: ActiveTrip = { ...trip, completed: [...trip.completed, leg] };
+  persist(next);
+  return next;
+}
+
+/** Forget the trip. Called when the rider arrives, abandons, or starts
+ *  something that is not this trip. */
+export function endTrip(): void {
+  try {
+    localStorage.removeItem(ACTIVE_TRIP_KEY);
+  } catch {
+    // Nothing to do and nothing to report: a trip that cannot be cleared is
+    // cleared by the next `startTrip`, which replaces whatever is there.
+  }
+}
+
+/** Totals over the legs finished SO FAR. Never includes the leg in progress:
+ *  the HUD shows that one live, and adding a moving figure to a settled one
+ *  gives a number that is neither. */
+export function tripTotals(trip: ActiveTrip): TripTotals {
+  let costCents = 0;
+  let meters = 0;
+  let seconds = 0;
+  let partial = false;
+  for (const leg of trip.completed) {
+    if (leg.costCents === null || leg.meters === null || leg.seconds === null) {
+      partial = true;
+    }
+    costCents += leg.costCents ?? 0;
+    meters += leg.meters ?? 0;
+    seconds += leg.seconds ?? 0;
+  }
+  return {
+    legsDone: trip.completed.length,
+    plannedRides: trip.plannedRides,
+    costCents,
+    meters,
+    seconds,
+    partial,
+  };
+}
+
+/** Which leg is being ridden right now, 1-based.
+ *
+ *  Legs done plus one, CLAMPED to the planned count: a rider who re-solved
+ *  mid-trip can ride more legs than the plan predicted (the fleet moved, the
+ *  vehicle was gone, they took two shorter hops instead of one), and "leg 4 of
+ *  3" is the badge announcing our own arithmetic rather than their trip. The
+ *  honest reading of the last slot is "the last leg", so that is what it
+ *  says. */
+export function currentLeg(trip: ActiveTrip): number {
+  return Math.min(trip.completed.length + 1, trip.plannedRides);
+}
+
+/** True when the leg about to be ridden is the last one the plan predicted. */
+export function onFinalLeg(trip: ActiveTrip): boolean {
+  return trip.completed.length + 1 >= trip.plannedRides;
+}
+
+/** True when every planned leg has been ridden. */
+export function tripComplete(trip: ActiveTrip): boolean {
+  return trip.completed.length >= trip.plannedRides;
+}
+
+/** "Leg 2 of 3" — the HUD badge, and nothing more than that.
+ *
+ *  No destination in it: the badge sits on a screen where the nav pane already
+ *  names the destination, and a rider glancing at a phone on a handlebar mount
+ *  while moving can read three words or six, not both. */
+export function legBadge(trip: ActiveTrip): string {
+  return `Leg ${currentLeg(trip)} of ${trip.plannedRides}`;
+}
