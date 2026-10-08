@@ -15,13 +15,15 @@
 //
 // Two param forms:
 //   `?ride=<16 hex>`      → the API's `vehicle_identifier`, used as-is.
-//   `?ride=plate:<PLATE>` → resolved through the GbfsPlates **reverse** lookup
-//                           after an explicit awaited `prime()` (at page load no
-//                           GPS fix has primed the index yet). A miss — a down
-//                           or CORS-closed feed leaves the index empty, and the
-//                           plate may simply have left the feed — falls through
-//                           to Screen 2's manual-plate path with the plate
-//                           prefilled. Never a dead end.
+//   `?ride=plate:<PLATE>` → resolved through our public
+//                           `GET /api/v1/vehicles/resolve` (plates.ts's
+//                           `resolvePlate`) — public because the link already
+//                           carries the plate, and the answer is only the ids
+//                           our public feed publishes. Works signed out, needs
+//                           no GPS fix, and never touches Veo's servers. A miss
+//                           (no such plate, ambiguous, API down or rate
+//                           limited) falls through to Screen 2's manual-plate
+//                           path with the plate prefilled. Never a dead end.
 //
 // Gating: `wireRideDeepLink()` deliberately does NOT read the
 // `scooter-fyi-ride-modal` dev flag itself — the flag belongs at the call site,
@@ -30,7 +32,7 @@
 // default-on). Keeping the check out of here also means a test never has to
 // arrange localStorage to exercise the plumbing.
 
-import { GbfsPlates } from "./gbfs.ts";
+import { normalizePlate as sharedNormalizePlate, resolvePlate as resolvePlateRemote } from "./plates.ts";
 import { openRideModal, type RideModalEntry } from "./ride-modal.ts";
 
 /** The deep-link param. */
@@ -47,20 +49,10 @@ export type RideDeepLink =
   | { kind: "plate"; plate: string };
 
 export interface RideDeepLinkHooks {
-  /** Every device id in the last feed response, **unfiltered** —
-   *  `devices.allFeatures().map((f) => f.properties.device_id)`. Supplying this
-   *  is all the `plate:` form needs: the module primes its own `GbfsPlates`
-   *  index and reverse-looks-up over these ids. Deliberately not
-   *  `visibleFeatures()`: a leftover map filter must never hide the scooter the
-   *  rider is standing next to. */
-  deviceIds?(): Iterable<string>;
-  /** Override the plate index prime (tests). Defaults to this module's own
-   *  `GbfsPlates.prime()`; it never rejects, and a failure just leaves the
-   *  index empty (→ the manual-plate path). */
-  primePlates?(): Promise<void>;
-  /** Override plate → vehicle identifier resolution (tests). Defaults to
-   *  `reversePlateLookup` over `deviceIds()`. */
-  resolvePlate?(plate: string): string | null;
+  /** Override plate → `vehicle_identifier` resolution (tests). Defaults to the
+   *  public `/vehicles/resolve` endpoint (plates.ts's `resolvePlate`). May be
+   *  sync or async; null (or a rejection) is a miss → the manual-plate path. */
+  resolvePlate?(plate: string): string | null | Promise<string | null>;
   /** Injected for tests; defaults to `ride-modal.ts`'s `openRideModal`. */
   openRideModal?(entry: RideModalEntry): void;
   /** The `consumePendingMagicLink()` promise main.ts already holds. Resolving
@@ -88,12 +80,10 @@ export function parseRideParam(raw: string | null | undefined): RideDeepLink | n
   return null;
 }
 
-/** Plate comparison form: trimmed, uppercased, inner whitespace and separators
- *  dropped. Veo plates are all-digit today; this keeps a hand-typed
- *  `plate:10-255 43` matching the feed's `1025543`. */
-export function normalizePlate(raw: string): string {
-  return (raw || "").trim().toUpperCase().replace(/[\s-]+/g, "");
-}
+/** Plate comparison form — see plates.ts, which owns it now (the API's
+ *  `/vehicles/resolve` normalizes the same way server-side). Re-exported so
+ *  existing importers keep working. */
+export const normalizePlate = sharedNormalizePlate;
 
 /** Read the deep link without touching the URL. */
 export function readRideDeepLink(href: string = location.href): RideDeepLink | null {
@@ -135,8 +125,9 @@ export function consumeRideDeepLink(): RideDeepLink | null {
 }
 
 /** Exact-match reverse lookup: plate → device id, over the device ids given.
- *  `plateFor` is `GbfsPlates.cachedPlateFor` (device id → plate, the direction
- *  the index actually holds). Exact match only — a nearest-neighbour guess
+ *  `plateFor` is `PlateIndex.cachedPlateFor` (device id → plate, the direction
+ *  the index actually holds — signed-in only, so for a guest this never
+ *  matches and callers go on to `/vehicles/resolve`). Exact match only — a nearest-neighbour guess
  *  could hand back the wrong scooter, and missing beats wrong. */
 export function reversePlateLookup(
   plate: string,
@@ -157,62 +148,13 @@ export function reversePlateLookup(
   return null;
 }
 
-// ---------- default plate resolution (this module's own GbfsPlates) ----------
-//
-// devices.ts keeps its GbfsPlates index private and primes it on the first GPS
-// fix; a page-load deep link has no fix yet, so the module holds its own
-// instance and primes it explicitly. It is built lazily — only a `plate:` link
-// ever fetches the public feed — and there is at most one extra fetch per
-// session. (A follow-up could hand devices.ts's own index out instead; that is a
-// devices.ts change this lane deliberately does not make.)
-let deepLinkPlates: GbfsPlates | null = null;
+// ---------- default plate resolution ----------
 
-function plateIndex(): GbfsPlates {
-  deepLinkPlates ??= new GbfsPlates();
-  return deepLinkPlates;
-}
-
-function defaultPrimePlates(): Promise<void> {
-  return plateIndex().prime();
-}
-
-/** Drop the lazily-built plate index (its TTL and failure cooldown with it).
- *  Exists for tests and HMR — production builds it at most once. */
-export function resetRideDeepLinkPlates(): void {
-  deepLinkPlates = null;
-}
-
-function defaultResolvePlate(
-  plate: string,
-  deviceIds: (() => Iterable<string>) | undefined,
-): string | null {
-  if (!deviceIds) return null;
-  return resolvePlateAgainstGbfs(plate, deviceIds());
-}
-
-/** Reverse-resolve a plate to a `device_id` against THIS module's GBFS index.
- *
- *  Exported because the QR tool (`qr-utility.ts`, via main.ts) needs the same
- *  answer from the same index: a scanned sticker carries a plate, and the
- *  vehicle identifier it has to become is a salted hash the browser cannot
- *  compute. Sharing this instance rather than building a third one keeps the
- *  public-feed fetch count where it already was — devices.ts has one primed on
- *  the first GPS fix, this module has one for links, and that is enough.
- *
- *  Call `primeDeepLinkPlates()` first: the index is only populated on demand. */
-export function resolvePlateAgainstGbfs(
-  plate: string,
-  deviceIds: Iterable<string>,
-): string | null {
-  const index = plateIndex();
-  return reversePlateLookup(plate, deviceIds, (id) => index.cachedPlateFor(id));
-}
-
-/** Fetch the public GBFS feed into the index above, if it is not already fresh.
- *  Never rejects — a blocked or down feed just leaves the previous index (or
- *  none) and callers degrade to "no match". */
-export function primeDeepLinkPlates(): Promise<void> {
-  return plateIndex().prime();
+/** Plate → `vehicle_identifier` via the public `/vehicles/resolve` endpoint.
+ *  Null on a miss or when the API couldn't be asked. */
+async function defaultResolvePlate(plate: string): Promise<string | null> {
+  const r = await resolvePlateRemote(plate);
+  return r.kind === "hit" ? r.vehicleIdentifier : null;
 }
 
 /** How long the fallback watcher waits for `?ml=` to be consumed before giving
@@ -282,23 +224,14 @@ async function runRideDeepLink(hooks: RideDeepLinkHooks): Promise<void> {
     return;
   }
 
-  // Plate form: prime the index first — at page load no GPS fix has primed it,
-  // and devices.ts only primes on the first fix, which the poor-GPS path may
-  // never get.
-  const prime = hooks.primePlates ?? defaultPrimePlates;
-  try {
-    await prime();
-  } catch (e) {
-    // prime() never rejects by contract; belt and braces so a future change
-    // can't turn a deep link into an unhandled rejection.
-    console.error("ride deep link: plate index prime failed", e);
-  }
-  const resolve =
-    hooks.resolvePlate ??
-    ((plate: string) => defaultResolvePlate(plate, hooks.deviceIds));
+  // Plate form: ask our API which vehicle carries this plate. No GPS fix and
+  // no loaded map are needed — the answer is the vehicle's own identifier,
+  // which Screen 2 matches against the feed once it has one.
+  const resolve = hooks.resolvePlate ?? defaultResolvePlate;
   let vehicleIdentifier: string | null = null;
   try {
-    vehicleIdentifier = resolve(link.plate);
+    const found = await resolve(link.plate);
+    vehicleIdentifier = found ? found.toLowerCase() : null;
   } catch (e) {
     console.error("ride deep link: plate lookup failed", e);
   }

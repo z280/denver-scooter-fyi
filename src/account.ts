@@ -24,6 +24,7 @@ import {
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { openAdminModal } from "./admin-modal.ts";
 import { signOut } from "./map-auth.js";
+import { sharedPlateIndex } from "./plates.ts";
 import { type RatePlanKey } from "./config.ts";
 import {
   applyServerRatePlan,
@@ -261,6 +262,10 @@ export function renderSignedInAccount(
     try {
       await signOut();
     } finally {
+      // Plates are served to signed-in riders only; drop them before anything
+      // else can render. (PlateIndex also clears itself on the next read once
+      // the token is gone — this just doesn't wait for that.)
+      sharedPlateIndex().clear();
       // Reload so all data refetches drop back to the public endpoint
       // and the UI resets cleanly to the unauthenticated state.
       location.reload();

@@ -149,15 +149,14 @@ export function isAdminEmail(email: string | null | undefined): boolean {
  *  any scooter's QR code. */
 export const VEO_ADJUST_TOKEN = "622qh4";
 
-/** Veo's PUBLIC GBFS free_bike_status feed for Denver. The browser fetches
- *  this directly (see gbfs.ts) to recover a vehicle's plate — the number
- *  painted on the deck / in the QR code — from each entry's rental_uris
- *  `&number=` param. This keeps the plate out of OUR API: we source it
- *  straight from Veo, client-side. Verified CORS-open (Access-Control-
- *  Allow-Origin present) 2026-07; if Veo ever closes it, this needs a
- *  same-origin passthrough instead. */
-export const VEO_GBFS_FREE_BIKE_STATUS_URL =
-  "https://cluster-prod.veoride.com/api/shares/name/den/gbfs/free_bike_status";
+// Plates (the number painted on the deck / in the QR code) come from OUR API,
+// never from Veo's servers in the rider's browser: a background pull from the
+// browser hands Veo every rider's IP (owner decision 2026-10-08). See
+// plates.ts — `/vehicles/plates` serves them to signed-in riders only, one
+// batch of nearby vehicles at a time; the public `/vehicles/resolve` maps a
+// plate the rider already holds to a vehicle and reveals no plate. The only
+// Veo URLs left below are navigation the rider chooses (the deep link and
+// Adjust bounce, the Zendesk form).
 
 /** The exact deep-link format printed on every scooter: opens the Veo app
  *  to this vehicle when installed, else Adjust bounces to the app store. */
@@ -331,8 +330,9 @@ export const VEO_ZENDESK_PARKING: {
   // build time, so the field is simply left for the rider to fill. Likewise
   // fill VEO_VEHICLE_TYPE_TAGS above with each dropdown option's tag.
   customFields: [
-    // Vehicle number (text) — the plate under the QR code. Resolved from
-    // Veo's own GBFS client-side (see gbfs.ts / effectivePlate).
+    // Vehicle number (text) — the plate under the QR code. From our own
+    // `/vehicles/plates` for signed-in riders (plates.ts / effectivePlate);
+    // empty for a guest, who types it on the form.
     { fieldId: "360038000552", map: (r) => r.plate ?? "" },
     // Vehicle type (dropdown) — Astro→Scooter, Cosmo→Cosmo, Apollo→Apollo,
     // Rover→Trike (Veo's form may still label the option by the old name).

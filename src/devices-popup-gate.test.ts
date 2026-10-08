@@ -117,7 +117,7 @@ function feature(
       device_id: "d1",
       form_factor: "scooter",
       spatial_status: "available",
-      // A plate up front keeps the popup off the async GBFS hydration path.
+      // A plate up front keeps the popup off the async plate-lookup path.
       vehicle_plate: "12345",
       ...extra,
     } as DeviceProperties,

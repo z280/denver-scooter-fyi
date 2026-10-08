@@ -42,7 +42,7 @@
 // scooter's QR code from your sofa. A WRONG plate is deliberately NOT an
 // error: the API accepts it, stores it, and pays nothing. So this module
 // never validates the plate locally, never compares it to a plate the client
-// happens to have resolved from GBFS, and never blocks Send on it. Doing any
+// happens to have looked up (plates.ts), and never blocks Send on it. Doing any
 // of those would (a) turn a server rule into a client rule two deploys away
 // from disagreeing with it, and (b) hand anyone with dev tools a free
 // plate oracle. The rider is told plainly what the plate is for, up front,

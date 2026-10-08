@@ -49,9 +49,11 @@ export interface DeviceProperties {
   public_name?: string | null;
   /** "928" — the last three characters of the plate, as printed on the deck.
    *  This is what tells two Lunar 🐸s apart when you are standing between
-   *  them, so it is on the public payload. The RAW plate is still admin-only;
-   *  the suffix is public because Veo publishes the whole plate themselves in
-   *  free_bike_status, keyed by the same id we emit as `device_id`.
+   *  them, so it is on the public payload. The RAW plate is not on this payload
+   *  (signed-in riders get it per nearby vehicle from `/vehicles/plates`,
+   *  plates.ts); the suffix is public because Veo publishes the whole plate
+   *  themselves in free_bike_status, keyed by the same id we emit as
+   *  `device_id`.
    *  Null for a device whose plate we have never resolved. */
   plate_suffix?: string | null;
   /** 16-hex stable per-scooter identifier; persistent across trips unlike device_id. */
@@ -124,7 +126,8 @@ export interface DeviceProperties {
   // ----- Private fields — only via /api/v1/private/* (devices/lookup, trips)
   // when signed in. `vehicle_plate` is deliberately NOT on the public
   // endpoint (publishing live plates would let Veo reconcile our map against
-  // their GBFS feed), so the "Unlock in Veo" deep link is authenticated-only.
+  // their GBFS feed), so the "Unlock in Veo" deep link is authenticated-only;
+  // ordinary signed-in riders get plates from `/vehicles/plates` (plates.ts).
   vehicle_plate?: string;
   first_ever_observed_at?: string;
   max_observed_range_meters?: number | null;
@@ -538,6 +541,40 @@ export async function authedFetchJSON<T>(
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Vehicle plates (scooter-fyi-api #134). The caching, batching and budget
+// rules live in plates.ts — the only caller of these two.
+// ---------------------------------------------------------------------------
+
+export interface VehiclePlatesResponse {
+  /** device_id → plate; unknown / plateless ids are omitted. */
+  plates: Record<string, string>;
+  as_of: string;
+}
+
+/** `GET /api/v1/vehicles/plates` — signed-in only, 1–50 ids. */
+export function fetchVehiclePlates(
+  deviceIds: readonly string[],
+): Promise<VehiclePlatesResponse> {
+  const qs = deviceIds.map(encodeURIComponent).join(",");
+  return authedFetchJSON<VehiclePlatesResponse>(
+    `/api/v1/vehicles/plates?device_ids=${qs}`,
+  );
+}
+
+export interface VehicleResolveResponse {
+  device_id: string;
+  vehicle_identifier: string;
+}
+
+/** `GET /api/v1/vehicles/resolve` — public; 404 (NoDataError) = no match or
+ *  ambiguous. */
+export function resolveVehiclePlate(plate: string): Promise<VehicleResolveResponse> {
+  return getJSON<VehicleResolveResponse>(
+    `/api/v1/vehicles/resolve?plate=${encodeURIComponent(plate)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

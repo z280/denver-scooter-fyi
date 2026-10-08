@@ -5,24 +5,23 @@
 // drawer remain the discovery surfaces and are untouched by this program.
 //
 // ---------------------------------------------------------------------------
-// DECISION — reusing `ride-deeplink.ts`'s reverse plate lookup instead of
-// adding one to `GbfsPlates`.
+// DECISION — where plates come from, in both directions.
 //
-// The lane brief suggested adding a `plate -> device_id` method to
-// `GbfsPlates` itself (`cachedPlateFor` only goes the other way). But
-// `ride-deeplink.ts` already ships exactly that capability as a tested, pure
-// export — `reversePlateLookup(plate, deviceIds, plateFor)`, an exact-match
-// scan over `cachedPlateFor` with the same case/separator normalization this
-// screen needs for its OWN manual-plate path (a rider who types
-// "10-25 543" should match the same way a `?ride=plate:10-25 543` deep link
-// does). Building a SECOND normalization inside `gbfs.ts` would risk the two
-// drifting apart, and `gbfs.ts` sitting one layer below `ride-deeplink.ts`
-// architecturally is the wrong place to import `ride-deeplink.ts`'s
-// normalization back into. So: this screen imports `reversePlateLookup` (and
-// leaves `gbfs.ts` untouched) rather than adding a redundant reverse index.
-// The "reverse lookup on GbfsPlates" the plan asks for still happens — it's
-// just implemented as a scan over `GbfsPlates.cachedPlateFor`, exactly like
-// the deep-link path already does.
+// Forward (device → plate, to label candidates "Plate 1025543"): the app's
+// shared `PlateIndex` (plates.ts), filled from OUR `/vehicles/plates` —
+// signed-in riders only, one batch of nearby vehicles at a time. This screen
+// asks it for its own candidate list (the ≤50 nearest the fix). A guest gets
+// no plates here and the list shows models and distances only.
+//
+// Reverse (typed plate → device, the manual-plate path): first a free local
+// scan over whatever the index already holds (`reversePlateLookup` from
+// `ride-deeplink.ts`, the same normalization a `?ride=plate:` link uses), then
+// our PUBLIC `/vehicles/resolve` — which is what lets a signed-out guest's
+// typed plate still match. Public because the rider is the one holding the
+// plate; the answer is ids our public feed already publishes. Resolve calls
+// are spent only on a complete-looking plate (debounced), on blur, or on
+// Enter, never per keystroke: the endpoint allows 30/min per IP.
+// Nothing on this screen talks to Veo's servers.
 // ---------------------------------------------------------------------------
 //
 // Screen 2.5 (the Usuals picker) registers as its OWN screen, id `"2.5"` —
@@ -50,7 +49,13 @@ import { distanceMeters, type Locate, type LngLat } from "./locate.ts";
 import type { Devices, ModelKey } from "./devices.ts";
 import { modelKeyOf } from "./devices.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
-import { GbfsPlates } from "./gbfs.ts";
+import {
+  MAX_PLATE_BATCH,
+  normalizePlate,
+  resolvePlate as defaultResolvePlate,
+  sharedPlateIndex,
+  type ResolveResult,
+} from "./plates.ts";
 import {
   VEHICLE_IDENTIFIER_RE,
   reversePlateLookup,
@@ -102,7 +107,7 @@ export function formatFeet(meters: number): string {
 // ---------------------------------------------------------------------------
 
 export interface Candidate {
-  /** GBFS `device_id` / `bike_id` — what `GbfsPlates` keys on. */
+  /** The feed's `device_id` — what `PlateIndex` keys on. */
   deviceId: string;
   /** 16-hex, lowercased — the API's `vehicle_identifier`; what actually gets
    *  stored on the ride session and sent to `POST /tracked-rides`. */
@@ -189,9 +194,18 @@ export function shouldAutoPreselect(
 // ---------------------------------------------------------------------------
 
 export interface PlatesLike {
-  prime(): Promise<void>;
+  /** Ask for these ids' plates (nearest first). Never rejects. */
+  prime(deviceIds: Iterable<string>): Promise<void>;
   cachedPlateFor(deviceId: string): string | null;
 }
+
+/** A typed plate this long (normalized) looks complete — Veo plates are
+ *  seven digits today — so the remote resolve fires after a short pause
+ *  instead of waiting for blur. */
+export const COMPLETE_PLATE_LEN = 7;
+/** Pause after the last keystroke before a complete-looking plate is sent
+ *  to `/vehicles/resolve`. */
+export const RESOLVE_DEBOUNCE_MS = 500;
 
 export type PlateCheckResult =
   | { kind: "empty" }
@@ -220,6 +234,31 @@ export function checkTypedPlate(
   if (deviceId === selectedDeviceId) return { kind: "already_selected" };
   const candidate = all.get(deviceId);
   if (!candidate) return { kind: "unresolved" };
+  return { kind: "switch", candidate };
+}
+
+/** The remote half of the typed-plate check: map a `/vehicles/resolve` hit
+ *  onto the current feed snapshot (by `device_id`, then by
+ *  `vehicle_identifier`). Same outcomes as `checkTypedPlate`; a hit on a
+ *  vehicle this snapshot can't offer is `unresolved`. */
+export function checkResolvedPlate(
+  hit: { deviceId: string; vehicleIdentifier: string } | null,
+  selectedDeviceId: string | null,
+  all: ReadonlyMap<string, Candidate>,
+): PlateCheckResult {
+  if (!hit) return { kind: "unresolved" };
+  let candidate = all.get(hit.deviceId);
+  if (!candidate) {
+    const vid = hit.vehicleIdentifier.toLowerCase();
+    for (const c of all.values()) {
+      if (c.vehicleIdentifier === vid) {
+        candidate = c;
+        break;
+      }
+    }
+  }
+  if (!candidate) return { kind: "unresolved" };
+  if (candidate.deviceId === selectedDeviceId) return { kind: "already_selected" };
   return { kind: "switch", candidate };
 }
 
@@ -294,12 +333,13 @@ export interface RideScreenSelectDeps {
    *  via the integrator's wiring — omitted, this screen renders
    *  `buildFallbackOptionsPanel` instead. */
   buildOptionsPanel?: RideOptionsPanelBuilder;
-  /** Injected for tests; defaults to one `GbfsPlates()` instance shared for
-   *  the lifetime of this wiring (constructed once in `wireRideScreenSelect`,
-   *  NOT `devices.ts`'s own private index — see the `ride-screen-select.ts`
-   *  module-map row: devices.ts only primes on the first GPS fix, which the
-   *  poor-GPS path may never get, so this screen primes its own). */
+  /** Injected for tests; defaults to the app's shared `PlateIndex`
+   *  (plates.ts) — the same one devices.ts fills, so a plate the popup already
+   *  fetched costs nothing here. This screen still asks for its own
+   *  candidates, since the poor-GPS path may never have primed it. */
   plates?: PlatesLike;
+  /** Injected for tests; defaults to plates.ts's public `/vehicles/resolve`. */
+  resolvePlate?(plate: string): Promise<ResolveResult>;
   /** Injected for tests; defaults to `listRideUsuals` from api.ts. */
   listRideUsuals?(): Promise<RideUsual[]>;
 }
@@ -307,15 +347,21 @@ export interface RideScreenSelectDeps {
 /** Internal shape once the optional deps have their defaults filled in. */
 type ResolvedDeps = RideScreenSelectDeps & {
   plates: PlatesLike;
+  resolvePlate(plate: string): Promise<ResolveResult>;
   listRideUsuals(): Promise<RideUsual[]>;
 };
 
 /** Register Screens 2 and 2.5. Call once at startup; returns an unregister
  *  function for tests/HMR. */
 export function wireRideScreenSelect(deps: RideScreenSelectDeps): () => void {
-  const plates = deps.plates ?? new GbfsPlates();
+  const plates = deps.plates ?? sharedPlateIndex();
   const listUsuals = deps.listRideUsuals ?? defaultListRideUsuals;
-  const resolved: ResolvedDeps = { ...deps, plates, listRideUsuals: listUsuals };
+  const resolved: ResolvedDeps = {
+    ...deps,
+    plates,
+    resolvePlate: deps.resolvePlate ?? defaultResolvePlate,
+    listRideUsuals: listUsuals,
+  };
 
   const unreg2 = registerRideScreen("2", {
     // F4 fix: the S8 [New Destination] loop (`ending(8) → wizard:3`) keeps
@@ -417,7 +463,7 @@ function buildSelectScreen(
   // feed independently of anything a rider types. The plate field itself
   // only ever shows for manual entry (`confirmWrap.hidden`, synced in
   // `render()`) — a list/auto-selected candidate already carries its plate
-  // from the GBFS match, so there is nothing to confirm or re-type.
+  // (when the rider is signed in to get one), so there is nothing to confirm.
   //
   // FRICTION-REDUCTION PASS: this screen used to always show both a Plate #
   // and a Battery % field, regardless of whether the rider had already
@@ -465,6 +511,7 @@ function buildSelectScreen(
     onDone: () => {
       keypad.detach();
       reslotSecondary();
+      resolveTypedNow(); // Done is the keypad's "that's the plate"
     },
   });
 
@@ -493,11 +540,77 @@ function buildSelectScreen(
   };
   plateInput.addEventListener("focus", () => onFieldFocus(plateInput));
   plateInput.addEventListener("blur", onFieldBlur);
+  // Blur and Enter are the rider saying "that's the plate" — resolve now.
+  plateInput.addEventListener("blur", () => resolveTypedNow());
+  plateInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") resolveTypedNow();
+  });
 
   plateInput.addEventListener("input", () => {
     plateInput.value = sanitizeNumeric(plateInput.value, 10);
     onPlateChanged();
   });
+
+  // ---------------- remote typed-plate resolve ----------------
+  let resolveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The normalized plate whose remote answer is already applied (or in
+   *  flight), so blur after a debounced resolve doesn't ask twice. */
+  let resolvedFor: string | null = null;
+
+  function cancelResolveTimer(): void {
+    if (resolveTimer !== null) {
+      clearTimeout(resolveTimer);
+      resolveTimer = null;
+    }
+  }
+
+  /** Called when the local check couldn't place the typed plate. */
+  function scheduleRemoteResolve(): void {
+    cancelResolveTimer();
+    const want = normalizePlate(plateValue);
+    if (want.length < COMPLETE_PLATE_LEN) return; // wait for blur / Enter
+    resolveTimer = setTimeout(() => {
+      resolveTimer = null;
+      resolveTypedNow();
+    }, RESOLVE_DEBOUNCE_MS);
+  }
+
+  function resolveTypedNow(): void {
+    cancelResolveTimer();
+    if (destroyed || selection?.kind !== "manual") return;
+    const want = normalizePlate(plateValue);
+    if (want === "" || want === resolvedFor) return;
+    resolvedFor = want;
+    const had = null; // manual entry: nothing highlighted any more
+    void deps.resolvePlate(want).then((r) => {
+      // Stale: the rider kept typing, picked something, or left.
+      if (destroyed || normalizePlate(plateValue) !== want) return;
+      if (selection?.kind !== "manual") return;
+      if (r.kind === "error") {
+        resolvedFor = null; // allow a retry on the next blur / Enter
+        plateWarning.hidden = false;
+        plateWarning.textContent =
+          "Couldn't check that plate right now — try again in a moment, or pick your scooter from the list.";
+        return;
+      }
+      const result = checkResolvedPlate(
+        r.kind === "hit" ? r : null,
+        had,
+        allCandidates,
+      );
+      if (result.kind === "switch") {
+        selection = { kind: "device", candidate: result.candidate };
+        plateWarning.hidden = false;
+        plateWarning.textContent = `Matched ${titleFor(result.candidate)}.`;
+        render();
+      } else {
+        plateWarning.hidden = false;
+        plateWarning.textContent =
+          "No scooter in the live fleet has that plate — check the number on the deck.";
+      }
+    });
+  }
+  ctx.onCleanup(cancelResolveTimer);
 
   // ---------------- state helpers ----------------
 
@@ -599,9 +712,17 @@ function buildSelectScreen(
         plateWarning.hidden = !had;
         if (had) {
           plateWarning.textContent =
-            "That plate doesn't match the highlighted scooter, and isn't in the live feed — switched to manual entry.";
+            "That plate doesn't match the highlighted scooter — switched to manual entry.";
         }
         break;
+    }
+    if (result.kind === "unresolved") {
+      // The local scan only knows plates already fetched for nearby
+      // vehicles (and none at all signed out) — ask the public resolver.
+      if (normalizePlate(plateValue) !== resolvedFor) resolvedFor = null;
+      scheduleRemoteResolve();
+    } else {
+      cancelResolveTimer();
     }
     render();
   }
@@ -616,7 +737,7 @@ function buildSelectScreen(
     // once a real device or "My Scooter/Bike" is picked.
     ctx.setNextEnabled(nextEnabled());
     // The plate field only ever makes sense for manual entry: a list/auto-
-    // selected candidate's plate already came from the GBFS match (nothing
+    // selected candidate's plate already came from the plate index (nothing
     // to confirm), and "My own Device" has no plate at all in the session
     // shape (`RideSessionOwnDevice` is just `{own: true}`). Hidden rather
     // than merely disabled in both cases — there is nothing useful to look
@@ -697,7 +818,7 @@ function buildSelectScreen(
         "ride-option__title",
         platesReady
           ? "None of these — enter plate manually"
-          : "None of these — enter plate manually (loading plate index…)",
+          : "None of these — enter plate manually (loading plates…)",
       ),
     );
     manualRow.addEventListener("click", selectManual);
@@ -772,9 +893,28 @@ function buildSelectScreen(
     ranked = rankByDistance(allCandidates);
   }
 
-  function rerank(): void {
+  /** Ask the plate index for this screen's candidates — the ≤50 nearest the
+   *  fix (the index skips ones it already has fresh, and asks nothing signed
+   *  out). When the answer lands, re-render once WITHOUT re-priming, so a
+   *  prime can never trigger another prime. */
+  function primeCandidatePlates(): Promise<void> {
+    if (fix === null) return Promise.resolve();
+    const ids = rankByDistance(allCandidates, {
+      maxMeters: Number.POSITIVE_INFINITY,
+      limit: MAX_PLATE_BATCH,
+    }).map((c) => c.deviceId);
+    if (ids.length === 0) return Promise.resolve();
+    return deps.plates.prime(ids);
+  }
+
+  function rerank(opts: { prime?: boolean } = {}): void {
     if (destroyed) return;
     computeCandidates();
+    if (opts.prime !== false) {
+      void primeCandidatePlates().then(() => {
+        if (!destroyed) rerank({ prime: false });
+      });
+    }
     if (selection === null) {
       const nearest = ranked[0];
       if (shouldAutoPreselect(nearest, fix?.accuracy)) {
@@ -804,15 +944,15 @@ function buildSelectScreen(
     plateInput.value = ctx.entry.plate;
     plateValue = ctx.entry.plate;
   }
-  rerank(); // applies distance auto-preselect only if still unselected; renders.
+  rerank({ prime: false }); // applies distance auto-preselect only if still unselected; renders.
 
-  void deps.plates.prime().then(() => {
+  void primeCandidatePlates().then(() => {
     if (destroyed) return;
     platesReady = true;
     if (plateInput.value) {
-      onPlateChanged(); // this screen's own fresh index may resolve it now
+      onPlateChanged(); // the index may hold it now; else resolves remotely
     } else {
-      rerank(); // plates may have landed for already-ranked candidates too
+      rerank({ prime: false }); // plates may have landed for ranked candidates
     }
   });
 
