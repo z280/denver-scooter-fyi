@@ -6595,7 +6595,14 @@ body.landscape-hint-dismissed .hud-note--landscape {
   padding: 8px 6px;
   border-radius: 10px;
   cursor: pointer;
-  white-space: nowrap;
+  /* Two buttons share a row 50/50, and some labels ("💾 Save these as my
+     ideal scooter") are longer than half a 300-360 px drawer. nowrap made
+     them spill out of their buttons and widen the whole Filters panel into a
+     sideways scroll; wrapping onto two balanced lines keeps them inside. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  line-height: 1.25;
 }
 .preset-btn:hover {
   border-color: var(--accent);
