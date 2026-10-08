@@ -42,9 +42,11 @@ export interface LoginPanelDeps {
 }
 
 export interface LoginPanelHandle {
-  /** Render (or re-render) the Google button. Google Identity Services draws
-   *  into the container's layout box, so calling this while the panel is
-   *  hidden yields a 0px-wide button — the caller defers to first show. */
+  /** Render (or re-render) the Google button. This is the call that injects
+   *  Google's script (accounts.google.com/gsi/client), so the caller makes it
+   *  only once the sign-in block is on screen — `whenDrawerOpen` — never at
+   *  boot. It also has to wait for that anyway: GIS draws into the
+   *  container's layout box, and a hidden one yields a 0px-wide button. */
   renderGoogle(): void;
   dispose(): void;
 }
@@ -79,9 +81,11 @@ export function buildLoginPanel(
   host.append(intro);
 
   // Sign in with Google — shown only when the backend's /auth/config says
-  // it's enabled and hands back a client id (the single source of truth;
-  // no third-party script loads otherwise). `cfg` is null until that fetch
-  // resolves, which triggers a re-render.
+  // it's enabled and hands back a client id (the single source of truth).
+  // `cfg` is null until that fetch resolves, which triggers a re-render.
+  // Building the panel loads nothing from Google: only renderGoogle() does,
+  // and the caller defers that until the drawer is actually open (see
+  // `whenDrawerOpen` below), so Google's script never loads at boot.
   let googleWrap: HTMLElement | null = null;
   const clientId = cfg?.googleEnabled ? cfg.googleClientId : null;
   if (clientId) {
@@ -292,4 +296,29 @@ export function buildLoginPanel(
       googleWrap?.replaceChildren();
     },
   };
+}
+
+/** Run `fn` once `drawer` is open (carries `is-open`, which main.ts's
+ *  wireDrawers sets) — immediately if it already is, otherwise on the first
+ *  open. Returns a cancel for a rebuild that makes the pending call moot.
+ *
+ *  This is what keeps Google's sign-in script off the boot path: the Account
+ *  drawer's sign-in block is BUILT at boot for every signed-out visitor, but
+ *  its Google button is rendered through this, so the script is fetched only
+ *  when the rider opens the drawer. With no drawer to watch, runs `fn` now. */
+export function whenDrawerOpen(
+  drawer: HTMLElement | null,
+  fn: () => void,
+): () => void {
+  if (!drawer || drawer.classList.contains("is-open")) {
+    fn();
+    return () => {};
+  }
+  const obs = new MutationObserver(() => {
+    if (!drawer.classList.contains("is-open")) return;
+    obs.disconnect();
+    fn();
+  });
+  obs.observe(drawer, { attributes: true, attributeFilter: ["class"] });
+  return () => obs.disconnect();
 }

@@ -87,13 +87,51 @@ let exitCode = 0;
 try {
   const page = await browser.newPage({ viewport: { width: 412, height: 860 } });
   page.on("pageerror", (e) => errors.push(e.stack || String(e)));
-  await page.route("**/*", (route) =>
-    route.request().url().startsWith(origin) ? route.continue() : route.abort(),
+  // Every off-origin request is still aborted, but the ones to Google's
+  // sign-in script and to OpenStreetMap's Nominatim are also RECORDED: the
+  // owner directive of 2026-10-08 is that neither is touched at boot.
+  const offOrigin = [];
+  await page.route("**/*", (route) => {
+    const url = route.request().url();
+    if (url.startsWith(origin)) return route.continue();
+    offOrigin.push(url);
+    return route.abort();
+  });
+  // Signed out, with /auth/config saying Google IS on — the case where the
+  // old boot loaded Google's script and fired One Tap. (Registered after the
+  // catch-all, so it wins for this one URL.)
+  await page.route("**/api/v1/auth/config", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        google_enabled: true,
+        google_client_id: "smoke-test.apps.googleusercontent.com",
+        magic_link_enabled: true,
+        code_enabled: true,
+        sms_enabled: false,
+      }),
+    }),
   );
   await page.goto(`${origin}/`, { waitUntil: "load", timeout: 60_000 });
   await page.waitForTimeout(SETTLE_MS);
   const started = await page.evaluate(() => !!document.querySelector("canvas.maplibregl-canvas"));
   if (!started) errors.push("the map never initialised (no maplibre canvas)");
+
+  const gsiTag = () =>
+    page.evaluate(() => !!document.querySelector('script[src*="accounts.google.com"]'));
+  const touched = (re) => offOrigin.filter((u) => re.test(new URL(u).hostname));
+  if (await gsiTag()) errors.push("Google's sign-in script was added at boot for a signed-out visitor");
+  if (touched(/(^|\.)accounts\.google\.com$/).length)
+    errors.push(`requested accounts.google.com at boot: ${touched(/(^|\.)accounts\.google\.com$/)}`);
+  if (touched(/nominatim/).length) errors.push(`requested Nominatim: ${touched(/nominatim/)}`);
+  // ...and opening the Account drawer, which shows the sign-in block, is what
+  // loads it.
+  await page.evaluate(() =>
+    document.querySelector('.drawer-tab[data-drawer="account"]')?.click(),
+  );
+  await page.waitForTimeout(1500);
+  if (!(await gsiTag())) errors.push("opening Account (signed out, Google on) never added Google's sign-in script");
 
   // The fleet analytics page (analytics.html, its own entry). Offline, every
   // chart lands in its error state — which is exactly what must not throw.

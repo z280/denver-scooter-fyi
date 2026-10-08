@@ -91,7 +91,6 @@ import {
   type HexMetric,
 } from "./hexdensity.ts";
 import { consumePendingMagicLink } from "./auth-magic-link.ts";
-import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
@@ -129,7 +128,7 @@ import {
   type ResolvedRideModePoints,
 } from "./ride-settings.ts";
 import { renderSignedInAccount, type AccountHandle } from "./account.ts";
-import { buildLoginPanel, type LoginPanelHandle } from "./account-login.ts";
+import { buildLoginPanel, whenDrawerOpen, type LoginPanelHandle } from "./account-login.ts";
 import { createMapPick } from "./map-pick.ts";
 import { createHomeBar, type HomeBarHandle } from "./home-bar.ts";
 import { createTripPins } from "./trip-pins.ts";
@@ -960,19 +959,9 @@ const magicLinkSettled: Promise<boolean> = consumePendingMagicLink().then(
   },
 );
 
-// Google One Tap: for signed-out visitors, auto-prompt the top-right One Tap
-// dialog on load — but only if the backend's /auth/config says Google is
-// enabled (the single source of truth) and hands back a client id. GIS
-// manages its own cooldown so this isn't nagging. Signed-in users are skipped.
-if (!isAuthenticated()) {
-  void loadAuthConfig().then((cfg) => {
-    if (cfg.googleEnabled && cfg.googleClientId && !isAuthenticated()) {
-      void promptGoogleOneTap(cfg.googleClientId, {
-        onSignedIn: () => location.reload(),
-      });
-    }
-  });
-}
+// No Google One Tap at boot (owner directive 2026-10-08). Google's sign-in
+// script loads only when a sign-in surface that shows the Google button is
+// rendered — see auth-google.ts. `boot-no-google-script.test.ts` holds this.
 
 // ---------- Ride HUD ----------
 
@@ -5155,6 +5144,8 @@ function wireAccount(): void {
   let signedIn: AccountHandle | null = null;
   // Handle for the sign-in doors (account-login.ts); null while signed in.
   let loginPanel: LoginPanelHandle | null = null;
+  // Cancels a Google-button render still waiting for the drawer to open.
+  let cancelGoogle: () => void = () => {};
   // Handle for the Local Data tab; null until it has been built.
   let localData: LocalDataHandle | null = null;
   // Key of the state the current DOM was built for. Same key → refresh in
@@ -5278,11 +5269,15 @@ function wireAccount(): void {
         location.reload();
       },
     });
-    // Unconditional now. The Google button needs a laid-out container to size
-    // itself (a hidden one renders 0px wide), which is why this used to wait
-    // for the Login tab to be shown — the host is always visible, so there is
-    // nothing left to wait for.
-    loginPanel.renderGoogle();
+    // Deferred to the drawer's first open (owner directive 2026-10-08):
+    // rendering the Google button is what injects Google's sign-in script,
+    // and this panel is built at boot for every signed-out visitor. A rider
+    // who never opens Account never loads it. (It also needs a laid-out
+    // container: a hidden one renders 0px wide.)
+    const panel = loginPanel;
+    cancelGoogle = whenDrawerOpen(document.getElementById("drawer-account"), () =>
+      panel.renderGoogle(),
+    );
   };
 
   const render = (): void => {
@@ -5299,6 +5294,8 @@ function wireAccount(): void {
       signedIn = null;
       loginPanel?.dispose();
       loginPanel = null;
+      cancelGoogle();
+      cancelGoogle = () => {};
       localData?.dispose();
       localData = null;
       // Every panel EXCEPT In-Ride and Navigation: those two are built once and

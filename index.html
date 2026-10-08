@@ -1227,10 +1227,11 @@
           <strong>Scooter.fyi will always be pro-consumer.</strong> We won't
           do things that hurt the people using this site. There will never be
           any sale of data, sketchy third-party analytics, or anything else
-          that harms users — the only measurement here is private,
-          first-party, cookieless analytics we run ourselves, with no
-          third parties involved, ever, and you can switch it off right
-          below. For those of you who have created accounts: thank you for
+          that harms users — our own measurement is private,
+          first-party, cookieless analytics we run ourselves, and you can
+          switch it off right below. (Our host, Cloudflare, adds its own
+          cookieless Web Analytics script to every page; it reports page
+          views to Cloudflare.) For those of you who have created accounts: thank you for
           your trust. I take your privacy and data security extremely
           seriously. The governing documents are here:
         </p>
@@ -1252,8 +1253,10 @@
           <h3 id="about-analytics-label" class="control-label">Private analytics</h3>
           <p class="control-hint">
             Our analytics are first-party and cookieless, with no persistent
-            identifier. (Separately, the site loads Google's sign-in script for
-            visitors who aren't signed in.) Turning this off stops all
+            identifier. (Separately, Google's sign-in script loads only if you
+            open sign-in, and our host, Cloudflare, adds its own cookieless Web
+            Analytics script to every page; it reports page views to
+            Cloudflare. This switch doesn't control that.) Turning this off stops all
             usage-event collection for this browser; the choice is stored on
             your device only.
           </p>
