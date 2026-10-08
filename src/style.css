@@ -1868,6 +1868,25 @@ body.ride-active .arrival {
    is a circle at every font size — these carry a glyph, not a line of text,
    and padding-derived roundness drifts into an oval the moment one of them
    uses a different ×. */
+/* THE FACE IS HERE TOO, and it was not, which is the bug this block's own
+   comments described as already fixed. Three separate rules elsewhere say
+   "face, shape and ink come from the shared metal + round-✕ rules above" — but
+   no metal rule ever matched these selectors, and this one set geometry only.
+   So every one of these nine dismissals rendered with the USER AGENT's button
+   defaults: `#efefef`, a `2px outset` 3D bevel, hard black ink and Arial,
+   forced into a 34px circle. A 1990s OS button on a 2026 card, identical in
+   dark mode because none of it came from a token.
+
+   Every other × in the app (`.drawer-close`, `.ranks-modal__close`,
+   `.icon-lightbox__close`, `.dibs-cert__close`, …) resets `appearance`,
+   `border` and `background` itself. These nine are the ones that joined a
+   shared rule and so never did it individually — the consolidation that was
+   meant to stop six near-identical copies drifting left the face behind.
+
+   A SOFT FILLED CIRCLE rather than a transparent one: these sit on cards
+   floating over a moving map, where a bare glyph has nothing behind it to
+   prove it is a control. Quiet ink, because a dismiss should never compete
+   with the thing it dismisses. */
 .arrival__close,
 .planlist__close,
 .home-bar__close,
@@ -1888,6 +1907,58 @@ body.ride-active .arrival {
   justify-content: center;
   font-size: 18px;
   line-height: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  /* The UA default was Arial. Everything else on these cards is the app's
+     stack, and a × from a different family is visibly a different ×. */
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.arrival__close:hover,
+.planlist__close:hover,
+.home-bar__close:hover,
+.qr-scan__close:hover,
+.device-features__close:hover,
+.equity-receipt__close:hover,
+.ride-preflight__close:hover,
+.admin-analytics__close:hover,
+.ride-modal__close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* The focus ring is the ONLY thing on these that may be loud: it is the one
+   state a keyboard rider navigates by, and `appearance: none` above removed
+   the UA's. Offset outward so it reads as a ring around the circle rather
+   than as a second border inside it. */
+.arrival__close:focus-visible,
+.planlist__close:focus-visible,
+.home-bar__close:focus-visible,
+.qr-scan__close:focus-visible,
+.device-features__close:focus-visible,
+.equity-receipt__close:focus-visible,
+.ride-preflight__close:focus-visible,
+.admin-analytics__close:focus-visible,
+.ride-modal__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  color: var(--fg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .arrival__close,
+  .planlist__close,
+  .home-bar__close,
+  .qr-scan__close,
+  .device-features__close,
+  .equity-receipt__close,
+  .ride-preflight__close,
+  .admin-analytics__close,
+  .ride-modal__close {
+    transition: none;
+  }
 }
 
 /* ---------- Close buttons ---------- */
