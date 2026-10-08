@@ -815,16 +815,56 @@ export function mountAnalytics(root: HTMLElement, opts: MountOptions): { state: 
   return { state: () => state };
 }
 
+/** Embed parameters that the controls' own URL state must carry along, so a
+ *  host's reload (e.g. on a theme change) still lands in embed mode. */
+export function embedParams(search: string): string {
+  const q = new URLSearchParams(search);
+  const keep = new URLSearchParams();
+  if (q.get("embed") === "1") keep.set("embed", "1");
+  const t = q.get("theme");
+  if (t === "light" || t === "dark") keep.set("theme", t);
+  return keep.toString();
+}
+
+/** Merge the controls' search string with the embed parameters. */
+export function withEmbedParams(search: string, embed: string): string {
+  if (!embed) return search;
+  const q = new URLSearchParams(search.replace(/^\?/, ""));
+  for (const [k, v] of new URLSearchParams(embed)) q.set(k, v);
+  const out = q.toString();
+  return out ? `?${out}` : "";
+}
+
+/** Embedded: report the rendered height to the host, the same protocol as
+ *  /embed/stats.html (an iframe cannot size itself). The host accepts it only
+ *  from this origin and clamps it. Re-sent whenever the page reflows. */
+export function postEmbedHeight(win: Window = window): () => void {
+  const send = (): void => {
+    // The BODY's content height, not the document's: the document is never
+    // shorter than the frame, so reporting it could only ever grow the frame.
+    const body = win.document.body;
+    const cs = win.getComputedStyle(body);
+    const height = Math.ceil(body.scrollHeight + parseFloat(cs.marginTop || "0") + parseFloat(cs.marginBottom || "0"));
+    win.parent?.postMessage({ type: "scooterfyi:analytics-height", height }, "*");
+  };
+  send();
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(send) : null;
+  ro?.observe(win.document.body);
+  return () => ro?.disconnect();
+}
+
 const mountPoint = typeof document !== "undefined" ? document.getElementById("analytics") : null;
 if (mountPoint) {
+  const embed = embedParams(location.search);
   mountAnalytics(mountPoint, {
     search: location.search,
     onState: (search) => {
       try {
-        history.replaceState(null, "", `${location.pathname}${search}`);
+        history.replaceState(null, "", `${location.pathname}${withEmbedParams(search, embed)}`);
       } catch {
         /* a sandboxed frame may refuse; the page still works */
       }
     },
   });
+  if (embed.includes("embed=1") && window.parent !== window) postEmbedHeight();
 }

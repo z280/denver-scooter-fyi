@@ -11,7 +11,13 @@
       (function () {
         try {
           var t = null;
-          if (localStorage.getItem("scooter-fyi-theme-sun") === "1") {
+          // Embedded (?embed=1, e.g. weseeyouveo.com/data): the HOST decides
+          // the theme through ?theme=, the only channel a framed page has.
+          var q = new URLSearchParams(location.search);
+          if (q.get("embed") === "1") document.documentElement.dataset.embed = "1";
+          var qt = q.get("theme");
+          if (qt === "light" || qt === "dark") t = qt;
+          if (!t && localStorage.getItem("scooter-fyi-theme-sun") === "1") {
             var times = JSON.parse(localStorage.getItem("scooter-fyi-sun-times"));
             var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Denver" });
             if (times && times.date === today && isFinite(times.sunrise) && isFinite(times.sunset)) {
@@ -40,6 +46,7 @@
   <body class="an-body">
     <header class="an-header">
       <a class="an-back" href="/">&larr; Map</a>
+      <a class="an-full" href="/analytics" target="_blank" rel="noopener">Open the full page &#8599;</a>
       <h1 class="an-h1">Fleet analytics</h1>
       <p class="an-standfirst">
         How Veo's Denver fleet performs, measured from Veo's own public feed.
