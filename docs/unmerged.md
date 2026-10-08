@@ -53,4 +53,3 @@ merge); a branch made only of those is safe to delete.
 ### `claude/lucid-hopper-FqI5F`
 - fb24483 Replace gated range floor with a dual-handle range slider for everyone
 - c59b073 Add authenticated ≥40 km range filter and simplify mobile unlock gate
-

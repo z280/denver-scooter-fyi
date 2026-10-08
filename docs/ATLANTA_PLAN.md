@@ -11,8 +11,10 @@ cycle-to-cycle persistence, periodically re-mints its entire namespace at
 once. Both are `stable_vehicle_id: false`.
 
 `MULTI_TENANCY_PLAN.md` names a companion `docs/MULTI_CITY_FRONTEND_PLAN.md`
-for the general de-Denverization. That doc does not exist. This one is not
-it: this is Atlanta-specific and narrower.
+for the general de-Denverization. That doc does not exist on `main`: a draft
+exists only on the unmerged branch `claude/multi-provider-multi-city-al0qxl`
+(see [unmerged.md](unmerged.md)). This one is not it: this is
+Atlanta-specific and narrower.
 
 ---
 
