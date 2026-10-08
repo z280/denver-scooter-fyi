@@ -150,6 +150,7 @@ import {
 import { submitDeviceReport } from "./reports.ts";
 import { learnFromReceipt } from "./cost-calibration.ts";
 import { precheckReceipt } from "./receipt-precheck.ts";
+import { buildTripPanel, type TripPanelHandle } from "./trip-panel.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
@@ -4048,6 +4049,8 @@ let enterFindWheels: () => void = () => {};
 /** The plan list, while it is on screen. One at a time: two of these would be
  *  two surfaces arguing about one decision. */
 let planListPanel: PlanListPanelHandle | null = null;
+/** §11.9's reading surface. Built on the drawer's first open, never at boot. */
+let tripPanel: TripPanelHandle | null = null;
 
 /** Today's tracked rides, for §2.2's free-minute estimate.
  *
@@ -4874,6 +4877,36 @@ function wireDrawers(): void {
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.
     if (id === "tools") notifyPanel?.refresh();
+    // Same, for the same reason and more so: every figure on the trip panel —
+    // the destination, the route's own ETA, which leg is current, the planning
+    // preference — can change while this drawer is shut, and a ride changes
+    // all four. Built lazily on the first open so a rider who never asks
+    // "where am I going" pays nothing for the answer.
+    if (id === "trip") {
+      tripPanel ??= buildTripPanel(need("trip-panel"), {
+        state: () => {
+          const doc = rideSession.current();
+          const dest = doc?.dest ?? peekPendingTrip()?.dest ?? null;
+          return {
+            dest:
+              dest === null
+                ? null
+                : { label: dest.label, lat: dest.lat, lon: dest.lon },
+            // Only a CHOSEN route has an honest duration. Navigation is off by
+            // default, so most rides have none — and an arrival time derived
+            // from a straight line would be the one figure here a rider could
+            // check against their watch and find wrong.
+            routeSeconds: doc?.route?.durationS ?? null,
+            routeMeters: doc?.route?.distanceM ?? null,
+            nowMs: Date.now(),
+          };
+        },
+        showOnMap: (target) => {
+          map.easeTo({ center: [target.lon, target.lat], zoom: 16 });
+        },
+      });
+      tripPanel.refresh();
+    }
     // Rendered on open rather than at boot: the map does not need it, and a
     // rider who never opens the drawer should not pay for the fetch. Every
     // open re-fetches — the endpoint carries an ETag keyed to the counters,

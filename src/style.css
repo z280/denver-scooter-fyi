@@ -10230,3 +10230,87 @@ input[data-ride-keypad="on"] {
   padding-top: 10px;
   border-top: 1px dashed var(--border);
 }
+
+/* ---------- "Your trip" drawer (trip-panel.ts) ----------
+   A READING SURFACE. Everything here is sized to be read rather than tapped —
+   the one control is the stepper — so the type scale runs the other way from
+   the rest of the drawers: the destination is the biggest thing on the page
+   and the preference that shaped it is the quietest. */
+.trippanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Section eyebrow. Uppercase and small because it labels the line below it
+   rather than competing with it. */
+.trippanel__label {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.trippanel__label:first-child {
+  margin-top: 0;
+}
+.trippanel__dest {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--fg);
+}
+.trippanel__leg {
+  margin: 10px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+}
+/* The stepper. Back and Next sit at the edges with the count between them, so
+   the count does not move as the label beside it changes length. */
+.trippanel__stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.trippanel__stepcount {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.trippanel__step {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
+}
+/* Struck AND dimmed, never dimmed alone: at a glance on a phone in sunlight,
+   opacity is not a signal. Same rule the broken feature pills follow. */
+.trippanel__step.is-done {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+/* The current leg is the one the rider came here to find, so it keeps full
+   contrast while the finished ones recede. No colour of its own: on a panel
+   where everything else is already --fg, being the only un-dimmed, un-struck
+   line is the emphasis. */
+.trippanel__step.is-current {
+  font-weight: 700;
+}
+.trippanel__pref {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.trippanel__prefvalue {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
+}
