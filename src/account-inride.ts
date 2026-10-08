@@ -26,6 +26,7 @@ import {
   type FavoriteSlot,
   type FavoriteSlotId,
 } from "./favorite-slots.ts";
+import { calibrationSentence, clearCalibration } from "./cost-calibration.ts";
 import { reverseGeocode } from "./geocode.ts";
 import {
   DEFAULT_RATE_PLAN,
@@ -232,6 +233,32 @@ export function buildInRidePanel(
   rate.append(rateWrap);
 
   // ---------------------------------------------------------------------
+  // §11.2 — what the receipts taught the cost estimate
+  // ---------------------------------------------------------------------
+
+  // ONLY VISIBLE WHEN THERE IS SOMETHING TO SAY. A section explaining that we
+  // have learned nothing yet is a settings row about our own internals, and
+  // the rider cannot act on it — the way to make it appear is to file a
+  // receipt, which is a thing they do for their own reasons.
+  const calib = section("Cost estimate");
+  const calibLine = el("p", "account-hint");
+  const calibClear = el("button", "text-btn", "Reset this");
+  calibClear.type = "button";
+  const calibStatus = makeStatus();
+  calib.append(calibLine, calibClear, calibStatus.node);
+  calibClear.addEventListener("click", () => {
+    clearCalibration();
+    calibStatus.set("Reset — estimates start from our own clock again.");
+    renderCalibration();
+  });
+  function renderCalibration(): void {
+    const sentence = calibrationSentence();
+    calib.hidden = sentence === null;
+    if (sentence !== null) calibLine.textContent = sentence;
+  }
+  renderCalibration();
+
+  // ---------------------------------------------------------------------
   // Favourite destinations
   // ---------------------------------------------------------------------
 
@@ -395,7 +422,7 @@ export function buildInRidePanel(
 
   for (const id of FAVORITE_SLOT_IDS) favs.append(buildSlotRow(id));
 
-  host.append(display, rate, favs);
+  host.append(display, rate, calib, favs);
 
   const refresh = (): void => {
     speedoSelect.value = speedometerStyle();
@@ -404,6 +431,8 @@ export function buildInRidePanel(
     const saved = savedRatePlan();
     rateSelect.value = saved ?? DEFAULT_RATE_PLAN;
     rateDefaultNote.hidden = saved !== null;
+    // A receipt filed since the drawer was last open can have changed this.
+    renderCalibration();
     rerenderSlots();
   };
   refresh();

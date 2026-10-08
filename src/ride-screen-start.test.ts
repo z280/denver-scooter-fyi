@@ -30,8 +30,10 @@ import {
   type RideSessionStore,
 } from "./ride-session.ts";
 import {
+  MAX_SCAN_BACKDATE_MS,
   START_COUNTDOWN_S,
   startScreenSkip,
+  usableScanStart,
   wireRideScreenStart,
   type LocateLike,
   type RideScreenStartDeps,
@@ -1220,5 +1222,129 @@ describe("pre-ride battery reach", () => {
     wire(sessionWithDest({ ...FAR, label: "" }), { rangeMetersFor: () => 1200 });
     openRideModal({ fastForwardTo: "6" });
     expect(root().textContent ?? "").toContain("may not reach your destination");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §11.2 — the scan is the start moment
+// ---------------------------------------------------------------------------
+
+/** Two microtask turns: the start dispatch sits behind the awaited
+ *  `startTrackedRide` call, which is the idiom the rest of this file uses. */
+const flush = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
+describe("usableScanStart", () => {
+  it("takes a scan from moments ago", () => {
+    expect(usableScanStart(1_000_000, 1_030_000)).toBe(1_000_000);
+  });
+
+  it("refuses a stale one", () => {
+    // Past five minutes the scan is about a scooter the rider looked at and
+    // walked away from, and backdating to it would invent minutes nobody was
+    // charged for.
+    expect(usableScanStart(1_000_000, 1_000_000 + MAX_SCAN_BACKDATE_MS + 1)).toBeNull();
+    expect(usableScanStart(1_000_000, 1_000_000 + MAX_SCAN_BACKDATE_MS)).toBe(1_000_000);
+  });
+
+  it("refuses a scan from the future and anything unparseable", () => {
+    // A device whose clock jumped would otherwise hand us a negative elapsed
+    // time, and a clock that counts backwards is worse than one that starts
+    // late.
+    expect(usableScanStart(1_000_001, 1_000_000)).toBeNull();
+    expect(usableScanStart(undefined, 1_000_000)).toBeNull();
+    expect(usableScanStart(Number.NaN, 1_000_000)).toBeNull();
+    expect(usableScanStart(Number.POSITIVE_INFINITY, 1_000_000)).toBeNull();
+  });
+});
+
+describe("a scanned ride starts from the scan, not from our clock", () => {
+  it("backdates the session's startedAtMs to the scan", async () => {
+    // Veo bills from the unlock, which sits between the scan and the server
+    // row's own `started_at`. Taking the scan makes the clock run long, which
+    // is the safe way for a cost estimate to be wrong — and the ±15s nudges
+    // exist because the short version is what shipped.
+    const session = sessionAt(DEVICE, true);
+    const serverStart = "2026-07-29T18:30:00Z";
+    const serverMs = Date.parse(serverStart);
+    const scannedAtMs = serverMs - 45_000;
+    const started = fakeStartedRide({ started_at: serverStart });
+    wire(session, {
+      startTrackedRide: vi.fn(async () => started),
+      now: () => serverMs + 1_000,
+    });
+    openRideModal({ fastForwardTo: "6", scannedAtMs });
+
+    buttonWithText("I already started").click();
+    await flush();
+
+    expect(session.current()?.startedAtMs).toBe(scannedAtMs);
+  });
+
+  it("falls back to the server's own start when the scan is stale", async () => {
+    const session = sessionAt(DEVICE, true);
+    const serverStart = "2026-07-29T18:30:00Z";
+    const serverMs = Date.parse(serverStart);
+    const started = fakeStartedRide({ started_at: serverStart });
+    wire(session, {
+      startTrackedRide: vi.fn(async () => started),
+      now: () => serverMs + 1_000,
+    });
+    openRideModal({
+      fastForwardTo: "6",
+      scannedAtMs: serverMs - MAX_SCAN_BACKDATE_MS - 60_000,
+    });
+
+    buttonWithText("I already started").click();
+    await flush();
+
+    expect(session.current()?.startedAtMs).toBe(serverMs);
+  });
+
+  it("never takes a scan that postdates the server row", async () => {
+    const session = sessionAt(DEVICE, true);
+    const serverStart = "2026-07-29T18:30:00Z";
+    const serverMs = Date.parse(serverStart);
+    const started = fakeStartedRide({ started_at: serverStart });
+    wire(session, {
+      startTrackedRide: vi.fn(async () => started),
+      now: () => serverMs + 30_000,
+    });
+    // Fresh enough to pass the age gate, but later than the row it is about —
+    // which is not evidence of anything.
+    openRideModal({ fastForwardTo: "6", scannedAtMs: serverMs + 20_000 });
+
+    buttonWithText("I already started").click();
+    await flush();
+
+    expect(session.current()?.startedAtMs).toBe(serverMs);
+  });
+
+  it("uses the scan on a private ride, where there is no server row at all", async () => {
+    const session = privateSessionAt(DEVICE, true);
+    const nowMs = 1_800_000_000_000;
+    const scannedAtMs = nowMs - 40_000;
+    wire(session, { now: () => nowMs, randomBytes: () => new Uint8Array(6) });
+    openRideModal({ fastForwardTo: "6", scannedAtMs });
+
+    buttonWithText("I already started").click();
+    await flush();
+
+    expect(session.current()?.startedAtMs).toBe(scannedAtMs);
+  });
+
+  it("an unscanned ride is unaffected", async () => {
+    const session = sessionAt(DEVICE, true);
+    const serverStart = "2026-07-29T18:30:00Z";
+    const started = fakeStartedRide({ started_at: serverStart });
+    wire(session, { startTrackedRide: vi.fn(async () => started) });
+    openRideModal({ fastForwardTo: "6" });
+
+    buttonWithText("I already started").click();
+    await flush();
+
+    expect(session.current()?.startedAtMs).toBe(Date.parse(serverStart));
   });
 });

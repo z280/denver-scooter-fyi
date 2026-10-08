@@ -112,6 +112,7 @@ import {
   type TrackedRide,
 } from "./api.ts";
 import type { RatePlanKey } from "./config.ts";
+import { calibrationOffsetMs } from "./cost-calibration.ts";
 import { activeTrip, legBadge, onFinalLeg, recordLeg, tripTotals } from "./trip-legs.ts";
 import type { Locate, LngLat } from "./locate.ts";
 import { openRideModal as defaultOpenRideModal } from "./ride-modal.ts";
@@ -173,7 +174,20 @@ export function screen8CostBreakdown(
   planKey: RatePlanKey | null,
   taxRate: number = currentTaxRate(),
 ): RideCostBreakdown {
-  return estimateWithTax(planFor(planKey ?? "resident"), elapsedMs, taxRate);
+  // §11.2: priced over the elapsed time PLUS whatever this rider's own
+  // receipts say our clock has been missing, exactly as the HUD's live readout
+  // is. The two figures are the same estimate a minute apart, and a rider who
+  // watched one number for twenty minutes and is shown a different one here
+  // would be right to trust neither.
+  //
+  // The ride's own span is untouched: `liveElapsedMs` is what the clock shows
+  // and what a banked leg records, and inflating that would make the one
+  // number on this screen the rider can check against their watch wrong.
+  return estimateWithTax(
+    planFor(planKey ?? "resident"),
+    elapsedMs + calibrationOffsetMs(),
+    taxRate,
+  );
 }
 
 /** The single end-report body every "I ended my ride in Veo" tap sends —

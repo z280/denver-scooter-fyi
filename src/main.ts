@@ -148,6 +148,7 @@ import {
   type ScannedVehicle,
 } from "./qr-ride-scan.ts";
 import { submitDeviceReport } from "./reports.ts";
+import { learnFromReceipt } from "./cost-calibration.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
@@ -411,8 +412,38 @@ function openEquityReceipt(): void {
       tab.click();
     },
     pickOnMap: (hint) => mapPick.pick({ hint }),
+    // §11.2: the receipt is the only place Veo's own billed minutes ever reach
+    // us, so a filed one is the chance to learn what our clock has been
+    // missing. The form has a plate and a charge date and cannot match either
+    // to a ride; this can, and refuses to guess when the day held more than
+    // one. Fire-and-forget: a rider filing a receipt is not waiting on our
+    // cost estimate, and a failed rides fetch must not turn into an error on
+    // a form that already succeeded.
+    onReceiptFiled: (facts) => void learnFromFiledReceipt(facts),
     returnFocusTo: document.getElementById("equity-indicator"),
   });
+}
+
+/** Turn a filed receipt into a calibration sample, or do nothing.
+ *
+ *  Signed out there is no rides list to match against, which is also when
+ *  there are no tracked rides to have a receipt for. */
+async function learnFromFiledReceipt(facts: {
+  veoMinutes: number;
+  chargeDate: string;
+}): Promise<void> {
+  if (!isAuthenticated()) return;
+  try {
+    const { rides } = await listTrackedRides({ limit: 40 });
+    learnFromReceipt({
+      spans: spansOf(rides),
+      chargeDate: facts.chargeDate,
+      veoMinutes: facts.veoMinutes,
+    });
+  } catch {
+    // Nothing to report and nothing to retry: the next receipt is another
+    // chance, and the calibration refuses to act on one sample anyway.
+  }
 }
 /** Denver's own slow / no-parking / no-ride zones (DOTI, via a CORA request).
  *  See `micromobility-zones.ts` for the provenance and for what the city's
@@ -3694,6 +3725,12 @@ async function handleQrRideScan(rawValue: string): Promise<string> {
         plate: action.vehicle.plate,
         deviceConfirmed: true,
         fastForwardTo: "4",
+        // §11.2: the scan is a real timestamped event, and it is the only
+        // moment in this flow we actually observed. Screen 6 prefers it over
+        // its own clock, which runs from after the unlock — see
+        // `resolveStartedAtMs` for the direction and why long is the safe way
+        // to be wrong.
+        scannedAtMs: Date.now(),
       });
       break;
 

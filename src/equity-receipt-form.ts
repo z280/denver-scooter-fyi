@@ -362,6 +362,25 @@ export interface ReceiptFormDeps {
   /** Injected for tests; defaults to the real POST. */
   submit?(input: DiscountReportIn): Promise<DiscountReportResult>;
   now?(): Date;
+  /** §11.2: a receipt the rider filed is the only place we ever see Veo's own
+   *  billed minutes, so this hands them up to whoever can match them against
+   *  the ride we recorded.
+   *
+   *  THIS FORM DOES NOT MATCH. It has a plate and a charge date; working out
+   *  which of a rider's rides that was means reading the local track store or
+   *  the rides list, and neither belongs in a module whose job is one POST.
+   *  The host matches, or does nothing — and doing nothing is fine, because the
+   *  calibration refuses to act on fewer than two samples anyway.
+   *
+   *  Fired AFTER a successful submit, never before: a receipt the server
+   *  refused is a receipt the rider is about to correct, and learning from a
+   *  figure they are still editing would teach us the typo. */
+  onReceiptFiled?(facts: {
+    plate: string;
+    veoMinutes: number;
+    chargeDate: string;
+    totalCents: number | null;
+  }): void;
   /** Where focus goes when the form closes. */
   returnFocusTo?: HTMLElement | null;
   onClose?(): void;
@@ -794,6 +813,15 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     status.textContent = "Sending…";
     submit(result.input)
       .then(() => {
+        // Before the `closed` guard: the rider closing the sheet the instant
+        // the POST lands must not cost them the one figure this ride can teach
+        // us, and the callback touches no DOM.
+        deps.onReceiptFiled?.({
+          plate: result.input.vehicle_plate,
+          veoMinutes: result.input.trip_minutes,
+          chargeDate: result.input.charge_date,
+          totalCents: result.input.total_cents ?? null,
+        });
         if (closed) return;
         showDone();
       })

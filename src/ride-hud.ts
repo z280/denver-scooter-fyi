@@ -59,6 +59,7 @@ import {
   saveRatePlan,
 } from "./ride-cost.ts";
 import { closeAllPopups } from "./chrome.ts";
+import { calibrationOffsetMs } from "./cost-calibration.ts";
 import { activeTrip, legBadge, tripTotals } from "./trip-legs.ts";
 import { MODEL_NAMES } from "./model-catalog.ts";
 import {
@@ -458,6 +459,12 @@ export class RideHud {
    *  That sheet's own adjust clock stays visible regardless — you can't nudge
    *  a clock you can't see. */
   private timerVisible = true;
+
+  /** §11.2's learned offset, in ms, added to the elapsed time BEFORE pricing
+   *  and never to the clock itself. The clock is how long the rider has been
+   *  riding, which they can check against their own watch; the cost is a
+   *  picture of a meter we cannot see, and that is the one this can improve. */
+  private costOffsetMs = 0;
 
   /** §11.1's voice, and the state that keeps it from repeating itself. */
   private readonly voice: RideVoice | null;
@@ -1291,6 +1298,12 @@ export class RideHud {
     recorder: RideHudTrackControl | null;
   }): void {
     this.startedAt = opts.startedAtMs;
+    // §11.2: what this rider's own receipts say our estimates have been
+    // missing. Captured once per ride rather than read on every tick, because
+    // it only changes when a receipt is filed and nobody files one mid-ride —
+    // and a figure that could move under a running counter would make the
+    // cost readout jump for no reason the rider could see.
+    this.costOffsetMs = calibrationOffsetMs();
     this.trackedRideId = opts.rideId;
     this.trackRecorder = opts.recorder;
     this.rideGeneration += 1;
@@ -1830,7 +1843,9 @@ export class RideHud {
       // still off.
       cost.hidden = !this.costHudVisible;
       if (rate && this.costHudVisible) {
-        cost.textContent = `≈ ${formatCents(rideCostCents(planFor(rate), elapsed))}`;
+        cost.textContent = `≈ ${formatCents(
+          rideCostCents(planFor(rate), elapsed + this.costOffsetMs),
+        )}`;
       }
     }
     this.renderTripLines(elapsed, rate);
@@ -1879,7 +1894,9 @@ export class RideHud {
     tripEl.hidden = !showMoney;
     if (!showMoney || trip === null || rate === null) return;
     const settled = tripTotals(trip);
-    const cents = settled.costCents + rideCostCents(planFor(rate), elapsedMs);
+    const cents =
+      settled.costCents +
+      rideCostCents(planFor(rate), elapsedMs + this.costOffsetMs);
     // "≈" and "so far" both, because it is an estimate AND incomplete; and
     // `partial` adds "at least", because a total summed over a leg that was
     // missing a figure is a floor. Three hedges on one short line is more than

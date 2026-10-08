@@ -253,9 +253,53 @@ function describeStartError(err: unknown): string {
 /** The server's own `started_at` is the authoritative clock (it is what the
  *  ride row itself was created with); the client `now()` is only a fallback
  *  for the — extremely unlikely — case that field fails to parse. */
-function resolveStartedAtMs(ride: StartedTrackedRide, now: () => number): number {
-  const ms = Date.parse(ride.started_at);
-  return Number.isFinite(ms) ? ms : now();
+/** §11.2: how far back a scan is still evidence about THIS ride.
+ *
+ *  A rider who scans a sticker and starts the ride is doing it inside a minute
+ *  or two: open Veo, find the unlock, press it. Past this, the scan is about a
+ *  scooter they looked at and walked away from — maybe they scanned three, or
+ *  scanned one and took a phone call — and backdating the clock to it would
+ *  invent minutes nobody was charged for. Five minutes is generous for the
+ *  real case and far short of the ones that would do harm. */
+export const MAX_SCAN_BACKDATE_MS = 5 * 60_000;
+
+/** The scan time, when it is still evidence, else null.
+ *
+ *  Refuses a timestamp in the FUTURE as well as a stale one: a device whose
+ *  clock jumped would otherwise hand us a negative elapsed time, and a clock
+ *  that counts backwards is worse than one that starts late. */
+export function usableScanStart(
+  scannedAtMs: number | undefined,
+  nowMs: number,
+): number | null {
+  if (scannedAtMs === undefined || !Number.isFinite(scannedAtMs)) return null;
+  const age = nowMs - scannedAtMs;
+  if (age < 0 || age > MAX_SCAN_BACKDATE_MS) return null;
+  return scannedAtMs;
+}
+
+/** When the ride started, best available.
+ *
+ *  THE ORDER IS EARLIEST-OBSERVED-WINS, and that is the whole of §11.2's first
+ *  half. The server's `started_at` is when the row was created, which is after
+ *  the rider unlocked; the scan is before it. Veo bills from the unlock, which
+ *  sits between the two, so taking the scan makes our clock run LONG and the
+ *  server's makes it run SHORT. Long is the safe way for a cost estimate to be
+ *  wrong: a rider who budgeted for more than Veo charged is not the rider this
+ *  can harm, and the ±15s nudges exist precisely because the short version was
+ *  what we shipped.
+ *
+ *  `Math.min` rather than "prefer the scan": a scan that somehow postdates the
+ *  server row is not evidence of anything, and the guard costs one call. */
+function resolveStartedAtMs(
+  ride: StartedTrackedRide,
+  now: () => number,
+  scannedAtMs: number | undefined,
+): number {
+  const parsed = Date.parse(ride.started_at);
+  const serverMs = Number.isFinite(parsed) ? parsed : now();
+  const scan = usableScanStart(scannedAtMs, now());
+  return scan === null ? serverMs : Math.min(scan, serverMs);
 }
 
 /** `private-<hex>` local track id (ride-session.ts's `RideSessionDoc.
@@ -894,10 +938,13 @@ function buildStartScreen(
       const nowFn = deps.now ?? (() => Date.now());
       const randomBytesFn = deps.randomBytes ?? defaultRandomBytes;
       const trackKeyId = randomPrivateTrackId(randomBytesFn);
+      // Same §11.2 rule on the private path, where there is no server row to
+      // compare against: the scan is the only observation there is.
+      const nowMs = nowFn();
       const started = deps.session.dispatch({
         type: "rideStarted",
         rideId: null,
-        startedAtMs: nowFn(),
+        startedAtMs: usableScanStart(ctx.entry.scannedAtMs, nowMs) ?? nowMs,
         trackKeyId,
         private: true,
       });
@@ -951,7 +998,7 @@ function buildStartScreen(
       const transition = deps.session.dispatch({
         type: "rideStarted",
         rideId: started.id,
-        startedAtMs: resolveStartedAtMs(started, nowFn),
+        startedAtMs: resolveStartedAtMs(started, nowFn, ctx.entry.scannedAtMs),
         trackKeyId: started.id,
         private: false,
       });

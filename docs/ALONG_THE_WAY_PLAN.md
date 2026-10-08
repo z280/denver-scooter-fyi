@@ -2444,10 +2444,54 @@ when the ride is not `riding`.
 The HUD offers ±15s/±1m nudges and a reset because we cannot see Veo's billing
 clock. That is an honest workaround, and it has become the rider's job.
 
-> **NOT BUILT, AND BOTH HALVES NEED THE OWNER.** This section rests on two
-> premises, and each has been overtaken by a later decision in this same
-> codebase. Recorded rather than worked around, because forcing either would
-> reverse a change that was made deliberately and for good reasons.
+> **BOTH HALVES NOW BUILT, on the owner's answer (2026-10-08): take the scan
+> timestamp, and feed the calibration from the receipt reader rather than from
+> a form.** The analysis below stands as written — it is why the build looks
+> the way it does — and what shipped is recorded after it.
+>
+> **The scan.** `RideModalEntry.scannedAtMs` carries the moment of the scan to
+> Screen 6, which prefers it over its own clock. The §6.7.3 tension resolves on
+> one word: there the rider SAYS they already started and the unlock time is
+> unknown, so we would be guessing; here it is measured. Three guards, because
+> an invented start time is the one thing this must not produce — a scan older
+> than five minutes is about a scooter they looked at and walked away from, a
+> scan from the future means a jumped clock, and a scan that postdates the
+> server row is not evidence of anything. The direction is deliberate: the scan
+> precedes the unlock, so our clock runs LONG, which is the safe way for a cost
+> estimate to be wrong.
+>
+> **The calibration.** `cost-calibration.ts`, learned from receipts and never
+> from a form — reinstating Screen 8's form would have bought a better estimate
+> at the price of every ride reaching the donation flow, which is the trade the
+> friction rewrite already refused. The offset is in TIME, not money: Veo's
+> rates are published and ours are right; what we cannot see is when the meter
+> started.
+>
+> It is a MEDIAN of five samples, because the one ride where the rider took a
+> phone call between the scan and the unlock is exactly the sample a mean would
+> carry forever. Nothing at all below two samples — one receipt is an anecdote.
+> A gap beyond ten minutes is dropped on the way in AND on the way out, so a
+> blob from an older build cannot put a twenty-minute "calibration" into every
+> estimate. And it never SHORTENS an estimate: learning that we run long stops
+> the figure drifting further, but an offset that discounted would under-quote
+> a rider against the bill they are about to be charged.
+>
+> Matching a receipt to a ride refuses ambiguity. A receipt carries a plate and
+> a charge date and no time of day; the rides we recorded carry timestamps and
+> no plate. So the match is on the Denver day, and two rides that day means we
+> cannot tell. Learning nothing is free; learning a four-minute offset from
+> somebody else's trip is not.
+>
+> The rider sees it in one sentence on the In-Ride tab and can reset it. The
+> sentence is about their rides, never about our arithmetic — the section only
+> exists when there is something to say, because a settings row explaining that
+> we have learned nothing yet is the app talking to itself.
+>
+> ---
+>
+> **The original analysis, which is why the above looks like it does.** This
+> section rested on two premises, and each had been overtaken by a later
+> decision in this same codebase.
 >
 > **"Screen 8 already collects the truth" is no longer true.** `ride-post-s8.ts`
 > stopped asking for battery, cost and minutes entirely, in a documented
