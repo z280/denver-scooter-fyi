@@ -8,6 +8,7 @@ Plans still being planned or built.
 
 - [ALONG_THE_WAY_PLAN.md](ALONG_THE_WAY_PLAN.md) — the frontend lane of the Along the Way program (phases 1–12; many shipped, several still open).
 - [ANALYTICS_PLAN.md](ANALYTICS_PLAN.md) — the State of Veo stats drawer and embed; tier 1 is live, tiers 2–3 are in progress.
+- [DECISION_FEATURE_PILL_LABELS.md](DECISION_FEATURE_PILL_LABELS.md) — an open owner decision: whether the device card's feature pills get their text labels back (Along the Way §12.3).
 - [ATLANTA_PLAN.md](ATLANTA_PLAN.md) — assessment of what an Atlanta launch would change here; nothing built yet.
 - [RIDER_VOICE_PLAN.md](RIDER_VOICE_PLAN.md) — what riders are asked and how a story reaches We See You Veo; steps 1–4 built, step 5 open.
 - [RIDER_REPORTING_BACKLOG.md](RIDER_REPORTING_BACKLOG.md) — the rider-reporting work still to build under the rider voice plan.

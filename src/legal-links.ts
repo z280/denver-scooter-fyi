@@ -1,4 +1,4 @@
-// Privacy Policy and Terms of Use, inside the map's attribution.
+// Privacy Policy and Terms of Service, inside the map's attribution.
 //
 // WHERE THEY USED TO BE: one place, inside the collapsed founder's note in the
 // About drawer — three taps deep, behind a `<details>` nobody opens, and
@@ -26,7 +26,7 @@
 // one-tap panel that does not. The About drawer still carries them in prose,
 // which is where somebody looking for them deliberately goes.
 
-import { LEGAL_LINKS } from "./config.ts";
+import { LEGAL_LINKS, PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "./config.ts";
 
 /** The links as attribution entries.
  *
@@ -44,4 +44,29 @@ export function legalAttribution(): string[] {
     (spec) =>
       `<a href="${spec.href}" target="_blank" rel="noopener noreferrer">${spec.label}</a>`,
   );
+}
+
+/** The one-line notice under every set of sign-in doors: what signing in
+ *  agrees to, with both documents a tap away. Built with DOM nodes (no
+ *  innerHTML) from the same module constants as the attribution links, and
+ *  opened in a new tab so a half-typed sign-in is not lost. */
+export function signInConsentLine(): HTMLParagraphElement {
+  const p = document.createElement("p");
+  p.className = "legal-fine-print";
+  const link = (href: string, label: string): HTMLAnchorElement => {
+    const a = document.createElement("a");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = label;
+    return a;
+  };
+  p.append(
+    "By signing in you agree to our ",
+    link(TERMS_OF_SERVICE_URL, "Terms of Service"),
+    " and acknowledge our ",
+    link(PRIVACY_POLICY_URL, "Privacy Policy"),
+    ".",
+  );
+  return p;
 }

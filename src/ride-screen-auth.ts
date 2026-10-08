@@ -57,6 +57,7 @@ import {
 } from "./auth-magic-link.ts";
 import { renderGoogleButton } from "./auth-google.ts";
 import { buildSmsDoor, type SmsDoorState } from "./sms-door.ts";
+import { signInConsentLine } from "./legal-links.ts";
 
 /** The subset of `Locate` this screen touches — narrowed so a test fake needs
  *  no real MapLibre `GeolocateControl`. */
@@ -235,7 +236,7 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
     const hint = el(
       "p",
       "ride-wizard__hint",
-      "Your location stays on this device unless you opt to save ride tracks.",
+      "We use your location to find nearby scooters and plan routes. If you're signed in, we record where each ride starts and ends in your ride history. Your full GPS track stays on this device unless you choose to donate it.",
     );
     const actions = el("div", "ride-wizard__actions");
     const btn = el("button", "login-btn", "Enable GPS");
@@ -350,6 +351,8 @@ function buildScreen(ctx: RideScreenContext, deps: ScreenDeps): RideScreen {
         onSignedIn: () => deps.onSignedIn(),
       });
     }
+
+    authSection.append(signInConsentLine());
   };
   renderAuth();
   void deps.loadCfg().then((cfg) => {

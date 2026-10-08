@@ -59,7 +59,17 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
   const phoneStatus = el("p", "account-magic-status");
   phoneStatus.setAttribute("role", "status");
   phoneStatus.setAttribute("aria-live", "polite");
-  phoneForm.append(phoneInput, phoneSubmit, phoneStatus);
+  // Texting disclosure, under the number it applies to. The last sentence is
+  // not boilerplate: the sender number is shared with our other services
+  // (z280 comms), and an opt-out is per number, so STOP reaches all of them.
+  const smsTerms = el(
+    "p",
+    "legal-fine-print",
+    "We'll text you a one-time sign-in code. Msg & data rates may apply. " +
+      "Reply STOP to opt out, HELP for help. STOP also stops texts from our " +
+      "other services that share this number.",
+  );
+  phoneForm.append(phoneInput, smsTerms, phoneSubmit, phoneStatus);
 
   // Step 2: type the texted code back. Hidden until one is sent.
   const codeForm = el("form", "account-code");

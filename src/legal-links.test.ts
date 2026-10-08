@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+//
 // The governing documents, as attribution entries.
 //
 // Small surface, and the interesting part is a negative: these must NOT come
@@ -8,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { LEGAL_LINKS } from "./config.ts";
-import { legalAttribution } from "./legal-links.ts";
+import { LEGAL_LINKS, PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "./config.ts";
+import { legalAttribution, signInConsentLine } from "./legal-links.ts";
 
 describe("the legal attribution entries", () => {
   it("renders every governing document, from the one shared list", () => {
@@ -61,5 +63,23 @@ describe("the legal attribution entries", () => {
       expect(m.createLegalLinks).toBeUndefined();
       expect(m.buildLegalLinks).toBeUndefined();
     });
+  });
+});
+
+describe("the sign-in consent line", () => {
+  it("links both documents, in a new tab, from the shared constants", () => {
+    const p = signInConsentLine();
+    expect(p.textContent).toBe(
+      "By signing in you agree to our Terms of Service and acknowledge our Privacy Policy.",
+    );
+    const links = [...p.querySelectorAll("a")];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      TERMS_OF_SERVICE_URL,
+      PRIVACY_POLICY_URL,
+    ]);
+    for (const a of links) {
+      expect(a.target).toBe("_blank");
+      expect(a.rel).toContain("noopener");
+    }
   });
 });

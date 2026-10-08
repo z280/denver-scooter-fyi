@@ -1,5 +1,5 @@
 // Typed client for the data.scooter.fyi public API.
-// Contract: https://raw.githubusercontent.com/z280/scooter-fyi-api/main/API.md
+// Contract: https://github.com/z280/scooter-fyi-api/blob/main/docs/reference/API.md
 
 import { clearStoredSessionIfToken } from "./auth-storage.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";

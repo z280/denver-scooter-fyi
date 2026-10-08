@@ -3357,6 +3357,22 @@ body.is-map-picking .home-bar {
   font-size: 12.5px;
   color: var(--fg-muted);
 }
+/* Small print beside the sign-in doors: the consent line under each set of
+   doors and the texting disclosure under the phone field. Muted and small,
+   but links stay underlined so they read as links. */
+.legal-fine-print {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.account-magic .legal-fine-print {
+  margin: 0;
+}
+.legal-fine-print a {
+  color: inherit;
+  text-decoration: underline;
+}
 .account-error {
   margin: 6px 0 0;
   font-size: 12.5px;

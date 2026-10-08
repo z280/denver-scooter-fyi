@@ -37,3 +37,13 @@ body {
   padding: 16px;
   max-width: 560px;
 }
+
+/* The governing documents, as small print under the panel. */
+.embed-legal {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--stats-fg-muted, #59636e);
+}
+.embed-legal a {
+  color: inherit;
+}

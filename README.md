@@ -2,13 +2,32 @@
 
 A live, full-screen map of every Veo shared scooter and e-bike in Denver. Dots
 update on a 90-second loop, color-coded by vehicle type, with optional boundary
-overlays, a per-region choropleth, neighborhood search, and a daily-compliance
-gauge.
+overlays, a per-region choropleth, address and place search, and a
+daily-compliance gauge. On top of the map: a guided Ride Mode with walking and
+riding directions, voice guidance and a live cost HUD; rider stats and a fleet
+analytics page; dibs; points, leaderboards and Territory Control; and ways
+for riders to report, photograph and tell their story about the fleet.
 
 It is a static single-page app in the hosting sense — this repo builds to plain
 files on Cloudflare Pages, with no server of its own. It is *not* self-contained:
-the browser talks directly to the public **data.scooter.fyi** API for every bit
-of data, and renders a self-hosted vector basemap.
+almost everything comes from the public **data.scooter.fyi** API, and the
+vector basemap is self-hosted on Cloudflare R2. The exceptions — all fetched
+directly by the browser — are:
+
+- **Google Identity Services** (`accounts.google.com/gsi/client`), the
+  sign-in script, loaded for visitors who are not signed in
+  ([src/auth-google.ts](src/auth-google.ts)).
+- **Veo's public GBFS feed**, fetched directly (once you have a location fix)
+  to look up the plate of the scooter in front of you
+  ([src/gbfs.ts](src/gbfs.ts)).
+- **OpenStreetMap Nominatim**, which turns the coordinates of a saved place
+  or a parking report into a street address ([src/geocode.ts](src/geocode.ts)).
+- **weseeyouveo.com**: its logo on the map page, the rider-story options when
+  the story screen opens, and a story only if you tick the box to send it
+  ([src/rider-story.ts](src/rider-story.ts)).
+- **sunrise-sunset.org**, only with the sun-synced theme
+  ([src/theme.ts](src/theme.ts)).
+- **Cloudflare R2**, which serves the basemap tiles (`BASEMAP_PMTILES_URL`).
 
 **The map works fully anonymously.** Everything that draws the map — the device
 feed, boundaries, H3 aggregates, the compliance gauge, routing, and anonymous
@@ -31,7 +50,9 @@ STOP stops all of them, not only scooter.fyi — worth knowing before you send
 it. The app will tell you plainly when that has happened, and only an UNSTOP
 text undoes it.
 
-**On tracking:** the frontend loads no ad tech and no third-party scripts.
+**On tracking:** the frontend loads no ad tech and no analytics SDKs. The one
+third-party script is Google Identity Services, loaded for visitors who are
+not signed in (above).
 The only measurement is **private, first-party analytics** we run ourselves
 ([src/telemetry.ts](src/telemetry.ts) → the API's `/api/v1/telemetry/events`):
 cookieless, with **no persistent identifier of any kind** — events carry a
@@ -42,18 +63,30 @@ search queries, coordinates, ride content, or preference values are ever
 sent, and no account id is ever attached (only a signed-in yes/no flag).
 The **About** drawer has an "Allow private analytics" switch that turns the
 whole thing off for your browser (stored locally, works signed out), and
-Global Privacy Control is honored automatically. `localStorage` otherwise
-holds only your own settings (theme, rate plan, install-prompt
-dismissal, the analytics opt-out, and a same-day-visit date stamp). Recorded ride tracks live in IndexedDB on your own device and are
-uploaded only if you choose to donate one; the **Local Data** tab in the
-Account drawer is where you can look at them, hand one over, or delete it.
-That is not the same as "no data is recorded": the API stores a reporter IP
-and user-agent on submitted reports, and the issuing IP and user-agent on
-sessions. The authoritative, machine-readable retention policy is
+Global Privacy Control and Do Not Track are honored automatically.
+
+**On your device:** `localStorage` holds your sign-in session token, your
+settings (theme, rate plan, ride preferences, the analytics opt-out and the
+like), saved and recent places, your dibs, watched scooters, the live ride
+(so a reload can pick it up), and unsent story drafts. Recorded ride tracks
+live in IndexedDB on your own device and leave it only if you choose to
+donate one; the **Local Data** tab in the Account drawer is where you can
+look at them, hand one over, or delete it.
+
+That is not the same as "no data is recorded". Signed in, a ride started in
+Ride Mode records where it started and ended in your ride history on the
+API; routing, walking-route and place-search requests send the from/to
+points (and what you typed) to the API; and the API stores a reporter IP and
+user-agent on submitted reports, and the issuing IP and user-agent on
+sessions. The [Privacy Policy](https://data.scooter.fyi/legal/privacy-policy)
+is the rider-facing statement, and the machine-readable retention policy is
 `GET /api/v1/meta/privacy`.
 
 - **Live site:** https://denver.scooter.fyi
-- **Data API contract:** https://github.com/z280/scooter-fyi-api/blob/main/API.md
+- **Data API contract:** https://github.com/z280/scooter-fyi-api/blob/main/docs/reference/API.md
+- **Privacy Policy / Terms of Service:** https://data.scooter.fyi/legal/privacy-policy ·
+  https://data.scooter.fyi/legal/terms-of-service
+- **Plans and reference:** [docs/README.md](docs/README.md)
 
 ## Features
 
@@ -76,24 +109,29 @@ sessions. The authoritative, machine-readable retention policy is
   arrival panel. One tap files a `not_rideable` report, which overrides the
   reliability tier outright for 24 hours, and sends the rider to the picker
   rather than offering another go at a scooter they have just told us is dead.
-- **🔔 Notify me if moved**: watch a specific scooter and hear about it when
-  somebody rides it away. Needs no account and no QR scan — a watch is a thing
-  your browser is doing for the next few hours, kept locally — and the alert
-  carries no location: it says the scooter went, and you open the app to see
-  where. In-app always, plus a lock-screen notification where you have allowed
-  one (asked for when you turn a watch on, never at page load). Up to six at a
-  time, listed in the Tools drawer, and the watch ends with the answer. It
-  works while the app is open; the backgrounded half needs a server-side
-  watcher that does not exist yet, and the copy says so.
+- **🔔 Notify me if moved**: hear about it when somebody rides away a scooter
+  you are connected to. A watch comes from exactly two places
+  ([src/device-notify.ts](src/device-notify.ts) `WATCH_RULES`): a scooter you
+  have called **dibs** on (which needs an account; at most two, and the watch
+  ends when the dibs does), or the scooter you just finished riding (one,
+  offered at the end of the ride, for two hours). A watch is kept locally in
+  your browser, and the alert carries no location: it says the scooter went,
+  and you open the app to see where. In-app always, plus a lock-screen
+  notification where you have allowed one (asked for when a watch starts,
+  never at page load). Listed in the Tools drawer under **Watched scooters**;
+  the watch ends with the answer. It works while the app is open; the
+  backgrounded half needs a server-side watcher that does not exist yet, and
+  the copy says so.
 
   This **replaced "Keep this one"** (the ⭐). That feature cost a sign-in, a QR
   scan and a fix within 75 m, and in exchange told you where a scooter you
   liked was parked — which this map already does, for every scooter, to
   anybody. The question a map cannot answer by sitting there is whether it has
   gone.
-- **Walk economics** (opt-in location): straight-line walk time to any
-  device, a dashed guide line on the map, and a Directions handoff to
-  Apple/Google Maps in walking mode.
+- **Walking to the scooter** (opt-in location): an in-app walking route on
+  the map from the API's router (`GET /api/v1/route/walk`,
+  [src/walk-leg.ts](src/walk-leg.ts)), re-routed as you walk, with an arrival
+  panel that flips to "you're here" off your GPS fix.
 - **Unlock in Veo**: the device popup deep-links into the Veo app using the
   same Adjust URL printed on the scooter's QR sticker. Deliberately gated —
   it appears only for a signed-in user with location on who is physically at
@@ -133,10 +171,36 @@ sessions. The authoritative, machine-readable retention policy is
   "Needs features confirmed"; a later report that disagrees flips it to
   "Needs review", and three reports settle it by 2/3 consensus. Worth 12
   points first time, 14 for clearing a review, 6 to reconfirm.
-- **Intent modes** (bottom center): one-tap presets — 🛴 *Find wheels*
-  (available devices, reliability coloring, location offer) and 📊 *Analysis*
-  (v1 choropleth + compliance gauge). The bar always shows the current
-  mode; tweaking filters or iconography doesn't clear it.
+- **Home bar** (bottom center): "Where are you going?" — search for a
+  destination (or pick a saved or recent place, or tap the map), then say
+  whether you want a Veo or have your own wheels. That is the way into a
+  planned trip and Ride Mode. It replaced the old three-way mode bar
+  (Find wheels / Analysis / Ride), which is gone for good
+  (`src/mode-bar-gone.test.ts`); the analysis surfaces live in the left
+  activity bar.
+- **🗺️ Navigation with voice guidance**: Ride Mode can route you to a
+  destination and show turn-by-turn instructions on the HUD, with spoken
+  prompts (with a mute) via the browser's own speech synthesis
+  ([src/ride-voice.ts](src/ride-voice.ts)).
+- **✋ Dibs**: a timestamped public claim on a scooter you are walking to
+  (signed in; it expires), with a shareable certificate that settles who
+  called it first. Veo has no reservations; this is the honest substitute
+  ([src/dibs.ts](src/dibs.ts)).
+- **📣 Rider stories**: after a ride you can write a short story and, only if
+  you tick the box, send it to the rider-advocacy site We See You Veo
+  ([src/rider-story.ts](src/rider-story.ts)).
+- **🧾 Equity receipt claims**: "Didn't get the discount?" — a signed-in
+  form for a Veo receipt that should have been billed at the Equity Area
+  rate; matching it to a ride happens server-side
+  ([src/equity-receipt-form.ts](src/equity-receipt-form.ts)).
+- **🏆 Points, leaderboards and Territory Control**: confirmed reports,
+  scans, photos and rides earn points; the Leaderboard drawer shows the
+  regional tally and can shade each H3 hexagon by who leads it.
+- **📊 Rider stats and fleet analytics**: the Stats drawer shows rental
+  outcome statistics from Veo's feed and links to the full **/analytics**
+  page (rides, failed starts, fleet status, equity-area share and dwell, by
+  hour, day, week or month). The same stats panel is published standalone at
+  `embed/stats.html` for framing on weseeyouveo.com.
 - **🧭 Ride companion**: a landscape-first HUD (the Veo app has none) where
   the live, pitched follow-cam map fills the whole screen — your position
   marker recenters it as you move, with 3D building extrusions where the
@@ -164,11 +228,21 @@ sessions. The authoritative, machine-readable retention policy is
   prices the trip under Lime's typical rates — what competition would have
   cost — and, for a ride that started or ended in an official Equity Area,
   quotes the contract's $0.13/min term and asks you to check your receipt.
-- Controls grouped by attribute in a left activity bar:
-  - **Devices** — type filter (All / Scooters / E-bikes), availability
-    switch, a unified battery block: quartile filter buttons plus a
-    "Color dots by range" toggle — **on by default**, so dots show battery
-    percentage out of the box — and a "Color dots by reliability" toggle.
+- Controls grouped in a left activity bar (Filters, Iconography,
+  Recommended, Areas, Leaderboard, Stats, Scan, Your trip, Tools, About,
+  Compliance):
+  - **Filters** — accordion sections: **Quick & Saved Filters** (one-tap
+    presets such as ⚡ Charged & Ridable, 👍 Decent Rides and 🚫🛴 No
+    Standing; save/load a map filter on this device; "My ideal scooter"),
+    **Model** (Astro, Cosmo, Apollo, Rover toggle cards, all on by default),
+    **Features** (require a confirmed bell, basket or cup holder, or show
+    scooters with missing data), **Rideability & Battery** (Any / Hide
+    high-risk / Likely rideable, a minimum battery percentage, hide Reserved
+    & Out of Service, "Only ones that can get me there", and an opt-out from
+    respecting other riders' dibs), and **Geographic Filters** (below), plus
+    Reset Filters. What the dots show — Data / Model / Ride type icons,
+    battery or reliability data, gauge rings, hover tooltip and legend — is
+    in the **Iconography** drawer.
     Device popups open with a turquoise (Veo-brand) header naming the model
     — Veo Astro (standing), Cosmo (seated, no pedals), Apollo (seated,
     pedals, 2-passenger), or Rover (seated, three wheels, cargo basket) —
@@ -183,11 +257,16 @@ sessions. The authoritative, machine-readable retention policy is
     (Off/Large/Medium/Small, shaded by any of six server-computed per-cell
     metrics — device density, trips started, starts/hour peak, avg
     battery, high-risk share, avg dwell — via a "Shade by" dropdown;
-    mutually exclusive with the choropleth), and an "Only show devices
-    in…" area filter. With an area type chosen, clicking a region directly
-    on the map adds or removes it from the filter.
-  - **Tools** — dense-cluster finder, the compliance calendar, and
-    devices-over-time.
+    mutually exclusive with the choropleth). The city's scooter rules
+    zones and the Rover service area are drawn from here too.
+  - **Geographic Filters** (in Filters) — "Filter devices by area": choose
+    an area type (City Region, Equity Areas, Council District, Neighborhood)
+    and pick areas from a searchable list. With an area type chosen,
+    clicking a region directly on the map adds or removes it from the
+    filter.
+  - **Tools** — My dibs, Watched scooters, the dense-cluster finder,
+    Confirm features by QR, Equity Compliance, devices over time, and (for
+    admins) admin tools.
   - **About Scooter.fyi** — who runs this and why, the beta disclaimer,
     the non-commercial and pro-consumer commitments, links to the privacy
     policy and terms, and the "Allow private analytics" switch.
@@ -237,12 +316,17 @@ sessions. The authoritative, machine-readable retention policy is
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev            # http://localhost:5173
+npm test               # vitest run (offline; every suite stubs fetch and storage)
+npm run smoke          # boot the BUILT site in headless Chromium; fail on any uncaught error
+npm run vectors:check  # tests/fixtures/track-chain-vectors.json still matches its generator
+npm run simulate:ride  # fake a GPS ride in a real browser to test Ride Mode (needs Playwright)
 ```
 
 The production API's CORS allowlist only includes production origins, so in dev
 all `/api` requests are proxied through Vite to `https://data.scooter.fyi` with a
-production `Origin` header (see [vite.config.ts](vite.config.ts)). In a
+production `Origin` header, and `/wsyv` is proxied to `https://weseeyouveo.com`
+for the rider-story calls (see [vite.config.ts](vite.config.ts)). In a
 production build the browser calls the API directly. This split lives in
 [src/api.ts](src/api.ts):
 
@@ -302,8 +386,14 @@ backend work reaches production the moment it merges — there is no separate
 cross-repo dependencies before merging anything that talks to a new
 endpoint.
 
-The workflow runs `npm ci && npm run build`, then uploads `dist/` with
-`wrangler pages deploy` (Direct Upload). It needs two repository secrets:
+The workflow runs `npm ci`, `npm run build` (tsc + vite), `npm test`
+(vitest), `npm run vectors:check` and `npm run smoke` (with
+`SMOKE_CHANNEL=chrome`, the runner's preinstalled Chrome), and only then
+uploads `dist/` with `wrangler pages deploy --branch=main` (production) or
+`--branch=pr-<number>` (preview) — Direct Upload. The build step injects
+`VITE_GOOGLE_CLIENT_ID`, but nothing in `src/` reads it: the Google client id
+comes from the API's `/auth/config` at runtime. It needs two repository
+secrets:
 
 | Secret | Value |
 | --- | --- |
@@ -331,7 +421,8 @@ src/
   sms-door.ts      the "text me a code" sign-in forms (its own module: it is
                    the only door whose failure mode is a deliberate choice
                    rather than an error)
-  map-auth.js      the sessionStorage session store the auth doors write to
+  map-auth.js      getAuth / isAuthenticated / signOut over the session blob
+  auth-storage.ts  owns that blob, in localStorage (sessionStorage fallback)
   account-tabs.ts  the Account drawer's tab shell (Login / Profile /
                    Community / Local Data) — outlives every panel rebuild
   account-login.ts the signed-out sign-in doors (Google, email, text)
@@ -395,15 +486,28 @@ src/
   main.ts          wiring: load, controls, 90s refresh loop
   style.css        all styling
 index.html         markup + control panel
-vite.config.ts     build config + dev API proxy
+analytics.html     the /analytics fleet analytics page (src/analytics-page.ts)
+embed/stats.html   the standalone stats panel, for framing (src/embed-stats.ts)
+vite.config.ts     build config + dev API and /wsyv proxies
 wrangler.toml      Cloudflare Pages project config
 r2-cors.json       R2 bucket CORS policy for the basemap
-scripts/           build-basemap.sh (regenerate + republish the pmtiles)
+tests/             shared test setup, helpers and fixtures (most tests sit
+                   beside their module as src/*.test.ts)
+docs/              plans and reference — see docs/README.md
+scripts/
+  build-basemap.sh      regenerate + republish the pmtiles
+  build-zones.mjs       public/micromobility-zones.geojson from the city's zone files
+  build-rover-zone.mjs  the Rover service-area polygon (docs/reference/ROVER_ZONE.md)
+  gen-track-vectors.mjs track-chain test vectors (npm run vectors:check)
+  simulate-gps-ride.mjs fakes a GPS ride in a browser (npm run simulate:ride)
+  smoke.mjs             headless boot check of the built site (npm run smoke)
 ```
 
 ## Out of scope
 
-Historical playback and alerting. Everything stateful — accounts, reports,
+Historical map playback, and server-side (push) alerting — "Notify me if
+moved" alerts are local and need the app open, and historical charts live on
+the /analytics page rather than on the map. Everything stateful — accounts, reports,
 rides, points, profiles — lives in the **data.scooter.fyi** backend
 ([scooter-fyi-api](https://github.com/z280/scooter-fyi-api)); this repo is only its
 frontend and contains no server code.

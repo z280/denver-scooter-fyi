@@ -16,6 +16,7 @@ import {
 import { renderGoogleButton as defaultRenderGoogleButton } from "./auth-google.ts";
 import { buildSmsDoor as defaultBuildSmsDoor } from "./sms-door.ts";
 import type { AuthConfig } from "./auth-config.ts";
+import { signInConsentLine } from "./legal-links.ts";
 
 /** Sign-in form state that outlives a rebuild. Shared with the SMS door, which
  *  keeps the phone half under the same contract. */
@@ -74,7 +75,7 @@ export function buildLoginPanel(
 
   const intro = el("p", "account-intro");
   intro.textContent =
-    "Sign in to report problems and (soon) track your rides. The map works fully without an account.";
+    "Sign in to track your rides, earn points, call dibs and report problems. The map works fully without an account.";
   host.append(intro);
 
   // Sign in with Google — shown only when the backend's /auth/config says
@@ -281,6 +282,8 @@ export function buildLoginPanel(
       onSignedIn: () => deps.onSignedIn(),
     });
   }
+
+  host.append(signInConsentLine());
 
   return {
     renderGoogle,

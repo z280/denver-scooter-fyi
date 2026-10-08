@@ -43,6 +43,14 @@
     >
       <div class="compliance-loading">Loading stats…</div>
     </main>
+    <!-- Same hrefs as LEGAL_LINKS in src/config.ts; static HTML cannot import
+         it, so keep the two in step. Inside <body>, so the height the panel
+         reports to its host includes it. -->
+    <footer class="embed-legal">
+      <a href="https://data.scooter.fyi/legal/privacy-policy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+      ·
+      <a href="https://data.scooter.fyi/legal/terms-of-service" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+    </footer>
     <script type="module" src="/src/embed-stats.ts"></script>
   </body>
 </html>
