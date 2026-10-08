@@ -95,13 +95,8 @@ import { promptGoogleOneTap } from "./auth-google.ts";
 import { loadAuthConfig, type AuthConfig } from "./auth-config.ts";
 import { refreshSessionIfStale } from "./auth-session.ts";
 import { openRideModal, wireRideModal } from "./ride-modal.ts";
-import {
-  VEHICLE_IDENTIFIER_RE,
-  normalizePlate,
-  primeDeepLinkPlates,
-  resolvePlateAgainstGbfs,
-  wireRideDeepLink,
-} from "./ride-deeplink.ts";
+import { wireRideDeepLink } from "./ride-deeplink.ts";
+import { resolvePlate, sharedPlateIndex } from "./plates.ts";
 import { vehicleDisplayName } from "./vehicle-name.ts";
 import {
   createRideSessionStore,
@@ -147,6 +142,7 @@ import { openQrScanner } from "./qr-scan.ts";
 import {
   qrRideAction,
   qrRideMessage,
+  resolveScannedPlate,
   type ScannedVehicle,
 } from "./qr-ride-scan.ts";
 import { submitDeviceReport } from "./reports.ts";
@@ -1642,10 +1638,10 @@ map.on("load", async () => {
         });
       });
     },
-    // The entry's id is a 16-hex `vehicle_identifier` on the `?ride=<hex>`
-    // path but a `device_id` on the `?ride=plate:` path (GbfsPlates' reverse
-    // lookup speaks device_id — gbfs.ts's index is keyed on Veo's bike_id).
-    // Accept either and hand jumpToDevice the device_id it matches popups on.
+    // The entry's id is normally a 16-hex `vehicle_identifier` (both `?ride=`
+    // forms produce one now — `/vehicles/resolve` answers with it), but a
+    // `device_id` is accepted too. Hand jumpToDevice the device_id it matches
+    // popups on.
     jumpToDevice: (id) => {
       const want = id.toLowerCase();
       const feat = devices
@@ -2004,10 +2000,6 @@ map.on("load", async () => {
     if (redeemed) return;
     wireRideDeepLink({
       magicLinkSettled,
-      // allFeatures(), never visibleFeatures(): a leftover model / battery /
-      // quality / area filter must not hide the scooter the rider is holding.
-      deviceIds: () =>
-        devices.allFeatures().map((f) => f.properties.device_id),
     });
   });
 
@@ -3781,61 +3773,15 @@ const DIBS_REFRESH_MS = 25_000;
 
 // ---------- The ribbon QR tool's "Ride mode" dial position ----------
 
-/** Resolve a scanned sticker to a vehicle in the live feed.
- *
- *  WHY THE PLATE IS THE BRIDGE. The sticker carries a plate; the session doc
- *  wants a `vehicle_identifier`, which is a salted hash the browser cannot
- *  compute. The feed gives us both sides: the identifier on every feature, and
- *  the plate either directly (`vehicle_plate`, served to signed-in riders) or
- *  out of Veo's own public GBFS deep links (`gbfs.ts`), which works signed out.
- *
- *  The feed's own plate is tried FIRST and the public index only primed when
- *  that misses, so a signed-in rider's scan costs no extra network at all. */
-async function resolveScannedVehicle(
-  plate: string,
-): Promise<ScannedVehicle | null> {
-  const features = devices.allFeatures();
-  const wanted = normalizePlate(plate);
-  if (wanted === "") return null;
-
-  const asVehicle = (
-    f: (typeof features)[number],
-    resolvedPlate: string,
-  ): ScannedVehicle | null => {
-    const vid = String(f.properties.vehicle_identifier ?? "").toLowerCase();
-    if (!VEHICLE_IDENTIFIER_RE.test(vid)) return null;
-    return {
-      vehicleIdentifier: vid,
-      deviceId: f.properties.device_id,
-      plate: resolvedPlate,
-      name: vehicleDisplayName(
-        f.properties.public_name,
-        resolvedPlate,
-        f.properties.vehicle_model_name,
-        f.properties.plate_suffix,
-      ),
-    };
-  };
-
-  for (const f of features) {
-    const fed = f.properties.vehicle_plate;
-    if (fed && normalizePlate(String(fed)) === wanted) {
-      const v = asVehicle(f, String(fed));
-      if (v) return v;
-    }
-  }
-
-  // Signed out, or a feed without plates: fall back to Veo's public feed
-  // through the index `ride-deeplink.ts` already keeps for `?ride=plate:`
-  // links. Never rejects — a blocked feed just means no match.
-  await primeDeepLinkPlates();
-  const deviceId = resolvePlateAgainstGbfs(
-    plate,
-    features.map((f) => f.properties.device_id),
-  );
-  if (!deviceId) return null;
-  const f = features.find((x) => x.properties.device_id === deviceId);
-  return f ? asVehicle(f, plate) : null;
+/** Resolve a scanned sticker to a vehicle in the live feed — see
+ *  `resolveScannedPlate` (qr-ride-scan.ts) for the three ways across, none of
+ *  which touch Veo's servers. */
+function resolveScannedVehicle(plate: string): Promise<ScannedVehicle | null> {
+  const index = sharedPlateIndex();
+  return resolveScannedPlate(plate, devices.allFeatures(), {
+    plateFor: (id) => index.cachedPlateFor(id),
+    resolve: resolvePlate,
+  });
 }
 
 /** Perform whatever the scan means, and return the sentence to show.

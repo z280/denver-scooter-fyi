@@ -18,7 +18,12 @@ import {
   veoParkingReportUrl,
   type ParkingReportInput,
 } from "./config.ts";
-import { GbfsPlates } from "./gbfs.ts";
+import {
+  PLATE_TTL_MS,
+  nearestDeviceIds,
+  sharedPlateIndex,
+  type PlateIndex,
+} from "./plates.ts";
 import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
@@ -202,6 +207,11 @@ const RIDE_TOOLTIP_MS = 2200;
 const RANGE_SRC = "device-range";
 const RANGE_FILL_LAYER = "device-range-fill";
 const RANGE_LINE_LAYER = "device-range-line";
+
+/** Re-ask for nearby plates once the rider has moved this far from the last
+ *  batch's anchor (see Devices.primeNearbyPlates). Well inside the radius
+ *  the nearest 50 vehicles cover anywhere downtown. */
+const PLATE_REPRIME_M = 150;
 
 const SRC = "devices";
 /** Base clustering radius (px) at the default ✨ Icon size; setIconScale
@@ -460,10 +470,14 @@ export class Devices {
   /** ✨ Icon size preference — multiplies the zoom→size ramps for the
    *  device badges and their text overlays (1 = default). */
   private iconScale = 1;
-  /** Plate resolver backed by Veo's public GBFS feed — lets the popup fill
-   *  the "Unlock in Veo" link and the parking-report prefill with the real
-   *  vehicle number without our own API ever exposing plates. */
-  private readonly plates = new GbfsPlates();
+  /** Plates from our own API (`/vehicles/plates`, plates.ts) — signed-in
+   *  riders only, one batch of nearby vehicles at a time. Lets the popup fill
+   *  the "Open in Veo" link and the parking-report prefill with the real
+   *  vehicle number; a guest gets none and types the plate instead. The app's
+   *  ONE shared index, so its request spacing is a per-tab ceiling. */
+  private readonly plates: PlateIndex = sharedPlateIndex();
+  /** Where (and when) the last fix-driven plate prime was anchored. */
+  private plateAnchor: { at: LngLat; t: number } | null = null;
   /** Session status, pushed in by wireAccount() once /auth/session
    *  resolves. admin lifts the proximity gate on ▶️ Start (issue #18) and on
    *  🛴 I'll ride this one. */
@@ -612,12 +626,33 @@ export class Devices {
     private readonly locate: Locate,
   ) {
     // A plate is only ever needed at the scooter (unlock / parking report),
-    // which already requires a location fix — so prime the GBFS index on the
-    // first fix. By the time the user opens a nearby popup it's warm, and
-    // cachedPlateFor() stays a synchronous lookup.
-    this.locate.onFix(() => {
-      void this.plates.prime();
-    });
+    // which already requires a location fix — so on the first fix, and again
+    // whenever the rider has moved PLATE_REPRIME_M or the last batch has gone
+    // stale, ask our API for the plates of the ~50 vehicles nearest the fix.
+    // By the time the user opens a nearby popup it's warm, and
+    // cachedPlateFor() stays a synchronous lookup. Signed out: nothing is
+    // asked (plates are a signed-in feature). The index itself skips ids it
+    // already has fresh and spaces requests, so this stays a handful of
+    // requests a minute even mid-ride, against a 60/min account limit.
+    this.locate.onFix((pos) => this.primeNearbyPlates(pos));
+  }
+
+  /** See the constructor. Anchored so a stationary rider (fixes ~1/s) asks
+   *  once per PLATE_TTL_MS, and a moving one once per PLATE_REPRIME_M. */
+  private primeNearbyPlates(pos: LngLat): void {
+    if (!isAuthenticated()) {
+      this.plateAnchor = null; // sign-in later should prime at once
+      return;
+    }
+    const now = Date.now();
+    const a = this.plateAnchor;
+    if (a && now - a.t < PLATE_TTL_MS && distanceMeters(a.at, pos) < PLATE_REPRIME_M) {
+      return;
+    }
+    const ids = nearestDeviceIds(this.allFeatures(), pos);
+    if (ids.length === 0) return; // feed not loaded yet — try the next fix
+    this.plateAnchor = { at: { lng: pos.lng, lat: pos.lat }, t: now };
+    void this.plates.prime(ids);
   }
 
   addLayers(): void {
@@ -1070,9 +1105,9 @@ export class Devices {
       // line down, where it belongs.
       //
       // The suffix is added here rather than server-side: the public payload
-      // omits the plate on purpose, and this app resolves its own from Veo's
-      // GBFS feed, so the disambiguating digits are ours to add only once we
-      // already have them.
+      // omits the plate on purpose, and a signed-in rider's plate comes from
+      // our own `/vehicles/plates` (plates.ts), so the disambiguating digits
+      // are ours to add only once we already have them.
       const namePlate: string | null =
         (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
         this.plates.cachedPlateFor(props.device_id);
@@ -1265,8 +1300,8 @@ export class Devices {
       };
       // ▶️ Start (issue #18) — subsumes the old "Unlock in Veo" link. Same
       // deep link as the QR sticker on the scooter's deck, same gates: it
-      // needs a plate (`effectivePlate` — the admin field, or one resolved
-      // client-side from Veo's own public GBFS feed), a signed-in session,
+      // needs a plate (`effectivePlate` — the admin field, or one from our
+      // own signed-in `/vehicles/plates` endpoint), a signed-in session,
       // and physical proximity (UNLOCK_PROXIMITY_M) — except admins, who
       // skip the proximity requirement entirely. The button is ALWAYS
       // visible; when disabled, tapping it explains why in the hint line.
@@ -1349,12 +1384,11 @@ export class Devices {
 
       const user = this.locate.current();
 
-      // Effective plate: the admin-only field when present, else resolved
-      // client-side from Veo's public GBFS feed (keyed by device_id == the
-      // feed's bike_id). Only resolved when the user has a fix — a plate is
-      // only actionable at the scooter, and this avoids scanning the index
-      // for far-away or no-location views. Powers the unlock link and the
-      // parking-report prefill without our API exposing plates.
+      // Effective plate: the admin-only field when present, else the plate
+      // index (plates.ts — our `/vehicles/plates`, signed-in riders only,
+      // keyed by device_id). Only read when the user has a fix — a plate is
+      // only actionable at the scooter. Powers the unlock link and the
+      // parking-report prefill; a guest gets null and types the plate.
       const effectivePlate: string | null =
         (props.vehicle_plate ? String(props.vehicle_plate) : null) ??
         (user || this.adminSession
@@ -1404,7 +1438,13 @@ export class Devices {
         // which are the card's previous ones with the distance added.
         startHint = startGate.reason;
       } else if (!effectivePlate) {
-        startHint = "Looking up this scooter's plate — try again in a moment.";
+        // Only reachable signed in (open_in_veo requires sign-in, checked
+        // above), so the index really is asking our API. "none" means it
+        // answered and has no plate for this vehicle — waiting won't help.
+        startHint =
+          this.plates.lookupState(props.device_id) === "none"
+            ? "We don't have this scooter's plate right now — scan the QR code on its deck to unlock it."
+            : "Looking up this scooter's plate — try again in a moment.";
       }
       // Resolve the deep link inline so the plate's non-null narrowing is
       // explicit rather than riding on TS aliased-condition narrowing.
@@ -2023,13 +2063,14 @@ export class Devices {
       });
 
       // Progressive plate hydration: the plate powers the unlock link and the
-      // parking-report prefill, but the GBFS index may not be warm on the very
-      // first popup after a fix. If we rendered without a plate but the user
-      // has a fix (so proximity features apply), prime the index and re-render
-      // once when a plate lands. Guarded so it runs at most one extra time and
-      // only while THIS popup is still the open one.
+      // parking-report prefill, but this vehicle may not be in the nearby
+      // batch yet (first popup after a fix, or a vehicle beyond the nearest
+      // 50). If we rendered without a plate but the user has a fix (so
+      // proximity features apply), ask for THIS device and re-render once
+      // when a plate lands. Signed out the index asks nothing. Guarded so it
+      // runs at most one extra time and only while THIS popup is still open.
       if (!retry && (user || this.adminSession) && !effectivePlate) {
-        void this.plates.prime().then(() => {
+        void this.plates.prime([props.device_id]).then(() => {
           if (this.popup !== popup) return; // closed or replaced
           if (this.plates.cachedPlateFor(props.device_id)) {
             this.openDevicePopup(props, coords, true);
@@ -2177,7 +2218,7 @@ export class Devices {
       // then jumps past every screen the answers make unnecessary
       // (`ride-preflight.ts`). Passing the plate matters: it is what lets
       // Screen 6 build a working Open-in-Veo deep link without a second
-      // GBFS round trip.
+      // plate lookup.
       // 📜 View dibs certificate — theirs to show, or somebody else's to
       // check. Only rendered when there is one.
       // Two of these now — the icon in the notice and the action row's

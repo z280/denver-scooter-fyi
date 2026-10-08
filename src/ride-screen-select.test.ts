@@ -1025,3 +1025,151 @@ describe("Screen 2 — skip gate for the pre-ride survey", () => {
     expect(resolveStartScreen({ vehicleIdentifier: V1 })).toBe("2");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plates via our API: candidate priming + the public typed-plate resolve
+// ---------------------------------------------------------------------------
+
+describe("plates from our API", () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const plateInputEl = () =>
+    document.querySelector('input[aria-label^="Plate"]') as HTMLInputElement;
+  function type(value: string): void {
+    const input = plateInputEl();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("primes the plate index with this screen's ≤50 nearest candidates, nearest first", async () => {
+    const feats = Array.from({ length: 60 }, (_, i) =>
+      feature(`dev${i}`, `a1b2c3d4e5f6${String(1000 + i)}`, metersNorth(10 + i * 5)),
+    );
+    const primed: string[][] = [];
+    const plates: PlatesLike = {
+      prime: (ids) => {
+        primed.push([...ids]);
+        return Promise.resolve();
+      },
+      cachedPlateFor: () => null,
+    };
+    wireRideScreenSelect({ devices: fakeDevices(feats), locate: fakeLocate(ORIGIN), session: newSession(), plates });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+    expect(primed.length).toBeGreaterThan(0);
+    for (const batch of primed) {
+      expect(batch.length).toBeLessThanOrEqual(50);
+    }
+    expect(primed[0][0]).toBe("dev0");
+    expect(primed[0]).not.toContain("dev55");
+  });
+
+  it("asks for nothing without a fix (no 'nearest' to choose)", async () => {
+    const prime = vi.fn(() => Promise.resolve());
+    wireRideScreenSelect({
+      devices: fakeDevices([feature("a", V1, ORIGIN)]),
+      locate: fakeLocate(null),
+      session: newSession(),
+      plates: { prime, cachedPlateFor: () => null },
+    });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+    expect(prime).not.toHaveBeenCalled();
+  });
+
+  it("guest: a typed plate is matched through the public resolver — debounced, once", async () => {
+    setAuthed(false);
+    const a = feature("devA", V1, metersNorth(30));
+    const b = feature("devB", V2, metersNorth(60));
+    const session = newSession();
+    const resolvePlate = vi.fn(async () => ({
+      kind: "hit" as const,
+      deviceId: "devB",
+      vehicleIdentifier: V2,
+    }));
+    wireRideScreenSelect({
+      devices: fakeDevices([a, b]),
+      locate: fakeLocate({ ...ORIGIN, accuracy: 10 }),
+      session,
+      plates: fakePlates(), // signed out: the index knows no plates
+      resolvePlate,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+
+    // Digit by digit: nothing is sent for an incomplete plate.
+    for (const partial of ["1", "10", "109", "1099", "10990", "109900"]) type(partial);
+    await wait(600);
+    expect(resolvePlate).not.toHaveBeenCalled();
+
+    type("1099001");
+    expect(resolvePlate).not.toHaveBeenCalled(); // debounced
+    await wait(600);
+    expect(resolvePlate).toHaveBeenCalledTimes(1);
+    expect(resolvePlate).toHaveBeenCalledWith("1099001");
+    await flush();
+    expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V2 });
+    expect(rideModalRoot()?.textContent).toContain("Matched");
+  });
+
+  it("blur resolves a short plate immediately; a miss says so", async () => {
+    const resolvePlate = vi.fn(async () => ({ kind: "miss" as const }));
+    const session = newSession();
+    wireRideScreenSelect({
+      devices: fakeDevices([]),
+      locate: fakeLocate(null),
+      session,
+      plates: fakePlates(),
+      resolvePlate,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+    type("12345");
+    plateInputEl().dispatchEvent(new Event("blur"));
+    expect(resolvePlate).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(rideModalRoot()?.textContent).toContain("No scooter in the live fleet has that plate");
+    expect(session.current()?.device).toBeNull();
+    // Blurring again on the same plate doesn't spend another request.
+    plateInputEl().dispatchEvent(new Event("blur"));
+    expect(resolvePlate).toHaveBeenCalledTimes(1);
+  });
+
+  it("an API error is not a miss: it says try again, and a later blur retries", async () => {
+    const resolvePlate = vi.fn(async () => ({ kind: "error" as const }));
+    wireRideScreenSelect({
+      devices: fakeDevices([]),
+      locate: fakeLocate(null),
+      session: newSession(),
+      plates: fakePlates(),
+      resolvePlate,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+    type("1234567");
+    plateInputEl().dispatchEvent(new Event("blur"));
+    await flush();
+    expect(rideModalRoot()?.textContent).toContain("Couldn't check that plate");
+    plateInputEl().dispatchEvent(new Event("blur"));
+    expect(resolvePlate).toHaveBeenCalledTimes(2);
+  });
+
+  it("signed in with the plate cached: matched locally, no resolve request", async () => {
+    const a = feature("devA", V1, metersNorth(30));
+    const b = feature("devB", V2, metersNorth(60));
+    const session = newSession();
+    const resolvePlate = vi.fn(async () => ({ kind: "miss" as const }));
+    wireRideScreenSelect({
+      devices: fakeDevices([a, b]),
+      locate: fakeLocate({ ...ORIGIN, accuracy: 10 }),
+      session,
+      plates: fakePlates({ devB: "1099001" }),
+      resolvePlate,
+    });
+    openRideModal({ fastForwardTo: "2" });
+    await flush();
+    type("1099001");
+    await wait(600);
+    expect(session.current()?.device).toMatchObject({ vehicleIdentifier: V2 });
+    expect(resolvePlate).not.toHaveBeenCalled();
+  });
+});

@@ -15,12 +15,12 @@ import {
   normalizePlate,
   parseRideParam,
   readRideDeepLink,
-  resetRideDeepLinkPlates,
   reversePlateLookup,
   stripRideParam,
   wireRideDeepLink,
 } from "./ride-deeplink.ts";
 import type { RideModalEntry } from "./ride-modal.ts";
+import { resetResolveCache } from "./plates.ts";
 
 const HEX = "a1b2c3d4e5f60718";
 
@@ -28,7 +28,7 @@ function setUrl(search: string, hash = ""): void {
   history.replaceState(null, "", `/${search}${hash}`);
 }
 
-/** Let the module's promise chain settle (it awaits `primePlates`). */
+/** Let the module's promise chain settle (it awaits `resolvePlate`). */
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -38,12 +38,11 @@ let opened: RideModalEntry[];
 beforeEach(() => {
   opened = [];
   setUrl("");
-  // The built-in plate index is a lazy module singleton with a TTL and a
-  // failure cooldown — reset it so one case's stubbed feed can't silence the
-  // next case's prime().
-  resetRideDeepLinkPlates();
-  // No test may touch the real GBFS feed: the default plate path fetches it,
-  // and `unstubGlobals` puts the real one back after each case.
+  // The public resolver caches answers and honours 429 cooldowns module-wide
+  // — reset it so one case's stub can't answer the next case.
+  resetResolveCache();
+  // No test may touch the network: the default plate path calls our API,
+  // and `unstubGlobals` puts the real fetch back after each case.
   vi.stubGlobal(
     "fetch",
     vi.fn(() => Promise.reject(new Error("no network in tests"))),
@@ -225,127 +224,95 @@ describe("wireRideDeepLink — ?ml= goes first", () => {
 });
 
 describe("wireRideDeepLink — plate variant", () => {
-  it("primes the index before the reverse lookup and preselects on a hit", async () => {
+  it("resolves the plate and preselects on a hit", async () => {
     setUrl(`?${RIDE_PARAM}=plate:1025543`);
-    const order: string[] = [];
+    const asked: string[] = [];
     wireRideDeepLink({
       openRideModal: capture,
-      primePlates: async () => {
-        order.push("prime");
-        await Promise.resolve();
-      },
-      resolvePlate: (plate) => {
-        order.push(`resolve:${plate}`);
+      resolvePlate: async (plate) => {
+        asked.push(plate);
         return HEX;
       },
     });
     await flush();
-    expect(order).toEqual(["prime", "resolve:1025543"]);
+    expect(asked).toEqual(["1025543"]);
     expect(opened).toEqual([{ vehicleIdentifier: HEX, plate: "1025543" }]);
     expect(readRideDeepLink()).toBeNull();
   });
 
   it("falls through to the manual-plate path (prefilled) on a miss", async () => {
     setUrl(`?${RIDE_PARAM}=plate:1025543`);
-    wireRideDeepLink({
-      openRideModal: capture,
-      primePlates: () => Promise.resolve(),
-      resolvePlate: () => null,
-    });
+    wireRideDeepLink({ openRideModal: capture, resolvePlate: () => null });
     await flush();
     expect(opened).toEqual([{ plate: "1025543" }]);
   });
 
-  it("still opens when no device list is available to resolve against", async () => {
-    // The built-in path would prime its own index; no fetch should be needed
-    // because there is nothing to resolve against.
-    const fetchSpy = vi.fn(() => Promise.reject(new Error("no network")));
-    vi.stubGlobal("fetch", fetchSpy);
-    setUrl(`?${RIDE_PARAM}=plate:1025543`);
-    wireRideDeepLink({ openRideModal: capture });
-    await flush();
-    expect(opened).toEqual([{ plate: "1025543" }]);
-  });
-
-  it("resolves through its own primed GbfsPlates index by default", async () => {
-    // The public feed's shape: the plate lives in the rental_uris `&number=`.
-    const body = {
-      data: {
-        bikes: [
-          {
-            bike_id: "dead00000000beef",
-            rental_uris: { android: "https://veo/x?adj_t=1&number=1025543" },
-          },
-          {
-            bike_id: HEX,
-            rental_uris: { android: "https://veo/x?adj_t=1&number=1099001" },
-          },
-        ],
-      },
-    };
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response),
+  it("by default asks our public /vehicles/resolve — signed out, no Veo request", async () => {
+    const fetchSpy = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ device_id: "dev-1", vehicle_identifier: HEX }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
     );
     vi.stubGlobal("fetch", fetchSpy);
-    setUrl(`?${RIDE_PARAM}=plate:1099001`);
-    wireRideDeepLink({
-      openRideModal: capture,
-      deviceIds: () => ["dead00000000beef", HEX],
-    });
+    setUrl(`?${RIDE_PARAM}=plate:10-99 001`);
+    wireRideDeepLink({ openRideModal: capture });
+    await flush();
     await flush();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain("/api/v1/vehicles/resolve?plate=1099001");
+    expect(String(url)).not.toMatch(/veoride/i);
+    // Public: no bearer goes with it.
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
     expect(opened).toEqual([{ vehicleIdentifier: HEX, plate: "1099001" }]);
   });
 
-  it("falls through when the feed is down (empty index), never a dead end", async () => {
-    const fetchSpy = vi.fn(() => Promise.reject(new Error("CORS")));
+  it("a 404 from /vehicles/resolve is a miss → manual path, never a dead end", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ detail: "not found" }), { status: 404 }),
+        ),
+      ),
+    );
+    setUrl(`?${RIDE_PARAM}=plate:1099001`);
+    wireRideDeepLink({ openRideModal: capture });
+    await flush();
+    await flush();
+    expect(opened).toEqual([{ plate: "1099001" }]);
+  });
+
+  it("falls through when the API is down, never a dead end", async () => {
+    const fetchSpy = vi.fn(() => Promise.reject(new Error("offline")));
     vi.stubGlobal("fetch", fetchSpy);
     setUrl(`?${RIDE_PARAM}=plate:1099001`);
-    wireRideDeepLink({
-      openRideModal: capture,
-      deviceIds: () => [HEX],
-    });
+    wireRideDeepLink({ openRideModal: capture });
+    await flush();
     await flush();
     expect(opened).toEqual([{ plate: "1099001" }]);
   });
 
   it("an explicit resolvePlate is authoritative — a null is a miss, not a fallback", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: {
-              bikes: [
-                {
-                  bike_id: HEX,
-                  rental_uris: { android: "https://veo/x?number=1099001" },
-                },
-              ],
-            },
-          }),
-      } as Response),
-    );
+    const fetchSpy = vi.fn(() => Promise.reject(new Error("must not be called")));
     vi.stubGlobal("fetch", fetchSpy);
     setUrl(`?${RIDE_PARAM}=plate:1099001`);
-    wireRideDeepLink({
-      openRideModal: capture,
-      deviceIds: () => [HEX],
-      primePlates: () => Promise.resolve(),
-      resolvePlate: () => null,
-    });
+    wireRideDeepLink({ openRideModal: capture, resolvePlate: () => null });
     await flush();
     expect(opened).toEqual([{ plate: "1099001" }]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("never dead-ends when prime() rejects", async () => {
+  it("never dead-ends when the lookup rejects", async () => {
     setUrl(`?${RIDE_PARAM}=plate:1025543`);
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     wireRideDeepLink({
       openRideModal: capture,
-      primePlates: () => Promise.reject(new Error("feed down")),
-      resolvePlate: () => null,
+      resolvePlate: () => Promise.reject(new Error("down")),
     });
     await flush();
     expect(opened).toEqual([{ plate: "1025543" }]);

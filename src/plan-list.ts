@@ -164,7 +164,7 @@ function minutes(seconds: number): number {
  *  `plate` is passed as null on purpose. The raw plate is not on the public
  *  payload at all (`api.ts` says why: publishing live plates would let Veo
  *  reconcile our map against their fleet), and the callers that have one got
- *  it from a GBFS lookup needing a GPS fix and a reachable feed. This module is
+ *  it from a signed-in plate lookup (plates.ts) needing a GPS fix. This module is
  *  pure and has neither. `plate_suffix` IS on the payload and
  *  `vehicleDisplayName` prefers it over a derived suffix anyway, so nothing is
  *  lost but the dependency. */

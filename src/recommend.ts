@@ -269,8 +269,8 @@ export class RecommendedDevices {
       // reach the one you picked.
       this.walkTo?.({
         name: sel.name,
-        // The plate genuinely is not needed here — it is resolved from GBFS
-        // at the scooter, where it is actually used. The IDENTIFIER is a
+        // The plate genuinely is not needed here — it is looked up (signed
+        // in) at the scooter, where it is actually used. The IDENTIFIER is a
         // different matter: dibs is keyed on it, so passing null meant a
         // scooter picked off this list arrived at the walk flow anonymous
         // and lost every dibs affordance on the way.

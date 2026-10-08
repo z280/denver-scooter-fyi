@@ -2,9 +2,15 @@
 // `qr-ride-scan.ts`'s header for the five doors that used to each tie a scooter
 // to a ride at a different point in the flow, and none of them once it was
 // running.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { qrRideAction, qrRideMessage, type ScannedVehicle } from "./qr-ride-scan.ts";
+import {
+  qrRideAction,
+  qrRideMessage,
+  resolveScannedPlate,
+  type ScannedVehicle,
+} from "./qr-ride-scan.ts";
+import type { DeviceProperties } from "./api.ts";
 import type { RideOptions } from "./api.ts";
 import { blankRideSession, type RideSessionDoc } from "./ride-session.ts";
 
@@ -148,5 +154,67 @@ describe("qrRideMessage", () => {
     ];
     expect(new Set(all).size).toBe(all.length);
     for (const m of all) expect(m.length).toBeGreaterThan(0);
+  });
+});
+
+describe("resolveScannedPlate — sticker plate to a vehicle on the map", () => {
+  const feat = (
+    device_id: string,
+    vehicle_identifier: string,
+    extra: Partial<DeviceProperties> = {},
+  ): GeoJSON.Feature<GeoJSON.Point, DeviceProperties> =>
+    ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-104.99, 39.75] },
+      properties: { device_id, vehicle_identifier, ...extra } as DeviceProperties,
+    }) as GeoJSON.Feature<GeoJSON.Point, DeviceProperties>;
+  const V1 = "a1b2c3d4e5f60701";
+  const V2 = "a1b2c3d4e5f60702";
+  const features = [feat("d1", V1), feat("d2", V2)];
+
+  it("guest: resolves through the public resolver and matches the map by device_id", async () => {
+    const resolve = vi.fn(async () => ({
+      kind: "hit" as const,
+      deviceId: "d2",
+      vehicleIdentifier: V2,
+    }));
+    const v = await resolveScannedPlate("10-99001", features, {
+      plateFor: () => null,
+      resolve,
+    });
+    expect(resolve).toHaveBeenCalledWith("10-99001");
+    expect(v).toMatchObject({ vehicleIdentifier: V2, deviceId: "d2", plate: "10-99001" });
+  });
+
+  it("falls back to vehicle_identifier when the device id has rotated", async () => {
+    const v = await resolveScannedPlate("1099001", features, {
+      plateFor: () => null,
+      resolve: async () => ({ kind: "hit", deviceId: "rotated", vehicleIdentifier: V1 }),
+    });
+    expect(v?.vehicleIdentifier).toBe(V1);
+  });
+
+  it("signed in with the plate already cached: no resolve request at all", async () => {
+    const resolve = vi.fn(async () => ({ kind: "miss" as const }));
+    const v = await resolveScannedPlate("1025543", features, {
+      plateFor: (id) => (id === "d1" ? "1025543" : null),
+      resolve,
+    });
+    expect(v?.vehicleIdentifier).toBe(V1);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("a miss, an error, or a hit on a vehicle not on the map is no match", async () => {
+    for (const r of [
+      { kind: "miss" as const },
+      { kind: "error" as const },
+      { kind: "hit" as const, deviceId: "elsewhere", vehicleIdentifier: "ffffffffffffffff" },
+    ]) {
+      const v = await resolveScannedPlate("1025543", features, {
+        plateFor: () => null,
+        resolve: async () => r,
+      });
+      expect(v).toBeNull();
+    }
   });
 });

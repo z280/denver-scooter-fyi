@@ -32,6 +32,9 @@
 // a plate that resolves to no vehicle in the current feed.
 
 import type { RideSessionDoc, RideState } from "./ride-session.ts";
+import type { DeviceProperties } from "./api.ts";
+import { normalizePlate, type ResolveResult } from "./plates.ts";
+import { vehicleDisplayName } from "./vehicle-name.ts";
 
 /** A vehicle the scan resolved to, in the terms the session doc wants. */
 export interface ScannedVehicle {
@@ -126,4 +129,97 @@ export function qrRideMessage(action: QrRideAction): string {
     case "unknown_vehicle":
       return `Plate ${action.plate} isn't in the live fleet right now — it may have just been picked up, or be out of the service area.`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Plate → vehicle, for the scan
+// ---------------------------------------------------------------------------
+
+export interface ScanResolveDeps {
+  /** The signed-in plate index's synchronous read (`PlateIndex.cachedPlateFor`);
+   *  always null for a guest. */
+  plateFor(deviceId: string): string | null;
+  /** The public `/vehicles/resolve` (plates.ts's `resolvePlate`). */
+  resolve(plate: string): Promise<ResolveResult>;
+}
+
+const VID_RE = /^[0-9a-f]{16}$/;
+
+/** Resolve a scanned sticker's plate to a vehicle in the live feed.
+ *
+ *  WHY THE PLATE IS THE BRIDGE. The sticker carries a plate; the session doc
+ *  wants a `vehicle_identifier`, which is a salted hash the browser cannot
+ *  compute. Three ways across, cheapest first:
+ *   1. the feed's own `vehicle_plate` (admin/private feeds only);
+ *   2. the signed-in plate index — answers it already holds for nearby
+ *      vehicles, so a signed-in rider's scan usually costs no request;
+ *   3. our public `GET /api/v1/vehicles/resolve`, which works signed out and
+ *      reveals no plate the rider isn't already holding.
+ *  Never Veo's servers. The answer is matched against the devices on the map
+ *  (by device_id, then vehicle_identifier): a vehicle we can't show is a
+ *  vehicle we can't start a ride on. */
+export async function resolveScannedPlate(
+  plate: string,
+  features: ReadonlyArray<GeoJSON.Feature<GeoJSON.Point, DeviceProperties>>,
+  deps: ScanResolveDeps,
+): Promise<ScannedVehicle | null> {
+  const wanted = normalizePlate(plate);
+  if (wanted === "") return null;
+
+  const asVehicle = (
+    f: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>,
+    resolvedPlate: string,
+  ): ScannedVehicle | null => {
+    const vid = String(f.properties.vehicle_identifier ?? "").toLowerCase();
+    if (!VID_RE.test(vid)) return null;
+    return {
+      vehicleIdentifier: vid,
+      deviceId: f.properties.device_id,
+      plate: resolvedPlate,
+      name: vehicleDisplayName(
+        f.properties.public_name,
+        resolvedPlate,
+        f.properties.vehicle_model_name,
+        f.properties.plate_suffix,
+      ),
+    };
+  };
+
+  for (const f of features) {
+    const fed = f.properties.vehicle_plate;
+    if (fed && normalizePlate(String(fed)) === wanted) {
+      const v = asVehicle(f, String(fed));
+      if (v) return v;
+    }
+  }
+
+  for (const f of features) {
+    let cached: string | null = null;
+    try {
+      cached = deps.plateFor(f.properties.device_id);
+    } catch {
+      continue;
+    }
+    if (cached !== null && normalizePlate(cached) === wanted) {
+      const v = asVehicle(f, plate);
+      if (v) return v;
+    }
+  }
+
+  // Public reverse lookup. Never rejects — an error or a miss is "no match".
+  let r: ResolveResult;
+  try {
+    r = await deps.resolve(plate);
+  } catch {
+    return null;
+  }
+  if (r.kind !== "hit") return null;
+  const f =
+    features.find((x) => x.properties.device_id === r.deviceId) ??
+    features.find(
+      (x) =>
+        String(x.properties.vehicle_identifier ?? "").toLowerCase() ===
+        r.vehicleIdentifier,
+    );
+  return f ? asVehicle(f, plate) : null;
 }
