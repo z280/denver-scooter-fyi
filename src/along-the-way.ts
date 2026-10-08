@@ -25,6 +25,7 @@ import { WALK_METERS_PER_MIN } from "./locate";
 import { billableMinutes } from "./ride-cost";
 import { DETOUR_FACTOR, straightLineMeters } from "./reach";
 import {
+  everyLegFields,
   matches,
   relax,
   relaxationLadder,
@@ -663,13 +664,26 @@ function searchOnce(
   // fails a `must` is disqualified like anything else" — is about favourites
   // not buying their way past a requirement, and still holds: a favourite
   // cannot become the vehicle you end on without satisfying the spec.
+  // THE STARTER IS EXEMPT FROM PREFERENCES, NOT FROM PHYSICS.
+  //
+  // Stripping the spec here is what makes hand-offs worth having: a scruffy
+  // Astro is a fine thing to ride 1.2 km to the scooter you actually want, and
+  // demanding the full sheet of every vehicle in the chain would throw most of
+  // the useful plans away. That is right for a preference.
+  //
+  // It is wrong for a constraint about what the vehicle physically is. You
+  // cannot carry a passenger on something that does not take two, not on the
+  // last leg and not on the first, and a plan that proposed it would be worse
+  // than no plan at all. `spec.everyLeg` is how a caller says which
+  // requirements are of that kind, and those survive into the starter.
+  const binding = new Set(everyLegFields(spec));
   const starterSpec: RideSpec = {
     ...spec,
-    models: null,
-    features: [],
-    minBattery: 0,
-    minQuality: "any",
-    must: spec.must.filter((f) => f === "must_reach"),
+    models: binding.has("models") ? spec.models : null,
+    features: binding.has("features") ? spec.features : [],
+    minBattery: binding.has("min_battery") ? spec.minBattery : 0,
+    minQuality: binding.has("min_quality") ? spec.minQuality : "any",
+    must: spec.must.filter((f) => f === "must_reach" || binding.has(f)),
   };
 
   /** Is this candidate the vehicle the rider is on right now? Only the

@@ -202,6 +202,15 @@ import {
 import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
 import { defaultSpec } from "./ride-spec.ts";
+import {
+  TWO_PASSENGER_MIN_BATTERY,
+  TWO_PASSENGER_MODELS,
+  applyTwoPassengers,
+  conflictsWithSpec,
+  setTwoPassengers,
+  twoPassengerNote,
+  twoPassengers,
+} from "./passenger-mode.ts";
 import type { PlanRow } from "./plan-list.ts";
 import {
   planningFreeMinuteEstimate,
@@ -2363,6 +2372,63 @@ function wireQuickFilters(): void {
       setHideUnavailableControl(true);
     },
   };
+  // TWO PASSENGERS IS A TOGGLE, not a one-shot like the three above it.
+  //
+  // Those three set some controls and are done — tapping one twice does the
+  // same thing twice. This one is a STATE the rider leaves on, because it is a
+  // fact about the trip they are taking rather than a view they are applying,
+  // and it has to be turnable off without hunting through the sections it
+  // touched. So it owns its own storage, reports its state through
+  // `aria-pressed`, and says what it is enforcing underneath.
+  const twoUpBtn = document.querySelector<HTMLButtonElement>(
+    '#quick-filters [data-quick="two-up"]',
+  );
+  const twoUpNote = document.getElementById("two-up-note");
+  const renderTwoUp = (): void => {
+    const on = twoPassengers();
+    twoUpBtn?.setAttribute("aria-pressed", String(on));
+    twoUpBtn?.classList.toggle("is-active", on);
+    if (!twoUpNote) return;
+    const note = twoPassengerNote(rideSpecPanel?.activeSpec() ?? defaultSpec());
+    twoUpNote.textContent = note ?? "";
+    twoUpNote.hidden = note === null;
+    // The contradiction gets the warning treatment; the ordinary "here is what
+    // I am enforcing" line does not. Only one of the two is a problem.
+    twoUpNote.classList.toggle(
+      "control-hint--warning",
+      on && conflictsWithSpec(rideSpecPanel?.activeSpec() ?? defaultSpec()),
+    );
+  };
+  twoUpBtn?.addEventListener("click", () => {
+    const next = !twoPassengers();
+    track("control_change", { control: "quick-two-up", value: next ? "on" : "off" });
+    if (!setTwoPassengers(next)) {
+      // Said out loud rather than swallowed. A rider who believes this is on,
+      // and whose next reload turns it off, gets offered a one-seater for a
+      // trip they are taking with somebody.
+      if (twoUpNote) {
+        twoUpNote.textContent =
+          "Couldn't save that on this device — it will switch itself off if you reload.";
+        twoUpNote.hidden = false;
+        twoUpNote.classList.add("control-hint--warning");
+      }
+      return;
+    }
+    // The map half, so the fleet on screen is the fleet the planner will use.
+    // Only on the way ON: turning it off must not reset filters the rider set
+    // for their own reasons, which they would then have to put back by hand.
+    if (next) {
+      setToggleGroup("#model-filter", "model", new Set<string>(TWO_PASSENGER_MODELS));
+      setMinBatteryControl(TWO_PASSENGER_MIN_BATTERY);
+      setQualityFilter("no-risk");
+      setHideUnavailableControl(true);
+    }
+    renderTwoUp();
+  });
+  // A spec edit can turn a conflict on or off while this drawer is open.
+  window.addEventListener("scooter:spec-changed", renderTwoUp);
+  renderTwoUp();
+
   for (const btn of document.querySelectorAll<HTMLButtonElement>(
     "#quick-filters button",
   )) {
@@ -4114,7 +4180,11 @@ function planSearchDeps(): PlanSearchDeps {
       const fix = locate.current();
       return fix ? { lat: fix.lat, lng: fix.lng } : null;
     },
-    spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
+    // TWO PASSENGERS BINDS THE PLANNER, which no other quick filter does —
+    // map filters are a view and this is a fact about the trip. Composed over
+    // the rider's own spec rather than replacing it: two passengers is a
+    // constraint on top of what they like, not instead of it.
+    spec: () => applyTwoPassengers(rideSpecPanel?.activeSpec() ?? defaultSpec()),
     // The same value WITHOUT the default, which is the only way to tell "no
     // preference" from "a preference that happens to accept everything". The
     // list uses it to decide whether a share is worth computing and whether to

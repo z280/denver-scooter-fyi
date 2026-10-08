@@ -111,6 +111,21 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** Tell the rest of the app that `activeSpec()` changed.
+ *
+ *  A window event rather than a dep callback, for the same reason
+ *  `scooter:trip-changed` is one: the listeners are surfaces that come and go
+ *  (the Filters drawer's Two Passengers note is the first), and threading a
+ *  callback from here to each of them would make this panel know about them.
+ *
+ *  ONLY ATTACH AND DETACH FIRE IT, because only those change what `activeSpec`
+ *  returns — it reads `attachment.attachedSpec` and nothing else. Saving a spec
+ *  while detached changes the stored sheet and not the active one, and firing
+ *  then would wake listeners for a change they cannot observe. */
+function emitSpecChanged(): void {
+  window.dispatchEvent(new CustomEvent("scooter:spec-changed"));
+}
+
 export function wireRideSpecPanel(
   deps: RideSpecPanelDeps,
 ): RideSpecPanelHandle | null {
@@ -191,6 +206,7 @@ export function wireRideSpecPanel(
       applying = false;
     }
     status(`Showing only “${use.name}”.`);
+    emitSpecChanged();
     track("spec_applied_to_map", { source: "drawer" });
   };
 
@@ -198,6 +214,9 @@ export function wireRideSpecPanel(
     const restore = attachment.detachAndRestore();
     toggle.checked = false;
     clearStatus();
+    // Before the early return below: a detach with nothing to restore is still
+    // a detach, and `activeSpec()` is null either way.
+    emitSpecChanged();
     if (!restore) return;
     applying = true;
     try {

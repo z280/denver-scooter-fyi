@@ -954,3 +954,104 @@ describe("the favourite bonus is a preference, not a discount", () => {
     }
   });
 });
+
+describe("a requirement that binds EVERY leg, starter included", () => {
+  // The exact shape of the headline case above, with the roles reversed: the
+  // near vehicle is the wrong one and the far vehicle is the right one. That
+  // test wants the planner to ride the near Astro as a starter. This one wants
+  // it to refuse — because two passengers cannot ride a one-seater, not even
+  // for ninety seconds.
+  const twoUpSpec = () =>
+    spec({
+      models: ["apollo"],
+      must: ["models"],
+      everyLeg: ["models"],
+    });
+
+  const fleet = () => [
+    feature(at(120), {
+      device_id: "cosmo-near",
+      vehicle_identifier: "cosmo-near",
+      vehicle_model_name: "Cosmo",
+    }),
+    feature(at(835), {
+      device_id: "apollo-far",
+      vehicle_identifier: "apollo-far",
+      vehicle_model_name: "Apollo",
+    }),
+  ];
+
+  it("NEVER puts the rider on a non-matching starter", () => {
+    const res = rankPlans(fleet(), ctx({ spec: twoUpSpec() }));
+    for (const plan of res.plans) {
+      for (const leg of rideLegs(plan)) {
+        expect(leg.vehicle?.vehicle_model_name, vehicleSeq(plan).join(" → ")).toBe(
+          "Apollo",
+        );
+      }
+    }
+  });
+
+  it("walks rather than riding the wrong vehicle, even when that leaves nothing to ride", () => {
+    // A CONSEQUENCE WORTH STATING, because it is the price of the requirement
+    // and not a bug in it. The Apollo here is 835 m away — a fourteen-minute
+    // walk, past the twelve-minute cap — so the only way the planner could
+    // have reached it was the starter hop this mode forbids. With that gone
+    // there is nothing rideable, and the honest answer is the walk.
+    //
+    // The headline test at the top of this file is the same fleet with the
+    // same geometry and gets a two-vehicle plan. The difference is entirely
+    // `everyLeg`.
+    const res = rankPlans(fleet(), ctx({ spec: twoUpSpec() }));
+    for (const plan of res.plans) {
+      expect(vehicleSeq(plan)).not.toContain("cosmo-near");
+    }
+    expect(res.plans.every((p) => rideLegs(p).length === 0)).toBe(true);
+  });
+
+  it("rides the matching vehicle when it is close enough to walk to", () => {
+    // The other half of the pair: the requirement costs nothing when a
+    // matching vehicle is in reach on foot.
+    const res = rankPlans(
+      [
+        feature(at(120), {
+          device_id: "cosmo-near",
+          vehicle_identifier: "cosmo-near",
+          vehicle_model_name: "Cosmo",
+        }),
+        feature(at(200), {
+          device_id: "apollo-near",
+          vehicle_identifier: "apollo-near",
+          vehicle_model_name: "Apollo",
+        }),
+      ],
+      ctx({ spec: twoUpSpec() }),
+    );
+    const best = res.plans.find((p) => rideLegs(p).length > 0);
+    expect(best).toBeDefined();
+    expect(vehicleSeq(best!)).toEqual(["apollo-near"]);
+  });
+
+  it("STILL allows a non-matching starter when the field is merely hard", () => {
+    // The control. Without `everyLeg` the planner behaves exactly as before —
+    // which is the right behaviour for a preference, and the reason the new
+    // field had to be opt-in rather than a change to what `must` means.
+    const res = rankPlans(
+      fleet(),
+      ctx({ spec: spec({ models: ["apollo"], must: ["models"] }) }),
+    );
+    const best = res.plans[0];
+    expect(vehicleSeq(best)).toEqual(["cosmo-near", "apollo-far"]);
+  });
+
+  it("offers nothing to ride when no vehicle meets the requirement", () => {
+    // And the walk-only plan survives, because walking two people somewhere is
+    // always possible.
+    const res = rankPlans(
+      [feature(at(120), { device_id: "cosmo", vehicle_identifier: "cosmo" })],
+      ctx({ spec: twoUpSpec() }),
+    );
+    for (const plan of res.plans) expect(rideLegs(plan)).toHaveLength(0);
+    expect(res.walkOnly).toBeTruthy();
+  });
+});
