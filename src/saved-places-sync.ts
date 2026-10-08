@@ -169,6 +169,19 @@ export function reconcileSavedPlaces(
  *  is the state before the first reconcile and after a failed push. */
 let serverCopy: Favorite[] | null = null;
 
+/** Whether the server this session is talking to knows about saved places at
+ *  all — set by the first reconcile that sees the field, true or empty.
+ *
+ *  THE HOOK WILL NOT PUSH UNTIL IT IS SET, and that is not merely tidiness. An
+ *  older deployment's `ProfileUpdate` has no `saved_places`, and Pydantic
+ *  IGNORES fields it does not know rather than refusing them — so a push to one
+ *  would come back 200 with the rider's places quietly dropped. Success is the
+ *  worst shape that failure could take here. The reconcile is the only thing
+ *  that can tell the difference, so nothing is sent before it has run, which
+ *  also means a favourite edited before the profile GET lands waits for it
+ *  rather than racing it. */
+let serverKnows = false;
+
 /** True while a reconcile is writing the merged list into the local store.
  *
  *  WHY A FLAG AND NOT JUST THE ECHO GUARD. `reconcileSavedPlaces` writes
@@ -184,6 +197,7 @@ let applying = false;
  *  the next one's first push look like an echo and vanish. */
 export function _resetSavedPlacesSyncForTests(): void {
   serverCopy = null;
+  serverKnows = false;
   applying = false;
   setFavoritesSyncHook(null);
 }
@@ -203,7 +217,7 @@ export interface SavedPlacesSyncDeps {
  *  starts or ends. */
 export function startSavedPlacesSync(deps: SavedPlacesSyncDeps): void {
   setFavoritesSyncHook((favs) => {
-    if (applying || !deps.signedIn()) return;
+    if (applying || !serverKnows || !deps.signedIn()) return;
     const next = favs.slice();
     // THE ECHO GUARD. A reconcile writes the merged list locally, which fires
     // this hook, which would push the list the server just gave us straight
@@ -229,7 +243,10 @@ export function syncSavedPlacesFromProfile(
   deps: SavedPlacesSyncDeps,
 ): ReconcileResult | null {
   const result = reconcileSavedPlaces(remote);
+  // Null means the field was absent: an older deployment, which must not be
+  // written to. `serverKnows` stays false and the hook stays quiet.
   if (!result) return null;
+  serverKnows = true;
   // What the server holds, as of this payload — set whether or not a push
   // follows, so the rider's next edit is compared against the truth rather
   // than against nothing.

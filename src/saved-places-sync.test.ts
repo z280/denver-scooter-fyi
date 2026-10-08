@@ -54,6 +54,16 @@ const deps = (signedIn = true) => ({
   push: vi.fn().mockResolvedValue(undefined),
 });
 
+/** Register the mirror AND let it learn that this server speaks saved places,
+ *  by reconciling against an account that holds none. Nothing pushes before
+ *  that, on purpose — see `serverKnows`. */
+const started = (d: ReturnType<typeof deps>) => {
+  startSavedPlacesSync(d);
+  syncSavedPlacesFromProfile([], d);
+  d.push.mockClear();
+  return d;
+};
+
 describe("validation on the way in", () => {
   it("accepts an ordinary place", () => {
     expect(cleanPlaces([place()])).toEqual([place()]);
@@ -167,16 +177,35 @@ describe("reconcile", () => {
 
 describe("the mirror", () => {
   it("pushes a local edit while signed in", async () => {
-    const d = deps(true);
-    startSavedPlacesSync(d);
+    const d = started(deps(true));
     recordFavorite({ emoji: "🏋️", label: "Gym", lat: 39.7, lon: -105 });
     await vi.waitFor(() => expect(d.push).toHaveBeenCalledTimes(1));
     expect(d.push.mock.calls[0][0][0]).toMatchObject({ label: "Gym" });
   });
 
+  it("sends nothing to a server that has not said it knows about saved places", async () => {
+    // An older deployment: `ProfileUpdate` has no `saved_places`, and Pydantic
+    // IGNORES an unknown field rather than refusing it — so this push would
+    // come back 200 with the rider's places quietly dropped. Success is the
+    // worst shape that failure could take, so nothing is sent until a reconcile
+    // has seen the field.
+    const d = deps(true);
+    startSavedPlacesSync(d);
+    expect(syncSavedPlacesFromProfile(undefined, d)).toBeNull();
+    recordFavorite({ emoji: "🏋️", label: "Gym", lat: 39.7, lon: -105 });
+    expect(d.push).not.toHaveBeenCalled();
+
+    // And it is a gate, not a mute: once the server answers, edits flow.
+    syncSavedPlacesFromProfile([], d);
+    d.push.mockClear();
+    recordFavorite({ emoji: "🏊", label: "Pool", lat: 39.71, lon: -105.01 });
+    await vi.waitFor(() => expect(d.push).toHaveBeenCalledTimes(1));
+  });
+
   it("stays silent signed out", () => {
     const d = deps(false);
     startSavedPlacesSync(d);
+    syncSavedPlacesFromProfile([], d);
     recordFavorite({ emoji: "🏋️", label: "Gym", lat: 39.7, lon: -105 });
     expect(d.push).not.toHaveBeenCalled();
   });
@@ -236,9 +265,12 @@ describe("the mirror", () => {
     // rider's next edit compared against a server state that never existed.
     const d = {
       signedIn: () => true,
-      push: vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined),
+      push: vi.fn().mockResolvedValue(undefined),
     };
     startSavedPlacesSync(d);
+    syncSavedPlacesFromProfile([], d);
+    d.push.mockReset();
+    d.push.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
     saveFavorites([place()]);
     await vi.waitFor(() => expect(d.push).toHaveBeenCalledTimes(1));
     // Same list again: normally an echo, but the first push failed, so we no
@@ -248,8 +280,7 @@ describe("the mirror", () => {
   });
 
   it("sends the five wire fields and nothing else", () => {
-    const d = deps(true);
-    startSavedPlacesSync(d);
+    const d = started(deps(true));
     saveFavorites([place()]);
     expect(Object.keys(d.push.mock.calls[0][0][0]).sort()).toEqual([
       "emoji",
@@ -263,6 +294,7 @@ describe("the mirror", () => {
   it("still mirrors when local storage refused the write", async () => {
     // Private browsing is exactly the case where the rider's places only
     // survive if the account has them.
+    const d = started(deps(true));
     vi.stubGlobal("localStorage", {
       getItem: () => null,
       setItem: () => {
@@ -271,8 +303,6 @@ describe("the mirror", () => {
       removeItem: () => {},
       clear: () => {},
     });
-    const d = deps(true);
-    startSavedPlacesSync(d);
     expect(saveFavorites([place()])).toBe(false);
     await vi.waitFor(() => expect(d.push).toHaveBeenCalledTimes(1));
   });
