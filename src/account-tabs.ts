@@ -7,33 +7,47 @@ import { track } from "./telemetry.ts";
 // them. That separation is the whole point: wireAccount() rebuilds panel
 // CONTENTS, never the strip.
 //
+// LOGIN IS NOT A TAB ANY MORE. It was the first of five, which meant the one
+// thing a rider always needs to see — am I signed in, and how do I get out —
+// was behind a tab, and every other tab was dimmed until they found it. It now
+// sits in its own host ABOVE this strip, always visible, in both states (the
+// sign-in doors when signed out, the session line and Sign out when signed in).
+// `wireAccount()` owns that host; this module never sees it.
+//
+// IN-RIDE PREFERENCES IS FIRST, and unlike the three after it, it is never
+// gated: everything on it is a device preference in localStorage (the
+// speedometer, the cost readout, the rate plan, the favourite destinations), so
+// it works signed out. A rider's first visit therefore opens on a tab that does
+// something, instead of one that tells them to sign in.
+//
 // Keyboard behaviour follows the ARIA authoring practices for tabs: one tab
 // stop for the whole strip (roving tabindex), arrows move and select, Home
 // and End jump to the ends.
 
-export type AccountTabId = "login" | "profile" | "community" | "local";
+export type AccountTabId = "inride" | "profile" | "community" | "local";
 
 export const ACCOUNT_TAB_IDS: readonly AccountTabId[] = [
-  "login",
+  "inride",
   "profile",
   "community",
   "local",
 ] as const;
 
 const TAB_LABELS: Record<AccountTabId, string> = {
-  login: "Login",
+  inride: "In-Ride",
   profile: "Profile",
   community: "Community",
   local: "Local Data",
 };
 
 /** Feather-style paths, matching the inline-SVG convention used for every
- *  other icon in the app: log-in, user, users, database. */
+ *  other icon in the app: gauge (speedometer), user, users, database. */
 const TAB_ICON_PATHS: Record<AccountTabId, string[]> = {
-  login: [
-    "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
-    "M10 17l5-5-5-5",
-    "M15 12H3",
+  // A dial with a needle — the speedometer this tab's first control governs.
+  inride: [
+    "M12 21a9 9 0 1 1 9-9",
+    "M12 12l5-3",
+    "M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
   ],
   profile: ["M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M12 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0"],
   community: [
@@ -177,7 +191,7 @@ export function createAccountTabs(
 
   host.append(strip, ...panels.values());
 
-  let current: AccountTabId = deps.initial ?? "login";
+  let current: AccountTabId = deps.initial ?? "inride";
 
   const applyTabStops = (): void => {
     for (const [id, tab] of tabs) tab.tabIndex = id === current ? 0 : -1;

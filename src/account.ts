@@ -23,10 +23,9 @@ import {
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { openAdminModal } from "./admin-modal.ts";
 import { signOut } from "./map-auth.js";
-import { RATE_PLANS, type RatePlanKey } from "./config.ts";
+import { type RatePlanKey } from "./config.ts";
 import {
   applyServerRatePlan,
-  saveRatePlan,
   setRatePlanSyncHook,
   toApiRatePlan,
 } from "./ride-cost.ts";
@@ -35,14 +34,19 @@ import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 import { TERRITORY_FILL_OPACITY, hexWithAlpha } from "./leaderboard.ts";
 import { setRibbonOpen } from "./chrome.ts";
+import { openEditProfileModal } from "./account-edit-profile.ts";
 
 /** Where each group of sections mounts when the drawer is tabbed. Omitting
  *  this renders everything into one body, as the drawer did before tabs —
  *  which keeps this module usable (and testable) on its own. */
 export interface AccountPanelMounts {
-  /** Session status, admin badge, sign out. */
+  /** Session status, admin badge, sign out. NOT a tab any more — `wireAccount`
+   *  mounts this above the tab strip, where it is visible from every tab. */
   login: HTMLElement;
-  /** Contact details, rate plan, home and work. */
+  /** The Edit Profile door, home and work. Contact details themselves live in
+   *  the modal behind that button (`account-edit-profile.ts`); the rate plan
+   *  moved to the In-Ride tab, which `account-inride.ts` owns because every
+   *  control on it works signed out. */
   profile: HTMLElement;
   /** Public identity, privacy, badges, points. */
   community: HTMLElement;
@@ -71,6 +75,14 @@ export interface AccountSignedInDeps {
   pickLocation?(kind: "home" | "work"): Promise<{ lat: number; lng: number } | null>;
   /** Home/work moved (or were cleared): redraw the pins. */
   onLocationsChanged?(points: HomeWorkPoints): void;
+  /** The rate-plan control lives on the In-Ride tab now, outside this module,
+   *  because it has to work signed out. These two are the seam back to it:
+   *  `onRatePlanResolved` fires once the profile GET has reconciled the
+   *  server's plan with this device's, and `rateStatus` is where the sync
+   *  hook's PUT reports. Both absent in the legacy single-body layout, where
+   *  the status falls back to a line this module renders itself. */
+  onRatePlanResolved?(key: RatePlanKey | null): void;
+  rateStatus?(message: string, isError?: boolean): void;
 }
 
 export interface AccountHandle {
@@ -341,7 +353,7 @@ export function renderSignedInAccount(
   let phoneVerifyRow: { syncCapability(): void } | null = null;
   // Status line of the rate-plan control, once built — the sync hook below
   // reports there whichever picker (drawer or HUD) triggered it.
-  let rateSyncStatus: StatusLine | null = null;
+
   // Fires after any successful profile PUT; the points section listens to
   // notice the one-time completion award landing.
   let onProfileSaved: (() => void) | null = null;
@@ -1463,28 +1475,56 @@ export function renderSignedInAccount(
     refreshHint();
     sec.append(hint);
 
-    sec.append(
-      textField({
+    // CONTACT DETAILS LIVE BEHIND THIS BUTTON, not on the tab. They are the two
+    // fields a rider fills once and never opens again, and inline they were both
+    // the first and the largest thing here — the phone-verification flow (send a
+    // code, type it back, resend) unfolded in the middle of the panel. The
+    // fields themselves are unchanged and still built below by the same
+    // `textField` / `phoneVerificationRow` helpers, with the same save paths;
+    // `account-edit-profile.ts` is only the shell they are appended to.
+    const summary = el("p", "account-contact-summary");
+    const renderSummary = (prof: Profile): void => {
+      const email = prof.email?.trim();
+      const phone = prof.phone_number?.trim();
+      const parts: string[] = [];
+      if (email) parts.push(email);
+      if (phone) {
+        // Say whether the number is PROVED, not just stored: only a verified
+        // number can sign you in, and that is the whole reason the row exists.
+        parts.push(
+          `${formatUsPhone(phone)}${prof.phone_verified ? " (verified)" : " (unverified)"}`,
+        );
+      }
+      summary.textContent = parts.length
+        ? parts.join(" · ")
+        : "No email or phone on file yet.";
+    };
+    renderSummary(p);
+
+    const editBtn = el("button", "login-btn login-btn--secondary", "Edit Profile");
+    editBtn.type = "button";
+    editBtn.addEventListener("click", () => {
+      // Built fresh on every open, from the CURRENT profile: a stale set of
+      // inputs would show the rider the values they had before their last save.
+      const emailField = textField({
         label: "Email",
         type: "email",
-        value: p.email ?? "",
+        value: profile?.email ?? "",
         placeholder: sessionEmail ?? "you@email.com",
         autocomplete: "email",
         fallbackError: "Couldn't save your email.",
         save: (v) => savePatch({ email: v }).then((u) => u.email),
-      }),
-    );
+      });
 
-    // Saving a DIFFERENT number drops its verification server-side (proof
-    // belongs to a number, not to an account), so the row below re-reads
-    // from the save response rather than assuming it still says "verified".
-    const phoneVerify = phoneVerificationRow(p);
-    phoneVerifyRow = phoneVerify;
-    sec.append(
-      textField({
+      // Saving a DIFFERENT number drops its verification server-side (proof
+      // belongs to a number, not to an account), so the row below re-reads
+      // from the save response rather than assuming it still says "verified".
+      const phoneVerify = phoneVerificationRow(profile ?? p);
+      phoneVerifyRow = phoneVerify;
+      const phoneField = textField({
         label: "Phone",
         type: "tel",
-        value: p.phone_number ?? "",
+        value: profile?.phone_number ?? "",
         placeholder: "(303) 555-1212",
         autocomplete: "tel",
         fallbackError: "Couldn't save your phone number.",
@@ -1493,67 +1533,21 @@ export function renderSignedInAccount(
             phoneVerify.update(u);
             return u.phone_number;
           }),
-      }),
-      phoneVerify.node,
-    );
-
-    // Rate plan. One flat list: the option labels themselves say whether a
-    // VeoPlus Pass applies, so there is no separate Pass control.
-    //
-    // The account is the source of truth here — a plan chosen on a phone
-    // should price a ride opened on a laptop. The server has one field and
-    // it holds the base plan only; the Pass is a local pricing refinement it
-    // cannot represent. So exactly one local write remains, and it is a
-    // CACHE, never an input: the HUD's cost ticker reads the plan
-    // synchronously while a ride is starting and cannot wait for a profile
-    // GET, and a signed-out rider has no profile to read at all.
-    const rateWrap = el("div", "account-field");
-    rateWrap.append(el("span", "control-label", "Rate plan"));
-    const rateSelect = el("select", "select");
-    rateSelect.setAttribute("aria-label", "Rate plan");
-    const rateStatus = makeStatus();
-    // Server wins on the base plan; the local Pass refinement survives when
-    // the two agree, and the cache is refreshed on the way through.
-    const shownKey = applyServerRatePlan(p.rate_plan);
-    if (!shownKey) {
-      const opt = el("option", undefined, "Choose your plan…");
-      opt.value = "";
-      opt.disabled = true;
-      opt.selected = true;
-      rateSelect.append(opt);
-    }
-    for (const plan of RATE_PLANS) {
-      const opt = el("option", undefined, plan.label);
-      opt.value = plan.key;
-      rateSelect.append(opt);
-    }
-    if (shownKey) rateSelect.value = shownKey;
-    // This device knows a plan the account does not — push it up so the two
-    // converge instead of silently disagreeing until the next change.
-    if (shownKey && !p.rate_plan) {
-      void savePatch({ rate_plan: toApiRatePlan(shownKey) }).catch(() => {
-        /* the next change retries; the ticker is already correct locally */
       });
-    }
-    rateSelect.addEventListener("change", () => {
-      const key = rateSelect.value as RatePlanKey;
-      if (!RATE_PLANS.some((pl) => pl.key === key)) return;
-      // saveRatePlan refreshes the cache and fires the sync hook, which owns
-      // the PUT and the status messaging. Report a cache-write failure
-      // afterwards so it wins over the hook's optimistic copy — the account
-      // still saved, but this device won't remember the Pass.
-      if (!saveRatePlan(key)) {
-        rateStatus.set(
-          "Saved to your account, but not to this device (private browsing?).",
-          true,
-        );
-      }
+
+      openEditProfileModal({
+        fields: [emailField, phoneField, phoneVerify.node],
+        onClose: () => {
+          // The row is gone with the modal, so the minute tick must stop
+          // poking it — `refresh()` calls `syncCapability()` on whatever this
+          // points at.
+          phoneVerifyRow = null;
+          renderSummary(profile ?? p);
+        },
+      });
     });
-    rateWrap.append(rateSelect, rateStatus.node);
-    sec.append(rateWrap);
-    // The hook fires from ANY picker (the HUD adjust panel too) while this
-    // panel is alive; route its outcome to this section's status line.
-    rateSyncStatus = rateStatus;
+
+    sec.append(summary, editBtn);
 
     sec.append(
       locationRow("home", "Home location"),
@@ -1724,23 +1718,63 @@ export function renderSignedInAccount(
     return sec;
   };
 
+  // ----- Rate plan: reconcile the account with this device ----------------
+  // The CONTROL is on the In-Ride tab (`account-inride.ts`) because it has to
+  // work signed out; this half cannot move with it, because only this module
+  // has the profile. It ran inline in the Profile section before and is a named
+  // step now so it is obvious it still has to run.
+  //
+  // The account is the source of truth on the base plan — a plan chosen on a
+  // phone should price a ride opened on a laptop. The server has one field and
+  // it holds the base plan only; the VeoPlus Pass is a local pricing refinement
+  // it cannot represent, which is why one local write survives and why it is a
+  // CACHE, never an input: the HUD's cost ticker reads the plan synchronously
+  // while a ride is starting and cannot wait for a profile GET, and a signed-out
+  // rider has no profile to read at all.
+  const reconcileRatePlan = (p: Profile): void => {
+    // Server wins on the base plan; the local Pass refinement survives when the
+    // two agree, and the cache is refreshed on the way through.
+    const shownKey = applyServerRatePlan(p.rate_plan);
+    deps.onRatePlanResolved?.(shownKey);
+    // This device knows a plan the account does not — push it up so the two
+    // converge instead of silently disagreeing until the next change. Only when
+    // the device actually has one: inventing a plan for a rider who has never
+    // picked would write our own default onto their account as if they had.
+    if (shownKey && !p.rate_plan) {
+      void savePatch({ rate_plan: toApiRatePlan(shownKey) }).catch(() => {
+        /* the next change retries; the ticker is already correct locally */
+      });
+    }
+  };
+
   // ----- Rate-plan account sync ------------------------------------------
   // Registered only once the profile GET has resolved: the gate compares
   // against the SERVER's value (not localStorage), so a failed sync PUT is
   // retried on the next pick even with an unchanged base, and a pre-load
   // pick can't PUT ahead of the initial GET and then be overwritten by it.
   const registerRateSync = (): void => {
+    // The control is on the In-Ride tab now, so prefer ITS status line and
+    // fall back to this module's own only in the legacy single-body layout.
+    // Routed through one function rather than two call sites so the two cannot
+    // report different things.
+    const report = (message: string, isError = false): void => {
+      if (deps.rateStatus) deps.rateStatus(message, isError);
+      // No sink: the legacy single-body layout, which has no rate control at
+      // all. Logged rather than dropped, because a sync that silently fails is
+      // the one failure mode this reporting exists to prevent.
+      else if (isError) console.warn(`rate plan sync: ${message}`);
+    };
     setRatePlanSyncHook((plan) => {
       if (profile?.rate_plan === plan) {
         // Base plan already on the account — this was a local-only change
         // (e.g. a VeoPlus-variant flip the API doesn't model).
-        rateSyncStatus?.set("Saved on this device.");
+        report("Saved on this device.");
         return;
       }
-      rateSyncStatus?.set("Saving…");
+      report("Saving…");
       savePatch({ rate_plan: plan })
         .then(() => {
-          if (!disposed) rateSyncStatus?.set("Saved to your account.");
+          if (!disposed) report("Saved to your account.");
         })
         .catch((err: unknown) => {
           // localStorage already has the change; only the account sync
@@ -1748,7 +1782,7 @@ export function renderSignedInAccount(
           // above still sees the mismatch).
           console.warn("rate plan sync failed", err);
           if (!disposed) {
-            rateSyncStatus?.set(
+            report(
               describeError(
                 err,
                 "Saved on this device; couldn't sync to your account.",
@@ -1865,6 +1899,7 @@ export function renderSignedInAccount(
             buildPointsSection(),
           );
         }
+        reconcileRatePlan(p);
         registerRateSync();
         publishLocations();
       })

@@ -1020,6 +1020,27 @@ export class Devices {
     return this.popup !== null;
   }
 
+  /** §11.5: Veo's own remaining-range figure for one vehicle, in metres.
+   *
+   *  `allFeatures()`, never `visibleFeatures()` — the same reason the ride deep
+   *  link uses it. A leftover model, battery, quality or area filter must not
+   *  hide the scooter the rider is sitting on, and a filtered-out vehicle would
+   *  come back as "no observation", which `ride-reach.ts` reads as its
+   *  confidence floor and silences the warning. A filter the rider set on the
+   *  map must not be able to turn off a battery warning about their own ride.
+   *
+   *  Null for a vehicle the feed has dropped and for one it gives no range for
+   *  — a pedal-only bike, where the question does not apply. */
+  rangeMetersFor(vehicleIdentifier: string): number | null {
+    const want = vehicleIdentifier.toLowerCase();
+    const feat = this.allFeatures().find(
+      (f) =>
+        String(f.properties.vehicle_identifier ?? "").toLowerCase() === want,
+    );
+    if (!feat) return null;
+    return asNumber(feat.properties.current_range_meters);
+  }
+
   /** Close the device details popup if one is open (mode switches sweep
    *  every floating surface). The popup's own close event nulls the field. */
   closePopup(): void {

@@ -62,6 +62,7 @@ import {
   type RideStartIntent,
   type ScreenId,
 } from "./ride-modal.ts";
+import { DEFAULT_COST_HUD } from "./ride-display-prefs.ts";
 import { savesTracks } from "./track-preference.ts";
 
 export type { RidePreflightChoices, RideStartIntent };
@@ -82,7 +83,7 @@ export interface RidePreflightAnswers extends RidePreflightChoices {
 export const PREFLIGHT_DEFAULTS: RidePreflightAnswers = {
   navigation: false,
   save_tracks: true,
-  cost_hud: true,
+  cost_hud: DEFAULT_COST_HUD,
   // Only ever read when `cost_hud` is on. "Give me a link" is the default
   // because it is the answer that costs a rider nothing to be wrong about:
   // a rider who already started can tap "I already started" on Screen 6,

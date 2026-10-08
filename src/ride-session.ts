@@ -32,6 +32,11 @@ import type {
   TrackedRide,
 } from "./api.ts";
 import type { TrackTip } from "./track-store.ts";
+// The ONE runtime import in this module, and deliberately a module with no DOM
+// and no API client: the cascade rules were unreachable from here while they
+// lived in `ride-settings.ts`, and that is exactly why nothing re-applied them
+// when a device pick made a ride private. See `ride-option-cascades.ts`.
+import { applyCascades } from "./ride-option-cascades.ts";
 
 export const RIDE_SESSION_KEY = "scooter_fyi.ride_session";
 export const RIDE_SESSION_VERSION = 1;
@@ -133,6 +138,37 @@ export function selectedDevice(
   device: RideSessionDevice | null,
 ): RideSessionSelectedDevice | null {
   return device !== null && !isOwnDevice(device) ? device : null;
+}
+
+/** `options` with `own_device` brought into step with the device on the doc.
+ *
+ *  THESE TWO USED TO DISAGREE, and the app had to paper over it. `own_device` is
+ *  a `RideOptions` field and `device: { own: true }` is the session's device, and
+ *  only the entry paths in `main.ts` ever set both — the home bar and the free
+ *  ride. Screen 2's own-device option sets only the DEVICE (its options panel has
+ *  no `own_device` row at all), so a rider who picked "My Scooter/Bike" there got
+ *  a doc claiming `own_device: false`. That is why `ride-hud.ts` has to ask
+ *  `isOwnDevice(doc.device) || doc.options.own_device === true`, and why Screen
+ *  2's own skip predicate — which reads the OPTION — only worked for riders who
+ *  came in from the home bar.
+ *
+ *  It also silently disarmed half the cascade rules: `own_device` is what
+ *  disables battery modelling and the end-of-ride survey, and the reason never
+ *  fired for a Screen 2 pick. The `guest_or_private` rule happened to cover all
+ *  three for own-device rides, so nothing visibly broke — the rules were simply
+ *  being obeyed for the wrong reason.
+ *
+ *  Derived from the device rather than trusted from the caller, in both
+ *  directions: switching OFF own-device has to clear the flag, which is the same
+ *  thing `setDevice`'s own `private` doc comment means by "switching off
+ *  own-device should make the ride points-eligible again". A null device is not
+ *  an own device. */
+function ownDeviceOptions(
+  options: RideOptions,
+  device: RideSessionDevice | null,
+): RideOptions {
+  const own = isOwnDevice(device);
+  return options.own_device === own ? options : { ...options, own_device: own };
 }
 
 export interface RideSessionDest {
@@ -505,6 +541,23 @@ export function reduceRideSession(
     ? [{ kind: "end_reported", fields: endFields }]
     : [];
 
+  /** Re-apply the 🏆 cascades to a doc whose `private`, `own_device` or
+   *  `save_tracks` just moved.
+   *
+   *  THE REDUCER DOES THIS SO CALLERS CANNOT FORGET. `applyCascades` has always
+   *  said to run "after any change that could affect a cascade — a device pick
+   *  landing `own_device: true`", and the entry paths in `main.ts` did; the one
+   *  that could not was this reducer, because the rules lived in a DOM module it
+   *  must not import. So `setDevice` flipped a ride to `private` and left
+   *  `nav_improvement: true` standing — which `ride-screen-routes.ts` reads as
+   *  consent to POST route feedback for a ride that has no server row to attach
+   *  it to. Enforcing it here makes every transition correct at once, including
+   *  the ones that only exist in tests and the ones added later. */
+  const withCascades = (next: RideSessionDoc): RideSessionDoc => ({
+    ...next,
+    options: applyCascades(next.options, { private: next.private }),
+  });
+
   switch (action.type) {
     case "open": {
       // Never open a fresh wizard over a live ride — the F3 button swap relies
@@ -520,11 +573,14 @@ export function reduceRideSession(
       return accept(
         doc,
         withPhase(
-          {
+          withCascades({
             ...base,
             device,
+            // An own device makes the ride private whatever the caller said:
+            // `RideSessionOwnDevice` is "never points-eligible" by definition.
             private: base.private || isOwnDevice(device),
-          },
+            options: ownDeviceOptions(base.options, device),
+          }),
           "wizard",
           action.screen ?? "1",
         ),
@@ -547,7 +603,11 @@ export function reduceRideSession(
       if (doc.state === "idle" || doc.state === "done") {
         return reject(doc, `no session to configure from ${phase}`);
       }
-      return accept(doc, { ...doc, options: action.options });
+      // Cascaded, so a 🏆 option this ride cannot honour can never be stored —
+      // not by Screen 2's panel, and not by the Usuals picker, which applies a
+      // whole saved blob that may have been saved in a context where those
+      // options WERE available.
+      return accept(doc, withCascades({ ...doc, options: action.options }));
 
     case "setDevice": {
       if (doc.state !== "wizard") {
@@ -555,11 +615,15 @@ export function reduceRideSession(
       }
       const isPrivate =
         action.private ?? (isOwnDevice(action.device) || doc.private);
-      return accept(doc, {
-        ...doc,
-        device: action.device,
-        private: isPrivate,
-      });
+      return accept(
+        doc,
+        withCascades({
+          ...doc,
+          device: action.device,
+          private: isPrivate,
+          options: ownDeviceOptions(doc.options, action.device),
+        }),
+      );
     }
 
     case "associateDevice": {

@@ -10025,3 +10025,106 @@ input[data-ride-keypad="on"] {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ---------- Account: login above the tabs (main.ts's wireAccount) ----------
+   The sign-in doors and the session line share this host, which sits ABOVE
+   .account-tabs and is visible from every tab. It must not be sticky: the strip
+   below it already pins to the drawer header, and two sticky siblings in one
+   scroller leapfrog each other. */
+.account-login-host:not(:empty) {
+  padding-bottom: 4px;
+}
+/* The gate hint explains a DIMMED TAB, so it sits with the strip rather than
+   inside the panel the rider was refused — they never get to see that panel. */
+.account-gate-hint {
+  margin: 6px 0 0;
+}
+
+/* ---------- Account: Edit Profile modal (account-edit-profile.ts) ----------
+   Same shape as .ranks-modal, which every device-popup modal already uses, but
+   its own class: this one is a form, so it scrolls and it is wider. */
+.account-editprofile {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(13, 27, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.account-editprofile__card {
+  width: min(420px, 94vw);
+  /* Capped and scrollable: the phone row grows by a whole code form when a
+     verification is in flight, and on a short phone in landscape that would
+     otherwise push the ✕ off the screen. */
+  max-height: min(88vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.account-editprofile__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 6px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.account-editprofile__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+/* The house ✕: a 44×44 target, not a glyph with a few px of padding. */
+.account-editprofile__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.account-editprofile__close:hover {
+  color: var(--text);
+}
+.account-editprofile__body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The one-line "what we have on file" under the Profile tab's Edit button. */
+.account-contact-summary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  /* An email address has no spaces to break at, so a long one would widen the
+     drawer rather than wrap. */
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Account: In-Ride Preferences (account-inride.ts) ---------- */
+/* A favourite slot is a label, a hint, then the value and its actions. The
+   actions wrap onto their own line on a narrow drawer rather than squeezing the
+   address to nothing. */
+.account-favslot .account-location {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.account-favslot + .account-favslot {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}

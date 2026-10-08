@@ -45,12 +45,12 @@ describe("structure and aria", () => {
     }
   });
 
-  it("shows only the selected panel and defaults to login", () => {
+  it("shows only the selected panel and defaults to In-Ride", () => {
     const tabs = createAccountTabs(host);
-    expect(tabs.selected()).toBe("login");
-    expect(tabs.panel("login").hidden).toBe(false);
+    expect(tabs.selected()).toBe("inride");
+    expect(tabs.panel("inride").hidden).toBe(false);
     expect(tabs.panel("profile").hidden).toBe(true);
-    expect(tabFor("login").getAttribute("aria-selected")).toBe("true");
+    expect(tabFor("inride").getAttribute("aria-selected")).toBe("true");
     expect(tabFor("profile").getAttribute("aria-selected")).toBe("false");
   });
 
@@ -64,7 +64,7 @@ describe("structure and aria", () => {
     const tabs = createAccountTabs(host);
     const stops = () =>
       ACCOUNT_TAB_IDS.filter((id) => tabFor(id).tabIndex === 0);
-    expect(stops()).toEqual(["login"]);
+    expect(stops()).toEqual(["inride"]);
     tabs.select("profile");
     expect(stops()).toEqual(["profile"]);
   });
@@ -118,7 +118,7 @@ describe("disabled tabs", () => {
     onShow.mockClear();
 
     tabFor("local").click();
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
     expect(tabs.panel("local").hidden).toBe(true);
     expect(onBlocked).toHaveBeenCalledWith("local");
     expect(onShow).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe("disabled tabs", () => {
     const tabs = createAccountTabs(host);
     tabs.setEnabled("profile", false);
     tabs.select("profile");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
     tabs.setEnabled("profile", true);
     tabs.select("profile");
     expect(tabs.selected()).toBe("profile");
@@ -157,13 +157,13 @@ describe("keyboard", () => {
     key("ArrowRight");
     expect(tabs.selected()).toBe("profile");
     key("ArrowLeft");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
     // wraps backwards from the first tab to the last
     key("ArrowLeft");
     expect(tabs.selected()).toBe("local");
     // and forwards from the last back to the first
     key("ArrowRight");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
   });
 
   it("jumps with Home and End", () => {
@@ -171,7 +171,7 @@ describe("keyboard", () => {
     key("End");
     expect(tabs.selected()).toBe("local");
     key("Home");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
   });
 
   it("moves focus onto a disabled tab without selecting it", () => {
@@ -179,7 +179,7 @@ describe("keyboard", () => {
     const tabs = createAccountTabs(host, { onBlocked });
     tabs.setEnabled("profile", false);
     key("ArrowRight");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
     expect(document.activeElement).toBe(tabFor("profile"));
     expect(onBlocked).toHaveBeenCalledWith("profile");
   });
@@ -187,7 +187,7 @@ describe("keyboard", () => {
   it("ignores keys it does not handle", () => {
     const tabs = createAccountTabs(host);
     key("a");
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
   });
 });
 
@@ -198,7 +198,7 @@ describe("teardown", () => {
     const tabs = createAccountTabs(host);
     tabs.dispose();
     tabFor("profile").click();
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
   });
 
   it("stops responding to keyboard after dispose", () => {
@@ -209,6 +209,6 @@ describe("teardown", () => {
       .dispatchEvent(
         new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
       );
-    expect(tabs.selected()).toBe("login");
+    expect(tabs.selected()).toBe("inride");
   });
 });

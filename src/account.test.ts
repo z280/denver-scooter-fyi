@@ -37,6 +37,7 @@ vi.mock("./map-auth.js", () => ({ signOut: vi.fn().mockResolvedValue(undefined) 
 vi.mock("./geocode.ts", () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
 
 import { renderSignedInAccount, type AccountPanelMounts } from "./account.ts";
+import { saveRatePlan } from "./ride-cost.ts";
 import type { Profile } from "./api.ts";
 
 const PROFILE: Profile = {
@@ -128,11 +129,14 @@ describe("panel mounting", () => {
       ),
     ).toBe(true);
 
-    // Profile: the rider's own details.
+    // Profile: the rider's own details. Contact details are behind the Edit
+    // Profile door now, and the rate plan moved to the In-Ride tab, so what is
+    // left inline is that door and the two map locations.
     expect(mounts.profile.querySelector(".account-profile")).not.toBeNull();
     const profileText = mounts.profile.textContent ?? "";
-    expect(profileText).toContain("Rate plan");
+    expect(profileText).toContain("Edit Profile");
     expect(profileText).toContain("Home location");
+    expect(profileText).not.toContain("Rate plan");
 
     // Community: everything public-facing.
     const communityText = mounts.community.textContent ?? "";
@@ -150,7 +154,7 @@ describe("panel mounting", () => {
 
     expect(mounts.profile.textContent).not.toContain("Public identity");
     expect(mounts.profile.textContent).not.toContain("Badges");
-    expect(mounts.community.textContent).not.toContain("Rate plan");
+    expect(mounts.community.textContent).not.toContain("Edit Profile");
     expect(mounts.community.textContent).not.toContain("Home location");
   });
 
@@ -161,7 +165,7 @@ describe("panel mounting", () => {
     const text = body.textContent ?? "";
     expect(body.querySelector(".account-status")).not.toBeNull();
     expect(text).toContain("Public identity");
-    expect(text).toContain("Rate plan");
+    expect(text).toContain("Edit Profile");
     expect(text).toContain("Badges");
     expect(text).toContain("Points");
     expect(text).toContain("List me in leaderboards");
@@ -370,15 +374,38 @@ describe("phone verification gating", () => {
     }
     return !!node;
   };
-  const verifyBtn = (mounts: AccountPanelMounts) => {
+  /** Open the Edit Profile modal and hand back its card.
+   *
+   *  THE ROW IS NOT ON THE TAB ANY MORE. It lives behind the Edit Profile
+   *  button, in a dialog appended to `document.body` — so every assertion here
+   *  has to look there. Left pointing at `mounts.profile`, the two NEGATIVE
+   *  tests in this group ("does not offer it when texts are switched off",
+   *  "withholds the offer while the capability is still unknown") went on
+   *  passing for the wrong reason: there is no phone row in that panel at all,
+   *  so `toBeUndefined()` held however the feature behaved. A test that cannot
+   *  fail is not covering anything.
+   *
+   *  Each call opens a fresh modal, which is also what a rider gets — the
+   *  fields are rebuilt from the current profile on every open. */
+  const openEdit = (mounts: AccountPanelMounts): HTMLElement => {
     const btn = [...mounts.profile.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Edit Profile",
+    );
+    if (!btn) throw new Error("no Edit Profile button on the Profile panel");
+    btn.click();
+    const card = document.querySelector<HTMLElement>(".account-editprofile__card");
+    if (!card) throw new Error("Edit Profile modal did not open");
+    return card;
+  };
+  const verifyBtn = (mounts: AccountPanelMounts) => {
+    const btn = [...openEdit(mounts).querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent === "Verify by text" || b.textContent === "Resend",
     );
     return isShown(btn) ? btn : undefined;
   };
   /** Only text the rider can actually see. */
   const rowText = (mounts: AccountPanelMounts): string =>
-    [...mounts.profile.querySelectorAll<HTMLElement>("p, span")]
+    [...openEdit(mounts).querySelectorAll<HTMLElement>("p, span")]
       .filter((n) => isShown(n))
       .map((n) => n.textContent ?? "")
       .join(" ");
@@ -478,9 +505,14 @@ describe("phone verification gating", () => {
     });
     await settle();
 
-    verifyBtn(mounts)!.click();
+    // Opened ONCE and held: `verifyBtn()` opens a fresh modal per call, and the
+    // code form has to be read from the same dialog the button was clicked in.
+    const card = openEdit(mounts);
+    [...card.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "Verify by text")!
+      .click();
     await settle();
-    const codeForm = [...mounts.profile.querySelectorAll<HTMLFormElement>("form")].find(
+    const codeForm = [...card.querySelectorAll<HTMLFormElement>("form")].find(
       (f) => f.querySelector('input[autocomplete="one-time-code"]'),
     )!;
     expect(codeForm.hidden).toBe(false);
@@ -603,75 +635,97 @@ describe("home and work locations", () => {
   });
 });
 
-// ---------- rate plan ----------
+// ---------- rate plan: the account half ----------
+//
+// THE CONTROL MOVED. The select lives on the In-Ride tab now
+// (`account-inride.test.ts` covers the options, the shown value and the local
+// write) because it has to work signed out. What stays here is the half only
+// this module can do: reconciling the server's plan with this device's, pushing
+// a device-only plan up, and the sync hook that turns any picker's change —
+// this one, the HUD's wrench panel — into a PUT. The seam is the two deps.
 
-describe("rate plan", () => {
-  const select = (mounts: AccountPanelMounts) =>
-    [...mounts.profile.querySelectorAll<HTMLSelectElement>("select")].find(
-      (s) => s.getAttribute("aria-label") === "Rate plan",
-    )!;
-
-  it("offers the Pass variants in the same list, no separate control", async () => {
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
-    await settle();
-
-    const values = [...select(mounts).options].map((o) => o.value);
-    expect(values).toContain("resident");
-    expect(values).toContain("resident_plus");
-    // Nothing else in Profile is a Pass toggle.
-    expect(mounts.profile.textContent).not.toMatch(/VeoPlus Pass\b.*check/i);
-  });
-
-  it("shows the account's plan, not whatever this device remembers", async () => {
+describe("rate plan: account reconciliation", () => {
+  it("tells the panel which plan the account holds, not what this device remembers", async () => {
+    localStorage.setItem("scooter_fyi.rate_plan", "visitor");
     api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: "equity" });
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    const onRatePlanResolved = vi.fn();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: makeMounts(),
+      onRatePlanResolved,
+    });
     await settle();
 
-    expect(select(mounts).value).toBe("equity");
-  });
-
-  it("saves a change to the account", async () => {
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
-    await settle();
-
-    api.updateProfile.mockClear();
-    const s = select(mounts);
-    s.value = "visitor";
-    s.dispatchEvent(new Event("change", { bubbles: true }));
-    await settle();
-
-    expect(api.updateProfile).toHaveBeenCalledWith({ rate_plan: "visitor" });
+    expect(onRatePlanResolved).toHaveBeenCalledWith("equity");
   });
 
   it("pushes this device's plan up when the account has none yet", async () => {
     // A rider who picked a plan before signing in, or on this device only.
     localStorage.setItem("scooter_fyi.rate_plan", "resident_plus");
     api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: null });
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    const onRatePlanResolved = vi.fn();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: makeMounts(),
+      onRatePlanResolved,
+    });
     await settle();
 
-    // The Pass variant is shown (only this device can know it) and the base
-    // plan is sent up, so the two stop disagreeing.
-    expect(select(mounts).value).toBe("resident_plus");
+    // The Pass variant is what the panel shows (only this device can know it)
+    // and the BASE plan is what goes up, so the two stop disagreeing.
+    expect(onRatePlanResolved).toHaveBeenCalledWith("resident_plus");
     expect(api.updateProfile).toHaveBeenCalledWith({ rate_plan: "resident" });
   });
 
-  it("prompts when neither the account nor the device has a plan", async () => {
+  it("invents nothing when neither the account nor the device has a plan", async () => {
     api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: null });
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, { ...deps(), panels: mounts });
+    const onRatePlanResolved = vi.fn();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: makeMounts(),
+      onRatePlanResolved,
+    });
     await settle();
 
-    expect(select(mounts).value).toBe("");
-    // Nothing invented on the rider's behalf.
+    // Null, not the app's default: the panel shows the default as an
+    // ASSUMPTION, and writing it to the account would turn it into the rider's
+    // stated answer.
+    expect(onRatePlanResolved).toHaveBeenCalledWith(null);
     const rateWrites = api.updateProfile.mock.calls.filter(
       (c) => "rate_plan" in (c[0] as object),
     );
     expect(rateWrites).toHaveLength(0);
+  });
+
+  it("syncs a pick made by any picker to the account", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: "resident" });
+    const rateStatus = vi.fn();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: makeMounts(), rateStatus });
+    await settle();
+
+    api.updateProfile.mockClear();
+    // Exactly what the In-Ride select and the HUD's wrench panel both call.
+    saveRatePlan("visitor");
+    await settle();
+
+    expect(api.updateProfile).toHaveBeenCalledWith({ rate_plan: "visitor" });
+    expect(rateStatus).toHaveBeenCalledWith("Saved to your account.", false);
+  });
+
+  it("does not PUT a Pass flip the server cannot represent", async () => {
+    api.fetchProfile.mockResolvedValue({ ...PROFILE, rate_plan: "resident" });
+    const rateStatus = vi.fn();
+    renderSignedInAccount(body, AUTH, { ...deps(), panels: makeMounts(), rateStatus });
+    await settle();
+
+    api.updateProfile.mockClear();
+    // `resident_plus` strips to `resident`, which the account already holds —
+    // so this is a local-only refinement and a PUT would be a no-op write.
+    saveRatePlan("resident_plus");
+    await settle();
+
+    expect(api.updateProfile).not.toHaveBeenCalled();
+    expect(rateStatus).toHaveBeenCalledWith("Saved on this device.", false);
   });
 });
 

@@ -39,6 +39,7 @@ import {
   type GeocodeSearchHandlers,
 } from "./geocode-search.ts";
 import { isSamePlace, loadFavorites, type Favorite } from "./favorites.ts";
+import { orderedFavorites } from "./favorite-slots.ts";
 import { fetchProfile } from "./api.ts";
 import { isAuthenticated } from "./map-auth.js";
 import {
@@ -163,7 +164,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   let slot: Slot = "dest";
   let dest: TripPlace | null = null;
   let start: TripPlace | null = null;
-  let favorites: Favorite[] = loadFavorites();
+  let favorites: Favorite[] = orderedFavorites(loadFavorites());
   let recents: RecentDest[] = loadRecentDests();
   /** Home/Work from the signed-in profile. Starts empty and fills in when the
    *  fetch lands — the bar must be usable the instant it opens, so this is
@@ -262,7 +263,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     destOnly = null;
     phase = "destination";
     slot = "dest";
-    favorites = loadFavorites();
+    favorites = orderedFavorites(loadFavorites());
     recents = loadRecentDests();
     track("home_bar", { action: "open" });
     render();

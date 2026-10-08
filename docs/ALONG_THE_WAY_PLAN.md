@@ -1749,16 +1749,45 @@ sensitive of the three, so the house rules below are not boilerplate.
 
 ### 8.1 The architecture decision, first, because everything follows from it
 
-**The image never leaves the device.** OCR runs on-device, the rider confirms
-what was read, and only the **confirmed fields** upload. The evidence pile
-needs numbers, not photographs.
+> **SUPERSEDED BY THE OWNER, 2026-10-07.** This section used to read "the image
+> never leaves the device… if on-device OCR cannot be made accurate enough to
+> ship, the fallback is **manual entry** — never an upload." It is kept here, in
+> its own words, because the reasoning is still worth reading and because the
+> frontend holds modules built to it (`receipt-verdict.ts`, `receipt-complaint.ts`
+> — both pure, both still correct, both still unwired). But the rule changed
+> before either shipped, and a plan that still asserted the old one would have
+> the repo arguing with itself: `equity-receipt-form.ts` and the API's
+> `POST /reports/discount` both upload a receipt image today.
 
-Say that to riders in those words. "We store photos of your account and your
-receipts" and "we store figures you checked yourself" are different products,
-and only the second is worth building.
+**The rule now: either place, for something the rider explicitly uploaded.**
 
-If on-device OCR cannot be made accurate enough to ship, the fallback is
-**manual entry** — never an upload.
+- **We may read an uploaded image on the device or on the server.** On-device is
+  preferred, and the fallback when a receipt cannot be read there is the server,
+  not manual entry. Both are legitimate; which one runs can change as the
+  software improves, and no surface should promise one of them.
+- **Only what the rider explicitly uploaded, and only for retention we intend.**
+  That is the whole of the limit, and it is the part that has to hold: nothing is
+  read that was not handed over on purpose, and nothing is kept that the
+  retention schedule does not name. An image lifted from anywhere else, or kept
+  past its window, is out of bounds whichever machine reads it.
+- **Say it in those words.** The privacy policy
+  (`scooter-fyi-api/src/templates/legal/privacy_policy.html` §2) and the
+  `/meta/privacy` payload both now disclose that reading may happen on our
+  servers, name the provider that does it, and state the limit. Tests pin all
+  three, because the failure mode here is a policy that promises the stronger
+  version while the software does the weaker one.
+
+**What survives unchanged from the old rule:** the rider still confirms what was
+read before anything is submitted (§8.3 — the defence against a misread total),
+and the evidence pile still wants numbers. Uploading the image does not make the
+confirmation step optional; it makes it the step where a server's reading gets
+checked by the person it is about.
+
+**NO PLAN SCREENSHOT.** The API briefly required a second image — the rider's Veo
+plan — on the reasoning that the Equity Area rate applies whatever tier you are
+on, so the tier is what makes a claim stand. The owner removed it the next day:
+nothing automated read it, a claim is checked against the feed, and
+`declared_rate_plan` is taken on trust. See the API's `sql/095`.
 
 ### 8.2 Modules
 
@@ -2954,7 +2983,7 @@ the wrong call and the envelope should come back.
 | `plan-resume.ts` | the server-side plan (master plan §13.6) | no — there is nothing to resume until the plan outlives the tab |
 | the foreground check in `trip-plan.ts` | the API's **coalesced snapshot** (master plan §13.4) | yes, against a stub — it is a read |
 | **background loss detection** | the API's **server-side watcher** (master plan §13.4.1), over the stored plan | **no, and it cannot be faked here**: a backgrounded tab detects nothing, so the "phone in a pocket" criterion is satisfied by that watcher or not at all |
-| Phase 8: `receipt-read.ts`, `receipt-verdict.ts`, the complaint | nothing — OCR, the verdict and the `mailto:` are all local | **yes**, and this is most of the phase |
+| Phase 8: `receipt-read.ts`, `receipt-verdict.ts`, the complaint | the verdict and the `mailto:` are local; **reading an image is now either place** (§8.1, owner 2026-10-07), so server-side reading needs the API's receipt pipeline | the verdict and the complaint, **yes** — and the support address is filled in now (`VEO_SUPPORT_EMAIL`), so `complaintReady()` no longer gates the path off |
 | Phase 8: contributing / listing / withdrawing | receipt submission + list + delete endpoints, and the consent record | **no** — withdrawal that cannot delete server-side is not withdrawal, so there is nothing honest to build against a stub |
 | Phase 10's CC tick | Phase 8's complaint `mailto:`, which needs a real `cc` field (§8.5) | yes — but it is a recipient, not a line of body text |
 | server tier in `api.ts` | `POST /trip/candidates` | mock the contract; it is master plan §6.4 |

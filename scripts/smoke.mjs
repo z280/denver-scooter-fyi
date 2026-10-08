@@ -70,8 +70,18 @@ const errors = [];
 // SMOKE_CHANNEL=chrome in CI: GitHub's Ubuntu runners ship Google Chrome, so
 // nothing is downloaded (`playwright install --with-deps` hung for 15+ min in
 // apt on the first run). Locally, Playwright's bundled Chromium.
+// SMOKE_EXECUTABLE points at a browser binary directly, for an environment that
+// has one Playwright did not install — a prebaked container image, say, where
+// the bundled revision Playwright expects is absent and the default launch fails
+// with "Executable doesn't exist". Without it this script could not be run
+// anywhere but CI and a developer's own laptop, which is most of the places a
+// boot regression gets introduced.
 const browser = await chromium.launch(
-  process.env.SMOKE_CHANNEL ? { channel: process.env.SMOKE_CHANNEL } : {},
+  process.env.SMOKE_EXECUTABLE
+    ? { executablePath: process.env.SMOKE_EXECUTABLE }
+    : process.env.SMOKE_CHANNEL
+      ? { channel: process.env.SMOKE_CHANNEL }
+      : {},
 );
 let exitCode = 0;
 try {

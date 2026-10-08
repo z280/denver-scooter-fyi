@@ -283,13 +283,15 @@ describe("confirmation is the third condition, and it is a type", () => {
 });
 
 describe("the support address is not guessed", () => {
-  it("is blank until somebody fills it from Veo's own published contact", () => {
-    // Every other Veo endpoint in config.ts was verified against something Veo
-    // publishes. A plausible-looking address is worse than none: the complaint
-    // path's whole value is that it reaches somebody, and a wrong recipient
-    // produces a rider who believes they filed a billing query and did not.
-    expect(complaintReady()).toBe(false);
-    expect(VEO_SUPPORT_EMAIL).toBe("");
+  it("is the address the owner supplied, not one that looks plausible", () => {
+    // This asserted `""` until the owner gave it (2026-10-07). The point was
+    // never the emptiness: it is that the address comes from somebody who knows
+    // it, because the complaint path's whole value is that it reaches a human,
+    // and a wrong recipient produces a rider who believes they filed a billing
+    // query and did not. Pinned by value so a later edit to this constant is a
+    // decision somebody makes on purpose rather than a typo that ships.
+    expect(VEO_SUPPORT_EMAIL).toBe("support@veoride.zendesk.com");
+    expect(complaintReady()).toBe(true);
   });
 
   it("gates the complaint path on a real address, not on a truthy string", () => {

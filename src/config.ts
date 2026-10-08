@@ -215,14 +215,19 @@ export const LEGAL_LINKS: readonly { label: string; href: string }[] = [
  *  surface, and a surface that owns an address is a surface somebody has to go
  *  and edit when the address changes.
  *
- *  EMPTY, AND DELIBERATELY NOT GUESSED. Every other Veo endpoint in this file
- *  was verified against something Veo publishes — the Zendesk form's own field
- *  ids, the Adjust deep-link token. A plausible-looking address is worse than no
- *  address here: the complaint path's whole value is that it reaches somebody,
- *  and a wrong recipient produces a rider who believes they filed a billing
- *  query and did not. `complaintReady()` below is what keeps that from shipping
- *  silently. Fill it from Veo's own published support contact. */
-export const VEO_SUPPORT_EMAIL = "";
+ *  SUPPLIED BY THE OWNER (2026-10-07). It was deliberately left empty until
+ *  then, because every other Veo endpoint in this file was verified against
+ *  something Veo publishes — the Zendesk form's own field ids, the Adjust
+ *  deep-link token — and a plausible-looking address is worse than none here:
+ *  the complaint path's whole value is that it reaches somebody, and a wrong
+ *  recipient produces a rider who believes they filed a billing query and did
+ *  not. `complaintReady()` below stays, for the same reason it was written: it
+ *  is the guard that keeps an un-addressed draft from looking like the feature
+ *  working, and it costs nothing now that the address is real.
+ *
+ *  It is a Zendesk support address, which is why it reads like one — mail to it
+ *  opens a ticket in the same system `VEO_ZENDESK_PARKING` posts to. */
+export const VEO_SUPPORT_EMAIL = "support@veoride.zendesk.com";
 
 /** Whether §8.5's complaint path can be offered at all.
  *

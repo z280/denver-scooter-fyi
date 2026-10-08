@@ -197,7 +197,7 @@ import {
   type PlanSearchDeps,
 } from "./plan-search.ts";
 import { browserVoiceDeps, createRideVoice } from "./ride-voice.ts";
-import { currentTaxRate, planFor, savedRatePlan } from "./ride-cost.ts";
+import { currentTaxRate, effectiveRatePlan, planFor } from "./ride-cost.ts";
 import { createTrackRoute } from "./track-route.ts";
 import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
@@ -209,11 +209,14 @@ import {
 } from "./account-local-data.ts";
 import { createHomeWorkPins } from "./home-work-pins.ts";
 import {
+  buildInRidePanel,
+  type InRidePanelHandle,
+} from "./account-inride.ts";
+import {
   ACCOUNT_TAB_IDS,
   createAccountTabs,
   takeTabHint,
   writeTabHint,
-  type AccountTabId,
 } from "./account-tabs.ts";
 import { type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
@@ -824,7 +827,8 @@ wireAccount();
  *  Declared HERE, above `wireRideHud()`'s call, not beside the function: the
  *  call runs at module load and reads it, and a `const` read before its line
  *  is a ReferenceError that stopped main.ts before any vehicle was drawn
- *  (2026-10-07, ~11 h blank map). */
+ *  (2026-10-07, ~11 h blank map). `main-boot-order.test.ts` fails on that
+ *  ordering now, and `scripts/smoke.mjs` fails on the boot it produces. */
 const rideVoice = createRideVoice(browserVoiceDeps());
 
 const rideHud = wireRideHud();
@@ -910,7 +914,7 @@ function wireRideHud(): RideHud {
     freeMinutesAtStart: () => {
       const estimate = planningFreeMinuteEstimate(
         planSearchDeps(),
-        planFor(savedRatePlan() ?? "resident"),
+        planFor(effectiveRatePlan()),
       );
       if (estimate === null || estimate.basis === "signed_out") return null;
       return estimate.remainingMinutes;
@@ -3332,10 +3336,11 @@ function wireModes(): void {
         '.drawer-tab[data-drawer="account"]',
       );
       if (!tab || tab.classList.contains("is-active")) return;
-      // The hint is asking them to sign in, so open on the doors. Only stamp
-      // it when we are actually about to click, so the hint can't be left
-      // behind to hijack some later, unrelated open.
-      tab.dataset.accountTab = "login";
+      // The hint is asking them to sign in, and the sign-in doors are above the
+      // tab strip now — visible whichever tab the drawer opens on. So there is
+      // no tab to name: opening the drawer IS landing on the doors. (This used
+      // to stamp `accountTab = "login"`, which after the restructure named a tab
+      // that no longer exists and would have been read as "blocked".)
       tab.click();
     },
     filterSummary: () => rideEntrySummary,
@@ -3981,7 +3986,7 @@ function planSearchDeps(): PlanSearchDeps {
       return fix ? { lat: fix.lat, lng: fix.lng } : null;
     },
     spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
-    rate: () => planFor(savedRatePlan() ?? "resident"),
+    rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
     // NO `favorites`, and that is not an omission to be tidied up later.
@@ -4068,7 +4073,7 @@ function openPlanList(dest: TripPlace): void {
 async function refreshTodaysRides(): Promise<boolean> {
   if (todaysRides !== null) return false;
   if (!isAuthenticated()) return false;
-  if ((savedRatePlan() ?? "resident") !== "equity") return false;
+  if (effectiveRatePlan() !== "equity") return false;
   if (savedCorrection(Date.now()) !== null) return false;
   try {
     todaysRides = spansOf((await listTrackedRides({ limit: 40 })).rides);
@@ -4809,20 +4814,45 @@ function wireAccount(): void {
   gateHint.setAttribute("role", "status");
   gateHint.hidden = true;
 
+  // LOGIN SITS ABOVE THE TABS, in its own host, and is the first thing in the
+  // drawer in both states: the sign-in doors when signed out, the session line
+  // and Sign out when signed in. It used to be the first of five tabs, which
+  // put the one thing a rider always needs — am I signed in, and how do I get
+  // out — behind a tab, while every other tab sat dimmed until they found it.
+  //
+  // Built BEFORE the strip so it lands above it in document order, and, like
+  // the strip, never torn down: render() replaces its CONTENTS only, so a
+  // half-typed email survives the auth-config rebuild exactly as the strip
+  // survives a token change.
+  const loginHost = document.createElement("div");
+  loginHost.className = "account-login-host";
+  body.append(loginHost);
+
+  // DECLARED BEFORE THE STRIP, AND NOT AS A `const` BELOW IT. `createAccountTabs`
+  // calls `onShow` for the initial tab synchronously, from inside its own
+  // constructor — that is deliberate, so lazily-built panels get their first
+  // build — and `onShow` below reads this. A `const` declared after that call
+  // would be in its temporal dead zone at exactly that moment, and `inRide?.`
+  // would NOT save it: optional chaining still evaluates the binding. The throw
+  // lands inside `createAccountTabs`, aborts `wireAccount`, and the In-Ride panel
+  // is never built at all — a tab that opens empty.
+  let inRide: InRidePanelHandle | null = null;
+
   // The strip is built ONCE and never torn down: render() below replaces
   // panel CONTENTS, so the rider's chosen tab survives both the auth-config
   // rebuild and a token change, exactly as signedOutState survives them.
   const tabs = createAccountTabs(body, {
-    initial: takeTabHint() ?? "login",
+    initial: takeTabHint() ?? "inride",
     onShow: (id) => {
       gateHint.hidden = true;
-      // GIS needs a laid-out container, so a Login panel that was hidden at
-      // build time gets its button on first show.
-      if (id === "login") loginPanel?.renderGoogle();
       // The drawn route belongs to this tab; leaving it should take the line
       // off the map with it.
       if (id === "local") void localData?.refresh();
       else localData?.clearSelection();
+      // The HUD's own wrench panel can change the rate plan mid-ride, so the
+      // settings copy of it is re-read every time this tab is shown rather
+      // than trusted to be current from when it was built.
+      if (id === "inride") inRide?.refresh();
     },
     onBlocked: (id) => {
       const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
@@ -4830,10 +4860,26 @@ function wireAccount(): void {
       gateHint.hidden = false;
     },
   });
-  tabs.panel("login").prepend(gateHint);
+  // Above the strip too: the hint explains a dimmed TAB, so it has to be
+  // readable from whichever tab the rider is standing on, not hidden inside
+  // the panel they were refused.
+  body.insertBefore(gateHint, tabs.strip);
+
+  // In-Ride Preferences. Built once, outside render(), and deliberately NOT
+  // rebuilt on sign-in or sign-out: every control on it is a device preference
+  // in localStorage, so none of them changes when a session does, and
+  // rebuilding would throw away an open rename box for no reason.
+  inRide = buildInRidePanel(tabs.panel("inride"), {
+    pickLocation: (label) =>
+      mapPick.pick({ hint: `Tap the map to set ${label}` }),
+    // The destination lists read the store when they open, so nothing has to
+    // be pushed at them — except the map pins, which are drawn from the
+    // profile's own home/work columns and are a different thing entirely.
+    onFavoritesChanged: () => {},
+  });
 
   const buildSignedOut = (): void => {
-    loginPanel = buildLoginPanel(tabs.panel("login"), {
+    loginPanel = buildLoginPanel(loginHost, {
       cfg: authCfg,
       state: signedOutState,
       // The session is persisted by the door itself; reload so every fetch
@@ -4844,7 +4890,11 @@ function wireAccount(): void {
         location.reload();
       },
     });
-    if (tabs.selected() === "login") loginPanel.renderGoogle();
+    // Unconditional now. The Google button needs a laid-out container to size
+    // itself (a hidden one renders 0px wide), which is why this used to wait
+    // for the Login tab to be shown — the host is always visible, so there is
+    // nothing left to wait for.
+    loginPanel.renderGoogle();
   };
 
   const render = (): void => {
@@ -4863,18 +4913,26 @@ function wireAccount(): void {
       loginPanel = null;
       localData?.dispose();
       localData = null;
-      for (const id of ACCOUNT_TAB_IDS) tabs.panel(id).replaceChildren();
-      tabs.panel("login").append(gateHint);
+      // Every panel EXCEPT In-Ride: that one is built once and owns nothing
+      // session-shaped, so emptying it here would delete a live panel and
+      // leave the tab blank.
+      for (const id of ACCOUNT_TAB_IDS) {
+        if (id !== "inride") tabs.panel(id).replaceChildren();
+      }
+      loginHost.replaceChildren();
       gateHint.hidden = true;
 
       const on = !!auth;
       tabs.setEnabled("profile", on);
       tabs.setEnabled("community", on);
       tabs.setEnabled("local", on || !GATE_LOCAL_TAB_ON_AUTH);
-      if (!tabs.isEnabled(tabs.selected())) tabs.select("login", { force: true });
+      // In-Ride is never gated — it is all device preferences — so it is also
+      // the safe place to land when a session ends underneath a tab that just
+      // became unavailable.
+      if (!tabs.isEnabled(tabs.selected())) tabs.select("inride", { force: true });
 
       if (auth) {
-        signedIn = renderSignedInAccount(tabs.panel("login"), auth, {
+        signedIn = renderSignedInAccount(loginHost, auth, {
           setAdminSession: (on2) => {
             devices.setAdminSession(on2);
             // The Tools drawer's Admin tools section exists only for a
@@ -4898,8 +4956,14 @@ function wireAccount(): void {
           // Null until /auth/config resolves — the row treats unknown as
           // "don't offer yet" rather than flashing a button that may vanish.
           smsEnabled: () => authCfg?.smsEnabled ?? null,
+          // The rate-plan control lives on the In-Ride tab, so the account's
+          // half of it reports through the panel rather than rendering a
+          // status line of its own.
+          onRatePlanResolved: (key) => inRide?.setRatePlan(key),
+          rateStatus: (message, isError) =>
+            inRide?.setRateStatus(message, isError),
           panels: {
-            login: tabs.panel("login"),
+            login: loginHost,
             profile: tabs.panel("profile"),
             community: tabs.panel("community"),
           },
@@ -4935,8 +4999,13 @@ function wireAccount(): void {
     '.topbar__right .drawer-tab[data-drawer="account"]',
   );
   accountBtn?.addEventListener("click", () => {
-    const want = accountBtn.dataset.accountTab as AccountTabId | undefined;
+    const raw = accountBtn.dataset.accountTab;
     delete accountBtn.dataset.accountTab;
+    // Validated, not cast. A stale or misspelled id used to reach `select()`,
+    // which treats an unknown tab as a disabled one and answered with the gate
+    // hint's fallback copy — "Sign in to use Community" — for a tab nobody
+    // asked for. An id we do not recognise means "no preference".
+    const want = ACCOUNT_TAB_IDS.find((id) => id === raw);
     if (want) tabs.select(want);
   });
 

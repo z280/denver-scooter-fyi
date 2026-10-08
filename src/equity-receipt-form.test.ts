@@ -18,7 +18,6 @@ import {
 } from "./api.ts";
 import {
   MSG_NOT_RATE_CHECKABLE,
-  MSG_PLAN_REQUIRED,
   MSG_RATE_LIMITED,
   MSG_RECEIVED,
   MSG_TOO_LARGE_ONE,
@@ -57,7 +56,6 @@ function goodValues(over: Partial<ReceiptFormValues> = {}): ReceiptFormValues {
     pinStart: null,
     pinEnd: null,
     receipt: png("receipt.png"),
-    plan: png("plan.png"),
     ...over,
   };
 }
@@ -183,16 +181,17 @@ describe("validateReceipt", () => {
         total: "",
         chargeDate: "",
         receipt: null,
-        plan: null,
       }),
       NOW,
     );
     expect(r.ok).toBe(false);
     if (r.ok) return;
+    // No "plan": the plan SCREENSHOT is gone (owner, 2026-10-07). The rider
+    // still picks a rate plan, but a select always has a value, so it is never
+    // a missing-field error.
     expect(Object.keys(r.errors).sort()).toEqual(
-      ["chargeDate", "cost", "minutes", "plan", "plate", "receipt"].sort(),
+      ["chargeDate", "cost", "minutes", "plate", "receipt"].sort(),
     );
-    expect(r.errors.plan).toBe(MSG_PLAN_REQUIRED);
   });
 
   it("refuses a future charge date, one before 2024, and a total under the subtotal", () => {
@@ -205,8 +204,8 @@ describe("validateReceipt", () => {
   });
 
   it("refuses an image over 10 MB before uploading it", () => {
-    const r = validateReceipt(goodValues({ plan: png("big.png", MAX_IMAGE_BYTES + 1) }), NOW);
-    expect(!r.ok && r.errors.plan).toBe(MSG_TOO_LARGE_ONE);
+    const r = validateReceipt(goodValues({ receipt: png("big.png", MAX_IMAGE_BYTES + 1) }), NOW);
+    expect(!r.ok && r.errors.receipt).toBe(MSG_TOO_LARGE_ONE);
   });
 });
 
@@ -222,7 +221,6 @@ function input(over: Partial<DiscountReportIn> = {}): DiscountReportIn {
     charge_date: "2026-09-29",
     declared_rate_plan: "unknown",
     receipt: png("receipt.png"),
-    plan_evidence: png("plan.png"),
     ...over,
   };
 }
@@ -243,7 +241,10 @@ describe("discountReportFormData", () => {
     expect(fd.get("pin_end_lat")).toBe("39.78123");
     expect(fd.get("pin_end_lng")).toBe("-104.82123");
     expect(fd.get("receipt")).toBeInstanceOf(Blob);
-    expect(fd.get("plan_evidence")).toBeInstanceOf(Blob);
+    // NO plan screenshot on the wire. The API ignores the part rather than
+    // rejecting it, so sending one would cost a rider an upload for bytes
+    // nobody reads (owner, 2026-10-07; API sql/095).
+    expect(fd.get("plan_evidence")).toBeNull();
   });
 });
 
@@ -288,7 +289,6 @@ describe("submitDiscountReport", () => {
             created_at: "2026-10-07T18:00:00Z",
             status: "received",
             receipt_stored: true,
-            plan_evidence_stored: true,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -337,17 +337,18 @@ describe("describeSubmitError", () => {
       "not_rate_checkable",
     );
     expect(describeSubmitError(http(429)).kind).toBe("rate_limited");
-    expect(describeSubmitError(http(422, { error: "plan_evidence_required" }))).toEqual({
-      kind: "fields",
-      errors: { plan: MSG_PLAN_REQUIRED },
-    });
+    // `plan_evidence_required` is a 422 the API cannot send any more. It is
+    // not special-cased: an unrecognised 422 falls through to the generic
+    // "look it over" message rather than naming a field that is not on screen.
+    expect(describeSubmitError(http(422, { error: "plan_evidence_required" })).kind)
+      .toBe("failed");
     expect(describeSubmitError(http(422, { error: "receipt_required" }))).toMatchObject({
       kind: "fields",
       errors: { receipt: expect.any(String) },
     });
     expect(
-      describeSubmitError(http(413, { error: "image_too_large", field: "plan_evidence", max_bytes: 1 })),
-    ).toEqual({ kind: "fields", errors: { plan: MSG_TOO_LARGE_ONE } });
+      describeSubmitError(http(413, { error: "image_too_large", field: "receipt", max_bytes: 1 })),
+    ).toEqual({ kind: "fields", errors: { receipt: MSG_TOO_LARGE_ONE } });
     expect(describeSubmitError(new TypeError("offline")).kind).toBe("failed");
   });
 
@@ -388,7 +389,6 @@ describe("openEquityReceiptForm", () => {
           created_at: "2026-10-07T18:00:00Z",
           status: "received" as const,
           receipt_stored: true,
-          plan_evidence_stored: true,
         }),
       ),
       now: () => NOW,
@@ -411,7 +411,6 @@ describe("openEquityReceiptForm", () => {
     q<HTMLInputElement>("#equity-receipt-subtotal").value = "5.00";
     q<HTMLInputElement>("#equity-receipt-date").value = "2026-09-29";
     setFile("equity-receipt-receipt", png("receipt.png"));
-    setFile("equity-receipt-plan-evidence", png("plan.png"));
   }
 
   const send = () =>
@@ -437,7 +436,7 @@ describe("openEquityReceiptForm", () => {
     expect(card.getAttribute("aria-modal")).toBe("true");
     expect(document.activeElement?.id).toBe("equity-receipt-plate");
     // Every field has a label pointing at it.
-    for (const id of ["plate", "minutes", "subtotal", "total", "date", "time", "plan", "receipt", "plan-evidence"]) {
+    for (const id of ["plate", "minutes", "subtotal", "total", "date", "time", "plan", "receipt"]) {
       expect(document.querySelector(`label[for="equity-receipt-${id}"]`), id).not.toBeNull();
     }
     // Nothing typed for the rider; the plan starts "Not sure" and is then
@@ -449,10 +448,35 @@ describe("openEquityReceiptForm", () => {
     expect(values).toEqual(["resident", "resident_plus", "visitor", "visitor_plus", "equity", "unknown"]);
   });
 
-  it("explains why the plan screenshot is required", () => {
+  it("says where the image is read and how long it is kept, at the upload itself", () => {
+    // The privacy policy carries the same three facts, but it is reachable only
+    // from the map's attribution panel — a disclosure nobody reads before
+    // uploading. This is the moment somebody is actually choosing.
     open();
-    const hint = q("#equity-receipt-plan-evidence-hint").textContent ?? "";
-    expect(hint).toMatch(/whatever plan you're on/);
+    const hint = q("#equity-receipt-receipt-hint").textContent ?? "";
+    expect(hint).toMatch(/on your device or on our server/i);
+    expect(hint).toMatch(/18 months/);
+    expect(hint).toMatch(/private storage/i);
+  });
+
+  it("does not promise that the image stays on the device", () => {
+    // Phase 8 §8.1 once said the image never leaves the device. The owner's
+    // rule (2026-10-07) allows either place, so asserting the stronger version
+    // anywhere a rider can read it would be a promise the software may break.
+    open();
+    expect(document.body.textContent).not.toMatch(/never leaves your device/i);
+    expect(document.body.textContent).not.toMatch(/stays on your device/i);
+  });
+
+  it("asks for no plan screenshot at all", () => {
+    // It was required until 2026-10-07, with a hint explaining that the
+    // contract gives the Equity Area rate whatever plan you are on. The field
+    // is gone; the rider's own answer in the Plan select is what we use.
+    open();
+    expect(document.getElementById("equity-receipt-plan-evidence")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/plan screenshot/i);
+    // The plan SELECT stays — we still ask which plan, we just believe them.
+    expect(q<HTMLSelectElement>("#equity-receipt-plan")).not.toBeNull();
   });
 
   it("shows inline errors, announced, and sends nothing", () => {

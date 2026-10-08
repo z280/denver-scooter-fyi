@@ -291,3 +291,92 @@ describe("clampFreeMinutes", () => {
     expect(clampFreeMinutes(Infinity)).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// §11.5 — battery reach
+//
+// The deciding lives in `ride-reach.ts` and is tested there. What is pinned
+// here is the part only the announcer owns: that it is said ONCE, that it is
+// ordered against the other cues, and that every reason for silence silences
+// it rather than hedging it.
+// ---------------------------------------------------------------------------
+
+const HERE = { lat: 39.7526, lng: -105.0 };
+/** A destination far enough east that 1 km of range cannot cover it. */
+const FAR = { lat: 39.7526, lon: -104.94 };
+
+const shortReach = () => ({
+  startRangeMeters: 1_000,
+  travelledMeters: 0,
+  at: HERE,
+  dest: FAR,
+});
+
+describe("battery reach", () => {
+  it("says it once, however many fixes arrive", () => {
+    // The condition is STICKY — range only falls, distance only grows — so a
+    // missing dedup would fire this on every fix for the rest of the ride.
+    const { all } = run([
+      { reach: shortReach() },
+      { reach: shortReach() },
+      { reach: { ...shortReach(), travelledMeters: 500 } },
+    ]);
+    expect(all.filter((a) => a.kind === "battery_reach")).toHaveLength(1);
+  });
+
+  it("buzzes, because it is worth acting on", () => {
+    const { all } = run([{ reach: shortReach() }]);
+    expect(all[0].kind).toBe("battery_reach");
+    expect(all[0].haptic).toBe(true);
+  });
+
+  it("outranks a turn cue on the same fix", () => {
+    // Not a money fact, but the one thing that can end the ride early — and a
+    // turn cue comes round again on the next sample.
+    const { all } = run([{ reach: shortReach(), maneuver: turn(30) }]);
+    expect(all.map((a) => a.kind)).toEqual(["battery_reach", "turn"]);
+  });
+
+  it("comes after the money moments, which are the most on-mission", () => {
+    const { all } = run([
+      { insideEquityArea: false },
+      { insideEquityArea: true, reach: shortReach() },
+    ]);
+    expect(all.map((a) => a.kind)).toEqual(["equity_entered", "battery_reach"]);
+  });
+
+  it("says nothing at all when the ride cannot answer the question", () => {
+    // THE CONFIDENCE FLOOR, at the announcer's edge: `reach` absent is the one
+    // check, and it must not produce a hedged warning.
+    expect(run([{ reach: null }]).all).toEqual([]);
+    expect(run([{}]).all).toEqual([]);
+    expect(run([{ reach: { ...shortReach(), startRangeMeters: null } }]).all).toEqual([]);
+    expect(run([{ reach: { ...shortReach(), dest: null } }]).all).toEqual([]);
+    expect(run([{ reach: { ...shortReach(), at: null } }]).all).toEqual([]);
+  });
+
+  it("says nothing when the battery is fine", () => {
+    expect(run([{ reach: { ...shortReach(), startRangeMeters: 50_000 } }]).all).toEqual([]);
+  });
+
+  it("is silenced by mute, by a popup, and by not riding", () => {
+    for (const over of [
+      { muted: true },
+      { blocked: true },
+      { status: "paused" },
+    ]) {
+      expect(run([{ reach: shortReach(), ...over }]).all).toEqual([]);
+    }
+  });
+
+  it("is still owed after the silence lifts", () => {
+    // Nothing is marked spoken while silent, so a warning withheld during a
+    // BRB arrives when the rider is moving again — unlike a turn, it does not
+    // stop being true.
+    const { all } = run([
+      { reach: shortReach(), muted: true },
+      { reach: shortReach() },
+    ]);
+    expect(all.map((a) => a.kind)).toEqual(["battery_reach"]);
+  });
+});
