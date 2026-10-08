@@ -149,6 +149,7 @@ import {
 } from "./qr-ride-scan.ts";
 import { submitDeviceReport } from "./reports.ts";
 import { learnFromReceipt } from "./cost-calibration.ts";
+import { precheckReceipt } from "./receipt-precheck.ts";
 import { peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
@@ -226,8 +227,8 @@ import {
   takeTabHint,
   writeTabHint,
 } from "./account-tabs.ts";
-import { type IndexedFeature } from "./geo.ts";
-import { OVERLAY_BY_LAYER, OVERLAYS, REFRESH_MS } from "./config.ts";
+import { pointInAny, type IndexedFeature } from "./geo.ts";
+import { OVERLAY_BY_LAYER, OVERLAYS, RATE_PLANS, REFRESH_MS } from "./config.ts";
 import { getAuth, isAuthenticated } from "./map-auth.js";
 import { initInstallPrompt } from "./install-prompt.ts";
 import { installUndoFreeTyping } from "./ios-shake-undo.ts";
@@ -419,6 +420,36 @@ function openEquityReceipt(): void {
     // one. Fire-and-forget: a rider filing a receipt is not waiting on our
     // cost estimate, and a failed rides fetch must not turn into an error on
     // a form that already succeeded.
+    // The local pre-check: run §8.4's bar over what the rider typed, before
+    // the receipt image is uploaded. A receipt whose own figures match the
+    // Equity Area rate has nothing to claim, so there is nothing to spend a
+    // phone connection and eighteen months of storage on — and nothing for a
+    // server to read, which is the cost this saves.
+    precheck: async (facts) => {
+      const start = facts.pinStart;
+      const end = facts.pinEnd;
+      let inArea: boolean | null = null;
+      if (start !== null || end !== null) {
+        try {
+          const zones = await equityAreaFeatures();
+          inArea =
+            (start !== null && pointInAny(start.lng, start.lat, zones)) ||
+            (end !== null && pointInAny(end.lng, end.lat, zones));
+        } catch {
+          // Left as null: "we did not look", which sends.
+        }
+      }
+      return precheckReceipt({
+        minutes: facts.minutes,
+        totalCents: facts.totalCents,
+        startedOrEndedInArea: inArea,
+        // The rider's own declared tier. `unknown` resolves to null, which is
+        // `tier_unresolved` — and that sends, because without a tier there is
+        // no expected charge to compare against.
+        rate: RATE_PLANS.find((p) => p.key === facts.declaredRatePlan) ?? null,
+        taxRate: currentTaxRate(),
+      });
+    },
     onReceiptFiled: (facts) => void learnFromFiledReceipt(facts),
     returnFocusTo: document.getElementById("equity-indicator"),
   });

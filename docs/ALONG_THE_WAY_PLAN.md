@@ -1848,6 +1848,37 @@ value is that it reaches somebody. `complaintReady()` is what stops a blank
 manual entry is the stated fallback), `receipt-panel.ts`, `account-confirm.ts`,
 and §8.6's three API clients.
 
+> **THE BAR NOW HAS A FIRST SURFACE, and it is a cost saving rather than a new
+> screen.** The owner's answer on §8.1 (2026-10-08) was to *"repurpose it as a
+> local pre-check, and try to avoid server-side OCR costs if possible"* —
+> `receipt-precheck.ts`, wired into the "didn't get the discount?" form.
+>
+> **There is no OCR in it, and that is the point.** The rider has already typed
+> the minutes and the cost, which is what §8.3 settled on because *"receipt
+> layouts change without notice, and a misread total is a rider sent to lose an
+> argument in public"*. So the figures are already in hand; what was missing was
+> anybody asking the verdict before spending an upload. Every report used to
+> send a photograph of a receipt over a phone connection, to be stored for
+> eighteen months and read on a server, including the ones whose own typed
+> figures said the charge was right.
+>
+> **It can only ever HOLD a report back for confirmation; it cannot refuse
+> one.** `send` is the default for every uncertainty, and the asymmetry is the
+> whole design: a report we did not need costs an upload, while a report we
+> talked the rider out of costs them the claim. So `nothing_to_claim` requires a
+> positive `correct` — geography established, tier known, arithmetic done and
+> matching — and every `cannot_tell` sends, including the Pass rider whose
+> charge matches, whose unproven dollar §8.4 already refuses to bless. A failed
+> pre-check sends too.
+>
+> "Send it anyway" is a real button, first, not a link under a paragraph: our
+> polygons, our copy of the rider's tier and our reading of the contract are
+> each one thing that could be wrong, and the rider came here because they
+> believe they were overcharged.
+>
+> The image still goes up when a report is actually sent, because that is the
+> evidence. What this saves is the ones that never needed sending.
+
 
 All three, or no claim is made:
 

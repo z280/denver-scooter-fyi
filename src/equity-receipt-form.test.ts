@@ -599,3 +599,116 @@ describe("review fixes (#108)", () => {
     expect(mod.parseCents("1000.01")).toEqual({ kind: "ok", value: 100_001 });
   });
 });
+
+describe("the local pre-check, before anything is uploaded", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const q = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
+  let close: (() => void) | null = null;
+
+  afterEach(() => {
+    close?.();
+    close = null;
+    document.body.replaceChildren();
+  });
+
+  function open(over: Partial<ReceiptFormDeps> = {}) {
+    const deps: ReceiptFormDeps = {
+      isSignedIn: () => true,
+      openSignIn: vi.fn(),
+      loadRatePlan: () => Promise.resolve("resident_plus"),
+      submit: vi.fn(() =>
+        Promise.resolve({
+          id: 1,
+          created_at: "2026-10-07T18:00:00Z",
+          status: "received" as const,
+          receipt_stored: true,
+        }),
+      ),
+      now: () => NOW,
+      ...over,
+    };
+    close = openEquityReceiptForm(deps);
+    return deps;
+  }
+
+  function fillAndSend(): void {
+    q<HTMLInputElement>("#equity-receipt-plate").value = "101 8354";
+    q<HTMLInputElement>("#equity-receipt-minutes").value = "16";
+    q<HTMLInputElement>("#equity-receipt-subtotal").value = "5.00";
+    q<HTMLInputElement>("#equity-receipt-date").value = "2026-09-29";
+    Object.defineProperty(q<HTMLInputElement>("#equity-receipt-receipt"), "files", {
+      value: [png("receipt.png")],
+      configurable: true,
+    });
+    q<HTMLFormElement>(".equity-receipt__form").dispatchEvent(
+      new Event("submit", { cancelable: true }),
+    );
+  }
+
+  const held = {
+    kind: "nothing_to_claim" as const,
+    verdict: {
+      verdict: "correct" as const,
+      reason: "matches_expected" as const,
+      expected: { unlock: 100, perMin: 208, tax: 27, total: 335 },
+      differenceCents: 0,
+    },
+    expectedCents: 335,
+    chargeCents: 335,
+  };
+
+  it("holds the upload back when the rider's own figures match", async () => {
+    const deps = open({ precheck: vi.fn(async () => held) });
+    fillAndSend();
+    await flush();
+    expect(deps.submit).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("nothing here to claim");
+    expect(document.body.textContent).toContain("$3.35 charged against $3.35 expected");
+  });
+
+  it("'Send it anyway' sends, through the same path, without re-entry", async () => {
+    // Our geography, our copy of their tier and our reading of the contract
+    // are each one thing that could be wrong, and the rider knows things we do
+    // not. A pre-check that could refuse would be the wrong tool.
+    const precheck = vi.fn(async () => held);
+    const deps = open({ precheck });
+    fillAndSend();
+    await flush();
+    const anyway = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Send it anyway",
+    )!;
+    expect(document.activeElement).toBe(anyway);
+    anyway.click();
+    await flush();
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+    // And it is not asked a second time about the same figures.
+    expect(precheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends straight through when there IS something to claim", async () => {
+    const deps = open({
+      precheck: vi.fn(async () => ({ kind: "send" as const, verdict: null })),
+    });
+    fillAndSend();
+    await flush();
+    await flush();
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a FAILED pre-check never costs the rider their report", async () => {
+    const deps = open({
+      precheck: vi.fn(() => Promise.reject(new Error("polygons unavailable"))),
+    });
+    fillAndSend();
+    await flush();
+    await flush();
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no pre-check wired, every report sends exactly as before", async () => {
+    const deps = open();
+    fillAndSend();
+    await flush();
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+  });
+});
