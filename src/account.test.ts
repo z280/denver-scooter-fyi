@@ -37,6 +37,7 @@ vi.mock("./map-auth.js", () => ({ signOut: vi.fn().mockResolvedValue(undefined) 
 vi.mock("./geocode.ts", () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
 
 import { renderSignedInAccount, type AccountPanelMounts } from "./account.ts";
+import { readSlot } from "./favorite-slots.ts";
 import { saveRatePlan } from "./ride-cost.ts";
 import type { Profile } from "./api.ts";
 
@@ -584,6 +585,28 @@ describe("home and work locations", () => {
       work_lat: 39.73922,
       work_lng: -104.98761,
     });
+  });
+
+  it("mirrors the saved location down into the Home favourite slot", async () => {
+    // The profile column is canonical — it survives a new device and feeds the
+    // map pins — but the two "Where to?" surfaces read the favourite store and
+    // nothing else, so without the mirror a rider sets their doorstep here and
+    // is never offered it when they go somewhere.
+    const mounts = makeMounts();
+    const onFavoritesChanged = vi.fn();
+    renderSignedInAccount(body, AUTH, {
+      ...deps(),
+      panels: mounts,
+      pickLocation: async () => ({ lat: 39.7, lng: -104.9 }),
+      onFavoritesChanged,
+    });
+    await settle();
+
+    button(rowFor(mounts, "Home location"), "Pick on map")!.click();
+    await settle();
+
+    expect(readSlot("home").place).toEqual({ lat: 39.7, lon: -104.9 });
+    expect(onFavoritesChanged).toHaveBeenCalled();
   });
 
   it("writes nothing when the rider cancels the pick", async () => {

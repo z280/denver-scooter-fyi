@@ -29,6 +29,7 @@ import {
   setRatePlanSyncHook,
   toApiRatePlan,
 } from "./ride-cost.ts";
+import { assignSlotPlace, clearSlot } from "./favorite-slots.ts";
 import { reverseGeocode } from "./geocode.ts";
 import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
@@ -75,6 +76,10 @@ export interface AccountSignedInDeps {
   pickLocation?(kind: "home" | "work"): Promise<{ lat: number; lng: number } | null>;
   /** Home/work moved (or were cleared): redraw the pins. */
   onLocationsChanged?(points: HomeWorkPoints): void;
+  /** The Home/Work favourite slots were mirrored from a profile write. Only
+   *  for anything holding a rendered copy of the favourites — both "Where to?"
+   *  surfaces read the store when they open, so they need no push. */
+  onFavoritesChanged?(): void;
   /** The rate-plan control lives on the In-Ride tab now, outside this module,
    *  because it has to work signed out. These two are the seam back to it:
    *  `onRatePlanResolved` fires once the profile GET has reconciled the
@@ -519,6 +524,15 @@ export function renderSignedInAccount(
         .then(() => {
           rowStatus.set("Saved.");
           renderValue();
+          // Mirror into the Home/Work favourite SLOTS, which is what the two
+          // "Where to?" surfaces render. The profile column stays canonical —
+          // it drives the map pins and the profile-completion award, and it is
+          // the copy that survives a new device — but a rider who sets their
+          // doorstep here expects to see it offered when they go somewhere,
+          // and the slot store is the only thing those lists read.
+          if (lat == null || lng == null) clearSlot(kind);
+          else assignSlotPlace(kind, { lat, lon: lng });
+          deps.onFavoritesChanged?.();
         })
         .catch((err: unknown) => {
           rowStatus.set(

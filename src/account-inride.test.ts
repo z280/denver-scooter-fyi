@@ -211,6 +211,35 @@ describe("favourite destinations", () => {
     expect(loadFavorites().some((f) => f.id === "slot:home")).toBe(true);
   });
 
+  it("reports Home and Work up to the server half, and only those two", async () => {
+    // The seam exists so the profile's home_lat/work_lat columns — which draw
+    // the map pins and count towards the profile-completion award — do not
+    // disagree with the slot the rider just set. The two custom slots have no
+    // column, so firing for them would be a patch with nothing in it.
+    const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
+    const onHomeWorkChanged = vi.fn();
+    buildInRidePanel(host, { pickLocation, onHomeWorkChanged });
+
+    button(slotRow("Work"), "Pick on map")!.click();
+    await vi.waitFor(() => {
+      expect(onHomeWorkChanged).toHaveBeenCalledWith("work", {
+        lat: 39.7,
+        lon: -104.9,
+      });
+    });
+
+    // Clearing is a write too: the column has to go null with the slot.
+    button(slotRow("Work"), "Clear")!.click();
+    expect(onHomeWorkChanged).toHaveBeenLastCalledWith("work", null);
+
+    onHomeWorkChanged.mockClear();
+    button(slotRow("Custom 2"), "Pick on map")!.click();
+    await vi.waitFor(() => {
+      expect(readSlot("custom2").place).not.toBeNull();
+    });
+    expect(onHomeWorkChanged).not.toHaveBeenCalled();
+  });
+
   it("renames a custom slot once it has a place", async () => {
     const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
     buildInRidePanel(host, { pickLocation });

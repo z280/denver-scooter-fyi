@@ -422,10 +422,19 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
 
     // Empty input: everything the rider has already told us, before we ask
     // them to type anything.
-    renderPinned();
-    if (favorites.length > 0) {
+    const pinnedPlaces = renderPinned();
+    // One doorstep, one row. The pinned pair is drawn from the profile's
+    // home/work columns and the Home/Work favourite SLOTS hold the same two
+    // places device-locally, so a signed-in rider who set them in settings has
+    // each place twice over — once above, once in the list. Screen 3 already
+    // drops the duplicate by coordinates and says why; this is the same rule,
+    // and it was the one surface missing it.
+    const listedFavorites = favorites.filter(
+      (f) => !pinnedPlaces.some((p) => isSamePlace(p, f)),
+    );
+    if (listedFavorites.length > 0) {
       listEl.append(section("Saved places"));
-      for (const f of favorites) {
+      for (const f of listedFavorites) {
         listEl.append(
           row(`${f.emoji} ${f.label}`.trim(), null, () =>
             // Saved places skip the recents ledger: they are permanent rows
@@ -436,7 +445,9 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
       }
     }
     const unsavedRecents = recents.filter(
-      (r) => !favorites.some((f) => isSamePlace(f, r)),
+      (r) =>
+        !favorites.some((f) => isSamePlace(f, r)) &&
+        !pinnedPlaces.some((p) => isSamePlace(p, r)),
     );
     if (unsavedRecents.length > 0) {
       listEl.append(section("Recent"));
@@ -473,7 +484,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
    *  the grid below is written so that state cannot be expressed. Neither
    *  set renders nothing at all, not an empty row or a pair of placeholders
    *  prompting setup; that belongs in the profile, where they are set. */
-  function renderPinned(): void {
+  function renderPinned(): TripPlace[] {
     // Shown for the start slot too: "where are you starting from?" has the
     // same two most-likely answers, and `pick` already routes by slot.
     const pinned: { glyph: string; label: string; place: TripPlace }[] = [];
@@ -483,7 +494,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     if (homeWork.work) {
       pinned.push({ glyph: "💼", label: "Work", place: homeWork.work });
     }
-    if (pinned.length === 0) return;
+    if (pinned.length === 0) return [];
 
     const grid = el("div", "home-bar__pinned");
     // The class carries the count, so CSS decides the widths and no branch
@@ -505,6 +516,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
       grid.append(btn);
     }
     listEl.append(grid);
+    return pinned.map((p) => p.place);
   }
 
   /** The start-point line. Three states, and none of them is a demand:

@@ -10,7 +10,8 @@ import {
   type DeviceInclude,
   fetchProfile,
   liveDibs,
-  releaseDibs,} from "./api.ts";
+  releaseDibs,
+  updateProfile,} from "./api.ts";
 import { createMap } from "./map.ts";
 import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
 import {
@@ -4873,9 +4874,41 @@ function wireAccount(): void {
     pickLocation: (label) =>
       mapPick.pick({ hint: `Tap the map to set ${label}` }),
     // The destination lists read the store when they open, so nothing has to
-    // be pushed at them — except the map pins, which are drawn from the
-    // profile's own home/work columns and are a different thing entirely.
+    // be pushed at them.
     onFavoritesChanged: () => {},
+    // The Home and Work slots have a server half. Mirroring the write up to
+    // the profile is what keeps the two sides of a rider's doorstep from
+    // disagreeing: the account drawer's own location rows already mirror
+    // DOWNWARD into these slots, the map pins are drawn from the profile
+    // columns, and the profile-completion award counts one of them. Without
+    // this, a rider could set Home here and still be told to complete their
+    // profile.
+    //
+    // Signed out it does nothing, by design — the slot stays device-local,
+    // which is the point of the slots. Failures are swallowed: the local write
+    // already happened and the row already says "Saved", so a dead network
+    // must not retract it. The next profile GET reconciles.
+    onHomeWorkChanged: (kind, point) => {
+      if (!isAuthenticated()) return;
+      const patch =
+        kind === "home"
+          ? { home_lat: point?.lat ?? null, home_lng: point?.lon ?? null }
+          : { work_lat: point?.lat ?? null, work_lng: point?.lon ?? null };
+      void updateProfile(patch)
+        .then((p) => {
+          homeWorkPins.set({
+            home:
+              p.home_lat != null && p.home_lng != null
+                ? { lat: p.home_lat, lng: p.home_lng }
+                : null,
+            work:
+              p.work_lat != null && p.work_lng != null
+                ? { lat: p.work_lat, lng: p.work_lng }
+                : null,
+          });
+        })
+        .catch(() => {});
+    },
   });
 
   const buildSignedOut = (): void => {
@@ -4951,6 +4984,9 @@ function wireAccount(): void {
                   : "Tap the map to set your work",
             }),
           onLocationsChanged: (points) => homeWorkPins.set(points),
+          // A profile home/work write mirrors down into the favourite slots,
+          // so the In-Ride tab's rows are stale until they re-read.
+          onFavoritesChanged: () => inRide?.refresh(),
           onCompletenessChanged: (complete) =>
             tabs.setFlagged("profile", !complete),
           // Null until /auth/config resolves — the row treats unknown as

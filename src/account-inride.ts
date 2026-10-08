@@ -49,6 +49,20 @@ export interface InRidePanelDeps {
   /** A favourite was added, renamed or cleared. The destination lists read the
    *  store on open, so this is only for anything holding a rendered copy. */
   onFavoritesChanged?(): void;
+  /** The Home or Work slot was set or cleared. Those two have a server half —
+   *  the profile's `home_lat`/`work_lat` columns, which draw the map pins and
+   *  count towards the profile-completion award — and this is the seam to it,
+   *  for the same reason the rate plan has one: this module never imports the
+   *  API client, so the host decides whether anything is listening. Absent, or
+   *  signed out, and the slot is simply device-local, which is the whole point
+   *  of the slots. Never fired for the two custom slots: they have no column.
+   *
+   *  Fired AFTER the local write, so the rider's row is already correct and a
+   *  failed round trip costs them nothing they can see. */
+  onHomeWorkChanged?(
+    kind: "home" | "work",
+    place: { lat: number; lon: number } | null,
+  ): void;
 }
 
 export interface InRidePanelHandle {
@@ -297,6 +311,9 @@ export function buildInRidePanel(
       status.set(persisted ? "Saved." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
+      if (id === "home" || id === "work") {
+        deps.onHomeWorkChanged?.(id, { lat, lon });
+      }
     };
 
     useBtn.addEventListener("click", () => {
@@ -340,6 +357,7 @@ export function buildInRidePanel(
       status.set(persisted ? "Cleared." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
+      if (id === "home" || id === "work") deps.onHomeWorkChanged?.(id, null);
     });
 
     const openRename = (): void => {
