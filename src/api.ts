@@ -625,6 +625,16 @@ export interface Profile {
    *  difference is what stops a sync wiping the server copy. See
    *  `saved-places-sync.ts`. */
   saved_places?: SavedPlace[];
+  /** DRAINING, like `favorites` above, and for the same reason: a rider's Home
+   *  and Work are two of the four favourite SLOTS now, and the slots reach the
+   *  account through `saved_places`. Nothing in this client writes these four
+   *  any more — the map pins, the "Where to?" pinned pair and Screen 3's saved
+   *  rows all read the slots, which works signed out and cannot disagree with
+   *  the control that sets them.
+   *
+   *  Still READ in one place: `isProfileComplete`, which mirrors the server's
+   *  own criteria for the ten-point completion award. That award is the last
+   *  thing holding these columns up, and moving it is an API change. */
   home_lat: number | null;
   home_lng: number | null;
   work_lat: number | null;
@@ -667,10 +677,6 @@ export type ProfileUpdate = Partial<
     | "rate_plan"
     | "theme"
     | "saved_places"
-    | "home_lat"
-    | "home_lng"
-    | "work_lat"
-    | "work_lng"
     | "royalty_title"
     | "ruling_color"
     | "ruling_border_color"

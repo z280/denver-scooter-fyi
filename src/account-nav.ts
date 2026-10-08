@@ -20,7 +20,7 @@
 // subject is the one that moved.
 //
 // SAME SEAMS AS `account-inride.ts`, deliberately: no API client, no map
-// import. `pickLocation` and `onHomeWorkChanged` are passed in, so this module
+// import. `pickLocation` is passed in, so this module
 // stays testable without either.
 
 import {
@@ -53,24 +53,14 @@ export interface NavPanelDeps {
   /** A favourite was added, renamed or cleared. The destination lists read the
    *  store on open, so this is only for anything holding a rendered copy. */
   onFavoritesChanged?(): void;
-  /** The Home or Work slot was set or cleared. Those two have a server half —
-   *  the profile's `home_lat`/`work_lat` columns, which draw the map pins and
-   *  count towards the profile-completion award — and this is the seam to it:
-   *  this module never imports the API client, so the host decides whether
-   *  anything is listening. Absent, or signed out, and the slot is simply
-   *  device-local. Never fired for the two custom slots: they have no column.
+  /** A Home or Work slot changed. Only for redrawing the map pins, which are
+   *  drawn from these slots — there is no profile column to mirror into any
+   *  more. Fired for the two custom slots too, since all four are saved places
+   *  and the caller may care about any of them.
    *
-   *  Note this is NOT how the slots reach the account's `saved_places` — that
-   *  is `favorites.ts`'s own sync hook, which fires for all four and for every
-   *  other saved place besides. These two columns are the older, narrower
-   *  mirror, kept because the map pins and the completion award read them.
-   *
-   *  Fired AFTER the local write, so the rider's row is already correct and a
-   *  failed round trip costs them nothing they can see. */
-  onHomeWorkChanged?(
-    kind: "home" | "work",
-    place: { lat: number; lon: number } | null,
-  ): void;
+   *  NOT how a slot reaches the account: that is `favorites.ts`'s own sync
+   *  hook, which carries all four (and every other saved place) into the
+   *  encrypted `saved_places` blob without this module knowing. */
   /** Whether the rider has configured an "ideal scooter".
    *
    *  Asked rather than imported: the spec lives behind a panel in another
@@ -315,9 +305,6 @@ export function buildNavPanel(
       status.set(persisted ? "Saved." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
-      if (id === "home" || id === "work") {
-        deps.onHomeWorkChanged?.(id, { lat, lon });
-      }
     };
 
     useBtn.addEventListener("click", () => {
@@ -361,7 +348,6 @@ export function buildNavPanel(
       status.set(persisted ? "Cleared." : NOT_PERSISTED, !persisted);
       rerenderSlots();
       deps.onFavoritesChanged?.();
-      if (id === "home" || id === "work") deps.onHomeWorkChanged?.(id, null);
     });
 
     const openRename = (): void => {

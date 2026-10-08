@@ -330,7 +330,7 @@ describe("Screen 3 — saved places (home/work)", () => {
       }),
     );
     const session = sessionAt("3");
-    wire(session, { getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    wire(session, { getHomeWork: () => ({ home: HOME, work: WORK }) });
     openRideModal({ fastForwardTo: "3" });
     await flush();
     const text = rideModalRoot()?.textContent ?? "";
@@ -341,7 +341,7 @@ describe("Screen 3 — saved places (home/work)", () => {
 
   it("picking Home dispatches the saved coordinates and advances", async () => {
     const session = sessionAt("3");
-    wire(session, { getHomeWork: async () => ({ home: HOME, work: null }) });
+    wire(session, { getHomeWork: () => ({ home: HOME, work: null }) });
     openRideModal({ fastForwardTo: "3" });
     await flush();
     const row = optionRows().find((r) => r.textContent?.includes("Home"));
@@ -360,7 +360,7 @@ describe("Screen 3 — saved places (home/work)", () => {
 
   it("renders no Saved-places section when the profile has neither", async () => {
     const session = sessionAt("3");
-    wire(session, { getHomeWork: async () => ({ home: null, work: null }) });
+    wire(session, { getHomeWork: () => ({ home: null, work: null }) });
     openRideModal({ fastForwardTo: "3" });
     await flush();
     expect(rideModalRoot()?.textContent).not.toContain("Saved places");
@@ -368,7 +368,7 @@ describe("Screen 3 — saved places (home/work)", () => {
 
   it("only Work set: no Home row, and the section still renders", async () => {
     const session = sessionAt("3");
-    wire(session, { getHomeWork: async () => ({ home: null, work: WORK }) });
+    wire(session, { getHomeWork: () => ({ home: null, work: WORK }) });
     openRideModal({ fastForwardTo: "3" });
     await flush();
     const text = rideModalRoot()?.textContent ?? "";
@@ -377,10 +377,15 @@ describe("Screen 3 — saved places (home/work)", () => {
     expect(text).not.toContain("🏠 Home");
   });
 
-  it("a rejecting or throwing loader costs only the rows, never the screen", async () => {
+  it("a throwing loader costs only the rows, never the screen", async () => {
+    // Only an INJECTED loader can throw — the default reads localStorage
+    // through `favorite-slots.ts`, which cannot. Still caught, because the
+    // saved rows are a bonus and recents and search carry the screen.
     const session = sessionAt("3");
     wire(session, {
-      getHomeWork: () => Promise.reject(new Error("profile down")),
+      getHomeWork: () => {
+        throw new Error("profile down");
+      },
     });
     openRideModal({ fastForwardTo: "3" });
     await flush();
@@ -402,35 +407,6 @@ describe("Screen 3 — saved places (home/work)", () => {
     expect(input()).not.toBeNull();
   });
 
-  it("a late profile answer does not stomp live search results", async () => {
-    // The rider starts typing before the profile fetch lands: the answer
-    // must be held for the next empty-input view, not re-rendered over the
-    // results list.
-    let resolveHomeWork: (p: { home: typeof HOME | null; work: null }) => void = () => {};
-    const session = sessionAt("3");
-    const fs = fakeSearch();
-    wire(session, {
-      createSearch: fs.createSearch,
-      getHomeWork: () =>
-        new Promise((resolve) => {
-          resolveHomeWork = resolve;
-        }),
-    });
-    openRideModal({ fastForwardTo: "3" });
-    // Let the (deliberately still-pending) loader be invoked so its
-    // resolver is captured, then start typing before it answers.
-    await flush();
-    typeInto("colfax");
-    fs.emitResults([result("1 Colfax Ave")], "colfax");
-    resolveHomeWork({ home: HOME, work: null });
-    await flush();
-    const text = rideModalRoot()?.textContent ?? "";
-    expect(text).toContain("1 Colfax Ave");
-    expect(text).not.toContain("Saved places");
-    // …but clearing the field brings the saved rows straight back.
-    typeInto("");
-    expect(rideModalRoot()?.textContent).toContain("🏠 Home");
-  });
 });
 
 describe("Screen 3 — recent destinations", () => {
@@ -597,13 +573,14 @@ describe("wireRideScreenDest — saved places", () => {
     expect(loadRecentDests()).toEqual([]);
   });
 
-  it("shows one Home when the profile and the local list agree", () => {
-    // Same doorstep, two sources. A rider seeing their own house twice would
-    // reasonably conclude one of them is wrong.
+  it("shows one Home when a saved place sits on the same doorstep", () => {
+    // The pinned pair IS two of the favourites now, so the duplicate this
+    // guards against is a rider who also saved their house under another name
+    // — close enough in coordinates to be the same door. Seeing their own
+    // house twice, they would reasonably conclude one of them is wrong.
     recordFavorite({ emoji: "🏠", label: "Home", lat: 39.74001, lon: -104.99001 });
     openAt3({
-      getHomeWork: () =>
-        Promise.resolve({ home: { lat: 39.74, lng: -104.99 }, work: null }),
+      getHomeWork: () => ({ home: { lat: 39.74, lng: -104.99 }, work: null }),
     });
     return Promise.resolve().then(() => {
       expect(optionRows().filter((r) => r.textContent?.includes("Home"))).toHaveLength(1);

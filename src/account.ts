@@ -30,7 +30,6 @@ import {
   setRatePlanSyncHook,
   toApiRatePlan,
 } from "./ride-cost.ts";
-import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 import { TERRITORY_FILL_OPACITY, hexWithAlpha } from "./leaderboard.ts";
 import { setRibbonOpen } from "./chrome.ts";
@@ -66,17 +65,11 @@ export interface AccountSignedInDeps {
   onAuthLost(): void;
   /** Tab mount points; absent means the legacy single-body layout. */
   panels?: AccountPanelMounts;
-  /** The profile is (in)complete. Lets the tab strip carry the nag, so it is
-   *  visible from Community or Local Data too — the ten points are easy to
-   *  miss when the hint only lives on the tab you are not looking at. */
-  onCompletenessChanged?(complete: boolean): void;
   /** Whether the backend can actually send a text right now (`sms_enabled`
    *  from /auth/config), or null while that is still unknown. Read on every
    *  render rather than captured, because the config resolves independently
    *  of the profile and may land after this panel is built. */
   smsEnabled?(): boolean | null;
-  /** Home/work moved (or were cleared): redraw the pins. */
-  onLocationsChanged?(points: HomeWorkPoints): void;
   /** The account's saved places, as they arrived with the profile.
    *
    *  Handed over rather than acted on here, because merging them into the
@@ -380,26 +373,9 @@ export function renderSignedInAccount(
     if (!disposed && seq === saveSeq) {
       profile = updated;
       refreshHint();
-      publishLocations();
       onProfileSaved?.();
     }
     return updated;
-  };
-
-  /** Keep the map's home/work pins in step with the profile. */
-  const publishLocations = (): void => {
-    if (!deps.onLocationsChanged) return;
-    const p = profile;
-    deps.onLocationsChanged({
-      home:
-        p?.home_lat != null && p.home_lng != null
-          ? { lat: p.home_lat, lng: p.home_lng }
-          : null,
-      work:
-        p?.work_lat != null && p.work_lng != null
-          ? { lat: p.work_lat, lng: p.work_lng }
-          : null,
-    });
   };
 
   // ----- Completion hint (10 one-time points; criteria mirror the API) ----
@@ -409,9 +385,12 @@ export function renderSignedInAccount(
     "⭐ Complete your profile — email, phone, rate plan, and one location — to earn 10 bonus points.",
   );
   const refreshHint = (): void => {
-    const complete = profile ? isProfileComplete(profile) : true;
-    hint.hidden = complete;
-    deps.onCompletenessChanged?.(complete);
+    // No listener any more. This used to push the answer out so the tab strip
+    // could carry a dot (`setFlagged`), which existed because the hint was
+    // stuck on a tab the rider might not be looking at. The profile is above
+    // the strip now, so the hint is on screen from every tab and the dot and
+    // its callback both went.
+    hint.hidden = profile ? isProfileComplete(profile) : true;
   };
 
   // ----- Field builders --------------------------------------------------
@@ -1810,7 +1789,6 @@ export function renderSignedInAccount(
         }
         reconcileRatePlan(p);
         registerRateSync();
-        publishLocations();
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -1841,9 +1819,10 @@ export function renderSignedInAccount(
     dispose() {
       disposed = true;
       setRatePlanSyncHook(null);
-      // The pins belong to this session's profile; a signed-out map should
-      // not still be showing where they live.
-      deps.onLocationsChanged?.({ home: null, work: null });
+      // Nothing to retract any more. The map's home/work pins are drawn from
+      // the favourite SLOTS, which are device-local and outlive a session —
+      // signing out does not un-know where the rider lives, and blanking the
+      // pins here used to claim it did.
     },
   };
 }

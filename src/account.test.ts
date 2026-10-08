@@ -531,48 +531,6 @@ describe("phone verification gating", () => {
   });
 });
 
-// ---------- picking a location ----------
-
-describe("where home and work are", () => {
-  // The EDITORS are gone from this panel: Home and Work are the Navigation
-  // tab's slots now (`account-nav.ts`), which own their own tests. What is
-  // still this module's job is reading the two columns off a loaded profile
-  // and telling the map where to put the pins.
-
-  it("reports where home and work are so the map can pin them", async () => {
-    const onLocationsChanged = vi.fn();
-    const mounts = makeMounts();
-    renderSignedInAccount(body, AUTH, {
-      ...deps(),
-      panels: mounts,
-      onLocationsChanged,
-    });
-    await settle();
-
-    expect(onLocationsChanged).toHaveBeenLastCalledWith({
-      home: { lat: 39.7392, lng: -104.9876 },
-      work: null,
-    });
-  });
-
-  it("clears the pins when the panel goes away", async () => {
-    const onLocationsChanged = vi.fn();
-    const mounts = makeMounts();
-    const handle = renderSignedInAccount(body, AUTH, {
-      ...deps(),
-      panels: mounts,
-      onLocationsChanged,
-    });
-    await settle();
-
-    handle.dispose();
-    expect(onLocationsChanged).toHaveBeenLastCalledWith({
-      home: null,
-      work: null,
-    });
-  });
-});
-
 // ---------- rate plan: the account half ----------
 //
 // THE CONTROL MOVED. The select lives on the In-Ride tab now

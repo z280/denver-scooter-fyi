@@ -31,7 +31,7 @@
 // here needed to change.
 // ---------------------------------------------------------------------------
 
-import { orderedFavorites } from "./favorite-slots.ts";
+import { orderedFavorites, readSlot } from "./favorite-slots.ts";
 import {
   registerRideScreen,
   type RideScreen,
@@ -39,8 +39,7 @@ import {
 } from "./ride-modal.ts";
 import type { LngLat, Locate } from "./locate.ts";
 import { markUndoFree } from "./ios-shake-undo.ts";
-import { fetchProfile, type GeocodeKind, type GeocodeResult } from "./api.ts";
-import { isAuthenticated } from "./map-auth.js";
+import type { GeocodeKind, GeocodeResult } from "./api.ts";
 import type { HomeWorkPoints } from "./home-work-pins.ts";
 import type { RideSessionDest, RideSessionStore } from "./ride-session.ts";
 import { track } from "./telemetry.ts";
@@ -168,10 +167,10 @@ export interface RideScreenDestDeps {
    *  wholesale and just assert on what this screen does with its callbacks. */
   createSearch?(handlers: GeocodeSearchHandlers): GeocodeSearchClient;
   /** The rider's saved home/work locations, for the Saved-places rows above
-   *  the recents. Injected for tests; defaults to reading the signed-in
-   *  profile, resolving all-null when signed out or the fetch fails — the
-   *  suggestions are a bonus, never a reason the screen can't render. */
-  getHomeWork?(): Promise<HomeWorkPoints>;
+   *  the recents. Injected for tests; defaults to the two favourite SLOTS,
+   *  which are device state — so this neither waits nor fails, and a
+   *  signed-out rider gets the rows too. */
+  getHomeWork?(): HomeWorkPoints;
   /** Drop a pin by tapping the map, for destinations that have no address to
    *  type. A friend's meetup spot — the gazebo in City Park — is a real
    *  destination that no geocoder will ever return, and without this the
@@ -190,26 +189,16 @@ function defaultCreateSearch(handlers: GeocodeSearchHandlers): GeocodeSearchClie
 
 const NO_HOME_WORK: HomeWorkPoints = { home: null, work: null };
 
-/** Same profile→points mapping `account.ts`'s `publishLocations` uses. A
- *  signed-out rider is the common case and not an error — skip the fetch
- *  entirely rather than burning a guaranteed 401. */
-async function defaultGetHomeWork(): Promise<HomeWorkPoints> {
-  if (!isAuthenticated()) return NO_HOME_WORK;
-  try {
-    const p = await fetchProfile();
-    return {
-      home:
-        p.home_lat != null && p.home_lng != null
-          ? { lat: p.home_lat, lng: p.home_lng }
-          : null,
-      work:
-        p.work_lat != null && p.work_lng != null
-          ? { lat: p.work_lat, lng: p.work_lng }
-          : null,
-    };
-  } catch {
-    return NO_HOME_WORK;
-  }
+/** Home and Work from the FAVOURITE SLOTS, which is where a rider sets them.
+ *
+ *  This used to read the signed-in profile's `home_lat`/`work_lat` columns over
+ *  a `fetchProfile()`. The slots are device-local, so this is synchronous, it
+ *  cannot fail, and it works signed out — which is the state the two previous
+ *  comments here each had to apologise for. */
+function slotHomeWork(): HomeWorkPoints {
+  const asPoint = (slot: { place: { lat: number; lon: number } | null }) =>
+    slot.place ? { lat: slot.place.lat, lng: slot.place.lon } : null;
+  return { home: asPoint(readSlot("home")), work: asPoint(readSlot("work")) };
 }
 
 /** Register Screen 3. Call once at startup; returns an unregister function
@@ -263,7 +252,20 @@ function buildDestScreen(
   /** Saved home/work, all-null until (and unless) the async load lands —
    *  the screen renders immediately either way, and the rows appear on the
    *  re-render when the profile answers. */
-  let saved: HomeWorkPoints = { home: null, work: null };
+  /** Home and Work for the Saved-places rows. Read at BUILD time, where this
+   *  used to be a fire-and-forget profile fetch with a re-render when it landed
+   *  and three failure modes to swallow — device state has none of that, so the
+   *  rows are in the first paint.
+   *
+   *  The try/catch survives only because an INJECTED loader can still throw;
+   *  the default reads localStorage through `favorite-slots.ts` and cannot. The
+   *  rows are a bonus either way — recents and search carry the screen. */
+  let saved: HomeWorkPoints = NO_HOME_WORK;
+  try {
+    saved = (deps.getHomeWork ?? slotHomeWork)();
+  } catch {
+    saved = NO_HOME_WORK;
+  }
   /** Locally saved places — available immediately and to everyone, unlike the
    *  profile's home/work, which need an account and a round trip. */
   let favorites: Favorite[] = orderedFavorites(loadFavorites());
@@ -581,7 +583,7 @@ function buildDestScreen(
             title: `Forget ${f.label}`,
             onClick: () => {
               favorites = orderedFavorites(forgetFavorite(f.id));
-              render();
+  render();
             },
           },
         });
@@ -661,24 +663,6 @@ function buildDestScreen(
     }
   }
   render();
-
-  // Fire-and-forget: the screen is already interactive on recents/search,
-  // and the Saved-places rows appear whenever the profile answers — but
-  // only if the rider is still on the empty-input suggestion view; a
-  // mid-typing re-render would stomp live search results. Wrapped so that
-  // neither a rejecting nor a synchronously-throwing loader (an injected
-  // one — the default can do neither) can break the screen build or leak
-  // an unhandled rejection; either failure just means no saved rows.
-  void Promise.resolve()
-    .then(() => (deps.getHomeWork ?? defaultGetHomeWork)())
-    .then((points) => {
-      if (destroyed) return;
-      saved = points;
-      if (isEmpty()) render();
-    })
-    .catch(() => {
-      /* the suggestions are a bonus — recents and search carry the screen */
-    });
 
   input.addEventListener("input", () => {
     const raw = input.value;

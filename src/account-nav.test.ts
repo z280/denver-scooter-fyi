@@ -87,33 +87,25 @@ describe("favourite destinations", () => {
     expect(loadFavorites().some((f) => f.id === "slot:home")).toBe(true);
   });
 
-  it("reports Home and Work up to the server half, and only those two", async () => {
-    // The seam exists so the profile's home_lat/work_lat columns — which draw
-    // the map pins and count towards the profile-completion award — do not
-    // disagree with the slot the rider just set. The two custom slots have no
-    // column, so firing for them would be a patch with nothing in it.
+  it("tells the host about every slot that changes, customs included", async () => {
+    // There is no profile column to mirror into any more — Home and Work are
+    // two saved places like the other two, and this seam exists only so the
+    // map pins (drawn from these same slots) can be repainted.
     const pickLocation = vi.fn().mockResolvedValue({ lat: 39.7, lng: -104.9 });
-    const onHomeWorkChanged = vi.fn();
-    buildNavPanel(host, { pickLocation, onHomeWorkChanged });
+    const onFavoritesChanged = vi.fn();
+    buildNavPanel(host, { pickLocation, onFavoritesChanged });
 
-    button(slotRow("Work"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(onHomeWorkChanged).toHaveBeenCalledWith("work", {
-        lat: 39.7,
-        lon: -104.9,
-      });
-    });
+    for (const label of ["Work", "Custom 2"]) {
+      onFavoritesChanged.mockClear();
+      button(slotRow(label), "Pick on map")!.click();
+      await vi.waitFor(() => expect(onFavoritesChanged).toHaveBeenCalled());
+    }
 
-    // Clearing is a write too: the column has to go null with the slot.
+    // Clearing is a change too: the pin has to come off the map with the slot.
+    onFavoritesChanged.mockClear();
     button(slotRow("Work"), "Clear")!.click();
-    expect(onHomeWorkChanged).toHaveBeenLastCalledWith("work", null);
-
-    onHomeWorkChanged.mockClear();
-    button(slotRow("Custom 2"), "Pick on map")!.click();
-    await vi.waitFor(() => {
-      expect(readSlot("custom2").place).not.toBeNull();
-    });
-    expect(onHomeWorkChanged).not.toHaveBeenCalled();
+    expect(onFavoritesChanged).toHaveBeenCalled();
+    expect(readSlot("work").place).toBeNull();
   });
 
   it("renames a custom slot once it has a place", async () => {

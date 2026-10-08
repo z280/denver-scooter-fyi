@@ -231,6 +231,7 @@ import {
   type LocalDataHandle,
 } from "./account-local-data.ts";
 import { createHomeWorkPins } from "./home-work-pins.ts";
+import { readSlot } from "./favorite-slots.ts";
 import {
   buildInRidePanel,
   type InRidePanelHandle,
@@ -349,9 +350,20 @@ map.addControl(
   "top-left",
 );
 const devices = new Devices(map, locate);
-// Profile location picking. The drawer gets these as callbacks so account.ts
-// never imports maplibre — and so its tests never need a map.
+// The rider's Home and Work on the map. Drawn from the favourite SLOTS — the
+// only place either is set — rather than from the profile's `home_lat` /
+// `work_lat` columns, which is what they used to follow. Two consequences, both
+// wanted: a SIGNED-OUT rider gets their pins, which they never did before
+// despite the slots having always worked without an account; and the pins
+// cannot disagree with the rows that fill them.
 const homeWorkPins = createHomeWorkPins(map);
+/** Repaint the pins from the slots. Called at boot and whenever a favourite
+ *  changes — there is nothing to fetch, so there is nothing to await. */
+function syncHomeWorkPins(): void {
+  const point = (slot: { place: { lat: number; lon: number } | null }) =>
+    slot.place ? { lat: slot.place.lat, lng: slot.place.lon } : null;
+  homeWorkPins.set({ home: point(readSlot("home")), work: point(readSlot("work")) });
+}
 const trackRoute = createTrackRoute(map);
 // Two different jobs, two different sets of layers on the same map (see
 // ride-trail.ts's header): `trackRoute` draws a FINISHED ride from the account
@@ -1272,6 +1284,13 @@ function wireRecommended(): void {
 }
 
 map.on("load", async () => {
+  // The pins add a source and three layers, so this cannot run before the
+  // style exists — `createHomeWorkPins`'s `ensureLayers` calls `addSource`
+  // unguarded and maplibre throws "Style is not done loading." Calling it at
+  // module load took the whole boot down, and only a real browser showed it:
+  // the previous code reached `set()` for the first time from a resolved
+  // profile fetch, which could not possibly land this early.
+  syncHomeWorkPins();
   // Ask for location now. Almost every number this app shows is relative to
   // where the rider is standing — the walk estimate on every popup, the
   // "worth the walk" ranking, the 75 m proximity gates, which scooter Screen 2
@@ -5290,51 +5309,14 @@ function wireAccount(): void {
   nav = buildNavPanel(tabs.panel("nav"), {
     pickLocation: (label) =>
       mapPick.pick({ hint: `Tap the map to set ${label}` }),
-    // The destination lists read the store when they open, so nothing has to
-    // be pushed at them.
-    onFavoritesChanged: () => {},
     // Whether an "ideal scooter" exists, so the split preference can say
     // plainly that it has nothing to prefer yet.
     hasIdealSpec: () => rideSpecPanel?.activeSpec() != null,
-    // The Home and Work slots have a server half. Mirroring the write up to
-    // the profile is what keeps the two sides of a rider's doorstep from
-    // disagreeing: the account drawer's own location rows already mirror
-    // DOWNWARD into these slots, the map pins are drawn from the profile
-    // columns, and the profile-completion award counts one of them. Without
-    // this, a rider could set Home here and still be told to complete their
-    // profile.
-    //
-    // This is NARROWER than the saved-places sync registered at boot, and both
-    // run: that one carries all four slots (and every other saved place) into
-    // the encrypted `saved_places` blob, while these two plaintext columns
-    // exist because the map pins and the award read them. Dropping them is an
-    // API migration, not a client edit.
-    //
-    // Signed out it does nothing, by design — the slot stays device-local,
-    // which is the point of the slots. Failures are swallowed: the local write
-    // already happened and the row already says "Saved", so a dead network
-    // must not retract it. The next profile GET reconciles.
-    onHomeWorkChanged: (kind, point) => {
-      if (!isAuthenticated()) return;
-      const patch =
-        kind === "home"
-          ? { home_lat: point?.lat ?? null, home_lng: point?.lon ?? null }
-          : { work_lat: point?.lat ?? null, work_lng: point?.lon ?? null };
-      void updateProfile(patch)
-        .then((p) => {
-          homeWorkPins.set({
-            home:
-              p.home_lat != null && p.home_lng != null
-                ? { lat: p.home_lat, lng: p.home_lng }
-                : null,
-            work:
-              p.work_lat != null && p.work_lng != null
-                ? { lat: p.work_lat, lng: p.work_lng }
-                : null,
-          });
-        })
-        .catch(() => {});
-    },
+    // Redraw the map's home/work pins. The pins follow the SLOTS now, not the
+    // profile's `home_lat`/`work_lat` columns — which is what makes them
+    // appear for a signed-out rider, and what stops them disagreeing with the
+    // only control that sets either.
+    onFavoritesChanged: () => syncHomeWorkPins(),
   });
 
   const buildSignedOut = (): void => {
@@ -5407,7 +5389,6 @@ function wireAccount(): void {
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
-          onLocationsChanged: (points) => homeWorkPins.set(points),
           // The saved places arrived with the profile. Merging them into the
           // device's own store is `saved-places-sync.ts`'s job; `undefined`
           // (an older deployment) is passed straight through, because only

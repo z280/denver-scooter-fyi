@@ -39,9 +39,11 @@ import {
   type GeocodeSearchHandlers,
 } from "./geocode-search.ts";
 import { isSamePlace, loadFavorites, type Favorite } from "./favorites.ts";
-import { orderedFavorites } from "./favorite-slots.ts";
-import { fetchProfile } from "./api.ts";
-import { isAuthenticated } from "./map-auth.js";
+import {
+  orderedFavorites,
+  readSlot,
+  type FavoriteSlot,
+} from "./favorite-slots.ts";
 import {
   loadRecentDests,
   recordRecentDest,
@@ -93,11 +95,11 @@ export interface HomeBarDeps {
    *  being planned. */
   onPlacesChange?(places: { dest: TripPlace | null; start: TripPlace | null }): void;
   /** The rider's saved Home and Work, for the pinned row. Injected for tests;
-   *  defaults to the signed-in profile. Only coordinates are stored, so the
-   *  labels are "Home" and "Work" — which is what the rider calls them and
-   *  what should appear as the destination downstream. Never awaited by the
-   *  bar's own open path: the row appears when it appears. */
-  getHomeWork?(): Promise<{ home: TripPlace | null; work: TripPlace | null }>;
+   *  defaults to the two favourite SLOTS, which are device-local and therefore
+   *  readable synchronously and without an account. Returns the labels as well
+   *  as the points, because that is what should appear as the destination
+   *  downstream. */
+  getHomeWork?(): { home: TripPlace | null; work: TripPlace | null };
 }
 
 export interface HomeBarHandle {
@@ -134,29 +136,28 @@ type Slot = "dest" | "start";
 
 const PLACEHOLDER = "Where are you going?";
 
-/** Home/Work off the signed-in profile. A signed-out rider is the common case
- *  and not an error — skip the fetch rather than burning a guaranteed 401,
- *  same as `ride-screen-dest.ts` does for the same two points. */
-async function defaultGetHomeWork(): Promise<{
-  home: TripPlace | null;
-  work: TripPlace | null;
-}> {
-  if (!isAuthenticated()) return { home: null, work: null };
-  try {
-    const p = await fetchProfile();
-    return {
-      home:
-        p.home_lat != null && p.home_lng != null
-          ? { label: "Home", lat: p.home_lat, lon: p.home_lng }
-          : null,
-      work:
-        p.work_lat != null && p.work_lng != null
-          ? { label: "Work", lat: p.work_lat, lon: p.work_lng }
-          : null,
-    };
-  } catch {
-    return { home: null, work: null };
-  }
+/** Home and Work for the pinned row, read from the FAVOURITE SLOTS.
+ *
+ *  These used to come from the signed-in profile's `home_lat`/`work_lat`
+ *  columns, over a `fetchProfile()` the bar fired after its first paint. The
+ *  slots are the only place a rider sets either now, so reading them here is
+ *  what makes the pinned row agree with the control that fills it — and it is
+ *  synchronous device state, so the row is on screen in the first paint, and a
+ *  SIGNED-OUT rider gets it too. They never did before, which was the odd part:
+ *  the slots have always worked without an account.
+ *
+ *  The labels come from the slot, so a renamed custom slot would read as
+ *  itself — though these two are not renameable, by `favorite-slots.ts`'s own
+ *  rule. */
+function pinnedHomeWork(): { home: TripPlace | null; work: TripPlace | null } {
+  const asPlace = (slot: FavoriteSlot): TripPlace | null =>
+    slot.place
+      ? { label: slot.label, lat: slot.place.lat, lon: slot.place.lon }
+      : null;
+  return {
+    home: asPlace(readSlot("home")),
+    work: asPlace(readSlot("work")),
+  };
 }
 
 export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHandle {
@@ -166,13 +167,9 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   let start: TripPlace | null = null;
   let favorites: Favorite[] = orderedFavorites(loadFavorites());
   let recents: RecentDest[] = loadRecentDests();
-  /** Home/Work from the signed-in profile. Starts empty and fills in when the
-   *  fetch lands — the bar must be usable the instant it opens, so this is
-   *  never awaited, and a signed-out rider simply never gets the row. */
-  let homeWork: { home: TripPlace | null; work: TripPlace | null } = {
-    home: null,
-    work: null,
-  };
+  /** Home/Work for the pinned row. Device state, so it is simply read — there
+   *  is nothing to wait for and nothing to repaint when it lands. */
+  let homeWork = (deps.getHomeWork ?? pinnedHomeWork)();
   let results: GeocodeResult[] = [];
   let status: SearchStatus = "idle";
   let liveQuery = "";
@@ -265,30 +262,12 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     slot = "dest";
     favorites = orderedFavorites(loadFavorites());
     recents = loadRecentDests();
+    // Re-read with the other two, and for the same reason: a rider can have
+    // set Home in the drawer since this bar was built.
+    homeWork = (deps.getHomeWork ?? pinnedHomeWork)();
     track("home_bar", { action: "open" });
     render();
     input.focus();
-    // Fire-and-forget, after the first paint. The bar is fully usable without
-    // it, and a rider who already knows where they are going should never
-    // wait on a profile fetch to start typing.
-    void loadHomeWork();
-  }
-
-  async function loadHomeWork(): Promise<void> {
-    const get = deps.getHomeWork ?? defaultGetHomeWork;
-    try {
-      const next = await get();
-      if (destroyed) return;
-      homeWork = next;
-      // Only repaint if there is something to add AND the rider is still
-      // looking at the list it belongs in — a late fetch must not stomp a
-      // sheet they have since typed into or moved past.
-      if ((next.home || next.work) && phase === "destination" && !input.value.trim()) {
-        render();
-      }
-    } catch {
-      /* no pinned row is a fine outcome; it is a shortcut, not a feature */
-    }
   }
 
   function collapse(opts: { keepPlaces?: boolean } = {}): void {
@@ -423,12 +402,11 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
     // Empty input: everything the rider has already told us, before we ask
     // them to type anything.
     const pinnedPlaces = renderPinned();
-    // One doorstep, one row. The pinned pair is drawn from the profile's
-    // home/work columns and the Home/Work favourite SLOTS hold the same two
-    // places device-locally, so a signed-in rider who set them in settings has
-    // each place twice over — once above, once in the list. Screen 3 already
-    // drops the duplicate by coordinates and says why; this is the same rule,
-    // and it was the one surface missing it.
+    // One doorstep, one row. The pinned pair IS two of the favourites — the
+    // Home and Work slots — lifted out for their own tap targets, so without
+    // this they would also appear in the list below. Dropped by coordinates
+    // rather than by id, which is the same rule Screen 3 uses and also catches
+    // a rider who saved their house a second time under another name.
     const listedFavorites = favorites.filter(
       (f) => !pinnedPlaces.some((p) => isSamePlace(p, f)),
     );
