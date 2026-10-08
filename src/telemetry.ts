@@ -1,10 +1,11 @@
 // First-party, cookieless usage telemetry.
 //
 // Everything here answers to the promise in README.md's "On tracking"
-// section: no analytics SDK or tracking script, no cookies, no persistent
-// identifier. (The site's one third-party script is Google's sign-in script,
-// disclosed separately in the README and the privacy policy; it is not part
-// of this telemetry.)
+// section: no analytics SDK, no cookies, no persistent identifier. (Two
+// third-party scripts are disclosed separately in the README: Google's
+// sign-in script, loaded only when a sign-in screen is opened, and the
+// cookieless Web Analytics script our host, Cloudflare, adds to every page.
+// Neither is part of this telemetry.)
 // Events carry a per-tab session id (sessionStorage — dies with the tab)
 // and nothing else; daily-unique counting happens server-side with a
 // salt that is destroyed after two days (scooter-fyi-api sql/061).

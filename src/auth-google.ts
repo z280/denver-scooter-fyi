@@ -1,4 +1,4 @@
-// Sign in with Google (Google Identity Services / One Tap).
+// Sign in with Google (Google Identity Services).
 //
 // Flow: GIS hands us a signed ID token (a JWT credential); we POST it to the
 // API's POST /api/v1/auth/google, which verifies it against Google's JWKS
@@ -6,17 +6,22 @@
 // persist via auth-session. Admin scope is decided server-side from the
 // verified email against ADMIN_EMAILS.
 //
-// Two entry points, one shared GIS init + callback:
-//   - promptGoogleOneTap(): the automatic top-right One Tap prompt, fired on
-//     load for signed-out visitors.
-//   - renderGoogleButton(): the official personalized button in the Account
-//     drawer (shows "Continue as <name>" for users with a Google session).
+// One entry point: renderGoogleButton(), the official personalized button
+// ("Continue as <name>" for users with a Google session). It is called only
+// by the two sign-in surfaces that show it — the Account drawer's sign-in
+// block (account-login.ts, once the drawer is actually open) and the ride
+// wizard's sign-in screen (ride-screen-auth.ts).
 //
-// DORMANT until configured: loads a third-party script from Google
-// (accounts.google.com/gsi/client) — the app's first external runtime
-// dependency — so it does nothing, and loads nothing, unless the backend's
-// GET /api/v1/auth/config reports google_enabled and hands back a client id
-// (see auth-config.ts). Callers pass that id into promptGoogleOneTap /
+// LAZY, AND NEVER AT BOOT (owner directive 2026-10-08). Google's script
+// (accounts.google.com/gsi/client) is injected the first time one of those
+// surfaces renders the button — never on page load, and never for a rider
+// who doesn't open sign-in. There is no automatic One Tap prompt: the old
+// on-load promptGoogleOneTap() loaded Google's script for every signed-out
+// visitor, and it is gone on purpose. Don't add a prompt() back.
+//
+// DORMANT until configured: even on a sign-in surface nothing loads unless
+// the backend's GET /api/v1/auth/config reports google_enabled and hands back
+// a client id (see auth-config.ts). Callers pass that id into
 // renderGoogleButton; this module never reads a compile-time flag.
 
 import { API_BASE } from "./api.ts";
@@ -31,11 +36,8 @@ interface GsiIdApi {
     client_id: string;
     callback: (response: { credential: string }) => void;
     auto_select?: boolean;
-    cancel_on_tap_outside?: boolean;
-    use_fedcm_for_prompt?: boolean;
   }): void;
   renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
-  prompt(): void;
   disableAutoSelect(): void;
 }
 type GsiWindow = Window & {
@@ -96,15 +98,11 @@ async function ensureInit(
   h: GoogleAuthHandlers,
 ): Promise<GsiIdApi | null> {
   if (!clientId) return null;
-  handlers = h; // latest caller's handlers win; both just reload on success
+  handlers = h; // latest caller's handlers win; every caller reloads on success
   const id = await loadGis();
   if (!initialized) {
     id.initialize({
       client_id: clientId,
-      cancel_on_tap_outside: true,
-      // Chrome is moving One Tap to FedCM; opt in so the prompt keeps working
-      // as third-party-cookie One Tap is deprecated.
-      use_fedcm_for_prompt: true,
       callback: (response) => {
         track("auth_start", { method: "google" });
         exchangeCredential(response.credential)
@@ -121,16 +119,6 @@ async function ensureInit(
     initialized = true;
   }
   return id;
-}
-
-/** Fire the automatic One Tap prompt (top-right). Call on load for
- *  signed-out visitors; GIS handles its own cooldown/backoff. */
-export async function promptGoogleOneTap(
-  clientId: string,
-  h: GoogleAuthHandlers,
-): Promise<void> {
-  const id = await ensureInit(clientId, h).catch(() => null);
-  id?.prompt();
 }
 
 /** Render the official personalized "Continue with Google" button into
