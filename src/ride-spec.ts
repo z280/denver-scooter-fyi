@@ -94,6 +94,27 @@ export interface RideSpec {
    *  the ranking and is given up, in `relaxationLadder`'s order, before the
    *  app reports that nothing matches. */
   must: SpecField[];
+  /** Requirements that bind EVERY leg, including the first.
+   *
+   *  A STRICTER THING THAN `must`, and the difference is the whole reason it
+   *  exists. `must` makes a requirement unrelaxable, but the trip planner
+   *  deliberately exempts the STARTER vehicle from the spec entirely
+   *  (`along-the-way.ts`'s `starterSpec`): a scruffy Astro is a fine thing to
+   *  ride 1.2 km to the scooter you actually want, and refusing it would throw
+   *  away most of what hand-offs are for. That exemption is right for a
+   *  preference and wrong for a physical constraint — you cannot carry a
+   *  passenger on a vehicle that does not take two, not even for the first
+   *  leg, and a plan that proposed it would be worse than no plan.
+   *
+   *  So a field listed here survives into the starter spec as well. Listing a
+   *  field here without also listing it in `must` would be incoherent — a
+   *  requirement that binds every leg but can be relaxed away — so callers
+   *  set both, and `hardenEveryLeg` below is how.
+   *
+   *  OPTIONAL, because specs are persisted (`ride-spec-store.ts`) and a blob
+   *  written before this field existed must read as "no such requirement"
+   *  rather than as undefined behaviour. */
+  everyLeg?: SpecField[];
 }
 
 /** Twelve minutes is inside `DIBS_MAX_WALK_MINUTES` (15) with room to spare,
@@ -109,6 +130,31 @@ export const DEFAULT_SPEC: RideSpec = {
   maxWalkMinutes: DEFAULT_MAX_WALK_MINUTES,
   must: [],
 };
+
+/** Make `fields` hard AND binding on every leg, merging with what is there.
+ *
+ *  The one supported way to set `everyLeg`, because the two lists have to
+ *  agree: a requirement that binds the starter but can be relaxed away is a
+ *  contradiction, and leaving callers to remember both is how that
+ *  contradiction gets written. */
+export function hardenEveryLeg(spec: RideSpec, fields: SpecField[]): RideSpec {
+  const must = new Set([...spec.must, ...fields]);
+  const everyLeg = new Set([...(spec.everyLeg ?? []), ...fields]);
+  return {
+    ...spec,
+    must: [...must],
+    everyLeg: [...everyLeg],
+  };
+}
+
+/** The fields a spec says bind every leg. Normalised so a caller never has to
+ *  think about the optionality, and intersected with `must` so a blob that
+ *  somehow carries one without the other cannot produce the contradiction
+ *  `hardenEveryLeg` exists to prevent. */
+export function everyLegFields(spec: RideSpec): SpecField[] {
+  const must = new Set(spec.must);
+  return (spec.everyLeg ?? []).filter((f) => must.has(f));
+}
 
 export function defaultSpec(): RideSpec {
   return { ...DEFAULT_SPEC, features: [], must: [] };

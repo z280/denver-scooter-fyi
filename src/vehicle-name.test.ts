@@ -1,7 +1,12 @@
 // What to call a scooter, and what not to call it twice.
 import { describe, expect, it } from "vitest";
 
-import { bareModelName, plateSuffix, vehicleDisplayName } from "./vehicle-name.ts";
+import {
+  bareModelName,
+  plateSuffix,
+  qualifiedVehicleName,
+  vehicleDisplayName,
+} from "./vehicle-name.ts";
 
 describe("the name a rider says out loud", () => {
   it("is the identity, disambiguated by what's printed on the deck", () => {
@@ -74,5 +79,59 @@ describe("the server's plate suffix", () => {
     expect(vehicleDisplayName("Lunar 🐸", "1025899", "Veo Cosmo", "")).toBe(
       "Lunar 🐸 899",
     );
+  });
+});
+
+describe("qualifiedVehicleName — what it is, then which one", () => {
+  it("puts the type before the name", () => {
+    expect(
+      qualifiedVehicleName({
+        publicName: "Onward 🌳",
+        modelName: "Cosmo",
+        suffix: "500",
+      }),
+    ).toBe("Cosmo Onward 🌳 500");
+  });
+
+  it("strips the maker the catalogue carries, so an operator never doubles", () => {
+    // The exact bug the dibs certificate hit: "Veo Veo Cosmo Veo Cosmo".
+    expect(
+      qualifiedVehicleName({
+        publicName: "Onward 🌳",
+        modelName: "Veo Cosmo",
+        suffix: "500",
+        operator: "Veo",
+      }),
+    ).toBe("Veo Cosmo Onward 🌳 500");
+  });
+
+  it("omits the operator where there is only one, which is Denver today", () => {
+    expect(
+      qualifiedVehicleName({ publicName: "Onward 🌳", modelName: "Veo Cosmo" }),
+    ).toBe("Cosmo Onward 🌳");
+  });
+
+  it("degrades in the order the parts actually go missing", () => {
+    // No public_name on an older payload: the bare type is still true and
+    // still useful.
+    expect(qualifiedVehicleName({ publicName: null, modelName: "Cosmo" })).toBe("Cosmo");
+    // No recognised model: the name alone, which is what we always showed.
+    expect(qualifiedVehicleName({ publicName: "Onward 🌳", modelName: null })).toBe(
+      "Onward 🌳",
+    );
+    // A suffix with no name is not a name.
+    expect(
+      qualifiedVehicleName({ publicName: null, modelName: "Cosmo", suffix: "500" }),
+    ).toBe("Cosmo");
+  });
+
+  it("never renders an empty segment or a bare blank", () => {
+    // A blank where a vehicle should be reads as a rendering fault.
+    expect(qualifiedVehicleName({ publicName: null, modelName: null })).toBe(
+      "Unknown vehicle",
+    );
+    expect(
+      qualifiedVehicleName({ publicName: "Onward 🌳", modelName: "", operator: "  " }),
+    ).toBe("Onward 🌳");
   });
 });

@@ -489,7 +489,7 @@ describe("pinned Home and Work", () => {
   const grid = (): HTMLElement | null => q<HTMLElement>(".home-bar__pinned");
 
   it("shares one row when both are set", async () => {
-    mount({ getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    mount({ getHomeWork: () => ({ home: HOME, work: WORK }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(2));
     expect(grid()!.classList.contains("is-pair")).toBe(true);
@@ -500,7 +500,7 @@ describe("pinned Home and Work", () => {
     // The owner's rule, verbatim: "if only one set, whole row, no weird half
     // buttons allowed ever". Asserted on the class the grid template keys
     // off, because that is the only thing that decides the width.
-    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    mount({ getHomeWork: () => ({ home: HOME, work: null }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(1));
     expect(grid()!.classList.contains("is-single")).toBe(true);
@@ -508,7 +508,7 @@ describe("pinned Home and Work", () => {
   });
 
   it("holds the same rule when it is Work that is set alone", async () => {
-    mount({ getHomeWork: async () => ({ home: null, work: WORK }) });
+    mount({ getHomeWork: () => ({ home: null, work: WORK }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(1));
     expect(pins()[0].textContent).toBe("💼Work");
@@ -516,7 +516,7 @@ describe("pinned Home and Work", () => {
   });
 
   it("renders no row at all when neither is set", async () => {
-    mount({ getHomeWork: async () => ({ home: null, work: null }) });
+    mount({ getHomeWork: () => ({ home: null, work: null }) });
     pill().click();
     await new Promise((r) => setTimeout(r, 0));
     // Not an empty row, and not a pair of "set your home" placeholders —
@@ -532,7 +532,7 @@ describe("pinned Home and Work", () => {
     // `loadFavorites`. Both halves then render — Home pinned at the top and
     // Home again under "Saved places" — unless the list drops it.
     assignSlotPlace("home", { lat: HOME.lat, lon: HOME.lon });
-    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    mount({ getHomeWork: () => ({ home: HOME, work: null }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(1));
     const texts = [...root.querySelectorAll(".home-bar__row")].map(
@@ -545,7 +545,7 @@ describe("pinned Home and Work", () => {
     // The dedupe is by coordinates, not by label: a rider's gym stays listed.
     assignSlotPlace("custom1", { lat: 39.76, lon: -104.88 });
     renameSlot("custom1", "Gym");
-    mount({ getHomeWork: async () => ({ home: HOME, work: null }) });
+    mount({ getHomeWork: () => ({ home: HOME, work: null }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(1));
     const texts = [...root.querySelectorAll(".home-bar__row")].map(
@@ -555,7 +555,7 @@ describe("pinned Home and Work", () => {
   });
 
   it("picks the destination straight through, without a recents echo", async () => {
-    const { planned } = mount({ getHomeWork: async () => ({ home: HOME, work: WORK }) });
+    const { planned } = mount({ getHomeWork: () => ({ home: HOME, work: WORK }) });
     pill().click();
     await vi.waitFor(() => expect(pins()).toHaveLength(2));
     pins()[0].click();
@@ -564,35 +564,18 @@ describe("pinned Home and Work", () => {
     expect(root.textContent).toContain("Need wheels");
   });
 
-  it("survives a profile fetch that fails, rather than breaking the sheet", async () => {
-    mount({
-      getHomeWork: async () => {
-        throw new Error("offline");
-      },
-    });
+  it("draws the pinned row from the favourite slots, signed out", async () => {
+    // It used to come from the signed-in profile over a fetch, so a signed-out
+    // rider never got the row at all — despite the slots having always worked
+    // without an account. No stubbed loader here on purpose: this is the real
+    // default path reading the real store.
+    assignSlotPlace("home", { lat: HOME.lat, lon: HOME.lon });
+    mount({});
     pill().click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(grid()).toBeNull();
-    // The bar still works — the pinned row is a shortcut, not a dependency.
-    expect(q(".home-bar__input")).toBeTruthy();
-  });
-
-  it("does not stomp a rider who has started typing before the fetch lands", async () => {
-    let release: (v: { home: typeof HOME; work: null }) => void = () => {};
-    mount({
-      getHomeWork: () =>
-        new Promise((res) => {
-          release = res;
-        }),
-    });
-    pill().click();
-    const input = q<HTMLInputElement>(".home-bar__input")!;
-    input.value = "villa park";
-    input.dispatchEvent(new Event("input"));
-    release({ home: HOME, work: null });
-    await new Promise((r) => setTimeout(r, 0));
-    // A late repaint here would wipe what they typed.
-    expect(input.value).toBe("villa park");
+    // In the FIRST paint, with nothing awaited: device state has nothing to
+    // wait for, which is the whole point of reading it here.
+    expect(pins()).toHaveLength(1);
+    expect(grid()!.textContent).toContain("Home");
   });
 });
 

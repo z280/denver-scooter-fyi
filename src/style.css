@@ -3632,21 +3632,11 @@ body.is-map-picking .home-bar {
   padding: 12px 11px 14px;
   background: var(--bg-panel);
 }
-/* Unfinished profile: the ten points are easy to miss when the hint only
-   lives on a tab you are not looking at. */
-.account-tab.has-flag .account-tab__label::after {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-left: 4px;
-  border-radius: 50%;
-  background: var(--pending, var(--accent));
-  vertical-align: 2px;
-}
-.account-tab.is-active.has-flag .account-tab__label::after {
-  background: var(--accent-ink);
-}
+/* No .has-flag rule any more. It drew a dot on the Profile tab for an
+   unfinished profile, because the ten-point hint was easy to miss when it lived
+   on a tab you were not looking at. The profile moved ABOVE the strip, so the
+   hint is now on screen from every tab and the dot had nothing left to say —
+   `setFlagged` went with it. */
 .account-panel[hidden] {
   display: none;
 }
@@ -10205,6 +10195,14 @@ input[data-ride-keypad="on"] {
    below it already pins to the drawer header, and two sticky siblings in one
    scroller leapfrog each other. */
 .account-login-host:not(:empty) {
+  padding-bottom: 4px;
+}
+/* Profile, in the same place and for the same reason — above the strip, under
+   the session line. No chrome of its own: it is the second half of one block
+   with the line above it, and a border here would draw a seam through the
+   middle of that. `:not(:empty)` so the signed-out drawer, where there is no
+   profile to show, does not carry the gap. */
+.account-profile-host:not(:empty) {
   padding-bottom: 4px;
 }
 /* The gate hint explains a DIMMED TAB, so it sits with the strip rather than

@@ -14,34 +14,45 @@ import { track } from "./telemetry.ts";
 // sign-in doors when signed out, the session line and Sign out when signed in).
 // `wireAccount()` owns that host; this module never sees it.
 //
-// IN-RIDE PREFERENCES IS FIRST, and unlike the three after it, it is never
-// gated: everything on it is a device preference in localStorage (the
-// speedometer, the cost readout, the rate plan, the favourite destinations), so
-// it works signed out. A rider's first visit therefore opens on a tab that does
-// something, instead of one that tells them to sign in.
+// NEITHER IS PROFILE, for the same reason carried one step further. Who you are
+// signed in as and the profile you are signed in WITH are one block, and
+// splitting them meant the rider read half of it above the strip and had to go
+// looking for the other half. It moved up beside the session line; the tab it
+// vacated is NAVIGATION, which is where the two things a rider actually tunes
+// per trip now live — how many scooters a route may use, and the four places
+// they go. Both were on In-Ride, which is about what the ride SCREEN shows:
+// a different question, answered in a different place, filed together only
+// because In-Ride was the one ungated tab at the time.
+//
+// IN-RIDE AND NAVIGATION ARE NEVER GATED: everything on both is a device
+// preference in localStorage (the speedometer, the cost readout and the rate
+// plan on one; route steps, how a split trip divides, and the four favourite
+// destinations on the other), so they work signed out. A rider's first visit
+// therefore opens on a tab that does something, instead of one that tells them
+// to sign in. Community and Local Data still need a session, and say so.
 //
 // Keyboard behaviour follows the ARIA authoring practices for tabs: one tab
 // stop for the whole strip (roving tabindex), arrows move and select, Home
 // and End jump to the ends.
 
-export type AccountTabId = "inride" | "profile" | "community" | "local";
+export type AccountTabId = "inride" | "nav" | "community" | "local";
 
 export const ACCOUNT_TAB_IDS: readonly AccountTabId[] = [
   "inride",
-  "profile",
+  "nav",
   "community",
   "local",
 ] as const;
 
 const TAB_LABELS: Record<AccountTabId, string> = {
   inride: "In-Ride",
-  profile: "Profile",
+  nav: "Navigation",
   community: "Community",
   local: "Local Data",
 };
 
 /** Feather-style paths, matching the inline-SVG convention used for every
- *  other icon in the app: gauge (speedometer), user, users, database. */
+ *  other icon in the app: gauge (speedometer), signpost, users, database. */
 const TAB_ICON_PATHS: Record<AccountTabId, string[]> = {
   // A dial with a needle — the speedometer this tab's first control governs.
   inride: [
@@ -49,7 +60,15 @@ const TAB_ICON_PATHS: Record<AccountTabId, string[]> = {
     "M12 12l5-3",
     "M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
   ],
-  profile: ["M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M12 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0"],
+  // A signpost: a post in the ground with one board pointing off it. Chosen
+  // over a compass or an arrow because both of those read as "which way am I
+  // facing", and nothing on this tab answers that — a signpost is about where
+  // you have decided to go, which is the cap, the split and the four places.
+  nav: [
+    "M12 21V3",
+    "M12 5h7l2.5 2.5L19 10h-7",
+    "M12 13H5l-2.5 2.5L5 18h7",
+  ],
   community: [
     "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2",
     "M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0",
@@ -107,8 +126,6 @@ export interface AccountTabsHandle {
   selected(): AccountTabId;
   setEnabled(id: AccountTabId, on: boolean): void;
   isEnabled(id: AccountTabId): boolean;
-  /** Mark a tab as needing attention (a dot on the label). */
-  setFlagged(id: AccountTabId, on: boolean): void;
   dispose(): void;
 }
 
@@ -276,13 +293,6 @@ export function createAccountTabs(
     },
     isEnabled(id) {
       return enabled.get(id) ?? false;
-    },
-    setFlagged(id, on) {
-      const tab = tabs.get(id)!;
-      tab.classList.toggle("has-flag", on);
-      // Announced, not just drawn: a dot nobody can hear is not a signal.
-      if (on) tab.setAttribute("aria-description", "needs attention");
-      else tab.removeAttribute("aria-description");
     },
     dispose() {
       strip.removeEventListener("click", onClick);

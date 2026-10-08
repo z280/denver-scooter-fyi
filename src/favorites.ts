@@ -15,6 +15,14 @@
 // The cap is what fits on a phone without a scroll: past a dozen, a saved
 // place is slower to find than to retype, and the recents list already covers
 // "somewhere I went once".
+//
+// LOCAL FIRST, AND STILL LOCAL FIRST. This store is the one the app reads, in
+// both states, and every write lands here before anything else happens. A
+// signed-in rider also gets the list mirrored to their account so it survives a
+// new phone (`saved-places-sync.ts`, encrypted at rest on the server) — but
+// that is a mirror hung off `setFavoritesSyncHook` below, not a second source
+// of truth, and a dead network costs the rider nothing they can see. Signing
+// out changes none of this: the hook is simply unregistered.
 
 export const FAVORITES_KEY = "scooter-fyi-favorites";
 export const MAX_FAVORITES = 12;
@@ -80,6 +88,31 @@ let sessionFavs: Favorite[] | null = null;
  *  reasoning as `telemetry.ts`'s `_resetTelemetryForTests`. */
 export function _resetFavoritesForTests(): void {
   sessionFavs = null;
+  // Same reasoning one line up, and the same bug waiting to happen: a hook
+  // registered by one test would otherwise still be firing during the next.
+  syncHook = null;
+}
+
+/** Fires after every write, with the list that was written.
+ *
+ *  THE SEAM TO THE ACCOUNT, and shaped exactly like `ride-cost.ts`'s rate-plan
+ *  hook for the same reason: this module must not import the API client. It
+ *  has no idea whether anyone is signed in, and signing in or out only changes
+ *  whether something is listening — never what a write does here.
+ *
+ *  It fires on a REFUSED write too (the session-mirror branch below). That is
+ *  deliberate: the list is still correct for this visit, and a rider in private
+ *  browsing is exactly the one whose places only survive if the account has
+ *  them. The listener is responsible for not echoing a list it just applied —
+ *  see `saved-places-sync.ts`, which compares before it sends.
+ *
+ *  One listener, not a set: there is one account. */
+let syncHook: ((favs: readonly Favorite[]) => void) | null = null;
+
+export function setFavoritesSyncHook(
+  fn: ((favs: readonly Favorite[]) => void) | null,
+): void {
+  syncHook = fn;
 }
 
 export function loadFavorites(): Favorite[] {
@@ -106,20 +139,30 @@ export function saveFavorites(favs: readonly Favorite[]): boolean {
 }
 
 function persistFavorites(favs: Favorite[]): boolean {
+  let stored: boolean;
   try {
     const blob: StoredFavorites = { v: 1, favs };
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(blob));
     // Storage is truth again — drop any mirror so a later read cannot serve
     // a stale copy of a list that has since been written properly.
     sessionFavs = null;
-    return true;
+    stored = true;
   } catch {
     // Private mode or quota. Hold the list in memory so the rest of THIS
     // visit stays coherent: without it the next save re-reads an empty
     // store and the rider watches an earlier favourite disappear.
     sessionFavs = favs.slice();
-    return false;
+    stored = false;
   }
+  // AFTER the local write, never instead of it, and never allowed to undo it:
+  // a listener that throws must not turn a successful save into a failed one,
+  // because the rider's row already says "Saved" and it is already true.
+  try {
+    syncHook?.(favs.slice());
+  } catch {
+    /* the mirror is best-effort by construction */
+  }
+  return stored;
 }
 
 /** Distinct enough for a list this size, and never a reason a save fails:

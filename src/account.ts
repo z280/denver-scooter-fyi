@@ -19,6 +19,7 @@ import {
   type PointsEntry,
   type Profile,
   type ProfileUpdate,
+  type SavedPlace,
 } from "./api.ts";
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
 import { openAdminModal } from "./admin-modal.ts";
@@ -29,9 +30,6 @@ import {
   setRatePlanSyncHook,
   toApiRatePlan,
 } from "./ride-cost.ts";
-import { assignSlotPlace, clearSlot } from "./favorite-slots.ts";
-import { reverseGeocode } from "./geocode.ts";
-import type { HomeWorkPoints } from "./home-work-pins.ts";
 import { formatUsPhone, isProbablyUsPhone } from "./auth-sms.ts";
 import { TERRITORY_FILL_OPACITY, hexWithAlpha } from "./leaderboard.ts";
 import { setRibbonOpen } from "./chrome.ts";
@@ -47,7 +45,13 @@ export interface AccountPanelMounts {
   /** The Edit Profile door, home and work. Contact details themselves live in
    *  the modal behind that button (`account-edit-profile.ts`); the rate plan
    *  moved to the In-Ride tab, which `account-inride.ts` owns because every
-   *  control on it works signed out. */
+   *  control on it works signed out.
+   *
+   *  NOT A TAB EITHER, as of the Navigation restructure: `wireAccount` mounts
+   *  this above the strip too, directly under the session line, so who you are
+   *  signed in as and the profile you are signed in WITH read as one block
+   *  instead of one being the answer to a tab the rider had to find. The tab
+   *  that used to hold it is Navigation now, and holds device preferences. */
   profile: HTMLElement;
   /** Public identity, privacy, badges, points. */
   community: HTMLElement;
@@ -61,25 +65,19 @@ export interface AccountSignedInDeps {
   onAuthLost(): void;
   /** Tab mount points; absent means the legacy single-body layout. */
   panels?: AccountPanelMounts;
-  /** The profile is (in)complete. Lets the tab strip carry the nag, so it is
-   *  visible from Community or Local Data too — the ten points are easy to
-   *  miss when the hint only lives on the tab you are not looking at. */
-  onCompletenessChanged?(complete: boolean): void;
   /** Whether the backend can actually send a text right now (`sms_enabled`
    *  from /auth/config), or null while that is still unknown. Read on every
    *  render rather than captured, because the config resolves independently
    *  of the profile and may land after this panel is built. */
   smsEnabled?(): boolean | null;
-  /** Let the rider drop a point on the map for home or work. Absent means
-   *  the row offers only "Use my location" and "Clear", as it always has —
-   *  which is also what keeps this module free of any map import. */
-  pickLocation?(kind: "home" | "work"): Promise<{ lat: number; lng: number } | null>;
-  /** Home/work moved (or were cleared): redraw the pins. */
-  onLocationsChanged?(points: HomeWorkPoints): void;
-  /** The Home/Work favourite slots were mirrored from a profile write. Only
-   *  for anything holding a rendered copy of the favourites — both "Where to?"
-   *  surfaces read the store when they open, so they need no push. */
-  onFavoritesChanged?(): void;
+  /** The account's saved places, as they arrived with the profile.
+   *
+   *  Handed over rather than acted on here, because merging them into the
+   *  device's own store is `saved-places-sync.ts`'s job and this module has no
+   *  business knowing the merge rule. `undefined` means the field was ABSENT
+   *  from the payload — an older deployment — and is passed through as such,
+   *  because the listener has to tell that apart from an account with none. */
+  onSavedPlaces?(places: SavedPlace[] | undefined): void;
   /** The rate-plan control lives on the In-Ride tab now, outside this module,
    *  because it has to work signed out. These two are the seam back to it:
    *  `onRatePlanResolved` fires once the profile GET has reconciled the
@@ -375,26 +373,9 @@ export function renderSignedInAccount(
     if (!disposed && seq === saveSeq) {
       profile = updated;
       refreshHint();
-      publishLocations();
       onProfileSaved?.();
     }
     return updated;
-  };
-
-  /** Keep the map's home/work pins in step with the profile. */
-  const publishLocations = (): void => {
-    if (!deps.onLocationsChanged) return;
-    const p = profile;
-    deps.onLocationsChanged({
-      home:
-        p?.home_lat != null && p.home_lng != null
-          ? { lat: p.home_lat, lng: p.home_lng }
-          : null,
-      work:
-        p?.work_lat != null && p.work_lng != null
-          ? { lat: p.work_lat, lng: p.work_lng }
-          : null,
-    });
   };
 
   // ----- Completion hint (10 one-time points; criteria mirror the API) ----
@@ -404,9 +385,12 @@ export function renderSignedInAccount(
     "⭐ Complete your profile — email, phone, rate plan, and one location — to earn 10 bonus points.",
   );
   const refreshHint = (): void => {
-    const complete = profile ? isProfileComplete(profile) : true;
-    hint.hidden = complete;
-    deps.onCompletenessChanged?.(complete);
+    // No listener any more. This used to push the answer out so the tab strip
+    // could carry a dot (`setFlagged`), which existed because the hint was
+    // stuck on a tab the rider might not be looking at. The profile is above
+    // the strip now, so the hint is on screen from every tab and the dot and
+    // its callback both went.
+    hint.hidden = profile ? isProfileComplete(profile) : true;
   };
 
   // ----- Field builders --------------------------------------------------
@@ -465,134 +449,6 @@ export function renderSignedInAccount(
     });
     form.append(input, saveBtn);
     wrap.append(form, fieldStatus.node);
-    return wrap;
-  };
-
-  /** Home/Work row: reverse-geocoded readout plus one-shot "Use my
-   *  location" (deliberately not the map-bound Locate control — the drawer
-   *  wants a single fix, no camera movement) and Clear. Coordinates PUT as
-   *  a pair, per the API contract. */
-  const locationRow = (kind: "home" | "work", label: string): HTMLElement => {
-    const wrap = el("div", "account-field");
-    wrap.append(el("span", "control-label", label));
-    // The value gets its own line: with three actions beside it, a street
-    // address (or a coordinate pair) would wrap mid-number in a 300px drawer.
-    const rowEl = el("div", "account-field__row account-location");
-    const value = el("span", "account-location__value");
-    const pickBtn = el("button", "text-btn", "Pick on map");
-    pickBtn.type = "button";
-    // Only offered when the drawer was handed a picker — the module stays
-    // free of any map import, and its tests stay free of a map.
-    pickBtn.hidden = !deps.pickLocation;
-    const useBtn = el("button", "text-btn", "Use my location");
-    useBtn.type = "button";
-    const clearBtn = el("button", "text-btn", "Clear");
-    clearBtn.type = "button";
-    const rowStatus = makeStatus();
-
-    const coords = (): { lat: number | null; lng: number | null } =>
-      kind === "home"
-        ? { lat: profile?.home_lat ?? null, lng: profile?.home_lng ?? null }
-        : { lat: profile?.work_lat ?? null, lng: profile?.work_lng ?? null };
-
-    const renderValue = (): void => {
-      const { lat, lng } = coords();
-      if (lat == null || lng == null) {
-        value.textContent = "Not set";
-        clearBtn.hidden = true;
-        return;
-      }
-      clearBtn.hidden = false;
-      value.textContent = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-      void reverseGeocode(lat, lng).then((addr) => {
-        const cur = coords();
-        if (addr && cur.lat === lat && cur.lng === lng) {
-          value.textContent = addr;
-        }
-      });
-    };
-
-    const putPair = (lat: number | null, lng: number | null): void => {
-      useBtn.disabled = true;
-      clearBtn.disabled = true;
-      rowStatus.set("Saving…");
-      const patch: ProfileUpdate =
-        kind === "home"
-          ? { home_lat: lat, home_lng: lng }
-          : { work_lat: lat, work_lng: lng };
-      savePatch(patch)
-        .then(() => {
-          rowStatus.set("Saved.");
-          renderValue();
-          // Mirror into the Home/Work favourite SLOTS, which is what the two
-          // "Where to?" surfaces render. The profile column stays canonical —
-          // it drives the map pins and the profile-completion award, and it is
-          // the copy that survives a new device — but a rider who sets their
-          // doorstep here expects to see it offered when they go somewhere,
-          // and the slot store is the only thing those lists read.
-          if (lat == null || lng == null) clearSlot(kind);
-          else assignSlotPlace(kind, { lat, lon: lng });
-          deps.onFavoritesChanged?.();
-        })
-        .catch((err: unknown) => {
-          rowStatus.set(
-            describeError(err, `Couldn't save your ${kind} location.`),
-            true,
-          );
-        })
-        .finally(() => {
-          useBtn.disabled = false;
-          clearBtn.disabled = false;
-        });
-    };
-
-    useBtn.addEventListener("click", () => {
-      if (!("geolocation" in navigator)) {
-        rowStatus.set("This browser can't share your location.", true);
-        return;
-      }
-      useBtn.disabled = true;
-      rowStatus.set("Locating…");
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          putPair(
-            Number(pos.coords.latitude.toFixed(5)),
-            Number(pos.coords.longitude.toFixed(5)),
-          );
-        },
-        () => {
-          useBtn.disabled = false;
-          rowStatus.set(
-            "Location unavailable — allow location access and retry.",
-            true,
-          );
-        },
-        { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-      );
-    });
-    pickBtn.addEventListener("click", () => {
-      const pick = deps.pickLocation;
-      if (!pick) return;
-      rowStatus.set("Tap the map…");
-      void pick(kind).then((point) => {
-        if (disposed) return;
-        if (!point) {
-          rowStatus.clear();
-          return;
-        }
-        // Same 5-decimal store as every other way of setting this (~1 m,
-        // which is finer than any of these sources actually resolve).
-        putPair(
-          Number(point.lat.toFixed(5)),
-          Number(point.lng.toFixed(5)),
-        );
-      });
-    });
-    clearBtn.addEventListener("click", () => putPair(null, null));
-
-    rowEl.append(value, pickBtn, useBtn, clearBtn);
-    wrap.append(rowEl, rowStatus.node);
-    renderValue();
     return wrap;
   };
 
@@ -1563,10 +1419,24 @@ export function renderSignedInAccount(
 
     sec.append(summary, editBtn);
 
-    sec.append(
-      locationRow("home", "Home location"),
-      locationRow("work", "Work location"),
+    // HOME AND WORK ARE NOT HERE ANY MORE. This section used to carry its own
+    // pair of location editors, which were the same two places as the
+    // Navigation tab's Home and Work slots and wrote the same columns through a
+    // mirror in both directions. Two controls for one value is confusing
+    // wherever they sit; with the profile now directly above the tab strip they
+    // were a single scroll apart, which made it obvious. The slots won because
+    // they work signed out and because there are four of them.
+    const toSlots = el("p", "account-hint");
+    toSlots.append(
+      document.createTextNode("Home, Work and two more places you choose: "),
     );
+    const slotsLink = el("button", "text-btn", "Navigation \u2192");
+    slotsLink.type = "button";
+    slotsLink.addEventListener("click", () => {
+      document.querySelector<HTMLButtonElement>("#account-tab-nav")?.click();
+    });
+    toSlots.append(slotsLink);
+    sec.append(toSlots);
 
     return sec;
   };
@@ -1892,6 +1762,10 @@ export function renderSignedInAccount(
       .then((p) => {
         if (disposed) return;
         profile = p;
+        // Before the panels are built: a merge can change the favourite slots,
+        // and the rows that render them should be built from the merged list
+        // rather than repainted a frame later.
+        deps.onSavedPlaces?.(p.saved_places);
         // Tabbed: contact/rate/location on Profile, everything public-facing
         // on Community. Untabbed: one stack, as before. Both branches build
         // in the same synchronous turn, so the Points section's
@@ -1915,7 +1789,6 @@ export function renderSignedInAccount(
         }
         reconcileRatePlan(p);
         registerRateSync();
-        publishLocations();
       })
       .catch((e: unknown) => {
         if (disposed) return;
@@ -1946,9 +1819,10 @@ export function renderSignedInAccount(
     dispose() {
       disposed = true;
       setRatePlanSyncHook(null);
-      // The pins belong to this session's profile; a signed-out map should
-      // not still be showing where they live.
-      deps.onLocationsChanged?.({ home: null, work: null });
+      // Nothing to retract any more. The map's home/work pins are drawn from
+      // the favourite SLOTS, which are device-local and outlive a session —
+      // signing out does not un-know where the rider lives, and blanking the
+      // pins here used to claim it did.
     },
   };
 }

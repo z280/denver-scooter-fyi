@@ -32,6 +32,12 @@ export interface PlanListPanelDeps {
   /** Search again against the current fleet. Optional: a caller that cannot
    *  re-search simply does not offer the button. */
   onRefresh?(): void;
+  /** Open the place an "ideal scooter" is configured. Optional, and this
+   *  module stays ignorant of where that is — the spec panel lives in a
+   *  drawer and this one knows nothing about drawers. Absent, the prompt is
+   *  still shown as a sentence: "the app can do this and you have not set it
+   *  up" is worth knowing even where this surface cannot open it. */
+  onConfigureSpec?(): void;
 }
 
 export interface PlanListPanelHandle {
@@ -75,8 +81,12 @@ export function createPlanListPanel(
   // price in the list, so a rider who reads a price and then finds the control
   // has read a number they are about to be told was a guess.
   const free = el("div", "planlist__free");
+  // Between the notes and the plans: it is about the list below it, and a
+  // rider who sets a spec up wants the list to change under them.
+  const specPrompt = el("div", "planlist__specprompt");
+  specPrompt.hidden = true;
   const body = el("div", "planlist__body");
-  panel.append(head, close, notes, free, body);
+  panel.append(head, close, notes, free, specPrompt, body);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -106,10 +116,51 @@ export function createPlanListPanel(
     if (v.capNote) {
       lines.push({ text: v.capNote, cls: "planlist__note--quiet" });
     }
+    // Why the order is not simply cheapest-first. Above the estimate note for
+    // the same reason the cap note is: it answers a question somebody is
+    // asking right now, looking at a list whose second row is cheaper than its
+    // first.
+    if (v.idealSplitNote) {
+      lines.push({ text: v.idealSplitNote, cls: "planlist__note--quiet" });
+    }
     lines.push({ text: v.estimateNote, cls: "planlist__note--quiet" });
     notes.replaceChildren(
       ...lines.map((l) => el("p", `planlist__note ${l.cls}`, l.text)),
     );
+  }
+
+  /** The offer to set up an ideal scooter, or nothing.
+   *
+   *  A PROMPT AND NOT A NAG. It appears only when there are multi-scooter
+   *  plans on the list — the one case where the app would actually use the
+   *  answer — and it is a plain row with a button, not a dismissible banner,
+   *  because the thing that makes it go away is answering it.
+   *
+   *  The button is handed up rather than wired here: this module knows nothing
+   *  about drawers, and the spec panel lives in one. Absent, the row still
+   *  renders as a sentence, because "the app can do this and you have not set
+   *  it up" is worth knowing even where this surface cannot open it.
+   *
+   *  It also says what it is FOR. "Set up your ideal scooter" alone is a
+   *  chore; naming the consequence — that plans will favour it — is the part
+   *  that makes it worth a tap. */
+  function renderSpecPrompt(v: PlanListView): void {
+    specPrompt.replaceChildren();
+    specPrompt.hidden = !v.needsSpec;
+    if (!v.needsSpec) return;
+    specPrompt.append(
+      el(
+        "p",
+        "planlist__note planlist__note--quiet",
+        "No ideal scooter set up yet — tell us what you like and we'll put more of a split trip on it.",
+      ),
+    );
+    if (deps.onConfigureSpec) {
+      const btn = el("button", "planlist__again", "Set up my ideal scooter");
+      btn.type = "button";
+      btn.addEventListener("click", () => deps.onConfigureSpec?.());
+      specPrompt.append(btn);
+    }
   }
 
   function renderFree(v: PlanListView): void {
@@ -284,6 +335,7 @@ export function createPlanListPanel(
   function render(v: PlanListView): void {
     renderNotes(v);
     renderFree(v);
+    renderSpecPrompt(v);
     renderBody(v);
     if (deps.onRefresh) {
       const again = el("button", "planlist__again", "Look again");

@@ -11,7 +11,9 @@ import {
   fetchProfile,
   liveDibs,
   releaseDibs,
-  updateProfile,} from "./api.ts";
+  updateProfile,
+  type SavedPlace,
+} from "./api.ts";
 import { createMap } from "./map.ts";
 import { ALL_SELECTED, modelsOf } from "./model-filter.ts";
 import {
@@ -202,6 +204,15 @@ import {
 import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
 import { defaultSpec } from "./ride-spec.ts";
+import {
+  TWO_PASSENGER_MIN_BATTERY,
+  TWO_PASSENGER_MODELS,
+  applyTwoPassengers,
+  conflictsWithSpec,
+  setTwoPassengers,
+  twoPassengerNote,
+  twoPassengers,
+} from "./passenger-mode.ts";
 import type { PlanRow } from "./plan-list.ts";
 import {
   planningFreeMinuteEstimate,
@@ -220,15 +231,23 @@ import {
   type LocalDataHandle,
 } from "./account-local-data.ts";
 import { createHomeWorkPins } from "./home-work-pins.ts";
+import { readSlot } from "./favorite-slots.ts";
 import {
   buildInRidePanel,
   type InRidePanelHandle,
 } from "./account-inride.ts";
 import {
+  buildNavPanel,
+  type NavPanelHandle,
+} from "./account-nav.ts";
+import {
+  startSavedPlacesSync,
+  syncSavedPlacesFromProfile,
+} from "./saved-places-sync.ts";
+import {
   ACCOUNT_TAB_IDS,
   createAccountTabs,
   takeTabHint,
-  writeTabHint,
 } from "./account-tabs.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import { OVERLAY_BY_LAYER, OVERLAYS, RATE_PLANS, REFRESH_MS } from "./config.ts";
@@ -238,6 +257,7 @@ import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
   installBrandMark,
+  isRibbonOpen,
   setRibbonOpen,
   closeAllPopups,
   registerPopupCloser,
@@ -330,9 +350,20 @@ map.addControl(
   "top-left",
 );
 const devices = new Devices(map, locate);
-// Profile location picking. The drawer gets these as callbacks so account.ts
-// never imports maplibre — and so its tests never need a map.
+// The rider's Home and Work on the map. Drawn from the favourite SLOTS — the
+// only place either is set — rather than from the profile's `home_lat` /
+// `work_lat` columns, which is what they used to follow. Two consequences, both
+// wanted: a SIGNED-OUT rider gets their pins, which they never did before
+// despite the slots having always worked without an account; and the pins
+// cannot disagree with the rows that fill them.
 const homeWorkPins = createHomeWorkPins(map);
+/** Repaint the pins from the slots. Called at boot and whenever a favourite
+ *  changes — there is nothing to fetch, so there is nothing to await. */
+function syncHomeWorkPins(): void {
+  const point = (slot: { place: { lat: number; lon: number } | null }) =>
+    slot.place ? { lat: slot.place.lat, lng: slot.place.lon } : null;
+  homeWorkPins.set({ home: point(readSlot("home")), work: point(readSlot("work")) });
+}
 const trackRoute = createTrackRoute(map);
 // Two different jobs, two different sets of layers on the same map (see
 // ride-trail.ts's header): `trackRoute` draws a FINISHED ride from the account
@@ -1253,6 +1284,13 @@ function wireRecommended(): void {
 }
 
 map.on("load", async () => {
+  // The pins add a source and three layers, so this cannot run before the
+  // style exists — `createHomeWorkPins`'s `ensureLayers` calls `addSource`
+  // unguarded and maplibre throws "Style is not done loading." Calling it at
+  // module load took the whole boot down, and only a real browser showed it:
+  // the previous code reached `set()` for the first time from a resolved
+  // profile fetch, which could not possibly land this early.
+  syncHomeWorkPins();
   // Ask for location now. Almost every number this app shows is relative to
   // where the rider is standing — the walk estimate on every popup, the
   // "worth the walk" ranking, the 75 m proximity gates, which scooter Screen 2
@@ -2362,6 +2400,63 @@ function wireQuickFilters(): void {
       setHideUnavailableControl(true);
     },
   };
+  // TWO PASSENGERS IS A TOGGLE, not a one-shot like the three above it.
+  //
+  // Those three set some controls and are done — tapping one twice does the
+  // same thing twice. This one is a STATE the rider leaves on, because it is a
+  // fact about the trip they are taking rather than a view they are applying,
+  // and it has to be turnable off without hunting through the sections it
+  // touched. So it owns its own storage, reports its state through
+  // `aria-pressed`, and says what it is enforcing underneath.
+  const twoUpBtn = document.querySelector<HTMLButtonElement>(
+    '#quick-filters [data-quick="two-up"]',
+  );
+  const twoUpNote = document.getElementById("two-up-note");
+  const renderTwoUp = (): void => {
+    const on = twoPassengers();
+    twoUpBtn?.setAttribute("aria-pressed", String(on));
+    twoUpBtn?.classList.toggle("is-active", on);
+    if (!twoUpNote) return;
+    const note = twoPassengerNote(rideSpecPanel?.activeSpec() ?? defaultSpec());
+    twoUpNote.textContent = note ?? "";
+    twoUpNote.hidden = note === null;
+    // The contradiction gets the warning treatment; the ordinary "here is what
+    // I am enforcing" line does not. Only one of the two is a problem.
+    twoUpNote.classList.toggle(
+      "control-hint--warning",
+      on && conflictsWithSpec(rideSpecPanel?.activeSpec() ?? defaultSpec()),
+    );
+  };
+  twoUpBtn?.addEventListener("click", () => {
+    const next = !twoPassengers();
+    track("control_change", { control: "quick-two-up", value: next ? "on" : "off" });
+    if (!setTwoPassengers(next)) {
+      // Said out loud rather than swallowed. A rider who believes this is on,
+      // and whose next reload turns it off, gets offered a one-seater for a
+      // trip they are taking with somebody.
+      if (twoUpNote) {
+        twoUpNote.textContent =
+          "Couldn't save that on this device — it will switch itself off if you reload.";
+        twoUpNote.hidden = false;
+        twoUpNote.classList.add("control-hint--warning");
+      }
+      return;
+    }
+    // The map half, so the fleet on screen is the fleet the planner will use.
+    // Only on the way ON: turning it off must not reset filters the rider set
+    // for their own reasons, which they would then have to put back by hand.
+    if (next) {
+      setToggleGroup("#model-filter", "model", new Set<string>(TWO_PASSENGER_MODELS));
+      setMinBatteryControl(TWO_PASSENGER_MIN_BATTERY);
+      setQualityFilter("no-risk");
+      setHideUnavailableControl(true);
+    }
+    renderTwoUp();
+  });
+  // A spec edit can turn a conflict on or off while this drawer is open.
+  window.addEventListener("scooter:spec-changed", renderTwoUp);
+  renderTwoUp();
+
   for (const btn of document.querySelectorAll<HTMLButtonElement>(
     "#quick-filters button",
   )) {
@@ -4061,7 +4156,41 @@ let tripPanel: TripPanelHandle | null = null;
  *  a rider with a full hour that we cannot see their rides. */
 let todaysRides: readonly RideSpan[] | null = null;
 
+/** The ribbon was open when the plan list took over, and we closed it.
+ *
+ *  Remembered so dismissing the list PUTS IT BACK. A surface that quietly
+ *  collapses a rider's navigation and leaves it collapsed has not made room,
+ *  it has taken something. */
+let ribbonClosedForPlanList = false;
+
+/** Give the plan list the width it needs, and give it back afterwards.
+ *
+ *  The card had already been moved out from under the ribbon with
+ *  `--ribbon-gutter`, and on a 412px phone that leaves it about 325px wide —
+ *  which is not enough for the leg lines it has to carry ("Ride Cosmo Onward
+ *  🌳 500 19 min to Cosmo Liftoff 🍉 167" is a long sentence and there are
+ *  three of them). So this is the owner's second option taken deliberately:
+ *  we really do need the space.
+ *
+ *  `persist: false` is the whole of the courtesy. The rider's stored ribbon
+ *  preference is untouched, so this is a borrow rather than a setting change,
+ *  and it is handed back on dismiss. */
 function closePlanList(): void {
+  teardownPlanList();
+  if (ribbonClosedForPlanList) {
+    ribbonClosedForPlanList = false;
+    setRibbonOpen(true);
+  }
+}
+
+/** Drop the panel WITHOUT handing the ribbon back.
+ *
+ *  Separate from `closePlanList` because re-opening the list — which every
+ *  re-solve does — went through the full close first, so the ribbon was handed
+ *  back and immediately borrowed again: one visible flap of the strip per
+ *  search, for nothing. The borrow is a property of "the list is up", not of
+ *  "this particular panel instance is up". */
+function teardownPlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
 }
@@ -4079,7 +4208,16 @@ function planSearchDeps(): PlanSearchDeps {
       const fix = locate.current();
       return fix ? { lat: fix.lat, lng: fix.lng } : null;
     },
-    spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
+    // TWO PASSENGERS BINDS THE PLANNER, which no other quick filter does —
+    // map filters are a view and this is a fact about the trip. Composed over
+    // the rider's own spec rather than replacing it: two passengers is a
+    // constraint on top of what they like, not instead of it.
+    spec: () => applyTwoPassengers(rideSpecPanel?.activeSpec() ?? defaultSpec()),
+    // The same value WITHOUT the default, which is the only way to tell "no
+    // preference" from "a preference that happens to accept everything". The
+    // list uses it to decide whether a share is worth computing and whether to
+    // offer to set one up.
+    activeSpec: () => rideSpecPanel?.activeSpec() ?? null,
     rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
@@ -4166,7 +4304,15 @@ function openPlanList(dest: TripPlace): void {
     enterFindWheels();
     return;
   }
-  closePlanList();
+  teardownPlanList();
+  // Before the panel is built, so it is never laid out against a width it is
+  // about to lose. Guarded on the flag as well as the state: a second open
+  // over an already-borrowed ribbon must not record a second borrow, or
+  // dismissing the list would leave the strip shut.
+  if (!ribbonClosedForPlanList && isRibbonOpen()) {
+    setRibbonOpen(false);
+    ribbonClosedForPlanList = true;
+  }
   // The map still shows the fleet the plans are drawn from, so find-wheels mode
   // stays on underneath: dismissing the list reveals a map that is already in
   // the right state rather than one that has to be put there.
@@ -4178,6 +4324,33 @@ function openPlanList(dest: TripPlace): void {
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
     onCancel: () => closePlanList(),
+    // "My ideal scooter" lives in the Filters drawer, which is where it has
+    // always lived and where a rider who already knows about it will look for
+    // it. Dismissing the list first because the drawer is the thing they are
+    // being sent to — two stacked surfaces over a map is how somebody loses
+    // track of which one they are pressing, which is the same argument §11.7
+    // made about the HUD's two sheets.
+    onConfigureSpec: () => {
+      closePlanList();
+      document
+        .querySelector<HTMLButtonElement>('.drawer-tab[data-drawer="devices"]')
+        ?.click();
+      // The spec controls live inside a collapsed `<details>` accordion, so
+      // opening the drawer alone lands the rider on a closed section with no
+      // sign of what they came for. Open the section, then put the control in
+      // view — in that order, because scrolling to something with zero height
+      // scrolls to the wrong place.
+      const edit = document.getElementById("spec-edit");
+      edit?.closest("details")?.setAttribute("open", "");
+      edit?.scrollIntoView({ block: "center", behavior: "smooth" });
+      // Focus last, and only the control itself: a rider sent here by a button
+      // should be able to carry straight on with the keyboard.
+      try {
+        edit?.focus({ preventScroll: true });
+      } catch {
+        /* detached, or an engine without the options bag */
+      }
+    },
     onRefresh: resolve,
     onCorrectFreeMinutes: (minutes) => {
       saveCorrection(Date.now(), minutes);
@@ -5010,6 +5183,21 @@ function wireFreshnessCollapse(): void {
 
 // Renders the Account drawer body based on map-auth state and keeps the
 // expiry countdown live. Also wires sign-in / sign-out handlers.
+/** The saved-places mirror's two seams: is there a session, and how to send.
+ *
+ *  Module-level rather than inside `wireAccount` because the hook it registers
+ *  outlives any one render of the drawer — a rider editing a favourite from the
+ *  "Where to?" sheet is not in the drawer at all. */
+const savedPlacesDeps = {
+  signedIn: () => isAuthenticated(),
+  push: (places: SavedPlace[]) => updateProfile({ saved_places: places }),
+};
+
+// Registered once, signed in or not: the hook asks `signedIn()` on every write,
+// so a session starting or ending re-wires nothing. Signed out this is inert
+// and the favourites store behaves exactly as it always has.
+startSavedPlacesSync(savedPlacesDeps);
+
 function wireAccount(): void {
   const body = document.getElementById("account-body");
   if (!body) return;
@@ -5054,6 +5242,16 @@ function wireAccount(): void {
   loginHost.className = "account-login-host";
   body.append(loginHost);
 
+  // AND SO DOES THE PROFILE, directly under it. Who you are signed in as and
+  // the profile you are signed in WITH are one block; splitting them put half
+  // above the strip and half behind a tab the rider had to go looking for. Like
+  // `loginHost` it is built once and never torn down — `render()` replaces its
+  // CONTENTS — and it is simply empty when signed out, because there is no
+  // profile to display until there is a session.
+  const profileHost = document.createElement("div");
+  profileHost.className = "account-profile-host";
+  body.append(profileHost);
+
   // DECLARED BEFORE THE STRIP, AND NOT AS A `const` BELOW IT. `createAccountTabs`
   // calls `onShow` for the initial tab synchronously, from inside its own
   // constructor — that is deliberate, so lazily-built panels get their first
@@ -5063,6 +5261,10 @@ function wireAccount(): void {
   // lands inside `createAccountTabs`, aborts `wireAccount`, and the In-Ride panel
   // is never built at all — a tab that opens empty.
   let inRide: InRidePanelHandle | null = null;
+  // Declared here for the same reason, and it is not hypothetical: `onShow`
+  // below reads this one too, and the Navigation tab can be the initial tab
+  // via `takeTabHint()`.
+  let nav: NavPanelHandle | null = null;
 
   // The strip is built ONCE and never torn down: render() below replaces
   // panel CONTENTS, so the rider's chosen tab survives both the auth-config
@@ -5079,9 +5281,12 @@ function wireAccount(): void {
       // settings copy of it is re-read every time this tab is shown rather
       // than trusted to be current from when it was built.
       if (id === "inride") inRide?.refresh();
+      // Same reasoning: a sign-in can have merged places in from the account,
+      // and the ideal-scooter spec lives behind a panel in another drawer.
+      if (id === "nav") nav?.refresh();
     },
     onBlocked: (id) => {
-      const what = id === "local" ? "Local Data" : id === "profile" ? "Profile" : "Community";
+      const what = id === "local" ? "Local Data" : "Community";
       gateHint.textContent = `Sign in to use ${what}.`;
       gateHint.hidden = false;
     },
@@ -5095,45 +5300,23 @@ function wireAccount(): void {
   // rebuilt on sign-in or sign-out: every control on it is a device preference
   // in localStorage, so none of them changes when a session does, and
   // rebuilding would throw away an open rename box for no reason.
-  inRide = buildInRidePanel(tabs.panel("inride"), {
+  inRide = buildInRidePanel(tabs.panel("inride"));
+
+  // Navigation preferences. Built once, outside render(), for exactly the same
+  // reason In-Ride is: every control on it is a device preference, none of them
+  // changes when a session does, and rebuilding would throw away an open rename
+  // box for no reason.
+  nav = buildNavPanel(tabs.panel("nav"), {
     pickLocation: (label) =>
       mapPick.pick({ hint: `Tap the map to set ${label}` }),
-    // The destination lists read the store when they open, so nothing has to
-    // be pushed at them.
-    onFavoritesChanged: () => {},
-    // The Home and Work slots have a server half. Mirroring the write up to
-    // the profile is what keeps the two sides of a rider's doorstep from
-    // disagreeing: the account drawer's own location rows already mirror
-    // DOWNWARD into these slots, the map pins are drawn from the profile
-    // columns, and the profile-completion award counts one of them. Without
-    // this, a rider could set Home here and still be told to complete their
-    // profile.
-    //
-    // Signed out it does nothing, by design — the slot stays device-local,
-    // which is the point of the slots. Failures are swallowed: the local write
-    // already happened and the row already says "Saved", so a dead network
-    // must not retract it. The next profile GET reconciles.
-    onHomeWorkChanged: (kind, point) => {
-      if (!isAuthenticated()) return;
-      const patch =
-        kind === "home"
-          ? { home_lat: point?.lat ?? null, home_lng: point?.lon ?? null }
-          : { work_lat: point?.lat ?? null, work_lng: point?.lon ?? null };
-      void updateProfile(patch)
-        .then((p) => {
-          homeWorkPins.set({
-            home:
-              p.home_lat != null && p.home_lng != null
-                ? { lat: p.home_lat, lng: p.home_lng }
-                : null,
-            work:
-              p.work_lat != null && p.work_lng != null
-                ? { lat: p.work_lat, lng: p.work_lng }
-                : null,
-          });
-        })
-        .catch(() => {});
-    },
+    // Whether an "ideal scooter" exists, so the split preference can say
+    // plainly that it has nothing to prefer yet.
+    hasIdealSpec: () => rideSpecPanel?.activeSpec() != null,
+    // Redraw the map's home/work pins. The pins follow the SLOTS now, not the
+    // profile's `home_lat`/`work_lat` columns — which is what makes them
+    // appear for a signed-out rider, and what stops them disagreeing with the
+    // only control that sets either.
+    onFavoritesChanged: () => syncHomeWorkPins(),
   });
 
   const buildSignedOut = (): void => {
@@ -5141,10 +5324,11 @@ function wireAccount(): void {
       cfg: authCfg,
       state: signedOutState,
       // The session is persisted by the door itself; reload so every fetch
-      // picks up the bearer token — landing on Profile, which is what a
-      // brand-new account most needs filled in.
+      // picks up the bearer token. No tab hint any more: the profile a new
+      // account most needs to fill in is above the strip now, visible from
+      // whichever tab the reload lands on, so naming one would only move the
+      // rider away from wherever they were.
       onSignedIn: () => {
-        writeTabHint("profile");
         location.reload();
       },
     });
@@ -5171,20 +5355,24 @@ function wireAccount(): void {
       loginPanel = null;
       localData?.dispose();
       localData = null;
-      // Every panel EXCEPT In-Ride: that one is built once and owns nothing
-      // session-shaped, so emptying it here would delete a live panel and
-      // leave the tab blank.
+      // Every panel EXCEPT In-Ride and Navigation: those two are built once and
+      // own nothing session-shaped, so emptying them here would delete a live
+      // panel and leave the tab blank.
       for (const id of ACCOUNT_TAB_IDS) {
-        if (id !== "inride") tabs.panel(id).replaceChildren();
+        if (id !== "inride" && id !== "nav") tabs.panel(id).replaceChildren();
       }
       loginHost.replaceChildren();
+      profileHost.replaceChildren();
       gateHint.hidden = true;
 
       const on = !!auth;
-      tabs.setEnabled("profile", on);
+      // Navigation is NOT gated, where the Profile tab it replaced was: every
+      // control on it is a localStorage preference, so a signed-out rider can
+      // set all of it. The profile that needed the session moved above the
+      // strip, where it is simply absent when there is nothing to show.
       tabs.setEnabled("community", on);
       tabs.setEnabled("local", on || !GATE_LOCAL_TAB_ON_AUTH);
-      // In-Ride is never gated — it is all device preferences — so it is also
+      // In-Ride is never gated either — it is all device preferences — so it is
       // the safe place to land when a session ends underneath a tab that just
       // became unavailable.
       if (!tabs.isEnabled(tabs.selected())) tabs.select("inride", { force: true });
@@ -5201,19 +5389,16 @@ function wireAccount(): void {
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
-          pickLocation: (kind) =>
-            mapPick.pick({
-              hint:
-                kind === "home"
-                  ? "Tap the map to set your home"
-                  : "Tap the map to set your work",
-            }),
-          onLocationsChanged: (points) => homeWorkPins.set(points),
-          // A profile home/work write mirrors down into the favourite slots,
-          // so the In-Ride tab's rows are stale until they re-read.
-          onFavoritesChanged: () => inRide?.refresh(),
-          onCompletenessChanged: (complete) =>
-            tabs.setFlagged("profile", !complete),
+          // The saved places arrived with the profile. Merging them into the
+          // device's own store is `saved-places-sync.ts`'s job; `undefined`
+          // (an older deployment) is passed straight through, because only
+          // that module should decide what silence means.
+          onSavedPlaces: (places) => {
+            syncSavedPlacesFromProfile(places, savedPlacesDeps);
+            // The slot rows are rendered from the store, and a merge can have
+            // changed them.
+            nav?.refresh();
+          },
           // Null until /auth/config resolves — the row treats unknown as
           // "don't offer yet" rather than flashing a button that may vanish.
           smsEnabled: () => authCfg?.smsEnabled ?? null,
@@ -5225,7 +5410,7 @@ function wireAccount(): void {
             inRide?.setRateStatus(message, isError),
           panels: {
             login: loginHost,
-            profile: tabs.panel("profile"),
+            profile: profileHost,
             community: tabs.panel("community"),
           },
         });

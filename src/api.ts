@@ -552,6 +552,18 @@ export interface ProfileBadge {
   earned_at: string;
 }
 
+/** One saved place as the account stores it. Deliberately the same five fields
+ *  as `favorites.ts`'s `Favorite`, and the slot ids (`slot:home`, `slot:work`,
+ *  `slot:custom1`, `slot:custom2`) travel as ordinary ids — the server has no
+ *  notion of a slot and should not grow one. */
+export interface SavedPlace {
+  id: string;
+  label: string;
+  emoji: string;
+  lat: number;
+  lon: number;
+}
+
 export interface Profile {
   email: string | null;
   phone_number: string | null;
@@ -573,26 +585,56 @@ export interface Profile {
   show_public_username: boolean;
   show_in_leaderboards: boolean;
   rate_plan: ApiRatePlan | null;
-  /** DEAD, BOTH OF THEM — kept typed because the server still sends them, and a
-   *  field absent from this interface is one the next reader has to rediscover
-   *  on the wire.
+  /** DEAD — kept typed because the server still sends it, and a field absent
+   *  from this interface is one the next reader has to rediscover on the wire.
    *
-   *  `theme`: the app's theme is a DEVICE preference and always has been —
-   *  `theme.ts` owns it in `scooter-fyi-theme` / `scooter-fyi-theme-sun`, with
-   *  sun-sync resolved locally. Nothing reads this column. (Not to be confused
-   *  with the per-ride `RideOptions.theme`, which §6.5 deleted for being inert:
-   *  that one was meant to be Screen 4's route-preview basemap flavour and no
-   *  screen ever read it either.)
+   *  The app's theme is a DEVICE preference and always has been — `theme.ts`
+   *  owns it in `scooter-fyi-theme` / `scooter-fyi-theme-sun`, with sun-sync
+   *  resolved locally. Nothing reads this column. (Not to be confused with the
+   *  per-ride `RideOptions.theme`, which §6.5 deleted for being inert: that one
+   *  was meant to be Screen 4's route-preview basemap flavour and no screen
+   *  ever read it either.)
    *
-   *  `favorites`: saved places are device-local too — `favorites.ts`, which says
-   *  why in its own header: the profile's two fixed home/work columns mean a
-   *  signed-out rider has no saved places at all and nobody has a third.
-   *  Nothing reads or writes this column.
-   *
-   *  Removing either is a cross-repo migration, not a client edit; until then
+   *  Removing it is a cross-repo migration, not a client edit; until then
    *  `docs/USER_CONFIGURATION_AUDIT.md` is the record. */
   theme: string | null;
+  /** SUPERSEDED BY `saved_places`, and the server migrates it on read.
+   *
+   *  It was the original plaintext JSONB column for saved places, which the
+   *  frontend never learned to write — so on most accounts it is empty, and on
+   *  the rest it holds rows from a build that predates `favorites.ts`. The
+   *  server folds whatever is in here into `saved_places` the next time the
+   *  profile is read, so this client neither reads nor writes it. Typed only
+   *  so the field on the wire has a name.
+   *
+   *  Do not send it. A write here would land in a column that is on its way
+   *  out and is not encrypted. */
   favorites: unknown[];
+  /** Saved places, round-tripped through the account so they survive a new
+   *  phone — the server half of `favorites.ts`.
+   *
+   *  ENCRYPTED AT REST server-side (API `src/place_crypto.py`): the column
+   *  holds a Fernet token, not these objects, because "Home" next to a
+   *  coordinate, an email and a phone number in one row is a dossier and a
+   *  database dump should not contain it. The server can still decrypt — it
+   *  has to, to serve them back — so this is encryption at rest, not
+   *  end-to-end, and the privacy policy says exactly that.
+   *
+   *  Optional because an older deployment does not send it, and "the field was
+   *  absent" must not read as "the rider has no saved places" — that
+   *  difference is what stops a sync wiping the server copy. See
+   *  `saved-places-sync.ts`. */
+  saved_places?: SavedPlace[];
+  /** DRAINING, like `favorites` above, and for the same reason: a rider's Home
+   *  and Work are two of the four favourite SLOTS now, and the slots reach the
+   *  account through `saved_places`. Nothing in this client writes these four
+   *  any more — the map pins, the "Where to?" pinned pair and Screen 3's saved
+   *  rows all read the slots, which works signed out and cannot disagree with
+   *  the control that sets them.
+   *
+   *  Still READ in one place: `isProfileComplete`, which mirrors the server's
+   *  own criteria for the ten-point completion award. That award is the last
+   *  thing holding these columns up, and moving it is an API change. */
   home_lat: number | null;
   home_lng: number | null;
   work_lat: number | null;
@@ -634,11 +676,7 @@ export type ProfileUpdate = Partial<
     | "show_in_leaderboards"
     | "rate_plan"
     | "theme"
-    | "favorites"
-    | "home_lat"
-    | "home_lng"
-    | "work_lat"
-    | "work_lng"
+    | "saved_places"
     | "royalty_title"
     | "ruling_color"
     | "ruling_border_color"

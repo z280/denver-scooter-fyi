@@ -384,8 +384,20 @@
             <button class="preset-btn" type="button" data-quick="charged">⚡ Charged &amp; Ridable</button>
             <button class="preset-btn" type="button" data-quick="decent">👍 Decent Rides</button>
             <button class="preset-btn" type="button" data-quick="no-standing">🚫🛴 No Standing</button>
+            <!-- THE ONE QUICK FILTER THAT IS NOT JUST A MAP SHORTCUT. It also
+                 binds the trip planner, on every leg including the first —
+                 carrying a passenger is a fact about the trip, not a view onto
+                 the map, and a plan that put two people on a one-seater would
+                 be unusable rather than merely worse. `aria-pressed` because
+                 unlike the three above it it is a STATE the rider can leave on;
+                 passenger-mode.ts says why. -->
+            <button class="preset-btn" type="button" data-quick="two-up" aria-pressed="false">👥 Two Passengers</button>
           </div>
           <p class="control-hint">One tap sets the sections below — everything stays adjustable after.</p>
+          <!-- Rendered by wireQuickFilters(): what Two Passengers is enforcing,
+               or the warning that it and the rider's ideal scooter cannot both
+               be satisfied. -->
+          <p class="control-hint" id="two-up-note" hidden></p>
           <h4 class="control-sublabel" id="preset-label">Saved filters</h4>
           <div class="preset-actions" role="group" aria-labelledby="preset-label">
             <button id="preset-save" class="preset-btn" type="button">💾 Save map filter</button>
