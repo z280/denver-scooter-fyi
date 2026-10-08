@@ -148,6 +148,7 @@ function hover(
     cross.style.display = "";
     tip.replaceChildren(h("div", "viz-tip__title", bucketLabel(chart.slots[i], chart.granularity)));
     if (chart.partial[i]) tip.append(h("div", "viz-tip__partial", `Incomplete bucket: counted so far`));
+    if (chart.older?.[i]) tip.append(h("div", "viz-tip__partial", OLDER_LABEL_CAP));
     let total = 0;
     let any = false;
     for (const s of chart.series) {
@@ -182,11 +183,11 @@ function hover(
   hit.addEventListener("pointerleave", hide);
 }
 
-export function legend(series: { name: string; color: string; dashed?: boolean; note?: string }[]): HTMLElement {
+export function legend(series: { name: string; color: string; dashed?: boolean; note?: string; swatchClass?: string }[]): HTMLElement {
   const ul = h("ul", "viz-legend");
   for (const s of series) {
     const li = h("li");
-    const sw = h("span", s.dashed ? "viz-swatch viz-swatch--dashed" : "viz-swatch");
+    const sw = h("span", ["viz-swatch", s.dashed ? "viz-swatch--dashed" : "", s.swatchClass ?? ""].filter(Boolean).join(" "));
     sw.style.setProperty("--swatch", s.color);
     sw.style.background = s.dashed ? "" : s.color;
     li.append(sw, document.createTextNode(s.note ? `${s.name} ${s.note}` : s.name));
@@ -213,8 +214,9 @@ export function dataTable(chart: SlotChart, format: ValueFormat = defaultFormat,
     const body = h("tbody");
     chart.slots.forEach((ms, i) => {
       const tr = h("tr");
-      tr.append(h("td", undefined, bucketLabel(ms, chart.granularity) + (chart.partial[i] ? ` (${PARTIAL_LABEL})` : "")));
-      if (chart.partial[i]) tr.className = "is-partial";
+      const tags = [chart.partial[i] ? PARTIAL_LABEL : "", chart.older?.[i] ? OLDER_LABEL : ""].filter(Boolean);
+      tr.append(h("td", undefined, bucketLabel(ms, chart.granularity) + (tags.length ? ` (${tags.join("; ")})` : "")));
+      tr.className = [chart.partial[i] ? "is-partial" : "", chart.older?.[i] ? "is-older" : ""].filter(Boolean).join(" ");
       let tot = 0;
       let any = false;
       for (const s of chart.series) {
@@ -236,17 +238,22 @@ export function dataTable(chart: SlotChart, format: ValueFormat = defaultFormat,
 }
 
 export interface Marker {
+  /** Slot position; fractional = part-way through a slot. */
   index: number;
   label: string;
 }
 
-function drawMarker(g: SVGGElement, x: number, height: number, label: string, width: number) {
+/** Tooltip / table wording for a bucket counted under an older method. */
+export const OLDER_LABEL = "older counting method — not comparable";
+const OLDER_LABEL_CAP = "Older counting method — not comparable";
+
+function drawMarker(g: SVGGElement, x: number, height: number, label: string, width: number, row = 0) {
   const xx = Math.round(x) + 0.5;
   g.append(svg("line", { x1: xx, x2: xx, y1: M.top - 4, y2: height - M.bottom, class: "viz-marker" }));
   const right = xx > width * 0.6;
   const t = svg("text", {
     x: right ? xx - 4 : xx + 4,
-    y: M.top + 6,
+    y: M.top + 6 + row * 14,
     "text-anchor": right ? "end" : "start",
     class: "viz-marker__label",
   });
@@ -259,7 +266,14 @@ function drawMarker(g: SVGGElement, x: number, height: number, label: string, wi
 export function renderStackedBars(
   container: HTMLElement,
   chart: SlotChart,
-  opts: { marker?: Marker; format?: ValueFormat; ariaLabel: string; totalLabel?: string },
+  opts: {
+    markers?: Marker[];
+    /** A shaded span in slot units (e.g. the failed-start undercount). */
+    band?: { from: number; to: number; label: string };
+    format?: ValueFormat;
+    ariaLabel: string;
+    totalLabel?: string;
+  },
 ): void {
   const format = opts.format ?? defaultFormat;
   container.classList.add("viz");
@@ -276,6 +290,24 @@ export function renderStackedBars(
     const x = (i: number) => M.left + i * slotW + slotW / 2;
     const gap = slotW > 8 ? 2 : slotW > 3 ? 1 : 0;
     const bw = Math.max(0.5, slotW - gap);
+    if (opts.band) {
+      const bx = M.left + opts.band.from * slotW;
+      const band = svg("rect", {
+        x: bx,
+        y: M.top,
+        width: Math.max(1, (opts.band.to - opts.band.from) * slotW),
+        height: height - M.top - M.bottom,
+        class: "viz-band",
+      });
+      const bt = svg("title");
+      bt.textContent = opts.band.label;
+      band.append(bt);
+      g.append(band);
+      // Below the marker label rows (at most two in practice).
+      const lt = svg("text", { x: bx + 4, y: M.top + 6 + 14 * Math.min(2, opts.markers?.length ?? 0), class: "viz-band__label" });
+      lt.textContent = opts.band.label;
+      if ((opts.band.to - opts.band.from) * slotW > 90) g.append(lt);
+    }
     const bars = svg("g", { class: "viz-bars" });
     for (let i = 0; i < n; i++) {
       const left = M.left + i * slotW + gap / 2;
@@ -285,6 +317,7 @@ export function renderStackedBars(
       }
       let acc = 0;
       const part = chart.partial[i];
+      const old = chart.older?.[i];
       for (const s of chart.series) {
         const v = s.values[i] ?? 0;
         if (v <= 0) continue;
@@ -292,7 +325,7 @@ export function renderStackedBars(
         const y1 = y(acc + v);
         acc += v;
         const r = svg("rect", { x: left, y: y1, width: bw, height: Math.max(0.5, y0 - y1), fill: s.color });
-        const cls = [slotW > 6 ? "viz-seg" : "", part ? "viz-seg--partial" : ""].filter(Boolean).join(" ");
+        const cls = [slotW > 6 ? "viz-seg" : "", part ? "viz-seg--partial" : "", old ? "viz-seg--older" : ""].filter(Boolean).join(" ");
         if (cls) r.setAttribute("class", cls);
         bars.append(r);
       }
@@ -308,7 +341,18 @@ export function renderStackedBars(
     }
     g.append(bars);
     xAxis(g, chart, width, height, x);
-    if (opts.marker) drawMarker(g, M.left + opts.marker.index * slotW, height, opts.marker.label, width);
+    // Each label takes the first row where its (estimated) extent does not
+    // overlap a label already placed; labels right of 60% grow leftwards.
+    const rows: [number, number][][] = [];
+    for (const m of [...(opts.markers ?? [])].sort((a, b) => a.index - b.index)) {
+      const mx = M.left + m.index * slotW;
+      const w = m.label.length * 6.3 + 8;
+      const ext: [number, number] = mx > width * 0.6 ? [mx - w, mx] : [mx, mx + w];
+      let row = rows.findIndex((r) => r.every(([a, b]) => ext[1] <= a || ext[0] >= b));
+      if (row < 0) row = rows.push([]) - 1;
+      rows[row].push(ext);
+      drawMarker(g, mx, height, m.label, width, row);
+    }
     const wrap = h("div", "viz-plot");
     wrap.append(root);
     hover(wrap, root, chart, width, height, x, slotW, format, opts.totalLabel);

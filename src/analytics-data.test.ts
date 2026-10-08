@@ -12,7 +12,11 @@ import {
   controlsToSearch,
   DEFAULT_CONTROLS,
   denverLocalToUtc,
+  changeMarkers,
   lineSegments,
+  olderMask,
+  slotPosition,
+  spanBand,
   lineSeries,
   modelColor,
   modelLabel,
@@ -268,5 +272,41 @@ describe("controls", () => {
     expect(controlsFromSearch(controlsToSearch(s))).toEqual(s);
     expect(controlsFromSearch("?days=abc&g=fortnight&layer=planet&region=<script>")).toEqual(DEFAULT_CONTROLS);
     expect(controlsFromSearch("?days=200&g=hour").days).toBe(31);
+  });
+});
+
+describe("counting eras", () => {
+  const slots = bucketSlots("2026-10-01T06:00:00Z", "2026-10-08T06:00:00Z", "day"); // Oct 1..7 (Denver)
+
+  it("positions an instant fractionally within its slot, null outside the axis", () => {
+    // Oct 6 01:36Z = Oct 5, 7:36 PM MDT: slot 4 (Oct 5), 19.6/24 of the way in
+    expect(slotPosition(slots, "day", Date.parse("2026-10-06T01:36:00Z"))).toBeCloseTo(4 + 19.6 / 24, 5);
+    expect(slotPosition(slots, "day", slots[0])).toBeNull();
+    expect(slotPosition(slots, "day", Date.parse("2026-09-01T00:00:00Z"))).toBeNull();
+    expect(slotPosition(slots, "day", Date.parse("2026-10-09T00:00:00Z"))).toBeNull();
+  });
+
+  it("mutes every bucket that starts before comparable_since, straddlers included", () => {
+    expect(olderMask(slots, "2026-10-06T01:36:00+00:00")).toEqual([true, true, true, true, true, false, false]);
+    expect(olderMask(slots, undefined)).toEqual(Array(7).fill(false));
+    expect(olderMask(slots, null)).toEqual(Array(7).fill(false));
+    expect(olderMask(slots, "not a date")).toEqual(Array(7).fill(false));
+  });
+
+  it("marks only the changes inside the window", () => {
+    const m = changeMarkers(slots, "day", [
+      { at: "2026-08-10T04:15:00+00:00", summary: "a" },
+      { at: "2026-10-06T01:36:00+00:00", summary: "b" },
+    ]);
+    expect(m).toHaveLength(1);
+    expect(m[0].label).toBe("Counting change Oct 5");
+    expect(changeMarkers(slots, "day", undefined)).toEqual([]);
+  });
+
+  it("clips a span to the axis", () => {
+    expect(spanBand(slots, "day", Date.parse("2026-08-10T06:00:00Z"), Date.parse("2026-10-03T06:00:00Z"))).toEqual({ from: 0, to: 2 });
+    expect(spanBand(slots, "day", Date.parse("2026-10-03T06:00:00Z"), Infinity)).toEqual({ from: 2, to: 7 });
+    expect(spanBand(slots, "day", Date.parse("2026-11-01T00:00:00Z"), Infinity)).toBeNull();
+    expect(spanBand([], "day", 0, 1)).toBeNull();
   });
 });

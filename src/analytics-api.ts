@@ -61,7 +61,27 @@ export interface AnalyticsModelBucket extends AnalyticsBucket {
   total: number;
 }
 
-export interface AnalyticsRidesResponse extends AnalyticsWindow {
+/** A change in HOW rides, stops or failed starts were counted (API
+ *  api_analytics.COUNTING_CHANGES). Figures either side of `at` measure
+ *  different things; a chart must not present the step as a change in Denver. */
+export interface CountingChange {
+  /** UTC ISO instant the new method took effect. */
+  at: string;
+  commit?: string;
+  /** Which series it touched: "rides", "dwell", "failed_starts". */
+  affects?: string[];
+  summary: string;
+}
+
+/** Counting-era fields (API #122). All optional: an older API omits them. */
+export interface AnalyticsCountingEras {
+  /** The changes that affect THIS series, oldest first. */
+  counting_changes?: CountingChange[];
+  /** Where the current method begins: compare figures only after this. */
+  comparable_since?: string | null;
+}
+
+export interface AnalyticsRidesResponse extends AnalyticsWindow, AnalyticsCountingEras {
   granularity: AnalyticsGranularity;
   region: { type: AnalyticsRegionType; name: string };
   models: string[];
@@ -70,9 +90,10 @@ export interface AnalyticsRidesResponse extends AnalyticsWindow {
   /** Exclusive end of what the rollup has processed; null when empty. */
   data_through: string | null;
   definition: string;
+  caveat?: string;
 }
 
-export interface AnalyticsFailedStartsResponse extends AnalyticsWindow {
+export interface AnalyticsFailedStartsResponse extends AnalyticsWindow, AnalyticsCountingEras {
   granularity: AnalyticsGranularity;
   region: { type: AnalyticsRegionType; name: string };
   models: string[];
@@ -84,6 +105,9 @@ export interface AnalyticsFailedStartsResponse extends AnalyticsWindow {
   caveat: string;
   /** "2026-08-10" — a Denver calendar date. */
   undercount_since: string;
+  /** UTC ISO end of the undercount (the counting fix). Absent from older
+   *  responses, where the undercount was still open-ended. */
+  undercount_until?: string;
 }
 
 export interface AnalyticsRegionDevices {
@@ -118,13 +142,14 @@ export interface AnalyticsDwellCell {
   average_minutes: number | null;
 }
 
-export interface AnalyticsDwellResponse extends AnalyticsWindow {
+export interface AnalyticsDwellResponse extends AnalyticsWindow, AnalyticsCountingEras {
   region_type: AnalyticsRegionType;
   models: string[];
   regions: { region: string; by_model: Record<string, AnalyticsDwellCell> }[];
   min_dwells_for_average: number;
   data_through: string | null;
   definition: string;
+  caveat?: string;
 }
 
 export interface AnalyticsFleetStatusBucket extends AnalyticsBucket {
