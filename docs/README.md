@@ -34,3 +34,5 @@ Living descriptions of the current system.
 
 - [ROVER_ZONE.md](reference/ROVER_ZONE.md) — where the Rover service-area polygon came from and how to change it.
 - [USER_CONFIGURATION_AUDIT.md](reference/USER_CONFIGURATION_AUDIT.md) — every rider setting: where it is stored, read and set.
+
+- [`unmerged.md`](unmerged.md): remote branches holding work not on `main` (snapshot, 2026-10-08).
