@@ -27,6 +27,7 @@ import {
 import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
+import { dibsSmsAlerts } from "./dibs-prefs.ts";
 import {
   yieldRibbonToDrawer,
   restoreRibbonAfterDrawer,
@@ -2333,6 +2334,11 @@ export class Devices {
               device_type: model?.name ?? props.vehicle_model_name ?? "",
               lat: at.lat,
               lon: at.lon,
+              // The rider's standing answer, sent WITH the claim rather than
+              // stored server-side as a preference — sql/097's rule, and the
+              // reason is that a claim should be honoured under the answer it
+              // was made under.
+              notify_sms: dibsSmsAlerts(),
             })
               .then((reg) => {
                 saveDibs({

@@ -9,7 +9,9 @@ import {
   type BoundaryLayer,
   type DeviceInclude,
   fetchProfile,
+  claimDibsAsMine,
   liveDibs,
+  registerDibs,
   releaseDibs,
   updateProfile,
   type SavedPlace,
@@ -188,7 +190,7 @@ import {
   type Dibs,
   loadDibs,
 } from "./dibs.ts";
-import { autoDibs } from "./dibs-prefs.ts";
+import { autoDibs, dibsSmsAlerts } from "./dibs-prefs.ts";
 import {
   setPendingTrip,
   takePendingTrip,
@@ -4709,6 +4711,38 @@ function beginWalkToVehicle(info: {
     // may stop the walk starting.
     armDibsWatch(claim);
     void requestDibsNotifications();
+    // AND IT HAS TO REACH THE SERVER. `callDibs` writes the phone's copy;
+    // the certificate's timestamp, every other rider's dimmed map and the
+    // SMS watch all read the row. A claim made here and never registered
+    // was a claim only this phone believed in.
+    //
+    // Guarded on `registration`: `callDibs` is idempotent on the vehicle
+    // identifier, so a claim the device popup already registered a moment
+    // ago comes back with its row attached and must not be inserted twice.
+    if (claim.registration === null) {
+      void registerDibs({
+        vehicle_identifier: claim.vehicleIdentifier,
+        vehicle_name: claim.vehicleName,
+        plate: claim.plate,
+        claimed_by: claim.claimedBy,
+        lat: info.lat,
+        lon: info.lng,
+        notify_sms: dibsSmsAlerts(),
+      })
+        .then((reg) => {
+          saveDibs({
+            ...claim,
+            registration: {
+              id: reg.id,
+              verifyUrl: reg.verify_url,
+              qrUrl: reg.qr_url,
+            },
+          });
+        })
+        .catch(() => {
+          /* the certificate falls back to this phone's own timestamp */
+        });
+    }
   }
 
   const panel = createArrivalPanel(need("arrival-panel"), {
@@ -4735,6 +4769,17 @@ function beginWalkToVehicle(info: {
       });
     },
     onChooseRoute: () => {
+      // "I'VE GOT IT." The one moment the rider declares they are taking
+      // THIS scooter, and the only chance to stop the server texting them
+      // about their own rental: its alert fires on "a rental started on this
+      // vehicle", which is all the fleet feed says, and the commonest such
+      // rental is the claimant's own. Fire-and-forget — a rider about to
+      // unlock a scooter should not wait on us, and the worst case of it not
+      // landing is one honest-but-unnecessary text.
+      const held = info.vehicleIdentifier
+        ? dibsOn(info.vehicleIdentifier)
+        : null;
+      if (held?.registration) void claimDibsAsMine(held.registration.id);
       endWalkFlow();
       // Straight to route triage. The wizard still owns starting a ride — it
       // is where the session doc, the track store and the Veo handoff live —

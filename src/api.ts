@@ -1934,6 +1934,12 @@ export interface DibsRegistration {
   expires_at: string;
   verify_url: string;
   qr_url: string;
+  /** Whether the server is actually watching this claim — NOT an echo of
+   *  `notify_sms`. A claim with no account behind it has nobody to text, and
+   *  an older server omits the field entirely, which is why this is
+   *  optional: absent means "this build cannot tell you", and the app must
+   *  not read that as yes. */
+  watching?: boolean;
 }
 
 export function registerDibs(
@@ -1946,6 +1952,13 @@ export function registerDibs(
     device_type?: string;
     lat?: number | null;
     lon?: number | null;
+    /** "Text me if this one goes out while my claim is live."
+     *
+     *  Sent per CLAIM rather than stored as an account preference, which is
+     *  the server's rule too (sql/097): a claim made while the switch was on
+     *  is honoured even if the rider turns it off an hour later, and one made
+     *  while it was off never starts texting because they turned it on. */
+    notify_sms?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<DibsRegistration> {
@@ -2006,6 +2019,29 @@ export function liveDibs(
  *
  *  Unauthenticated by design: possession of the claim id is the credential,
  *  exactly as it is for the certificate URL it appears in. */
+/** "I've got it" — the claimant is riding the scooter they claimed.
+ *
+ *  THIS PREVENTS ONE WRONG TEXT. The server's alert fires on "a rental
+ *  started on this vehicle", because that is the whole of what the fleet
+ *  feed says; it cannot see whose rental it is. The commonest rental on a
+ *  claimed scooter is the claimant's own, so without this the most ordinary
+ *  path in the app would text the rider to say somebody had taken their
+ *  scooter.
+ *
+ *  It does NOT release the claim — that is `releaseDibs`. The claim is still
+ *  what the certificate rests on and still dims the scooter for everyone
+ *  else until it expires.
+ *
+ *  Unauthenticated and fire-and-forget, like `releaseDibs`: possession of
+ *  the unguessable claim id is the credential, and a rider who is about to
+ *  unlock a scooter should not wait on us. */
+export async function claimDibsAsMine(dibsId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/dibs/${encodeURIComponent(dibsId)}/mine`, {
+    method: "POST",
+    keepalive: true,
+  });
+}
+
 export async function releaseDibs(dibsId: string): Promise<void> {
   await fetch(`${API_BASE}/api/v1/dibs/${encodeURIComponent(dibsId)}/release`, {
     method: "POST",

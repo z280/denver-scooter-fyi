@@ -285,8 +285,13 @@ export function buildNavPanel(
     smsInput.disabled = verified !== true;
     smsLabel.classList.toggle("is-disabled", verified !== true);
     if (verified === true) {
+      // SAYS WHAT WE CAN SEE. The fleet feed tells us a rental started on a
+      // vehicle, never whose rental it is — so the text reports that, and
+      // this hint promises the same thing rather than the stronger claim the
+      // switch's own label makes. Over-promising here is how the first
+      // alert about the rider's own ride reads as a bug.
       smsHint.textContent =
-        "We\u2019ll text you if somebody rides off on a scooter you called dibs on.";
+        "We\u2019ll text you if a rental starts on a scooter you called dibs on \u2014 we can\u2019t tell whose, so the message says so.";
       return;
     }
     smsHint.textContent =
