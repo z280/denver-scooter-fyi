@@ -2604,6 +2604,41 @@ readout, one primary action, everything else behind a single control. And the
 controls belong at the **bottom** — a phone on a handlebar mount is reached
 with a thumb from below, and the current cluster is at the top.
 
+> **SHIPPED, with one deliberate departure and one correction to the text.**
+>
+> The thumb cluster is three controls: **End**, **Re-center**, and one
+> neutral door to a single sheet. It was five (leave, end, wrench, display,
+> re-center) across two identically-positioned popovers, each of which could
+> be open while the other was shut — the dispatch spent most of its lines
+> closing one to open the other.
+>
+> **`Leave ride view` moved INSIDE the sheet**, as a text button. On a
+> handlebar mount the one action a rider must never hit by accident does not
+> belong beside the one they aim for.
+>
+> **Re-center stays out, on the owner's call**, against this section's own
+> "everything else behind a single control": it is the recovery from a gesture
+> the map itself invites, and a recovery two taps deep is not one.
+>
+> **The door is named for where it goes, not for what it is about**, and that
+> is load-bearing. The display chips had already been moved out of the wrench
+> panel once, because *"adjust time and rate"* was the wrong filing cabinet
+> for the controls over what the rider is LOOKING AT. A neutral control cannot
+> be the wrong cabinet, so both rows are now one tap from the same sheet
+> rather than three taps into different ones. The sheet is ordered by how
+> often a rider in motion reaches for it: On screen, then Clock and rate, then
+> the map's filter, then the things you do once.
+>
+> **The text was out of date on the position.** The cluster had already moved
+> to the bottom-left cutout by the time this was built; the paragraph's
+> handlebar-thumb argument is why it is there, and it is left as written
+> because the argument is still the reason.
+>
+> Both prompts that used to be reached from the cluster — the exit prompt and
+> Stop tracking — are now opened from inside the sheet, so opening either
+> shuts it first. A dialog stacked on a scrolling sheet on a moving map is the
+> same confusion the two old panels' one-at-a-time rule existed to prevent.
+
 ### 11.8 The ride ends and nothing accumulates
 
 Screen 10 awards points. The track lands in IndexedDB and is visible in the

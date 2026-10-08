@@ -431,7 +431,8 @@ export class RideHud {
    *  in `enterRiding` (nothing moves it mid-ride). The Veo cost counter is
    *  a picture of Veo's per-minute billing clock, and an own-device ride has
    *  no such clock running — so this forces the counter off for the ride and
-   *  drops its wrench-panel toggle entirely (there is nothing meaningful to
+   *  drops its chip from the ride-controls sheet entirely (there is nothing
+   *  meaningful to
    *  turn back on). Also drops the legacy summary's cost/comparator rows for
    *  the same reason. */
   private ownDeviceRide = false;
@@ -442,8 +443,8 @@ export class RideHud {
    *  Seeded per ride from the session doc — `"classic"` shows both (the ℹ
    *  copy's "ON by default both a classic and digital readout"), `"digital"`
    *  only the digital, `"none"` neither; a session-less legacy ride shows
-   *  both, exactly as it always did — and flippable mid-ride from the wrench
-   *  panel's Display chips. Ride-scoped, like the ☀/☾ toggle: no
+   *  both, exactly as it always did — and flippable mid-ride from the
+   *  ride-controls sheet's "On screen" chips. Ride-scoped, like the ☀/☾ toggle: no
    *  persistence. */
   private speedoClassicVisible = true;
   private speedoDigitalVisible = true;
@@ -451,10 +452,10 @@ export class RideHud {
   /** Whether the top-left ride clock shows. Independent of the cost flag —
    *  the rider can watch the timer without being shown a price (or vice
    *  versa; the two share the TL stack but hide separately). Always starts
-   *  ON: there is no pre-ride option for it, it's a wrench-panel Display
-   *  chip like the speedometers, ride-scoped and unpersisted. The wrench
-   *  panel's own adjust clock stays visible regardless — you can't nudge a
-   *  clock you can't see. */
+   *  ON: there is no pre-ride option for it, it's an "On screen" chip in the
+   *  ride-controls sheet like the speedometers, ride-scoped and unpersisted.
+   *  That sheet's own adjust clock stays visible regardless — you can't nudge
+   *  a clock you can't see. */
   private timerVisible = true;
 
   /** §11.1's voice, and the state that keeps it from repeating itself. */
@@ -806,24 +807,23 @@ export class RideHud {
         // theme (sun-sync > stored > OS).
         applyTheme(currentTheme() === "dark" ? "light" : "dark");
         break;
-      case "adjust":
-        // One panel at a time: two stacked sheets over a moving map is how a
-        // rider loses track of which one they are pressing.
+      case "more": {
+        // One sheet, so there is no other one to close first — which is what
+        // the two cases this replaced spent most of their lines doing.
+        const sheet = this.root.querySelector<HTMLElement>(".hud-more-panel");
+        if (!sheet) break;
+        sheet.toggleAttribute("hidden");
+        const open = !sheet.hasAttribute("hidden");
+        // The door reports its own state: a round glyph button with a panel
+        // behind it is the case `aria-expanded` exists for, and the sheet
+        // covers the map, so a reader who cannot see that needs telling.
         this.root
-          .querySelector(".hud-display-panel")
-          ?.setAttribute("hidden", "");
-        this.root
-          .querySelector(".hud-adjust-panel")
-          ?.toggleAttribute("hidden");
-        // The attachment may have ended since this panel was last open.
-        this.renderSpecNote();
+          .querySelector('[data-hud="more"].hud-round-btn')
+          ?.setAttribute("aria-expanded", String(open));
+        // The attachment may have ended since this sheet was last open.
+        if (open) this.renderSpecNote();
         break;
-      case "display-panel":
-        this.root.querySelector(".hud-adjust-panel")?.setAttribute("hidden", "");
-        this.root
-          .querySelector(".hud-display-panel")
-          ?.toggleAttribute("hidden");
-        break;
+      }
       case "recenter":
         this.recenterFollowCam();
         emitHudTrack("hud_recenter");
@@ -923,8 +923,8 @@ export class RideHud {
    *  first-class choice. The cost chip is omitted entirely on an own-device
    *  ride — there is no Veo billing clock to picture, so a toggle for it
    *  would only re-enable a number that means nothing. (The rate-plan
-   *  selection the cost estimate prices against is the wrench panel's
-   *  existing "Rate" select, directly above this row.) */
+   *  selection the cost estimate prices against is the "Rate" select further
+   *  down the same sheet, under "Clock and rate".) */
   private displayChipsMarkup(): string {
     const chip = (key: string, label: string, on: boolean): string =>
       `<button type="button" class="hud-chip${on ? " is-on" : ""}" data-hud="display" data-display="${key}" aria-pressed="${on}">${label}</button>`;
@@ -1038,12 +1038,29 @@ export class RideHud {
     return this.deviceCtl.modelSelection_();
   }
 
+  /** Shut §11.7's one sheet, keeping the door's `aria-expanded` honest.
+   *
+   *  Called before anything that puts a prompt over the HUD, because both of
+   *  those prompts are now OPENED FROM INSIDE the sheet ("Leave ride view" and
+   *  "Stop tracking" are rows in it). Leaving it up would stack a dialog on a
+   *  scrolling sheet on a moving map, which is the confusion the two old
+   *  panels' "one at a time" rule existed to prevent. */
+  private closeMorePanel(): void {
+    this.root
+      .querySelector(".hud-more-panel")
+      ?.setAttribute("hidden", "");
+    this.root
+      .querySelector('[data-hud="more"].hud-round-btn')
+      ?.setAttribute("aria-expanded", "false");
+  }
+
   // ---------- Leave the ride view (exit door → End Ride / BRB) ----------
 
   /** Prominent prompt over the live HUD: End Ride (finish + summary) or BRB
    *  (background the ride, keep the counter). Dismissible via Cancel. */
   private showExitPrompt(): void {
     if (this.root.querySelector('[data-hud-prompt="exit"]')) return;
+    this.closeMorePanel();
     const el = document.createElement("div");
     el.className = "hud-exit-prompt";
     el.dataset.hudPrompt = "exit";
@@ -1065,7 +1082,7 @@ export class RideHud {
     this.root.querySelector('[data-hud-prompt="exit"]')?.remove();
   }
 
-  /** The wrench panel's "Stop tracking" confirm — same visual treatment as
+  /** The ride-controls sheet's "Stop tracking" confirm — same visual treatment as
    *  the exit prompt (`.hud-exit-prompt`/`.hud-exit-card`), a distinct
    *  `data-hud-prompt` so the two never collide when queried/dismissed. Copy
    *  must say contribution points are effectively forfeited: the chain's
@@ -1075,6 +1092,7 @@ export class RideHud {
    *  note). */
   private showStopTrackingPrompt(): void {
     if (this.root.querySelector('[data-hud-prompt="stop-tracking"]')) return;
+    this.closeMorePanel();
     const el = document.createElement("div");
     el.className = "hud-exit-prompt";
     el.dataset.hudPrompt = "stop-tracking";
@@ -1101,8 +1119,8 @@ export class RideHud {
   }
 
   /** Seal the final partial batch and halt further recording — the ride and
-   *  HUD keep running. Removes the wrench panel's button directly rather than
-   *  a full `renderRiding()` (which would also close the panel and reset any
+   *  HUD keep running. Removes the sheet's own button directly rather than a
+   *  full `renderRiding()` (which would also close the sheet and reset any
    *  other transient UI state mid-adjustment). */
   private async confirmStopTracking(): Promise<void> {
     this.hideStopTrackingPrompt();
@@ -1567,32 +1585,26 @@ export class RideHud {
           ${rotateIconMarkup("hud-rotate-badge__icon")}
           <span class="hud-rotate-badge__text">Landscape works best</span>
         </div>
+        <!-- §11.7's HIERARCHY, and it is the whole point of this cluster.
+             During a ride there is one question — what is this costing me and
+             where do I turn — and one action: end. So three controls reach the
+             thumb and nothing else does: the primary action, the one that
+             undoes a mis-pinch, and a single door to everything else.
+
+             It was five (leave, end, wrench, display, re-center) across two
+             sheets, which is the eight-controls-one-question problem the
+             section names. Leave moved INSIDE the sheet: on a handlebar mount
+             the button a rider must never hit by accident does not belong
+             next to the one they aim for.
+
+             RE-CENTER STAYS OUT HERE on the owner's call, against the
+             section's own "everything else behind a single control": it is
+             the recovery from a gesture the map itself invites, and a
+             recovery buried two taps deep is not one. -->
         <div class="hud-corner hud-corner--bl">
           <div class="hud-cutout-btns">
-            <button type="button" class="hud-round-btn" data-hud="exit" aria-label="Leave ride view">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-              </svg>
-            </button>
             <button type="button" class="hud-round-btn hud-round-btn--stop" data-hud="end" aria-label="End ride">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
-            </button>
-            <button type="button" class="hud-round-btn" data-hud="adjust" aria-label="Adjust time and rate">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.121 2.121 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
-            </button>
-            <!-- WHICH READOUTS ARE ON SCREEN, one tap from the ride.
-                 These chips used to live only inside the wrench panel, three
-                 taps deep behind a tool whose own label is about time and
-                 rate — so the controls for what the rider is LOOKING AT were
-                 filed under the controls for what they are being charged.
-                 They moved out here into their own panel; the wrench keeps
-                 the clock, the rate, the model pills and Stop tracking. -->
-            <button type="button" class="hud-round-btn" data-hud="display-panel" aria-label="Choose what's on screen">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="2.5" y="4.5" width="19" height="13" rx="2"/><line x1="8" y1="20.5" x2="16" y2="20.5"/><line x1="12" y1="17.5" x2="12" y2="20.5"/>
-              </svg>
             </button>
             <!-- RE-CENTER, which is also the reset: it puts position, zoom,
                  pitch and bearing all back at once. One button, because a
@@ -1606,11 +1618,42 @@ export class RideHud {
                 <line x1="1.5" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22.5" y2="12"/>
               </svg>
             </button>
+            <!-- THE ONE DOOR. Named for where it goes rather than for what it
+                 is about, which is what let the two sheets it replaced drift:
+                 the display chips had to be moved out of the wrench panel once
+                 already because "adjust time and rate" was the wrong filing
+                 cabinet for what the rider is LOOKING AT. A neutral control
+                 cannot be the wrong cabinet, and both rows are now one tap
+                 from the same sheet instead of three taps into different
+                 ones. -->
+            <button type="button" class="hud-round-btn hud-round-btn--more" data-hud="more" aria-label="Ride controls" aria-expanded="false" title="Ride controls">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2.2" fill="currentColor" stroke="none"/>
+                <line x1="4" y1="12" x2="20" y2="12"/><circle cx="15.5" cy="12" r="2.2" fill="currentColor" stroke="none"/>
+                <line x1="4" y1="17" x2="20" y2="17"/><circle cx="7.5" cy="17" r="2.2" fill="currentColor" stroke="none"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div class="hud-corner hud-corner--br">${speedoMarkup()}</div>
 
-        <div class="hud-adjust-panel" hidden>
+        <!-- ONE SHEET. §11.7: the glanceable readout, one primary action,
+             everything else behind a single control. The two sheets this
+             replaces (the wrench's clock/rate/pills and the display panel's
+             chips) could each be open while the other was shut, and the
+             dispatch had to keep closing one to open the other.
+
+             ORDERED BY HOW OFTEN A RIDER IN MOTION REACHES FOR IT: what is on
+             screen first, then the clock they are reconciling against the Veo
+             app, then the map's filter, then the things you do once. Leaving
+             the ride view is last and is a text button, not a round one. -->
+        <div class="hud-more-panel" hidden role="dialog" aria-label="Ride controls">
+          <p class="hud-more-panel__title">On screen</p>
+          <div class="hud-adjust-row hud-devrow">
+            ${this.displayChipsMarkup()}
+          </div>
+
+          <p class="hud-more-panel__title">Clock and rate</p>
           <div id="hud-adjust-clock" class="hud-adjust-clock">0:00</div>
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="nudge" data-ms="-60000">−1m</button>
@@ -1623,6 +1666,7 @@ export class RideHud {
             <span>Rate</span>
             <select id="hud-rate-live" class="select">${rateOptions}</select>
           </label>
+
           <div class="hud-adjust-row hud-devrow">
             <span class="hud-devrow__label">Show</span>
             ${this.deviceChipsMarkup()}
@@ -1630,22 +1674,11 @@ export class RideHud {
           ${this.specNoteMarkup()}
           <p id="hud-rover-note" class="control-hint control-hint--warning"${this.roverNoteVisible() ? "" : " hidden"}>${ROVER_AREA_WARNING}</p>
           ${this.stopTrackingRowMarkup()}
-          <div class="hud-adjust-row">
-            <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
-            <button type="button" class="hud-btn hud-btn--primary" data-hud="adjust">Done</button>
-          </div>
-        </div>
 
-        <!-- Its own panel, not a row inside the wrench's. See the
-             display-panel button for why it left. -->
-        <div class="hud-display-panel" hidden>
-          <p class="hud-display-panel__title">On screen</p>
-          <div class="hud-adjust-row hud-devrow">
-            ${this.displayChipsMarkup()}
-          </div>
           <div class="hud-adjust-row">
             <button type="button" class="hud-btn" data-hud="toggle-night">☀ / ☾ theme</button>
-            <button type="button" class="hud-btn hud-btn--primary" data-hud="display-panel">Done</button>
+            <button type="button" class="hud-btn" data-hud="exit">Leave ride view</button>
+            <button type="button" class="hud-btn hud-btn--primary" data-hud="more">Done</button>
           </div>
         </div>
       </div>`;

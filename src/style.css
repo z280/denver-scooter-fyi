@@ -5232,7 +5232,7 @@ body.is-map-picking .ride-modal {
 }
 .hud-corner {
   position: absolute;
-  z-index: 2; /* above .nav-hud (z-index: 1) — the Exit/End/wrench buttons in
+  z-index: 2; /* above .nav-hud (z-index: 1) — the End/Re-center/More buttons in
                  .hud-corner--bl must stay reachable even with the Screen 7
                  directions panel fully open over that corner. */
   display: flex;
@@ -5269,7 +5269,8 @@ body.is-map-picking .ride-modal {
 .hud-readout--mph b { font-size: clamp(26px, 6vh, 40px); font-weight: 800; }
 .hud-readout--mph i { font-size: 14px; font-weight: 600; font-style: normal; opacity: 0.75; }
 
-/* Bottom-left cutout buttons: stop (end) + wrench (adjust). */
+/* Bottom-left cutout buttons: §11.7's three — End, Re-center, and the one
+   door to the ride-controls sheet. */
 .hud-corner--bl { pointer-events: none; }
 .hud-cutout-btns { display: flex; gap: 8px; pointer-events: auto; }
 .hud-readout--clock { pointer-events: auto; }
@@ -5317,7 +5318,7 @@ body.is-map-picking .ride-modal {
 }
 
 /* ride-hud.ts — F3 corner re-layout: the ride clock moves BL -> TL with the
-   cost readout stacked just below it, plus the wrench panel's live clock. */
+   cost readout stacked just below it, plus the sheet's live clock. */
 .hud-tl-stack {
   display: flex;
   flex-direction: column;
@@ -5355,7 +5356,7 @@ body.is-map-picking .ride-modal {
    its own children's flow. `z-index: 1` keeps it under the HUD corners (see
    `.hud-corner`'s `z-index: 2`) so a fully-open directions panel — up to
    320px wide, full height — never covers the always-must-stay-reachable
-   Exit/End/wrench buttons in `.hud-corner--bl`. */
+   End/Re-center/More buttons in `.hud-corner--bl`. */
 .nav-hud {
   position: absolute;
   inset: 0;
@@ -5618,14 +5619,24 @@ body.is-map-picking .ride-modal {
   background: rgba(255, 255, 255, 0.35);
 }
 
-/* Adjust popover (wrench): time nudges + rate + theme. */
-.hud-adjust-panel {
+/* §11.7's ONE SHEET: everything that is not the readout, End or Re-center.
+   Replaces the two identically-positioned popovers it grew out of (the
+   wrench's clock/rate/pills and the display panel's chips), which is why the
+   geometry is theirs unchanged — the rider's thumb lands where it always did.
+
+   Tall now that it holds both, so it scrolls rather than growing past the top
+   of a phone: capped against the viewport, with the bottom gap matching the
+   button cluster it opens from. */
+.hud-more-panel {
   position: absolute;
   left: 50%;
   bottom: 84px;
   transform: translateX(-50%);
   pointer-events: auto;
   width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -5636,32 +5647,18 @@ body.is-map-picking .ride-modal {
   box-shadow: var(--shadow);
   color: var(--fg);
 }
-/* "On screen" — which readouts the rider wants, in its own sheet rather than
-   buried in the wrench panel's time-and-rate controls. Same geometry as that
-   panel (only one of the two is ever open), so the rider's thumb lands in the
-   same place whichever they opened. */
-.hud-display-panel {
-  position: absolute;
-  left: 50%;
-  bottom: 84px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-  width: min(420px, calc(100vw - 24px));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  color: var(--fg);
-}
-.hud-display-panel__title {
-  margin: 0;
+/* Section headings inside the sheet. The sheet is one scroll with three
+   groups in it, and without these it reads as one undifferentiated pile of
+   chips and buttons. Not the first child's top margin, so the heading sits
+   tight against its own row rather than floating between two. */
+.hud-more-panel__title {
+  margin: 6px 0 0;
   font-size: 13px;
   font-weight: 700;
   opacity: 0.75;
+}
+.hud-more-panel__title:first-child {
+  margin-top: 0;
 }
 .hud-adjust-row { display: flex; gap: 6px; }
 .hud-adjust-row .hud-btn { padding: 10px 4px; font-size: 15px; flex: 1 1 0; }
