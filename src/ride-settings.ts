@@ -137,8 +137,6 @@ export const RIDE_PROVIDER_NAME = "Veo";
  *   - `speedometer: "classic"` matches the existing HUD's default (both the
  *     analog gauge and digital mph shown) — the ℹ copy's "we provide ON by
  *     default both a classic and digital readout" describes exactly that.
- *   - `theme: "auto"` mirrors `ride-session.ts`'s own recovery fallback and
- *     the app's existing sun-sync-first resolution order.
  *   - `navigation: false` — turn-by-turn is new and heavier (two more wizard
  *     screens, a geocode call); opt-in keeps the default flow the shortest
  *     "grab a scooter and go".

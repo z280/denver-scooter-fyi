@@ -573,6 +573,24 @@ export interface Profile {
   show_public_username: boolean;
   show_in_leaderboards: boolean;
   rate_plan: ApiRatePlan | null;
+  /** DEAD, BOTH OF THEM — kept typed because the server still sends them, and a
+   *  field absent from this interface is one the next reader has to rediscover
+   *  on the wire.
+   *
+   *  `theme`: the app's theme is a DEVICE preference and always has been —
+   *  `theme.ts` owns it in `scooter-fyi-theme` / `scooter-fyi-theme-sun`, with
+   *  sun-sync resolved locally. Nothing reads this column. (Not to be confused
+   *  with the per-ride `RideOptions.theme`, which §6.5 deleted for being inert:
+   *  that one was meant to be Screen 4's route-preview basemap flavour and no
+   *  screen ever read it either.)
+   *
+   *  `favorites`: saved places are device-local too — `favorites.ts`, which says
+   *  why in its own header: the profile's two fixed home/work columns mean a
+   *  signed-out rider has no saved places at all and nobody has a third.
+   *  Nothing reads or writes this column.
+   *
+   *  Removing either is a cross-repo migration, not a client edit; until then
+   *  `docs/USER_CONFIGURATION_AUDIT.md` is the record. */
   theme: string | null;
   favorites: unknown[];
   home_lat: number | null;

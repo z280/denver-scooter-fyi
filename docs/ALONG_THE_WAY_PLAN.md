@@ -2885,6 +2885,11 @@ Order by what the rider decides on, then what they can do:
   > bug. Flipping it back unilaterally would just be the newer document winning
   > on recency. **Owner's call.** Everything else in §12.3 that does not depend
   > on it has shipped.
+  >
+  > The reference materials for this one — the drawn card, the CSS comment that
+  > reverses it, the `emoji-scale.ts` precedent both sides cite, and what each
+  > answer costs to build — are collected in
+  > `docs/DECISION_FEATURE_PILL_LABELS.md`.
 - **The secondary row is text-sized**, not three more full-width bars.
 
 ### 12.4 Blocked is a sentence, in the card
