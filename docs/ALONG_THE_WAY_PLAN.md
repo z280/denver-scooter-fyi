@@ -1844,9 +1844,16 @@ plausible-looking address is worse than none, because the complaint path's whole
 value is that it reaches somebody. `complaintReady()` is what stops a blank
 `mailto:` shipping as a working feature, and a test pins it.
 
-**Still to build:** `receipt-read.ts` (§8.1's OCR decision is still open, and
-manual entry is the stated fallback), `receipt-panel.ts`, `account-confirm.ts`,
-and §8.6's three API clients.
+**Still to build:** `receipt-panel.ts`, `account-confirm.ts`, and §8.6's three
+API clients.
+
+> **`receipt-read.ts` IS NO LONGER OWED, and that is a decision rather than a
+> deferral.** §8.1's OCR question was answered by not needing an answer: the
+> rider types the minutes and the cost (§8.3's own conclusion, because receipt
+> layouts change without notice), so the figures are already in hand and there
+> is nothing for a reader to read. The module would have existed to produce
+> what the form already collects. `equity-receipt-form.ts` is the capture
+> surface and `receipt-precheck.ts` is what consumes it.
 
 > **THE BAR NOW HAS A FIRST SURFACE, and it is a cost saving rather than a new
 > screen.** The owner's answer on §8.1 (2026-10-08) was to *"repurpose it as a
@@ -3071,7 +3078,14 @@ Order by what the rider decides on, then what they can do:
   already have. A glyph is not a label (`emoji-scale.ts` had to learn the same
   thing).
 
-  > **NOT DONE, AND DELIBERATELY LEFT FOR THE OWNER.** The labels were taken
+  > **ANSWERED (2026-10-08): the pills keep their glyphs.** The owner accepted
+  > the recommendation to let the later, reasoned decision stand, and the facts
+  > strip was built around it — see the note on the bullet above, and
+  > `docs/DECISION_FEATURE_PILL_LABELS.md` for the whole question if it is ever
+  > reopened. §12.3 is closed. The reasoning that led here is kept below,
+  > because it is the record of why the two documents disagreed.
+  >
+  > The labels were taken
   > off the pills *after* this section was written, as a considered change with
   > its reasoning recorded in `style.css`: *"The names were three words of
   > chrome on the busiest line of the card; the icon is the recognisable part
@@ -3088,8 +3102,8 @@ Order by what the rider decides on, then what they can do:
   > So this is two documents disagreeing, the later one being the code, and the
   > question is a judgement call about a busy line rather than a correctness
   > bug. Flipping it back unilaterally would just be the newer document winning
-  > on recency. **Owner's call.** Everything else in §12.3 that does not depend
-  > on it has shipped.
+  > on recency. **Owner's call, now made: glyphs stay.** Everything else in
+  > §12.3 has shipped.
   >
   > The reference materials for this one — the drawn card, the CSS comment that
   > reverses it, the `emoji-scale.ts` precedent both sides cite, and what each
