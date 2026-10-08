@@ -1040,3 +1040,41 @@ describe("Screen 4 — turn-by-turn reaches the nav HUD", () => {
     expect(session.current()?.route?.maneuvers).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Outside the City of Denver (owner, 2026-10-08): the API words it, the
+// screen shows it iff present.
+// ---------------------------------------------------------------------------
+
+describe("Screen 4 — outside-the-city warning", () => {
+  const WORDING =
+    "Scooter.fyi uses City of Denver data to optimize routing. Your routing starts or ends outside of the city and thus may not be as optimized as in-city routes would be.";
+
+  it("shows the API's wording when the trip leaves the city", async () => {
+    const session = sessionOnScreen4(baseOptions());
+    const fetchRouteOptions = vi.fn(() =>
+      Promise.resolve({
+        ...optionsResponse(["safe"]),
+        outside_city: { from: false, to: true },
+        outside_city_warning: WORDING,
+      }),
+    );
+    wireRideScreenRoutes(baseDeps(session, { fetchRouteOptions }));
+    openRideModal({ fastForwardTo: "4" });
+    await flush();
+    const el = rideModalRoot()?.querySelector<HTMLElement>(".ride-route-outside-city");
+    expect(el?.hidden).toBe(false);
+    expect(el?.textContent).toContain(WORDING);
+  });
+
+  it("stays hidden for an in-city trip, and for an API that sends nothing", async () => {
+    for (const extra of [{ outside_city: { from: false, to: false }, outside_city_warning: null }, {}]) {
+      const session = sessionOnScreen4(baseOptions());
+      const fetchRouteOptions = vi.fn(() => Promise.resolve({ ...optionsResponse(["safe"]), ...extra }));
+      wireRideScreenRoutes(baseDeps(session, { fetchRouteOptions }));
+      openRideModal({ fastForwardTo: "4" });
+      await flush();
+      expect(rideModalRoot()?.querySelector<HTMLElement>(".ride-route-outside-city")?.hidden).toBe(true);
+    }
+  });
+});

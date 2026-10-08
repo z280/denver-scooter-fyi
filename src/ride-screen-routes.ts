@@ -498,6 +498,11 @@ function buildLoadedScreen(
   // line disappears with it.
   const betaEl = el("p", "ride-modal__hint ride-route-beta");
   betaEl.hidden = true;
+  // Owner, 2026-10-08: a trip that starts or ends outside the City of Denver
+  // is routed without the City data (HIN, canopy, bike network) that shapes
+  // the styles below. The API decides and words it; shown iff present.
+  const outsideCityEl = el("p", "ride-modal__hint ride-route-outside-city");
+  outsideCityEl.hidden = true;
   const listEl = el("ol", "ride-options ride-route-list");
   const nextBtn = el("button", "login-btn ride-route-next", "NEXT >>");
   nextBtn.type = "button";
@@ -536,6 +541,7 @@ function buildLoadedScreen(
     ...(roverEl ? [roverEl] : []),
     statusEl,
     betaEl,
+    outsideCityEl,
     listEl,
     controls,
   );
@@ -599,6 +605,9 @@ function buildLoadedScreen(
       betaEl.textContent = `⚠️ ${betaWarning}`;
       betaEl.hidden = false;
     }
+    const outsideCity = resp.outside_city_warning ?? null;
+    outsideCityEl.textContent = outsideCity ? `📍 ${outsideCity}` : "";
+    outsideCityEl.hidden = !outsideCity;
 
     results = new Map(
       resp.options.map((o) => [o.key, {
