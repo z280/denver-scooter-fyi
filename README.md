@@ -17,9 +17,6 @@ directly by the browser — are:
 - **Google Identity Services** (`accounts.google.com/gsi/client`), the
   sign-in script, loaded for visitors who are not signed in
   ([src/auth-google.ts](src/auth-google.ts)).
-- **Veo's public GBFS feed**, fetched directly (once you have a location fix)
-  to look up the plate of the scooter in front of you
-  ([src/gbfs.ts](src/gbfs.ts)).
 - **OpenStreetMap Nominatim**, which turns the coordinates of a saved place
   or a parking report into a street address ([src/geocode.ts](src/geocode.ts)).
 - **weseeyouveo.com**: its logo on the map page, the rider-story options when
@@ -33,8 +30,11 @@ directly by the browser — are:
 feed, boundaries, H3 aggregates, the compliance gauge, routing, and anonymous
 device reports — is unauthenticated. Accounts are **optional** and exist only
 for the features that have to be tied to a person: rider reports, ride tracking
-and history, points, your profile, and the signed-in device feed that exposes
-plates (which is what gates "Unlock in Veo"). Sign-in is Google, an emailed
+and history, points, your profile, and plates for scooters near you, which come from
+`/api/v1/vehicles/plates` and gate "Unlock in Veo"
+([src/plates.ts](src/plates.ts)). Your browser never contacts Veo: going from
+a plate you scanned or typed to a scooter uses the public, rate-limited
+`/api/v1/vehicles/resolve`, which never returns a plate. Sign-in is Google, an emailed
 magic link, a typed email code, or a code texted to a US mobile number; each
 mints a server-side bearer session. Which doors appear is decided by the
 backend, not by a frontend flag — see [src/auth-config.ts](src/auth-config.ts)
