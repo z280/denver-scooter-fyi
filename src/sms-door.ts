@@ -66,8 +66,9 @@ export function buildSmsDoor(container: HTMLElement, deps: SmsDoorDeps): void {
     "p",
     "legal-fine-print",
     "We'll text you a one-time sign-in code. Msg & data rates may apply. " +
-      "Reply STOP to opt out, HELP for help. STOP also stops texts from our " +
-      "other services that share this number.",
+      "Reply STOP to opt out (UNSTOP to opt back in); for help, email " +
+      "mhtc@z280.com. STOP also stops texts from our other services that " +
+      "share this number.",
   );
   phoneForm.append(phoneInput, smsTerms, phoneSubmit, phoneStatus);
 
