@@ -2179,6 +2179,35 @@ export async function geocodeSearch(
   return res?.results ?? [];
 }
 
+/** `GET /api/v1/geocode/reverse` — our own reverse geocoder (scooter-fyi-api),
+ *  which replaced the browser calling OpenStreetMap's Nominatim directly.
+ *  Every field is null when the geocoder had nothing for it. */
+export interface ReverseGeocodeResponse {
+  /** Short display label, built server-side. */
+  address: string | null;
+  name: string | null;
+  housenumber: string | null;
+  street: string | null;
+  locality: string | null;
+  city: string | null;
+  postcode: string | null;
+}
+
+/** Reverse-geocode one point. Public and IP-rate-limited (60/min). Throws
+ *  like every getJSON client: NoDataError for 404 (nothing found) and 503
+ *  (upstream down), ApiError for 400 (out of range) and 429 (with
+ *  `retryAfter`). `geocode.ts` is the caller that caches and fails soft. */
+export function fetchReverseGeocode(
+  lat: number,
+  lng: number,
+  signal?: AbortSignal,
+): Promise<ReverseGeocodeResponse> {
+  return getJSON<ReverseGeocodeResponse>(
+    `/api/v1/geocode/reverse${query({ lat, lng })}`,
+    signal,
+  );
+}
+
 // --- Pricing + points schedule -------------------------------------------
 
 export interface PricingResponse {

@@ -15,16 +15,18 @@ vector basemap is self-hosted on Cloudflare R2. The exceptions — all fetched
 directly by the browser — are:
 
 - **Google Identity Services** (`accounts.google.com/gsi/client`), the
-  sign-in script, loaded for visitors who are not signed in
-  ([src/auth-google.ts](src/auth-google.ts)).
-- **OpenStreetMap Nominatim**, which turns the coordinates of a saved place
-  or a parking report into a street address ([src/geocode.ts](src/geocode.ts)).
+  sign-in script, loaded only when you open a sign-in screen that offers
+  Google ([src/auth-google.ts](src/auth-google.ts)).
 - **weseeyouveo.com**: its logo on the map page, the rider-story options when
   the story screen opens, and a story only if you tick the box to send it
   ([src/rider-story.ts](src/rider-story.ts)).
 - **sunrise-sunset.org**, only with the sun-synced theme
   ([src/theme.ts](src/theme.ts)).
 - **Cloudflare R2**, which serves the basemap tiles (`BASEMAP_PMTILES_URL`).
+- **Cloudflare Web Analytics** (`static.cloudflareinsights.com`). Our host,
+  Cloudflare, adds its own cookieless Web Analytics script to every page; it
+  reports page views to Cloudflare. It is a Pages dashboard setting, not code
+  in this repo.
 
 **The map works fully anonymously.** Everything that draws the map — the device
 feed, boundaries, H3 aggregates, the compliance gauge, routing, and anonymous
@@ -50,10 +52,12 @@ STOP stops all of them, not only scooter.fyi — worth knowing before you send
 it. The app will tell you plainly when that has happened, and only an UNSTOP
 text undoes it.
 
-**On tracking:** the frontend loads no ad tech and no analytics SDKs. The one
-third-party script is Google Identity Services, loaded for visitors who are
-not signed in (above).
-The only measurement is **private, first-party analytics** we run ourselves
+**On tracking:** the frontend loads no ad tech, and this repo ships no
+analytics SDK. Two third-party scripts can load: Google Identity Services,
+only when you open sign-in (above), and Cloudflare's Web Analytics — our host,
+Cloudflare, adds its own cookieless Web Analytics script to every page; it
+reports page views to Cloudflare.
+Our own measurement is **private, first-party analytics** we run ourselves
 ([src/telemetry.ts](src/telemetry.ts) → the API's `/api/v1/telemetry/events`):
 cookieless, with **no persistent identifier of any kind** — events carry a
 per-tab session id (`sessionStorage`, dies with the tab), and daily-unique
