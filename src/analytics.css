@@ -639,3 +639,14 @@ a {
 .viz-heat__empty {
   color: var(--fg-muted);
 }
+
+/* Embedded (?embed=1): no "back to the map" from inside someone else's
+   page; a link out to the full page instead, and no outer page chrome. */
+.an-full { display: none; }
+:root[data-embed="1"] .an-back { display: none; }
+:root[data-embed="1"] .an-full {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+:root[data-embed="1"] .an-body { background: transparent; }
