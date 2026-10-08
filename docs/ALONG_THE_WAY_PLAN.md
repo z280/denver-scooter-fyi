@@ -3037,7 +3037,33 @@ Order by what the rider decides on, then what they can do:
   > compliance signal this whole app exists to publish, so it is one tap
   > further from the decision and not gone.
   >
-  > The **single facts strip** itself has not shipped — it depends on the
+  > **The single facts strip HAS NOW SHIPPED**, built around the header's
+  > glyph pills rather than against them. The recommendation the owner accepted
+  > (2026-10-08) was to let the later, reasoned decision stand: the pills keep
+  > their glyphs, the words stay in the `aria-label`, the tapped explanation and
+  > the stat list's prose row, and `docs/DECISION_FEATURE_PILL_LABELS.md` holds
+  > the whole question if it is ever reopened.
+  >
+  > The strip carries **battery and the remaining range together**, full-bleed
+  > between the verdict bar and the actions, in type you can read at arm's
+  > length. Together because neither answers the question alone: 40% means
+  > nothing without knowing what 40% of this model goes, and a range figure with
+  > no charge behind it has no provenance. The feed gives us both and they were
+  > in different places — battery in a definition list UNDER eight full-width
+  > buttons at the same weight as `Vehicle ID`, which is §12.1(a)'s finding
+  > exactly, and the range estimate a further tap inside `ℹ️ Details`.
+  >
+  > "Show on map" came up with the range figure. It is the control for the
+  > number beside it and the two were a tap apart for no reason.
+  >
+  > Neither figure is left behind in the list it came out of: two renderings of
+  > one fact is the duplication §12.1(b) names, and the quieter copy always wins
+  > the argument about which one is stale. A vehicle the feed told us nothing
+  > about gets no strip at all rather than an empty rule across the card.
+  >
+  > ---
+  >
+  > *The original note, before the question was answered:* it depends on the
   > labelled-chips question above, and a strip built around glyph-only pills is
   > a different design from the one drawn here. Worth doing as one change once
   > that is settled, rather than half now.

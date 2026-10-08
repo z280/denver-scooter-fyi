@@ -4988,6 +4988,38 @@ body.is-map-picking .ride-modal {
    good" and "will it get me there" are the two halves of one decision and a
    rider reads them together. Quiet by design — the verdict bar above it is
    the loud thing, and two shouting rows would leave neither read. */
+/* §12.3's ONE FACTS STRIP: battery and remaining range, full-bleed between
+   the verdict bar and the actions, in type you can read at arm's length.
+
+   The two numbers a rider picks between two nearby scooters with used to sit in
+   a definition list UNDER eight full-width buttons, at the same weight as
+   `Vehicle ID` — §12.1(a)'s finding — with the range figure a tap further
+   inside the details modal. This is the fix, and the size is the whole point:
+   bigger than the stat list it came out of, because it is what the controls
+   below it depend on. */
+.device-popup__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -14px;
+  padding: 9px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
+.device-popup__fact-sep {
+  opacity: 0.45;
+  font-weight: 400;
+}
+/* The control for the number beside it, so it reads as part of the fact rather
+   than as another action competing with the buttons below. */
+.device-popup__action--inline {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
 .device-popup__arrival {
   display: flex;
   flex-wrap: wrap;

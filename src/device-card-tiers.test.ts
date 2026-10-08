@@ -137,3 +137,60 @@ describe("§12.3 — the card is ordered by what the rider decides on", () => {
     expect(detailBlock).toContain("dwell_peer_median_hours");
   });
 });
+
+describe("§12.3 — the one facts strip", () => {
+  // From where the two figures are read off the feed, through the strip that
+  // renders them.
+  const stripBlock = devicesSrc.slice(
+    devicesSrc.indexOf("const batteryPct = asNumber(props.battery_percent)"),
+    devicesSrc.indexOf("const statRows: string[] = []"),
+  );
+
+  it("carries battery AND the range estimate, together", () => {
+    // Neither answers the question alone: 40% means nothing without knowing
+    // what 40% of this model goes, and a range figure with no charge behind it
+    // is a number with no provenance. The feed gives us both and they were in
+    // different places — one under eight buttons, one behind a tap.
+    expect(stripBlock).toContain("asNumber(props.battery_percent)");
+    expect(stripBlock).toContain("asNumber(props.current_range_meters)");
+    expect(stripBlock).toContain("formatRange(rangeMeters)");
+    // And both inside the one strip, rather than one of them rendered
+    // somewhere else that happens to sit in this slice.
+    expect(stripBlock).toContain("device-popup__facts");
+  });
+
+  it("is above the actions, not below them", () => {
+    // §12.1(a)'s finding, and the whole reason the strip exists. The markup
+    // order is the assertion: the strip is rendered before the body that holds
+    // `actionRow`.
+    const strip = devicesSrc.indexOf("${factsStrip}");
+    const body = devicesSrc.indexOf('<div class="device-popup__body">');
+    expect(strip).toBeGreaterThan(-1);
+    expect(body).toBeGreaterThan(-1);
+    expect(strip).toBeLessThan(body);
+  });
+
+  it("leaves neither figure behind in the lists it came out of", () => {
+    // Two renderings of one fact is the duplication §12.1(b) names, and the
+    // quieter copy always wins the argument about which is stale.
+    const statBlock = devicesSrc.slice(
+      devicesSrc.indexOf("const statRows: string[] = []"),
+      devicesSrc.indexOf("const detailRows: string[] = []"),
+    );
+    const detailBlock = devicesSrc.slice(
+      devicesSrc.indexOf("const detailRows: string[] = []"),
+    );
+    expect(statBlock).not.toContain("<dt>Battery</dt>");
+    expect(detailBlock).not.toContain("<dt>Range</dt>");
+  });
+
+  it("renders nothing at all when the feed told us neither", () => {
+    // Not an empty bar: a vehicle we know nothing about should not get a rule
+    // across the card announcing it.
+    expect(stripBlock).toContain("if (facts.length === 0) return");
+  });
+
+  it("keeps 'Show on map' with the number it controls", () => {
+    expect(stripBlock).toContain('data-action="toggle-range"');
+  });
+});

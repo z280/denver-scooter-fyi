@@ -1490,12 +1490,70 @@ export class Devices {
         );
       }
 
-      // ---- The compact stats the popup shows (issue #18: 3-5 key stats), now
-      // ordered by what a rider DECIDES on: Rating (only when the bar cannot say
-      // it), Battery, Type, Features. Everything else — including `Vehicle ID`
-      // and `Parked for`, which moved out in §12.3 — lives in the "Full details"
-      // modal so the popup stays short.
+      // ---- §12.3's ONE FACTS STRIP: the two numbers a rider chooses between
+      // two nearby scooters with, above the actions and in type you can read
+      // from arm's length.
+      //
+      // §12.1(a)'s finding was that "the four things a rider chooses on are
+      // below the buttons" — battery sat in a definition list under eight
+      // full-width actions, at the same visual weight as `Vehicle ID`, and the
+      // range estimate was a tap away inside `ℹ️ Details`. The rider scrolled
+      // past the controls to reach the facts the controls depend on.
+      //
+      // BATTERY AND RANGE TOGETHER, because neither answers the question
+      // alone: 40% means nothing without knowing what 40% of this model goes,
+      // and a range figure with no charge behind it is a number with no
+      // provenance. The feed gives us both and they were in different places.
+      //
+      // THE PILLS ARE NOT IN IT. §12.3 draws them here with their words back;
+      // the code took the words off later, deliberately, with the reasoning
+      // recorded in `style.css` — the names were three words of chrome on the
+      // busiest line of the card, and the full sentence is in the aria-label
+      // and in the tapped explanation. That argument stands, so the strip is
+      // built around a header that keeps its glyph pills rather than against
+      // it, and `docs/DECISION_FEATURE_PILL_LABELS.md` holds the whole
+      // question if it is ever reopened.
+      //
+      // "Show on map" comes with the range figure rather than staying behind
+      // the details modal: it is the control for the number beside it, and the
+      // two were a tap apart for no reason.
       const batteryPct = asNumber(props.battery_percent);
+      const rangeMeters = asNumber(props.current_range_meters);
+      const factsStrip = ((): string => {
+        const facts: string[] = [];
+        if (batteryPct !== null) {
+          facts.push(
+            `<span class="device-popup__fact">${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</span>`,
+          );
+        }
+        if (rangeMeters !== null) {
+          const showing = this.rangeCircleDeviceId === props.device_id;
+          facts.push(
+            `<span class="device-popup__fact">~${escapeHtml(formatRange(rangeMeters))} left</span>` +
+              `<button
+                 type="button"
+                 class="device-popup__action device-popup__action--inline"
+                 data-action="toggle-range"
+                 data-device="${escapeHtml(props.device_id)}"
+                 data-lng="${coords[0]}"
+                 data-lat="${coords[1]}"
+                 data-radius="${rangeMeters}"
+               >${showing ? "Hide on map" : "Show on map"}</button>`,
+          );
+        }
+        // No strip at all rather than an empty bar: a vehicle the feed told us
+        // nothing about should not get a rule across the card announcing it.
+        if (facts.length === 0) return "";
+        return `<div class="device-popup__facts">${facts.join(
+          `<span class="device-popup__fact-sep" aria-hidden="true">·</span>`,
+        )}</div>`;
+      })();
+
+      // ---- The compact stats the popup shows (issue #18: 3-5 key stats), now
+      // ordered by what a rider DECIDES on: Rating (only when the bar cannot
+      // say it), Type, Features. Battery and the range estimate moved up into
+      // the facts strip above; `Vehicle ID` and `Parked for` moved out to the
+      // "Full details" modal, both in §12.3.
       const statRows: string[] = [];
       // Normally the bar at the top IS the verdict, so this row carries only
       // what the bar cannot say: WHY. Repeating the label would be the same
@@ -1521,11 +1579,6 @@ export class Devices {
              <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
              <span class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</span>
            </dd>`,
-        );
-      }
-      if (batteryPct !== null) {
-        statRows.push(
-          `<dt>Battery</dt><dd>${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</dd>`,
         );
       }
       {
@@ -1617,25 +1670,6 @@ export class Devices {
             : "";
         detailRows.push(
           `<dt>Parked for</dt><dd>${escapeHtml(formatDwell(props.first_observed_at_location))}${peerHint}</dd>`,
-        );
-      }
-      const rangeMeters = asNumber(props.current_range_meters);
-      if (rangeMeters !== null) {
-        const showing = this.rangeCircleDeviceId === props.device_id;
-        detailRows.push(
-          `<dt>Range</dt>
-           <dd>
-             ${escapeHtml(formatRange(rangeMeters))}
-             <button
-               type="button"
-               class="device-popup__action"
-               data-action="toggle-range"
-               data-device="${escapeHtml(props.device_id)}"
-               data-lng="${coords[0]}"
-               data-lat="${coords[1]}"
-               data-radius="${rangeMeters}"
-             >${showing ? "Hide on map" : "Show on map"}</button>
-           </dd>`,
         );
       }
       if (props.propulsion_type) {
@@ -1962,6 +1996,7 @@ export class Devices {
              ${headerBlock}
              ${verdictBlock}
              ${arrivalBlock}
+             ${factsStrip}
              <div class="device-popup__body">
                <div class="device-popup__col">
                  ${actionRow}
