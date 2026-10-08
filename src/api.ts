@@ -1946,6 +1946,13 @@ export interface RouteOption {
 export interface RouteOptionsResponse {
   graph_bbox: [number, number, number, number];
   beta_warning?: string;
+  /** Does the trip start / end outside the City and County of Denver?
+   *  null when the API could not read the city boundary. */
+  outside_city?: { from: boolean | null; to: boolean | null };
+  /** Rider-facing text, present only when either end is outside the city:
+   *  the route styles are shaped by City of Denver data that stops at the
+   *  city line. Server-controlled like beta_warning: render it iff present. */
+  outside_city_warning?: string | null;
   /** Profiles that could not be routed at all — the High Injury Network
    *  exclusions mean `safe` can legitimately find nothing where `express`
    *  does. Reported rather than silently dropped. */
