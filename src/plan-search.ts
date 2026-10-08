@@ -19,6 +19,7 @@
 //   * `now` IS PASSED, never defaulted to `Date.now()` inside the search.
 
 import { handOffCap } from "./plan-prefs.ts";
+import { idealSplit } from "./ideal-share.ts";
 import {
   rankPlans,
   type LngLat,
@@ -46,6 +47,20 @@ export interface PlanSearchDeps {
   origin(): LngLat | null;
   /** The rider's "ideal scooter", or the default sheet. */
   spec(): RideSpec;
+  /** The same spec, but NULL when the rider has not configured one.
+   *
+   *  A second accessor rather than a nullable `spec()`, because the two
+   *  questions genuinely differ. The SEARCH wants a sheet to match against and
+   *  the default one is the right answer for a rider who has set nothing — it
+   *  means "anything goes". The VIEW wants to know whether there is a
+   *  preference at all: a share computed against a spec that requires nothing
+   *  is 100% for every vehicle in the city, which is an empty opinion dressed
+   *  up as agreement, and the prompt to set one up must not appear to somebody
+   *  who already did.
+   *
+   *  Optional, so a caller that has no notion of a configured spec — tests,
+   *  and anything predating the preference — behaves exactly as before. */
+  activeSpec?(): RideSpec | null;
   rate(): RatePlan;
   taxRate(): number;
   now(): number;
@@ -151,9 +166,15 @@ export function searchPlans(
       rate: ctx.rate,
       destinationLabel: dest.label,
       freeMinutes,
-      // Read at search time rather than captured, so a rider who changes it in
-      // the drawer and comes back gets the list they just asked for.
+      // Read at search time rather than captured, so a rider who changes
+      // either of these in the drawer and comes back gets the list they just
+      // asked for.
       handOffCap: handOffCap(),
+      spec: deps.activeSpec ? deps.activeSpec() : null,
+      // The SAME context the search matched with, so the share and the filter
+      // cannot disagree about the same vehicle.
+      matchContext: { dest: { lat: dest.lat, lon: dest.lon } },
+      idealSplit: idealSplit(),
     }),
   };
 }

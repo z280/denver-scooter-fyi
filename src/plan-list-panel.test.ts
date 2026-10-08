@@ -32,6 +32,7 @@ function row(over: Partial<PlanRow> = {}): PlanRow {
     // plan the panel cannot act on — the case the guard below now catches, and
     // which no test was asserting on purpose.
     firstVehicle: { device_id: "d1", vehicle_identifier: "v1" } as PlanRow["firstVehicle"],
+    idealShare: null,
     isWalkOnly: false,
     ...over,
   };
@@ -46,6 +47,8 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     riskWarning: null,
     freeMinutes: null,
     capNote: null,
+    idealSplitNote: null,
+    needsSpec: false,
     ...over,
   };
 }

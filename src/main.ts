@@ -238,6 +238,7 @@ import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
   installBrandMark,
+  isRibbonOpen,
   setRibbonOpen,
   closeAllPopups,
   registerPopupCloser,
@@ -4061,7 +4062,41 @@ let tripPanel: TripPanelHandle | null = null;
  *  a rider with a full hour that we cannot see their rides. */
 let todaysRides: readonly RideSpan[] | null = null;
 
+/** The ribbon was open when the plan list took over, and we closed it.
+ *
+ *  Remembered so dismissing the list PUTS IT BACK. A surface that quietly
+ *  collapses a rider's navigation and leaves it collapsed has not made room,
+ *  it has taken something. */
+let ribbonClosedForPlanList = false;
+
+/** Give the plan list the width it needs, and give it back afterwards.
+ *
+ *  The card had already been moved out from under the ribbon with
+ *  `--ribbon-gutter`, and on a 412px phone that leaves it about 325px wide —
+ *  which is not enough for the leg lines it has to carry ("Ride Cosmo Onward
+ *  🌳 500 19 min to Cosmo Liftoff 🍉 167" is a long sentence and there are
+ *  three of them). So this is the owner's second option taken deliberately:
+ *  we really do need the space.
+ *
+ *  `persist: false` is the whole of the courtesy. The rider's stored ribbon
+ *  preference is untouched, so this is a borrow rather than a setting change,
+ *  and it is handed back on dismiss. */
 function closePlanList(): void {
+  teardownPlanList();
+  if (ribbonClosedForPlanList) {
+    ribbonClosedForPlanList = false;
+    setRibbonOpen(true);
+  }
+}
+
+/** Drop the panel WITHOUT handing the ribbon back.
+ *
+ *  Separate from `closePlanList` because re-opening the list — which every
+ *  re-solve does — went through the full close first, so the ribbon was handed
+ *  back and immediately borrowed again: one visible flap of the strip per
+ *  search, for nothing. The borrow is a property of "the list is up", not of
+ *  "this particular panel instance is up". */
+function teardownPlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
 }
@@ -4080,6 +4115,11 @@ function planSearchDeps(): PlanSearchDeps {
       return fix ? { lat: fix.lat, lng: fix.lng } : null;
     },
     spec: () => rideSpecPanel?.activeSpec() ?? defaultSpec(),
+    // The same value WITHOUT the default, which is the only way to tell "no
+    // preference" from "a preference that happens to accept everything". The
+    // list uses it to decide whether a share is worth computing and whether to
+    // offer to set one up.
+    activeSpec: () => rideSpecPanel?.activeSpec() ?? null,
     rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
@@ -4166,7 +4206,15 @@ function openPlanList(dest: TripPlace): void {
     enterFindWheels();
     return;
   }
-  closePlanList();
+  teardownPlanList();
+  // Before the panel is built, so it is never laid out against a width it is
+  // about to lose. Guarded on the flag as well as the state: a second open
+  // over an already-borrowed ribbon must not record a second borrow, or
+  // dismissing the list would leave the strip shut.
+  if (!ribbonClosedForPlanList && isRibbonOpen()) {
+    setRibbonOpen(false);
+    ribbonClosedForPlanList = true;
+  }
   // The map still shows the fleet the plans are drawn from, so find-wheels mode
   // stays on underneath: dismissing the list reveals a map that is already in
   // the right state rather than one that has to be put there.
@@ -4178,6 +4226,33 @@ function openPlanList(dest: TripPlace): void {
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
     onCancel: () => closePlanList(),
+    // "My ideal scooter" lives in the Filters drawer, which is where it has
+    // always lived and where a rider who already knows about it will look for
+    // it. Dismissing the list first because the drawer is the thing they are
+    // being sent to — two stacked surfaces over a map is how somebody loses
+    // track of which one they are pressing, which is the same argument §11.7
+    // made about the HUD's two sheets.
+    onConfigureSpec: () => {
+      closePlanList();
+      document
+        .querySelector<HTMLButtonElement>('.drawer-tab[data-drawer="devices"]')
+        ?.click();
+      // The spec controls live inside a collapsed `<details>` accordion, so
+      // opening the drawer alone lands the rider on a closed section with no
+      // sign of what they came for. Open the section, then put the control in
+      // view — in that order, because scrolling to something with zero height
+      // scrolls to the wrong place.
+      const edit = document.getElementById("spec-edit");
+      edit?.closest("details")?.setAttribute("open", "");
+      edit?.scrollIntoView({ block: "center", behavior: "smooth" });
+      // Focus last, and only the control itself: a rider sent here by a button
+      // should be able to carry straight on with the keyboard.
+      try {
+        edit?.focus({ preventScroll: true });
+      } catch {
+        /* detached, or an engine without the options bag */
+      }
+    },
     onRefresh: resolve,
     onCorrectFreeMinutes: (minutes) => {
       saveCorrection(Date.now(), minutes);
@@ -5101,6 +5176,9 @@ function wireAccount(): void {
     // The destination lists read the store when they open, so nothing has to
     // be pushed at them.
     onFavoritesChanged: () => {},
+    // Whether an "ideal scooter" exists, so the split preference can say
+    // plainly that it has nothing to prefer yet.
+    hasIdealSpec: () => rideSpecPanel?.activeSpec() != null,
     // The Home and Work slots have a server half. Mirroring the write up to
     // the profile is what keeps the two sides of a rider's doorstep from
     // disagreeing: the account drawer's own location rows already mirror

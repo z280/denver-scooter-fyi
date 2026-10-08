@@ -96,6 +96,8 @@ function result(over: Partial<RankPlansResult> = {}): RankPlansResult {
   };
 }
 
+import { defaultSpec } from "./ride-spec.ts";
+
 describe("planHeadline", () => {
   it("counts scooters and hand-offs, and names the walk for what it is", () => {
     expect(planHeadline(walkOnly)).toBe("Walk the whole way");
@@ -110,11 +112,15 @@ describe("planHeadline", () => {
 });
 
 describe("planLegLines", () => {
-  it("walks the rider to the first vehicle by name, then rides to the door", () => {
+  it("names the TYPE first, then which one, then rides to the door", () => {
+    // "Ride Lunar 🐸 928 to Comet 🦊 104" said nothing about what the rider
+    // was being sent to sit on, and in a list of PLANS that is the half that
+    // decides whether they take it — standing on an Astro and sitting on a
+    // Rover are different trips.
     const lines = planLegLines(plan([walk(240), ride()]), "Union Station");
     expect(lines.map((l) => l.text)).toEqual([
-      "Walk 4 min to Lunar 🐸 928",
-      "Ride Lunar 🐸 928 10 min to Union Station",
+      "Walk 4 min to Cosmo Lunar 🐸 928",
+      "Ride Cosmo Lunar 🐸 928 10 min to Union Station",
     ]);
   });
 
@@ -133,9 +139,9 @@ describe("planLegLines", () => {
       "Union Station",
     );
     expect(lines.map((l) => l.text)).toEqual([
-      "Walk 4 min to Lunar 🐸 928",
-      "Ride Lunar 🐸 928 10 min to Comet 🦊 104",
-      "Ride Comet 🦊 104 10 min to Union Station",
+      "Walk 4 min to Cosmo Lunar 🐸 928",
+      "Ride Cosmo Lunar 🐸 928 10 min to Cosmo Comet 🦊 104",
+      "Ride Cosmo Comet 🦊 104 10 min to Union Station",
     ]);
   });
 
@@ -416,5 +422,91 @@ describe("the rider's hand-off cap", () => {
     expect(v.relaxedLabels).toEqual([]);
     expect(v.capRelaxed).toBe(false);
     expect(v.capNote).toContain("1 plan hidden");
+  });
+});
+
+describe("the ideal-scooter split, through the view", () => {
+  const COSMO_SPEC = { ...defaultSpec(), models: ["cosmo" as const] };
+  const astro = vehicle({
+    device_id: "d9",
+    public_name: "Comet 🦊",
+    plate_suffix: "104",
+    vehicle_model_name: "Astro",
+    vehicle_identifier: "v9",
+  });
+  /** 19 min on the Cosmo, 2 on the Astro. */
+  const idealHeavy = plan([walk(240), ride({ seconds: 1140 }), ride({ seconds: 120, vehicle: astro })]);
+  /** The other way round. */
+  const idealLight = plan([walk(240), ride({ seconds: 120 }), ride({ seconds: 1140, vehicle: astro })]);
+
+  it("says nothing about shares when no ideal scooter is configured", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+    });
+    expect(v.rows[0].idealShare).toBeNull();
+    expect(v.rows[0].chips.some((c) => c.kind === "ideal_share")).toBe(false);
+    expect(v.idealSplitNote).toBeNull();
+  });
+
+  it("offers to set one up, but only where a split is actually on the table", () => {
+    // Prompting on a list of one-scooter plans is asking a rider to answer a
+    // question nothing is about to use.
+    const split = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+    });
+    expect(split.needsSpec).toBe(true);
+
+    const single = planListView({
+      result: result({ plans: [plan([walk(240), ride()])], walkOnly }),
+      rate: rate("resident"),
+    });
+    expect(single.needsSpec).toBe(false);
+  });
+
+  it("does not offer to set one up when one is already set up", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: COSMO_SPEC,
+    });
+    expect(v.needsSpec).toBe(false);
+    expect(v.rows[0].idealShare).toBeCloseTo(1140 / 1260, 5);
+    expect(v.rows[0].chips.some((c) => c.kind === "ideal_share")).toBe(true);
+  });
+
+  it("puts the ideal-heavy plan first when the prices tie", () => {
+    const v = planListView({
+      result: result({ plans: [idealLight, idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: COSMO_SPEC,
+      idealSplit: "prefer_ideal",
+    });
+    expect(v.rows[0].idealShare).toBeGreaterThan(v.rows[1].idealShare!);
+    expect(v.idealSplitNote).toContain("ideal scooter");
+  });
+
+  it("leaves the planner's order alone under 'cheapest first'", () => {
+    const v = planListView({
+      result: result({ plans: [idealLight, idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: COSMO_SPEC,
+      idealSplit: "cheapest",
+    });
+    expect(v.rows[0].idealShare).toBeLessThan(v.rows[1].idealShare!);
+    expect(v.idealSplitNote).toBeNull();
+  });
+
+  it("orders AFTER the cap, so a promoted plan is never one about to be hidden", () => {
+    const v = planListView({
+      result: result({ plans: [idealLight, idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: COSMO_SPEC,
+      idealSplit: "prefer_ideal",
+      handOffCap: 0,
+    });
+    expect(v.rows).toHaveLength(0);
+    expect(v.idealSplitNote).toBeNull();
   });
 });

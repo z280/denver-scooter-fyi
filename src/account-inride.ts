@@ -28,6 +28,11 @@ import {
 } from "./favorite-slots.ts";
 import { calibrationSentence, clearCalibration } from "./cost-calibration.ts";
 import {
+  IDEAL_SPLIT_OPTIONS,
+  idealSplit,
+  setIdealSplit,
+} from "./ideal-share.ts";
+import {
   HAND_OFF_CAP_OPTIONS,
   handOffCap,
   setHandOffCap,
@@ -70,6 +75,14 @@ export interface InRidePanelDeps {
     kind: "home" | "work",
     place: { lat: number; lon: number } | null,
   ): void;
+  /** Whether the rider has configured an "ideal scooter".
+   *
+   *  Asked rather than imported: the spec lives behind a panel in another
+   *  drawer, and this module has no business reaching into it. Absent reads as
+   *  "not configured", which is the safe answer — it produces a row saying the
+   *  split preference has nothing to prefer yet, which is true of a build that
+   *  never wired this. */
+  hasIdealSpec?(): boolean;
 }
 
 export interface InRidePanelHandle {
@@ -236,6 +249,45 @@ export function buildInRidePanel(
   });
   capWrap.append(capSelect, capHint, capStatus.node);
   planning.append(capWrap);
+
+  // HOW a split trip divides, once the rider has accepted one. Separate from
+  // the cap above because they answer different questions: the cap is "will I
+  // switch at all", this is "given that I am switching, which one do I want to
+  // be on for most of it". A rider who capped hand-offs at zero never sees
+  // this one fire, and that is fine — it costs them one row they can ignore,
+  // where folding the two into a single control would mean neither said what
+  // it meant.
+  const splitStatus = makeStatus();
+  const splitWrap = el("div", "account-field");
+  splitWrap.append(el("span", "control-label", "When a trip is split"));
+  const splitSelect = el("select", "select");
+  splitSelect.setAttribute("aria-label", "When a trip is split");
+  for (const option of IDEAL_SPLIT_OPTIONS) {
+    const opt = el("option", undefined, option.label);
+    opt.value = option.value;
+    splitSelect.append(opt);
+  }
+  const splitHint = el("p", "account-hint");
+  const paintSplitHint = (): void => {
+    const chosen = IDEAL_SPLIT_OPTIONS.find((o) => o.value === splitSelect.value);
+    splitHint.textContent = chosen?.hint ?? "";
+  };
+  splitSelect.addEventListener("change", () => {
+    const next = splitSelect.value === "cheapest" ? "cheapest" : "prefer_ideal";
+    paintSplitHint();
+    splitStatus.set(setIdealSplit(next) ? "Saved." : NOT_PERSISTED);
+  });
+  splitWrap.append(splitSelect, splitHint, splitStatus.node);
+  planning.append(splitWrap);
+
+  // IT DOES NOTHING UNTIL AN IDEAL SCOOTER EXISTS, and saying so here is the
+  // difference between a control that looks broken and one that is waiting.
+  // Rendered unconditionally rather than hidden when a spec is configured: the
+  // drawer is built once and a rider can set a spec up without this panel
+  // hearing about it, so a hidden-when-set row would be stale more often than
+  // it was right. `refresh()` repaints it on reopen.
+  const splitNeedsSpec = el("p", "account-hint");
+  planning.append(splitNeedsSpec);
 
   // ---------------------------------------------------------------------
   // Rate plan
@@ -487,6 +539,12 @@ export function buildInRidePanel(
     const cap = handOffCap();
     capSelect.value = cap === null ? "any" : String(cap);
     paintCapHint();
+    splitSelect.value = idealSplit();
+    paintSplitHint();
+    const hasSpec = deps.hasIdealSpec?.() ?? false;
+    splitNeedsSpec.textContent = hasSpec
+      ? "Your ideal scooter is set up — Filters → My ideal scooter to change it."
+      : "You haven't set up an ideal scooter yet, so this has nothing to prefer. Filters → My ideal scooter.";
     // A receipt filed since the drawer was last open can have changed this.
     renderCalibration();
     rerenderSlots();

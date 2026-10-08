@@ -24,6 +24,13 @@
 
 import type { RankPlansResult, TripPlan, TripLeg } from "./along-the-way.ts";
 import { capNote, capPlans, type HandOffCap } from "./plan-prefs.ts";
+import {
+  idealShare,
+  idealShareChip,
+  idealSplitNote,
+  reorderForIdealShare,
+  type IdealSplit,
+} from "./ideal-share.ts";
 import type { RatePlan } from "./config.ts";
 import {
   equityDisclosures,
@@ -35,8 +42,8 @@ import {
 import type { FreeMinuteEstimate } from "./free-minutes.ts";
 import { freeMinutesCopy, type FreeMinutesCopy } from "./free-minutes-control.ts";
 import { formatCents } from "./ride-cost.ts";
-import type { SpecField } from "./ride-spec.ts";
-import { vehicleDisplayName } from "./vehicle-name.ts";
+import type { MatchContext, RideSpec, SpecField } from "./ride-spec.ts";
+import { qualifiedVehicleName } from "./vehicle-name.ts";
 
 /** Same vocabulary as the spec sheet's own field labels. Imported in spirit
  *  rather than in code: `ride-spec-panel.ts`'s copy is module-private and
@@ -56,7 +63,7 @@ export const RELAXED_FIELD_LABEL: Record<SpecField, string> = {
  *  and for the same reason: free text from a UI is how an address or an amount
  *  ends up somewhere it should not be. */
 export interface PlanChip {
-  kind: "equity_saving" | "hand_off" | "risk" | "free_minutes";
+  kind: "equity_saving" | "hand_off" | "risk" | "free_minutes" | "ideal_share";
   text: string;
 }
 
@@ -86,6 +93,9 @@ export interface PlanRow {
   /** The vehicle the rider goes to first, for the hand-off into the walk flow.
    *  Null on the walk-only plan, which has nowhere to be taken. */
   firstVehicle: TripLeg["vehicle"] | null;
+  /** Fraction of ridden seconds on vehicles that fully meet the rider's spec,
+   *  or null when no spec is configured (and so no question). */
+  idealShare: number | null;
   /** This row IS the walk-only plan. The surface treats it differently — there
    *  is no vehicle to claim and no cost to show. */
   isWalkOnly: boolean;
@@ -124,6 +134,15 @@ export interface PlanListView {
    *  hidden" does not answer it. Null when nothing was hidden, which is the
    *  common case and the default. */
   capNote: string | null;
+  /** The ideal-split preference reordered this list, in the rider's own words,
+   *  or null. Said only when it MOVED something: a standing explanation of a
+   *  preference that changed nothing is a line riders learn to skip, and then
+   *  miss on the day it matters. */
+  idealSplitNote: string | null;
+  /** True when no "ideal scooter" is configured. The surface offers to set one
+   *  up — a preference about which scooter you get is worth nothing until the
+   *  app knows which scooter you want. */
+  needsSpec: boolean;
 }
 
 export const ESTIMATE_NOTE =
@@ -149,10 +168,20 @@ function minutes(seconds: number): number {
  *  pure and has neither. `plate_suffix` IS on the payload and
  *  `vehicleDisplayName` prefers it over a derived suffix anyway, so nothing is
  *  lost but the dependency. */
-function legVehicleName(leg: TripLeg): string | null {
+function legVehicleName(leg: TripLeg, operator?: string | null): string | null {
   const v = leg.vehicle;
   if (!v) return null;
-  return vehicleDisplayName(v.public_name, null, v.vehicle_model_name, v.plate_suffix);
+  // TYPE FIRST, name second. On a pavement "which one" is the useful half and
+  // `vehicleDisplayName` is right; in a list of PLANS it is not — "Ride Onward
+  // 🌳 500 19 min to Liftoff 🍉 167" says nothing about what the rider is
+  // being sent to sit on, and whether a leg is standing on an Astro or sitting
+  // on a Rover changes "will I take this plan" more than the name does.
+  return qualifiedVehicleName({
+    publicName: v.public_name,
+    modelName: v.vehicle_model_name,
+    suffix: v.plate_suffix,
+    operator,
+  });
 }
 
 function rideLegs(plan: TripPlan): TripLeg[] {
@@ -232,8 +261,15 @@ export function savingBaseline(result: RankPlansResult): TripPlan | null {
 function chipsFor(
   plan: TripPlan,
   saving: StartInAreaSaving | null,
+  spec: RideSpec | null,
+  ctx: MatchContext,
 ): PlanChip[] {
   const chips: PlanChip[] = [];
+  // How the trip divides between the rider's ideal scooter and the rest. Only
+  // on a genuine split — see `idealShareChip` for why all-of-it and none-of-it
+  // both say nothing.
+  const share = idealShareChip(plan, spec, ctx);
+  if (share) chips.push({ kind: "ideal_share", text: share });
   if (saving) {
     const walk =
       saving.extraWalkMinutes > 0
@@ -290,6 +326,17 @@ export interface PlanListInput {
    *  that explains what the SEARCH gave up — into something that also covers a
    *  setting the rider could change in two taps. */
   handOffCap?: HandOffCap;
+  /** The rider's saved "ideal scooter", or null when they have not made one.
+   *  Null is NOT `defaultSpec()`: a share computed against a spec that
+   *  requires nothing is 100% for every vehicle in the city, which is an empty
+   *  opinion dressed up as agreement. */
+  spec?: RideSpec | null;
+  /** What `matches` needs for `mustReach`. Same object the search used, so the
+   *  share cannot disagree with the filter about the same vehicle. */
+  matchContext?: MatchContext;
+  /** How to break a near-tie on price. Defaults to the cheapest-first
+   *  behaviour every caller had before this preference existed. */
+  idealSplit?: IdealSplit;
 }
 
 /** Turn a search result into the rows §2.4 describes.
@@ -302,6 +349,7 @@ export interface PlanListInput {
  *  dishonesty as a flagged vehicle shown without its warning. */
 export function planListView(input: PlanListInput): PlanListView {
   const { result, rate } = input;
+  const spec = input.spec ?? null;
   const destinationLabel = input.destinationLabel ?? null;
   const baseline = savingBaseline(result);
 
@@ -325,10 +373,11 @@ export function planListView(input: PlanListInput): PlanListView {
       minutesLabel: `${minutes(plan.totalSeconds)} min`,
       costLabel: formatCents(plan.estimatedCents),
       legLines: planLegLines(plan, destinationLabel),
-      chips: chipsFor(plan, saving),
+      chips: chipsFor(plan, saving, spec, input.matchContext ?? {}),
       disclosures: equityDisclosures(plan, rate, saving),
       saving,
       firstVehicle: first?.vehicle ?? null,
+      idealShare: idealShare(plan, spec, input.matchContext ?? {}),
       isWalkOnly,
     };
   });
@@ -340,9 +389,23 @@ export function planListView(input: PlanListInput): PlanListView {
   const cap = input.handOffCap ?? null;
   const { kept, hidden } = capPlans(allRows, cap);
 
+  // AFTER the cap, so the preference orders what the rider will actually see
+  // rather than a list half of which is about to be removed — otherwise a
+  // promoted plan could be hidden a line later and the note would explain a
+  // reordering nobody can observe.
+  const { rows: ordered, moved } = reorderForIdealShare(
+    kept,
+    input.idealSplit ?? "cheapest",
+  );
+
   return {
-    rows: kept,
+    rows: ordered,
     capNote: capNote(hidden, cap),
+    idealSplitNote: idealSplitNote(moved, spec !== null),
+    // Asked only when there is a multi-scooter plan on offer. Prompting a
+    // rider to configure an ideal scooter on a list of one-scooter plans is
+    // asking them to answer a question nothing is about to use.
+    needsSpec: spec === null && ordered.some((r) => r.plan.handOffs > 0),
     estimateNote: ESTIMATE_NOTE,
     relaxedLabels: result.relaxed.map((f) => RELAXED_FIELD_LABEL[f]),
     capRelaxed: result.capRelaxed,
