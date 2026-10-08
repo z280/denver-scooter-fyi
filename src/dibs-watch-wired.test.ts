@@ -66,6 +66,31 @@ describe("a claim reaches the server", () => {
   });
 });
 
+describe("giving a claim up disarms the watch", () => {
+  it("routes every release through the server, from one funnel", () => {
+    // `dropDibs` is reached by the map popup's ✋ Release, "I'm switching
+    // scooters", backing out of the walk, and "it won't ride". Four of those
+    // five told the server nothing, so the row stayed live for up to
+    // twenty-five minutes and the watch stayed armed on a claim the rider had
+    // deliberately given up.
+    //
+    // Asserted on the HOOK BEING WIRED, because that is the single thing all
+    // five paths now depend on: unwire it and every one of them goes back to
+    // being local-only, with no test of any individual button able to tell.
+    const code = withoutComments(main);
+    expect(code).toContain("setDibsReleaseHook(");
+    const call = code.slice(code.indexOf("setDibsReleaseHook("));
+    expect(call.slice(0, 200)).toContain("releaseDibs(");
+  });
+
+  it("leaves no second path to the same call", () => {
+    // The My Dibs panel used to call `releaseDibs` itself. Two paths to one
+    // call is how the other four buttons came to have none.
+    const code = withoutComments(main);
+    expect(code.match(/releaseDibs\(/g) ?? []).toHaveLength(1);
+  });
+});
+
 describe("the claimant's own rental is not reported as a theft", () => {
   it("says 'mine' when the rider commits to the scooter they walked to", () => {
     // The server's alert fires on "a rental started on this vehicle" — all

@@ -291,9 +291,50 @@ export function saveDibs(updated: Dibs, now: number = Date.now()): void {
   persist([updated, ...rest]);
 }
 
+/** Fires when a claim is DELIBERATELY given up, with the claim that was.
+ *
+ *  THE SEAM TO THE SERVER, shaped exactly like `favorites.ts`'s sync hook and
+ *  for the same reason: this module must not import the API client.
+ *
+ *  WHY IT HAS TO BE HERE rather than at the call sites. `dropDibs` is the one
+ *  funnel every giving-up goes through — the map popup's ✋ Release, "I'm
+ *  switching scooters", backing out of the walk, and reporting a scooter that
+ *  will not ride. Four of those five used to drop the phone's copy and tell
+ *  the server nothing, so the row stayed live for up to twenty-five minutes:
+ *  still dimming that scooter on everybody else's map, and — once the SMS
+ *  watch shipped — still able to text the rider about a scooter they had
+ *  deliberately walked away from. An alert about an abandoned claim is the
+ *  worst thing that channel can say.
+ *
+ *  Only a DELIBERATE drop fires it. Expiry does not: the server holds its own
+ *  `expires_at` and reaches the same conclusion on its own clock, so there is
+ *  nothing to tell it.
+ *
+ *  One listener, not a set: there is one server. */
+let releaseHook: ((released: Dibs) => void) | null = null;
+
+export function setDibsReleaseHook(fn: ((released: Dibs) => void) | null): void {
+  releaseHook = fn;
+}
+
+/** Give a claim up. Tells the server too — see `setDibsReleaseHook`. */
 export function dropDibs(vehicleIdentifier: string, now: number = Date.now()): Dibs[] {
-  const next = loadDibs(now).filter((d) => d.vehicleIdentifier !== vehicleIdentifier);
+  const before = loadDibs(now);
+  const next = before.filter((d) => d.vehicleIdentifier !== vehicleIdentifier);
   persist(next);
+  // Only what this call actually removed, and only when it removed something:
+  // dropping a vehicle no claim was held on must not fire a release.
+  const gone = before.find((d) => d.vehicleIdentifier === vehicleIdentifier);
+  // AFTER the write, so the phone's copy is already correct if the hook throws
+  // — the local drop is what the rider just watched happen, and it must not be
+  // undone by a network layer having a bad day.
+  if (gone) {
+    try {
+      releaseHook?.(gone);
+    } catch {
+      /* the row expires on its own clock regardless */
+    }
+  }
   return next;
 }
 

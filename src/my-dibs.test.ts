@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { countdownFor, formatCountdown, wireMyDibs } from "./my-dibs.ts";
-import { DIBS_START_GRACE_MS, type Dibs } from "./dibs.ts";
+import {
+  DIBS_START_GRACE_MS,
+  setDibsReleaseHook,
+  type Dibs,
+} from "./dibs.ts";
 
 const T0 = 1_770_000_000_000;
 
@@ -65,6 +69,11 @@ describe("the My dibs list", () => {
   let section: HTMLElement;
   let list: HTMLElement;
 
+  // The release hook is module state in dibs.ts, so one left armed here goes
+  // on firing through every later test — the same hazard favorites.ts's own
+  // reset helper exists for.
+  afterEach(() => setDibsReleaseHook(null));
+
   beforeEach(() => {
     localStorage.clear();
     document.body.replaceChildren();
@@ -79,7 +88,6 @@ describe("the My dibs list", () => {
       section,
       list,
       onOpenCertificate: () => {},
-      onRelease: () => {},
       onChanged: () => {},
       now: () => T0,
       ...over,
@@ -115,13 +123,20 @@ describe("the My dibs list", () => {
       "scooter-fyi-dibs",
       JSON.stringify({ v: 1, dibs: [claim()] }),
     );
-    const onRelease = vi.fn();
+    // The server is told through `dibs.ts`'s release hook, which every
+    // giving-up in the app now goes through — this panel used to call the API
+    // itself, which left the other four release buttons telling the server
+    // nothing. Asserted on the hook rather than on a dep of this panel,
+    // because the hook is where the guarantee actually lives now.
+    const released = vi.fn();
+    setDibsReleaseHook(released);
     const onChanged = vi.fn();
-    const h = mount({ onRelease, onChanged });
+    const h = mount({ onChanged });
 
     list.querySelector<HTMLButtonElement>(".my-dibs__btn--release")!.click();
 
-    expect(onRelease).toHaveBeenCalledTimes(1);
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(released.mock.calls[0][0].vehicleIdentifier).toBe("aaaa1111bbbb2222");
     expect(onChanged).toHaveBeenCalledTimes(1);
     // Gone from storage, and the section folds away with it.
     expect(localStorage.getItem("scooter-fyi-dibs")).not.toContain("aaaa1111bbbb2222");

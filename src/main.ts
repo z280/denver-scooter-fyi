@@ -184,6 +184,7 @@ import {
   dibsExpiresAt,
   dibsOn,
   dropDibs,
+  setDibsReleaseHook,
   recordProgress,
   saveDibs,
   type Dibs,
@@ -1392,6 +1393,20 @@ map.on("load", async () => {
   // one, and an honest anonymous form when there is not — never a fabricated
   // identity, since the whole artifact is an assertion about who did what.
   devices.setDibsClaimant(() => dibsClaimant);
+  // GIVING UP A CLAIM HAS TO REACH THE SERVER, from every button that does it.
+  //
+  // `dropDibs` is the one funnel: the map popup's ✋ Release, "I'm switching
+  // scooters", backing out of the walk, and "it won't ride". Four of those
+  // told the server nothing, so the row stayed live for up to twenty-five
+  // minutes — dimming that scooter on everybody else's map, and, now that the
+  // SMS watch exists, able to text the rider about a scooter they had
+  // deliberately walked away from or swapped out of.
+  //
+  // Wired here rather than inside `dibs.ts` because that module must not
+  // import the API client, the same rule `favorites.ts` follows.
+  setDibsReleaseHook((released) => {
+    if (released.registration) void releaseDibs(released.registration.id);
+  });
   // A signed-out rider is the common case and not an error — skip the fetch
   // rather than burning a guaranteed 401, same as ride-screen-dest does.
   if (isAuthenticated()) {
@@ -1530,9 +1545,6 @@ map.on("load", async () => {
     section: need("tools-my-dibs"),
     list: need("my-dibs-list"),
     onOpenCertificate: (d: Dibs) => openDibsCertificate(d),
-    onRelease: (d: Dibs) => {
-      if (d.registration) void releaseDibs(d.registration.id);
-    },
     // Re-fetch rather than mutate a local copy: the server has just been told
     // to expire the row, and its answer is the one every other rider sees.
     onChanged: () => refreshLiveDibs(),

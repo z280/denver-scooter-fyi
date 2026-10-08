@@ -3,7 +3,7 @@
 // Dibs. What is pinned here is mostly the TIMESTAMP, because the timestamp is
 // the entire feature: two people at one scooter settle it by whose claim is
 // older, and everything that could quietly move that number is a bug.
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DIBS_KEY,
@@ -22,6 +22,7 @@ import {
   dibsOn,
   dropDibs,
   loadDibs,
+  setDibsReleaseHook,
 } from "./dibs.ts";
 
 const CLAIM = {
@@ -171,5 +172,92 @@ describe("age", () => {
     const d = callDibs(CLAIM, T0);
     expect(dibsAge(d, T0 + 5_000)).toBe("just now");
     expect(dibsAge(d, T0 + 7 * 60_000)).toBe("7 min ago");
+  });
+});
+
+
+describe("giving a claim up tells the server", () => {
+  // THE WATCH HAS TO BE DISARMED. Before this hook, four of the five release
+  // buttons in the app dropped the phone's copy and told the server nothing,
+  // so the row stayed live for up to twenty-five minutes: still dimming that
+  // scooter on everybody else's map, and — once the SMS watch shipped — still
+  // able to text the rider about a scooter they had deliberately given up. An
+  // alert about an abandoned claim is the worst thing that channel can say.
+  afterEach(() => setDibsReleaseHook(null));
+
+  const registered = (vid: string) => {
+    const d = callDibs({ ...CLAIM, vehicleIdentifier: vid }, T0);
+    saveDibs(
+      { ...d, registration: { id: `reg-${vid}`, verifyUrl: "u", qrUrl: "q" } },
+      T0,
+    );
+  };
+
+  it("fires with the claim that was dropped", () => {
+    registered("abc123");
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+
+    dropDibs("abc123", T0);
+
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(released.mock.calls[0][0].registration.id).toBe("reg-abc123");
+  });
+
+  it("fires only for the claim dropped, when several are held", () => {
+    // "I'm switching scooters" releases what is held and claims the new one.
+    // Releasing the wrong row would disarm a watch the rider still wants and
+    // leave armed the one they just abandoned.
+    registered("keep-me");
+    registered("drop-me");
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+
+    dropDibs("drop-me", T0);
+
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(released.mock.calls[0][0].vehicleIdentifier).toBe("drop-me");
+    expect(loadDibs(T0).map((d) => d.vehicleIdentifier)).toEqual(["keep-me"]);
+  });
+
+  it("does not fire for a vehicle no claim was held on", () => {
+    registered("abc123");
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+
+    dropDibs("never-claimed", T0);
+
+    expect(released).not.toHaveBeenCalled();
+  });
+
+  it("does not fire on expiry", () => {
+    // The server holds its own `expires_at` and reaches the same conclusion
+    // on its own clock, so there is nothing to tell it — and a release call
+    // per expired claim per read would be a lot of nothing.
+    callDibs(CLAIM, T0);
+    const released = vi.fn();
+    setDibsReleaseHook(released);
+
+    expect(loadDibs(T0 + DIBS_MAX_TOTAL_MS + 1)).toEqual([]);
+    expect(released).not.toHaveBeenCalled();
+  });
+
+  it("still drops the local copy when the hook throws", () => {
+    // The local drop is what the rider just watched happen. A network layer
+    // having a bad day must not put the claim back on their screen.
+    registered("abc123");
+    setDibsReleaseHook(() => {
+      throw new Error("offline");
+    });
+
+    expect(() => dropDibs("abc123", T0)).not.toThrow();
+    expect(loadDibs(T0)).toEqual([]);
+  });
+
+  it("is a no-op when nothing is listening", () => {
+    registered("abc123");
+    setDibsReleaseHook(null);
+    expect(() => dropDibs("abc123", T0)).not.toThrow();
+    expect(loadDibs(T0)).toEqual([]);
   });
 });

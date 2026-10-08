@@ -35,8 +35,6 @@ export interface MyDibsDeps {
   list: HTMLElement;
   /** Show the claim's certificate. */
   onOpenCertificate(dibs: Dibs): void;
-  /** Tell the server the claim is given back. See `releaseDibs`. */
-  onRelease(dibs: Dibs): void;
   /** Something changed — the map and any open popup need to know a claim
    *  went away. */
   onChanged(): void;
@@ -134,15 +132,16 @@ export function wireMyDibs(deps: MyDibsDeps): MyDibsHandle {
         // back to everyone else — and putting a speed bump in front of it
         // would be the app discouraging the thing it wants. Calling dibs
         // again costs one tap on the scooter.
-        // Local first so the UI answers instantly, then the server, which
-        // is what every OTHER rider's map reads. Not awaited: a release that
-        // fails to reach us still expires on its own clock, and blocking the
-        // button on the network would be the app hesitating over the one
-        // action that costs the rider nothing.
+        // `dropDibs` tells the server as well, through `dibs.ts`'s release
+        // hook — this panel used to do it itself, which made two paths to one
+        // call and left the other four release buttons in the app telling the
+        // server nothing at all. Not awaited either way: a release that fails
+        // to reach us still expires on its own clock, and blocking the button
+        // on the network would be the app hesitating over the one action that
+        // costs the rider nothing.
         dropDibs(d.vehicleIdentifier, now());
         track("dibs", { action: "released_from_list" });
         render();
-        deps.onRelease(d);
         deps.onChanged();
       });
       actions.append(release);
