@@ -4,7 +4,7 @@
 // This is the display half of Save Ride Tracks. The master plan's own copy for
 // that option promises two things — "trace where you've been on the map
 // display, AND also save waypoints of your location to your local device"
-// (docs/RIDE_MODE_OVERHAUL_PLAN.md) — and only the second half existed:
+// (docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md) — and only the second half existed:
 // track-store.ts sealed every fix into IndexedDB, but nothing ever drew it, so
 // the rider's own track was invisible until they opened the account drawer's
 // Local Data tab after the ride.

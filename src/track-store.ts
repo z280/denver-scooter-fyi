@@ -3,7 +3,7 @@
 // touches the network and nothing here touches the DOM — the server sees no
 // waypoint until the rider explicitly donates the chain at Screen 10.
 //
-// The wire format is normative and lives in `docs/RIDE_MODE_OVERHAUL_PLAN.md`
+// The wire format is normative and lives in `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md`
 // Part 2, which is committed byte-identically to the API repo. Its byte-encoding
 // rules are the whole ballgame, because the API's `src/track_verify.py` must
 // hash exactly the same bytes:

@@ -1,6 +1,6 @@
 // Screen 10 — contribution eligibility copy, the donation upload, points
 // display, and "See recent trips" (frontend plan, `ride-post.ts` row's S10
-// slice; master `docs/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 10"). Owner's
+// slice; master `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 10"). Owner's
 // generated-text skeleton, verbatim:
 //
 //   Your ride {may be | is} {eligible | ineligible} for community

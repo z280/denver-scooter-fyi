@@ -2,7 +2,7 @@
 // portrait, when the rider isn't mid-plate-entry): the two Ride Mode Options
 // controls, their cross-option cascades, the Usuals (Screen 2.5) CRUD, and
 // their info modals — owner copy, verbatim, from
-// `docs/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 2". This module owns no
+// `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` Part 0 "Screen 2". This module owns no
 // screen registration (`ride-screen-select.ts` registers Screens 2 / 2.5 and
 // owns the device-disambiguation list, the plate confirm field, and the
 // [NEXT >>] button); it exports a mountable panel plus the pure logic a

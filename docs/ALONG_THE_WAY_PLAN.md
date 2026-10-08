@@ -46,7 +46,7 @@ no caller in this repo — see the vocabulary note below.
 
 ## House rules that bind every phase
 
-Inherited from `docs/PLAN_RIDE_MODE_FRONTEND.md` and the modules this program
+Inherited from `docs/implemented/PLAN_RIDE_MODE_FRONTEND.md` and the modules this program
 touches:
 
 - Vanilla TypeScript, no framework. New surfaces are **new modules**, wired

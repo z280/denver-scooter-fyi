@@ -24,7 +24,7 @@ The review's core diagnosis, confirmed against the code:
 
 - **Filtering vs. symbology are scattered.** Battery *filtering* (bucket
   buttons) lives in the Filters drawer while battery *coloring* ("Display as:
-  Range") lives in Tools ([index.html](../index.html) `#battery-filter` vs.
+  Range") lives in Tools ([index.html](../../index.html) `#battery-filter` vs.
   `#color-by-seg`). Geography is split across three drawers: area filter in
   Filters, boundary overlays + density choropleth in Overlays, neighborhood
   search in Tools.
@@ -95,7 +95,7 @@ keep everything about one attribute in one place:
   - *Boundary outlines* checkbox list (unchanged, from `buildLayerToggles()`).
   - *Color regions by device density* choropleth select + legend (unchanged).
   - *Only show devices in…* — the existing area filter
-    ([src/area-filter.ts](../src/area-filter.ts)), renamed from the vague
+    ([src/area-filter.ts](../../src/area-filter.ts)), renamed from the vague
     "Additional filters", with the redundant Tools "Find a neighborhood"
     field folded into its search input.
 - **Tools drawer** keeps only the dense-cluster finder.
@@ -113,7 +113,7 @@ the map, one chip per active constraint, each with a ✕ to clear it:
 [ 🛴 Scooters ✕ ] [ ⚡ Top 25% battery ✕ ] [ 📍 5 neighborhoods ✕ ] [ Hide unavailable ✕ ]
 ```
 
-Wire it in [src/main.ts](../src/main.ts) where the filter handlers already
+Wire it in [src/main.ts](../../src/main.ts) where the filter handlers already
 converge. Clicking a chip's ✕ dispatches the same events the drawer widgets
 use, so drawer state stays in sync.
 
@@ -121,7 +121,7 @@ use, so drawer state stays in sync.
 
 When boundary polygons are visible, clicking a polygon toggles it in the
 area filter — the map itself becomes the filter UI. Implementation: a click
-handler on the overlay fill layers in [src/overlays.ts](../src/overlays.ts)
+handler on the overlay fill layers in [src/overlays.ts](../../src/overlays.ts)
 calling into `AreaFilter`; the existing `setOverlayChecked`/`setSubset`
 plumbing in main.ts already handles overlay↔filter synchronization.
 
@@ -174,7 +174,7 @@ The "better alternative" is a client-side nearest-neighbor scan over
 ### 2.4 Reliability score & ghost-scooter styling
 
 Derive a per-device 🟢/🟡/🔴 reliability tier client-side from fields that
-already exist on `DeviceProperties` ([src/api.ts](../src/api.ts)):
+already exist on `DeviceProperties` ([src/api.ts](../../src/api.ts)):
 `quality_designation`, `has_negative_report`, and — pending the public
 field promotion — `number_failed_starts` and dwell time from
 `first_observed_at_location`.
@@ -182,7 +182,7 @@ field promotion — `number_failed_starts` and dwell time from
 - **Popup badge** with a plain-language reason ("Idle 4 days · 2 failed
   start attempts logged").
 - **Ghost pins:** 🔴 devices render semi-transparent/desaturated
-  (paint-expression change in [src/devices.ts](../src/devices.ts), same
+  (paint-expression change in [src/devices.ts](../../src/devices.ts), same
   mechanism as the existing negative-report flag layer).
 - **New color mode:** "Color dots by reliability" joins type/range in the
   Phase 1 battery-block toggle group.
@@ -259,7 +259,7 @@ features (Phase 4). Two equally-first-class doors:
   Postmark's deliverability makes it genuinely one-tap-from-inbox.
 
 Both doors mint the **same bearer session** the existing `map-auth` flow
-already handles ([src/map-auth.js](../src/map-auth.js) storage/expiry/401
+already handles ([src/map-auth.js](../../src/map-auth.js) storage/expiry/401
 plumbing is reused, not rebuilt) — but rider sessions need to survive a
 multi-week horizon, not a browser tab: move rider tokens to `localStorage`
 with a silent refresh endpoint (API-side decision, see appendix). Nobody
@@ -325,7 +325,7 @@ Full-screen overlay (`src/ride-hud.ts`) on top of a dimmed, simplified map:
   can be squared with the Veo receipt.
 - **Equity-zone awareness:** the HUD knows the ride's start point; a
   client-side point-in-polygon against the v1/v2 boundaries
-  ([src/geo.ts](../src/geo.ts)) sets an "equity ride" flag shown as
+  ([src/geo.ts](../../src/geo.ts)) sets an "equity ride" flag shown as
   🏷️ *"started in an equity zone — discount applies"*, feeding the Phase 4
   discount check.
 - **Keep-awake & legibility:** Screen Wake Lock API (Chrome, iOS Safari
@@ -386,7 +386,7 @@ The contract discounts rides that **start or end** inside disadvantaged
 areas — that's a pure-geometry optimization, no routing engine needed:
 
 - **Start-side:** in Find-a-ride mode, if a candidate scooter sits inside a
-  v1/v2 zone (point-in-polygon, [src/geo.ts](../src/geo.ts)), badge it
+  v1/v2 zone (point-in-polygon, [src/geo.ts](../../src/geo.ts)), badge it
   *"🏷️ discount ride"* and factor that into the "worth the walk"
   comparison — a 2-min-farther scooter that makes the whole ride discounted
   is usually the better pick, and the card should say so with dollars.

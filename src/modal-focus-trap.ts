@@ -1,6 +1,6 @@
 // Minimal, dependency-free Tab focus trap for a full-screen dialog overlay
 // (`role="dialog"` `aria-modal="true"`) — the house rule every new modal in
-// this program must satisfy (`docs/PLAN_RIDE_MODE_FRONTEND.md`'s house
+// this program must satisfy (`docs/implemented/PLAN_RIDE_MODE_FRONTEND.md`'s house
 // rules: "Focus trapping is required too... neither `ride-wizard.ts` nor
 // `openFloatingModal` has one to copy"). `ride-modal.ts` wrote its own,
 // private `trapFocus()` for the wizard shell; Screens 8/9/10 (`ride-post-*

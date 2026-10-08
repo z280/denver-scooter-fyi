@@ -69,7 +69,7 @@ own, the hedge is mostly noise.
 
 ## 4. Ride mode
 
-`docs/RIDE_MODE_OVERHAUL_PLAN.md` is on main and is a plan, not a build. It
+`docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` is on main and is a plan, not a build. It
 was delivered as a review of what ride mode is missing. Nothing in it has been
 implemented beyond what shipped in PR #89 and #90.
 

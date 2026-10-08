@@ -1,6 +1,6 @@
 # Ride Mode Overhaul — Frontend Plan (denver-scooter-fyi)
 
-Companion to `docs/RIDE_MODE_OVERHAUL_PLAN.md` (the master program plan — read it first; the
+Companion to `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md` (the master program plan — read it first; the
 vision, glossary, chain-format spec, sequencing graph, and risks live there). This document is the
 actionable frontend plan: **four big phases (F1–F4)**, each shippable behind the mode-bar flag,
 each divisible into parallel lanes for multiple implementing agents.

@@ -3,14 +3,14 @@
 Status: **planning approved 2026-07-29**. This master document is committed **byte-identical** to both
 repositories:
 
-- `denver-scooter-fyi` → `docs/RIDE_MODE_OVERHAUL_PLAN.md`
+- `denver-scooter-fyi` → `docs/implemented/RIDE_MODE_OVERHAUL_PLAN.md`
 - `scooter-fyi-api` → `RIDE_MODE_OVERHAUL_PLAN.md`
 
 Each repository additionally carries its own detailed, actionable plan, structured as a few **big**
 phases ready for division across multiple implementing agents:
 
 - API: `PLAN_RIDE_MODE_API.md` (phases **A1–A4**)
-- Frontend: `docs/PLAN_RIDE_MODE_FRONTEND.md` (phases **F1–F4**)
+- Frontend: `docs/implemented/PLAN_RIDE_MODE_FRONTEND.md` (phases **F1–F4**)
 
 Where this master narrative and a per-repo plan disagree on a detail, the per-repo plan wins for its
 own repo; where either disagrees with the owner's vision below, the vision wins unless a numbered
