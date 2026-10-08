@@ -387,6 +387,23 @@ const rideRouteLine = createRideRouteLine(map);
 const routePreview = createRoutePreview(map);
 // The destination/start pins the home bar puts on the map.
 const tripPins = createTripPins(map);
+
+/** Whether the signed-in profile carries a PROVED phone number.
+ *
+ *  Null until the profile answers, and null again when there is no session —
+ *  which the Navigation tab renders as "sign in and verify a phone", not as
+ *  "you have no phone". Conflating the two tells a rider with a verified number
+ *  to go and verify it.
+ *
+ *  DECLARED HERE, ABOVE EVERY READER, and that is the whole reason this is not
+ *  down with the other ride-flow state: `wireAccount()` runs at module load and
+ *  builds the Navigation panel, whose `phoneVerified` dep reads this on its
+ *  first paint. A `let` further down the file is in its temporal dead zone at
+ *  that moment, which is a ReferenceError that stops main.ts before a single
+ *  vehicle is drawn — the exact failure `scripts/smoke.mjs` was written for,
+ *  and this one was caught by a screenshot run rather than by tsc or vitest,
+ *  neither of which can see initialisation order. */
+let phoneVerified: boolean | null = null;
 // The walk to the scooter, drawn with the same module as the ride route but
 // its own source ids and its own colour — see ride-route-line.ts's prefix.
 const walkLine = createRideRouteLine(map, "walk-route");
@@ -4164,14 +4181,6 @@ let interviewAnswers: InterviewAnswers | null = null;
  *  with the rest of the flow, because standing it down is a decision about one
  *  journey. */
 let useIdealSpec = true;
-
-/** Whether the signed-in profile carries a PROVED phone number.
- *
- *  Null until the profile answers, and null again when there is no session —
- *  which the Navigation tab renders as "sign in and verify a phone", not as
- *  "you have no phone". Conflating the two tells a rider with a verified number
- *  to go and verify it. */
-let phoneVerified: boolean | null = null;
 
 
 /** Drop the plan list, leaving the rider on the ranked scooters below it.
