@@ -47,6 +47,7 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     riskWarning: null,
     freeMinutes: null,
     capNote: null,
+    interviewNote: null,
     idealSplitNote: null,
     needsSpec: false,
     ...over,
@@ -133,10 +134,18 @@ describe("the plan list panel", () => {
     expect(root.textContent).toContain("Nothing we can offer");
   });
 
-  it("closes on the ✕", () => {
+  it("dismisses through a labelled button, not a corner ✕", () => {
+    // It had a corner ✕ while it floated over the map. In the Recommended
+    // drawer that ✕ stacked under the drawer's OWN close button — two in one
+    // corner, one of which shuts the whole menu. The label also says what
+    // happens: the ranked scooters are below, and that is where the rider lands.
     const onCancel = vi.fn();
     const { root } = mount(view(), { onCancel });
-    root.querySelector<HTMLButtonElement>(".planlist__close")!.click();
+    const dismiss = root.querySelector<HTMLButtonElement>(".planlist__dismiss");
+    expect(dismiss).toBeTruthy();
+    expect(dismiss!.textContent).toMatch(/scooter/i);
+    expect(root.querySelector(".planlist__close")).toBeNull();
+    dismiss!.click();
     expect(onCancel).toHaveBeenCalled();
   });
 
@@ -286,34 +295,8 @@ describe("the plan list panel", () => {
   });
 });
 
-describe("the card looks like a scroll when it is one", () => {
-  it("marks itself at-end when nothing is below the fold", () => {
-    // happy-dom reports zero for every layout figure, so `scrollHeight` and
-    // `clientHeight` are both 0 — which is exactly the un-scrollable case, and
-    // the one where a fade over the final button would make a live control
-    // look disabled.
-    const host = document.createElement("div");
-    document.body.append(host);
-    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
-    expect(host.querySelector(".planlist")?.classList.contains("is-at-end")).toBe(true);
-  });
-
-  it("drops the mark once there is content below, and restores it at the bottom", () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
-    const card = host.querySelector<HTMLElement>(".planlist")!;
-
-    // Stand in for layout happy-dom will not do: a card twice as tall as its
-    // window, scrolled to the top.
-    Object.defineProperty(card, "scrollHeight", { value: 600, configurable: true });
-    Object.defineProperty(card, "clientHeight", { value: 300, configurable: true });
-    card.scrollTop = 0;
-    card.dispatchEvent(new Event("scroll"));
-    expect(card.classList.contains("is-at-end")).toBe(false);
-
-    card.scrollTop = 300;
-    card.dispatchEvent(new Event("scroll"));
-    expect(card.classList.contains("is-at-end")).toBe(true);
-  });
-});
+// NO SCROLL-EDGE TESTS. The card used to be a fixed overlay and so its own
+// scroll container; a `mask-image` fade and an `is-at-end` class kept a
+// half-scrolled row from reading as a button clipped flat. It is a section
+// inside the Recommended drawer now and the DRAWER scrolls, so there is no
+// inner edge to clip anything and nothing for the panel to measure.

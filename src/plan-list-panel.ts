@@ -68,12 +68,21 @@ export function createPlanListPanel(
   const panel = el("div", "planlist");
   const head = el("div", "planlist__head");
   head.append(el("div", "planlist__title", "How to get there"));
-  // Shape, size and centring come from style.css's shared dismiss rule, which
-  // `.planlist__close` is listed in — a dismiss is the one control that is the
-  // same shape everywhere in the app.
-  const close = el("button", "planlist__close", "×");
+  // A LABELLED BUTTON AT THE END, not a corner ×, and the move into the drawer
+  // is what decided that.
+  //
+  // This used to be a 34px × pinned to the card's top-right by the shared
+  // dismiss rule, which works on a card floating over a map and does not work
+  // here: `.planlist` is no longer `position: fixed`, so the absolute × landed
+  // against the DRAWER and stacked underneath the drawer's own close button.
+  // Two ×s in one corner, and a tap on the wrong one closes the whole menu.
+  //
+  // It also says what it does now, which a × cannot. Dismissing this section
+  // is not closing anything — the ranked scooters are immediately below and
+  // that is where the rider lands, so "Pick a scooter myself" names the thing
+  // that is about to happen.
+  const close = el("button", "planlist__dismiss", "Pick a scooter myself");
   close.type = "button";
-  close.setAttribute("aria-label", "Close");
   close.addEventListener("click", () => deps.onCancel());
 
   const notes = el("div", "planlist__notes");
@@ -86,7 +95,7 @@ export function createPlanListPanel(
   const specPrompt = el("div", "planlist__specprompt");
   specPrompt.hidden = true;
   const body = el("div", "planlist__body");
-  panel.append(head, close, notes, free, specPrompt, body);
+  panel.append(head, notes, free, specPrompt, body, close);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -108,6 +117,13 @@ export function createPlanListPanel(
           "flagged scooter.",
         cls: "planlist__note--warn",
       });
+    }
+    // WHAT THE RIDER ASKED FOR, first among the quiet notes. It goes above the
+    // cap and the ordering because it is the only one that answers "did this
+    // list hear me at all" — and that question is why this note exists: the
+    // interview's answer used to reach the scooter ranking and never the plans.
+    if (v.interviewNote) {
+      lines.push({ text: v.interviewNote, cls: "planlist__note--quiet" });
     }
     // The rider's own cap, said plainly. Not a warning — nothing went wrong and
     // nothing was given up by the search; they asked for this. But it goes
@@ -313,24 +329,14 @@ export function createPlanListPanel(
     body.replaceChildren(...v.rows.map((row) => renderRow(row)));
   }
 
-  /** Tell the card whether anything is below the fold.
-   *
-   *  The card fades its last few pixels so a half-scrolled row reads as "there
-   *  is more" rather than as a button clipped flat by the card's edge — which
-   *  is what it looked like, and what prompted this. But a fade over the FINAL
-   *  button makes a live control look disabled, and a card too short to scroll
-   *  has nothing to hint at, so both of those turn it off.
-   *
-   *  CSS cannot ask whether a box overflows, so this is the one thing only the
-   *  panel can answer. The 2px slack absorbs sub-pixel scroll positions, which
-   *  otherwise leave the fade on at the very bottom on a fractional-DPR
-   *  display. */
-  function syncScrollEdge(): void {
-    const atEnd =
-      panel.scrollHeight - panel.clientHeight - panel.scrollTop <= 2;
-    panel.classList.toggle("is-at-end", atEnd);
-  }
-  panel.addEventListener("scroll", syncScrollEdge, { passive: true });
+  // NO SCROLL-EDGE FADE ANY MORE. This card used to be a fixed overlay and so
+  // its own scroll container, which clipped a half-scrolled row's button flat
+  // against its bottom edge; a `mask-image` fade and an `is-at-end` class
+  // existed to make that read as "there is more below". The card is a section
+  // inside the Recommended drawer now, and the DRAWER scrolls — so there is no
+  // inner edge to clip anything, and nothing for the panel to measure. CSS
+  // cannot ask whether a box overflows, which is why this had to live here;
+  // once the box stopped overflowing, so did the reason.
 
   function render(v: PlanListView): void {
     renderNotes(v);
@@ -343,11 +349,6 @@ export function createPlanListPanel(
       again.addEventListener("click", () => deps.onRefresh?.());
       body.append(again);
     }
-    // After the rows exist, because the answer depends on how tall they made
-    // it. A re-render can also shorten the list past the point of scrolling at
-    // all — a cap applied in the drawer does exactly that — so this runs on
-    // every render and not only the first.
-    syncScrollEdge();
   }
 
   render(view);
@@ -359,7 +360,6 @@ export function createPlanListPanel(
     },
     destroy() {
       destroyed = true;
-      panel.removeEventListener("scroll", syncScrollEdge);
       root.replaceChildren();
     },
   };

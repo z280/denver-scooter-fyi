@@ -134,6 +134,11 @@ export interface PlanListView {
    *  hidden" does not answer it. Null when nothing was hidden, which is the
    *  common case and the default. */
   capNote: string | null;
+  /** What the rider's interview answer did to this search, in their terms, or
+   *  null. Said BECAUSE the complaint this answers was that the answer
+   *  vanished: a rider who is told "showing Cosmos, which is what you asked
+   *  for" can see their input arrived. */
+  interviewNote: string | null;
   /** The ideal-split preference reordered this list, in the rider's own words,
    *  or null. Said only when it MOVED something: a standing explanation of a
    *  preference that changed nothing is a line riders learn to skip, and then
@@ -326,6 +331,16 @@ export interface PlanListInput {
    *  that explains what the SEARCH gave up — into something that also covers a
    *  setting the rider could change in two taps. */
   handOffCap?: HandOffCap;
+  /** One line naming what the rider's interview answer did to this search, or
+   *  null when it did nothing (or was never asked).
+   *
+   *  PASSED IN AND NOT DERIVED, because this module knows nothing about the
+   *  wizard and should not start: it is handed a `spec` that has already been
+   *  narrowed, and cannot tell which of the narrowing came from a sheet the
+   *  rider filled in months ago and which from a question asked on the way out
+   *  of the door. `interview-spec.ts` can, so it writes the sentence and this
+   *  only finds it a place to sit. */
+  interviewNote?: string | null;
   /** The rider's saved "ideal scooter", or null when they have not made one.
    *  Null is NOT `defaultSpec()`: a share computed against a spec that
    *  requires nothing is 100% for every vehicle in the city, which is an empty
@@ -401,6 +416,7 @@ export function planListView(input: PlanListInput): PlanListView {
   return {
     rows: ordered,
     capNote: capNote(hidden, cap),
+    interviewNote: input.interviewNote ?? null,
     idealSplitNote: idealSplitNote(moved, spec !== null),
     // Asked only when there is a multi-scooter plan on offer. Prompting a
     // rider to configure an ideal scooter on a list of one-scooter plans is

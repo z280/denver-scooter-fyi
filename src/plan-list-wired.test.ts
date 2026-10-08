@@ -37,13 +37,53 @@ describe("the plan list is wired to something", () => {
     expect(html).toMatch(/id="plan-list"/);
   });
 
-  it("is opened by the home bar's 'need wheels' answer", () => {
-    // The whole point of the branch. Asserted on the call rather than on
-    // `openPlanList` merely existing, since an unreferenced function is the
-    // state this test exists to rule out.
+  it("is reached from 'need wheels' THROUGH the interview, not beside it", () => {
+    // The chain is two steps now, and that is the fix rather than an
+    // indirection to tidy away. "Need wheels" used to call `openPlanList`
+    // directly, and `openPlanList` called `enterFindWheels()` — which starts
+    // the wizard. So the rider got an interview and a list of plans at the same
+    // moment, and the interview's answer never reached the plans.
+    //
+    // Still asserted on the CALLS and not on the functions existing, because an
+    // unreferenced search is the state this file exists to rule out. Both links
+    // are checked: severing either one puts the engine back out of reach.
     const code = withoutComments(main);
     const branch = code.slice(code.indexOf('if (wheels === "need")'));
-    expect(branch.slice(0, 200)).toContain("openPlanList(dest)");
+    expect(branch.slice(0, 200)).toContain("enterFindWheels()");
+    expect(branch.slice(0, 200)).not.toContain("openPlanList");
+
+    const done = code.slice(code.indexOf("onInterviewDone:"));
+    expect(done.slice(0, 1600)).toContain("openPlanList(trip.dest)");
+  });
+
+  it("does not start the wizard from inside openPlanList", () => {
+    // The exact line that produced two surfaces over one map. It was there so
+    // that dismissing the list revealed a map already in find-wheels state;
+    // `enterFindWheels` also runs `wizard.start()`, so it put the interview
+    // back on screen underneath the plans.
+    const body = functionBody(main, "function openPlanList(");
+    expect(body).not.toContain("enterFindWheels");
+  });
+
+  it("feeds the interview answer into the search", () => {
+    // The other half of the complaint: the answer was not weighed and
+    // discarded, it was never passed. Composed over the rider's saved sheet in
+    // `planSearchDeps`, the same way Two Passengers is.
+    const body = functionBody(main, "function planSearchDeps()");
+    expect(body).toContain("applyInterview");
+    expect(body).toContain("interviewAnswers");
+  });
+
+  it("lives in the Recommended drawer, above the scooters", () => {
+    // "The proper menu", and the reason dismissing the plans leaves the rider
+    // somewhere: the ranked scooters are the next section down, so emptying
+    // this one continues the old path in place instead of changing surface.
+    const drawer = html.slice(html.indexOf('id="drawer-recommended"'));
+    const body = drawer.slice(0, drawer.indexOf("</aside>"));
+    expect(body).toMatch(/id="plan-list"/);
+    expect(body.indexOf('id="plan-list"')).toBeLessThan(
+      body.indexOf('id="recommended-body"'),
+    );
   });
 
   it("reaches rankPlans through exactly one assembly point", () => {

@@ -209,6 +209,12 @@ import {
   twoPassengerNote,
   twoPassengers,
 } from "./passenger-mode.ts";
+import {
+  applyInterview,
+  interviewNote,
+  type InterviewAnswers,
+} from "./interview-spec.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import type { PlanRow } from "./plan-list.ts";
 import {
   planningFreeMinuteEstimate,
@@ -253,7 +259,6 @@ import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
   installBrandMark,
-  isRibbonOpen,
   setRibbonOpen,
   closeAllPopups,
   registerPopupCloser,
@@ -3521,16 +3526,27 @@ function wireModes(): void {
     // home of the ranked list (and keeps re-ranking with the filters).
     onInterviewDone: (priority, typeChoice, from, carryOverFilters) => {
       setWizardDocked(false);
-      const finish = (): void => {
-        recommended?.setContext({ from, priority, typeChoice });
-        setDrawer("recommended");
-      };
+      // KEPT, so the planner can read it. This is the one line whose absence
+      // was the whole complaint: the answer used to go to `recommended` and
+      // stop there, so the plan list — the thing "need wheels" actually opens —
+      // was built as if the rider had never been asked.
+      interviewAnswers = { priority, typeChoice };
+      // The ranked scooters, which are the path a rider falls back to when they
+      // dismiss the plans. Same answers, so the two agree.
+      recommended?.setContext({ from, priority, typeChoice });
+      setDrawer("recommended");
       // "Carry over my filters" is now the only behaviour there is: nothing
       // wiped them, so they are still applied and rankDevices() already ranks
       // over visibleFeatures(). The option survives in the interview as a
       // statement of intent; there is simply nothing left to restore.
       void carryOverFilters;
-      finish();
+      // And the plans, above the scooters in that same drawer — but only when
+      // there is a destination to plan TO. The wizard is also entered from the
+      // onboarding card and the top bar, where the rider has asked for a map of
+      // what is nearby and named nowhere to go; a plan list needs a
+      // destination, so those entries correctly get the scooters alone.
+      const trip = peekPendingTrip();
+      if (trip?.dest) openPlanList(trip.dest);
     },
   });
 
@@ -3549,8 +3565,13 @@ function wireModes(): void {
     // recover fields a lean payload had dropped.
     //
     // Recommendations are still scoped to one Find-a-ride session: drop them
-    // so re-entering never shows a stale list from the prior answers.
+    // so re-entering never shows a stale list from the prior answers. The
+    // interview answer and the plan list go with them for the same reason —
+    // letting last trip's "I want a Cosmo" steer the next trip's plans is the
+    // bug this restructure fixed, pointed the other way.
     recommended?.clear();
+    interviewAnswers = null;
+    closePlanList();
     // ...and close the drawer they were in, if it is the one open. Picking a
     // scooter off the ranked list is the moment that list stops being useful,
     // and leaving it open parks a panel over the map right when the rider
@@ -3928,18 +3949,23 @@ function wireHomeBar(): HomeBarHandle {
         return planStartedTrip({ dest, start });
       }
       setPendingTrip({ dest, wheels, start });
-      // "Need wheels" opens the PLAN LIST (§2.4) — one to four ways to get
-      // there, each with its legs, its total time and its cost including every
-      // unlock. That is what the Phase 2 engine was built to answer, and until
-      // now nothing in the app asked it: `rankPlans` shipped tested and
-      // unreachable.
+      // "Need wheels" ASKS BEFORE IT ANSWERS, which is the ordering the rider
+      // asked for and the reason this is not one line.
       //
-      // The map chooser is not replaced, it is underneath — `openPlanList`
-      // enters find-wheels mode too, so dismissing the list leaves the rider on
-      // a map that is already in the right state, and a rider with no GPS fix
-      // gets it instead of a list computed from a guessed origin.
+      // It used to call `openPlanList(dest)` directly, and that function called
+      // `enterFindWheels()` — which starts the wizard. So a rider got the
+      // interview ("what matters most?") and the plan list at the same moment,
+      // two surfaces over one map, and the interview's answer was handed to
+      // `recommend.ts` while the plans were built from the saved spec alone. The
+      // answer was not weighed and rejected; it never arrived.
+      //
+      // Now the wizard runs first and `onInterviewDone` builds the plans from
+      // what it heard. The wizard skips its own consent and location steps when
+      // a fix already exists and remembers a saved answer, so for a returning
+      // rider this is still one tap to a list — it is just a list that knows
+      // what they want.
       if (wheels === "need") {
-        openPlanList(dest);
+        enterFindWheels();
         return;
       }
       // "Got my own" has no vehicle to choose and nowhere to walk to. The
@@ -4102,41 +4128,36 @@ let tripPanel: TripPanelHandle | null = null;
  *  a rider with a full hour that we cannot see their rides. */
 let todaysRides: readonly RideSpan[] | null = null;
 
-/** The ribbon was open when the plan list took over, and we closed it.
+/** The wizard interview's answer, for as long as this trip lasts.
  *
- *  Remembered so dismissing the list PUTS IT BACK. A surface that quietly
- *  collapses a rider's navigation and leaves it collapsed has not made room,
- *  it has taken something. */
-let ribbonClosedForPlanList = false;
+ *  THE WHOLE POINT OF THE RESTRUCTURE. The interview used to hand its answer to
+ *  `recommend.ts` and nowhere else, so the plan list — which is what "need
+ *  wheels" actually opens — was built from the saved `RideSpec` alone and had
+ *  never heard of it. A rider answered "I want a Cosmo" and got plans ranked as
+ *  though they had said nothing. Held here so `planSearchDeps` can compose it
+ *  over the spec, exactly as Two Passengers is composed.
+ *
+ *  Cleared on leaving the flow, with the recommendations: it is an answer about
+ *  THIS trip, and letting it steer the next one would be the same bug pointed
+ *  the other way. */
+let interviewAnswers: InterviewAnswers | null = null;
 
-/** Give the plan list the width it needs, and give it back afterwards.
+
+/** Drop the plan list, leaving the rider on the ranked scooters below it.
  *
- *  The card had already been moved out from under the ribbon with
- *  `--ribbon-gutter`, and on a 412px phone that leaves it about 325px wide —
- *  which is not enough for the leg lines it has to carry ("Ride Cosmo Onward
- *  🌳 500 19 min to Cosmo Liftoff 🍉 167" is a long sentence and there are
- *  three of them). So this is the owner's second option taken deliberately:
- *  we really do need the space.
+ *  NO RIBBON BORROW ANY MORE, and no close/teardown split either. Both existed
+ *  because the list was a card floating over the map: at 412px it ran under the
+ *  open ribbon, so opening it closed the strip and dismissing it handed the
+ *  strip back — and because every re-solve re-opened the list, that round trip
+ *  had to be split in two or the ribbon flapped once per search. The list is a
+ *  section of the Recommended drawer now. The drawer was never under the
+ *  ribbon, so there is nothing to borrow and nothing to give back.
  *
- *  `persist: false` is the whole of the courtesy. The rider's stored ribbon
- *  preference is untouched, so this is a borrow rather than a setting change,
- *  and it is handed back on dismiss. */
+ *  DISMISSING IS NOT CLOSING THE DRAWER. The scooter list is right below this
+ *  section and is the path the rider was always on; emptying the section leaves
+ *  them on it, in place. Closing the whole drawer would take away the thing
+ *  they fell back to. */
 function closePlanList(): void {
-  teardownPlanList();
-  if (ribbonClosedForPlanList) {
-    ribbonClosedForPlanList = false;
-    setRibbonOpen(true);
-  }
-}
-
-/** Drop the panel WITHOUT handing the ribbon back.
- *
- *  Separate from `closePlanList` because re-opening the list — which every
- *  re-solve does — went through the full close first, so the ribbon was handed
- *  back and immediately borrowed again: one visible flap of the strip per
- *  search, for nothing. The borrow is a property of "the list is up", not of
- *  "this particular panel instance is up". */
-function teardownPlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
 }
@@ -4158,12 +4179,34 @@ function planSearchDeps(): PlanSearchDeps {
     // map filters are a view and this is a fact about the trip. Composed over
     // the rider's own spec rather than replacing it: two passengers is a
     // constraint on top of what they like, not instead of it.
-    spec: () => applyTwoPassengers(rideSpecPanel?.activeSpec() ?? defaultSpec()),
+    // TWO LAYERS OVER THE RIDER'S OWN SHEET, in increasing order of how much
+    // they were thinking about it. `applyInterview` is the question the wizard
+    // asked on the way out of the door, so it only ever NARROWS and never adds
+    // a hard requirement — the ladder can give all of it up. `applyTwoPassengers`
+    // is outermost because it is the one hard physical fact in the stack: a
+    // one-seater cannot carry two people at any ranking.
+    spec: () =>
+      applyTwoPassengers(
+        applyInterview(rideSpecPanel?.activeSpec() ?? defaultSpec(), interviewAnswers),
+      ),
     // The same value WITHOUT the default, which is the only way to tell "no
     // preference" from "a preference that happens to accept everything". The
     // list uses it to decide whether a share is worth computing and whether to
     // offer to set one up.
     activeSpec: () => rideSpecPanel?.activeSpec() ?? null,
+    // Written against the spec BEFORE the interview narrowed it, which is the
+    // only comparison that can tell whether the answer changed anything — and
+    // the only honest basis for claiming it did.
+    // `relaxed` comes from the search that just ran, so the sentence cannot
+    // claim an answer was honoured when the ladder gave it up to find anything
+    // at all — which it did, sitting directly under "we had to give up: Model".
+    interviewNote: (relaxed) =>
+      interviewNote(
+        rideSpecPanel?.activeSpec() ?? defaultSpec(),
+        interviewAnswers,
+        (key) => MODEL_NAMES[key],
+        relaxed,
+      ),
     rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
@@ -4247,28 +4290,49 @@ function openPlanList(dest: TripPlace): void {
   const deps = planSearchDeps();
   const first = searchPlans(deps, dest);
   if (first.kind !== "ok") {
-    enterFindWheels();
+    // `no_fix`: no GPS, so no origin, and a plan list computed from a guessed
+    // one walks the rider to a scooter that is not near them.
+    //
+    // THIS USED TO CALL `enterFindWheels()`, which was right when the plan list
+    // was the FIRST thing "need wheels" opened — falling back to the map
+    // chooser was strictly better than a wrong list. It is wrong now: the
+    // interview has already run by the time this is reached, and
+    // `enterFindWheels` starts the wizard, so this would re-ask the rider the
+    // question they just answered.
+    //
+    // The honest fallback is the one the rider is already on. They are standing
+    // in the Recommended drawer with the ranked scooters below this section, so
+    // leaving it empty puts them on exactly the path they would have dismissed
+    // the plans to reach — with a line saying why, because a section that asked
+    // for plans and silently shows none reads as a failure rather than a
+    // missing fix.
+    const why = document.createElement("p");
+    why.className = "planlist__note planlist__note--quiet";
+    why.textContent =
+      "We need your location to work out the ways there. The scooters below " +
+      "are ranked for what you asked for.";
+    need("plan-list").replaceChildren(why);
     return;
   }
-  teardownPlanList();
-  // Before the panel is built, so it is never laid out against a width it is
-  // about to lose. Guarded on the flag as well as the state: a second open
-  // over an already-borrowed ribbon must not record a second borrow, or
-  // dismissing the list would leave the strip shut.
-  if (!ribbonClosedForPlanList && isRibbonOpen()) {
-    setRibbonOpen(false);
-    ribbonClosedForPlanList = true;
-  }
-  // The map still shows the fleet the plans are drawn from, so find-wheels mode
-  // stays on underneath: dismissing the list reveals a map that is already in
-  // the right state rather than one that has to be put there.
-  enterFindWheels();
+  closePlanList();
+  // NO `enterFindWheels()` HERE, and removing it is the fix the rider asked
+  // for. It was called so that dismissing the list revealed a map already in
+  // find-wheels state — a reasonable thing to want, except `enterFindWheels`
+  // also runs `wizard.start()`. So "need wheels" put an interview on screen AND
+  // a list of plans over the top of it, two surfaces asking for the same tap,
+  // with the interview's answer going nowhere near the plans.
+  //
+  // The interview comes FIRST now (see `onPlanTrip`), and its answer is what
+  // these plans are built from. By the time this runs the rider has already
+  // answered, so there is nothing left to start.
   const resolve = (): void => {
     const again = searchPlans(deps, dest);
     if (again.kind === "ok") planListPanel?.update(again.view);
   };
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
+    // Empties this section and leaves the drawer open on the ranked scooters
+    // below — the old path, continued in place.
     onCancel: () => closePlanList(),
     // "My ideal scooter" lives in the Filters drawer, which is where it has
     // always lived and where a rider who already knows about it will look for

@@ -707,6 +707,20 @@
         <button class="drawer-close" type="button" aria-label="Close Recommended Devices">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- THE RIDE OPTIONS LIVE HERE, above the scooters, and that placement
+             is the fix rather than a detail. "Need wheels" used to open the
+             plan list as a card floating over the map AND start the find-wheels
+             wizard behind it, so a rider got an interview and a list of plans
+             at the same time, competing for the same tap. The plans are now one
+             section of the menu the ranked scooters were always in: dismissing
+             them leaves the rider on the scooter list, in place, which is the
+             old path continued rather than a different surface.
+
+             Empty until a trip is being planned, and `:empty` keeps it from
+             holding a gap for a rider who opened this drawer to browse. -->
+        <section class="control-group" id="plan-list" aria-live="polite">
+          <!-- populated by plan-list-panel.ts via main.ts's openPlanList() -->
+        </section>
         <section class="control-group" id="recommended-body" aria-live="polite">
           <!-- populated by recommend.ts -->
         </section>
@@ -1333,10 +1347,6 @@
          knew. Built by arrival-panel.ts; this is only the mount point. -->
     <div id="arrival-panel"></div>
 
-    <!-- The plan list (frontend plan §2.4): one to four ways to get there,
-         opened by "need wheels" on the home bar. Built by
-         plan-list-panel.ts; this is only the mount point. -->
-    <div id="plan-list"></div>
 
     <!-- Home bar (bottom center): "Where are you going?" — the surface that
          replaced the three-way mode bar. Built by home-bar.ts; this is only
