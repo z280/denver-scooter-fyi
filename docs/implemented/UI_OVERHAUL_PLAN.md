@@ -106,7 +106,7 @@ the strip stays icon-only, exactly as it looks today.
    (`scooter-fyi-ribbon`), matching the `theme.ts` try/catch pattern.
 4. New `src/chrome.ts` for the top bar, ribbon toggle, and right drawer.
    `main.ts` and `devices.ts` are already flagged as oversized in
-   `docs/API_INTEGRATION_PLAN.md` — do not grow them.
+   `docs/implemented/API_INTEGRATION_PLAN.md` — do not grow them.
 5. **The top bar auto-hides on short viewports (decided).** A fixed top bar
    plus the enlarged mode bar would sandwich the map to roughly 300px on a
    landscape phone. Below the existing `@media (max-height: 480px)`
@@ -218,7 +218,7 @@ button and email/code forms). No new empty states to write.
 
 > **Verify backend claims against the backend.** The rows below were
 > checked against the API repo at `scooter-fyi-api` (route table, endpoint
-> docstrings), **not** against `docs/API_INTEGRATION_PLAN.md` — that file is
+> docstrings), **not** against `docs/implemented/API_INTEGRATION_PLAN.md` — that file is
 > a frontend work plan and describes what *this* repo has yet to consume,
 > which is not the same as what the API serves. An earlier draft of this
 > table got three rows wrong by conflating the two.
@@ -543,7 +543,7 @@ live.
 
 ### 9.2 Still open
 
-- **Favorites needs a schema before it needs UI.** `docs/UX_PLAN.md:495-501`
+- **Favorites needs a schema before it needs UI.** `docs/implemented/UX_PLAN.md:495-501`
   (§5.2) names the subject — favouriting vehicle **models/plates**, with a
   "favorites first" sort and a map highlight, and models/plates being stable
   identifiers answers the obvious objection that device ids churn. But that

@@ -116,7 +116,7 @@ export type TelemetryProps = Record<string, string | number | boolean>;
 // Hyphenated key: the opt-out is a UI preference, not app state.
 export const OPT_OUT_KEY = "scooter-fyi-telemetry";
 // Dotted keys: per-tab session id and the first-visit-today stamp are
-// app state (docs/PLAN_RIDE_MODE_FRONTEND.md naming convention).
+// app state (docs/implemented/PLAN_RIDE_MODE_FRONTEND.md naming convention).
 const SESSION_KEY = "scooter_fyi.tsid";
 const DAY_STAMP_KEY = "scooter_fyi.tday";
 

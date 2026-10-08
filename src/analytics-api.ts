@@ -4,7 +4,7 @@
 // loads, and Rollup ships a module whole to every page that shares it, so
 // these fetchers would ride along on the map for nothing. They use api.ts's
 // public `getJSON` (same base URL, same NoDataError/ApiError handling).
-// Contract: the API repo's API.md "Fleet analytics" and src/api_analytics.py.
+// Contract: the API repo's docs/reference/API.md "Fleet analytics" and src/api_analytics.py.
 
 import { getJSON } from "./api.ts";
 
