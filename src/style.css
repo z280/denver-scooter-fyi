@@ -6069,6 +6069,13 @@ body.landscape-hint-dismissed .hud-note--landscape {
   font-size: 12px;
   color: var(--fg-muted);
 }
+/* §11.5's pre-ride battery note. Weighted and coloured like every other
+   warning in the app (`--warn-fg`, 600), but still a hint rather than a
+   banner: it refuses quietly, and it is not a gate on starting. */
+.ride-wizard__hint--warning {
+  color: var(--warn-fg);
+  font-weight: 600;
+}
 .ride-wizard__actions {
   display: flex;
   gap: 8px;

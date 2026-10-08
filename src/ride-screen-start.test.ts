@@ -1132,3 +1132,93 @@ describe("failed start", () => {
     expect(startTrackedRide).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// §11.5's "Before" half — refuse quietly rather than cheerfully
+// ---------------------------------------------------------------------------
+
+describe("pre-ride battery reach", () => {
+  /** A destination roughly 5 km north-east of `FIX`, which no small range
+   *  covers once the detour factor and the arrival reserve are applied. */
+  const FAR = { label: "Home", lat: 39.785, lon: -104.955 };
+  /** ~380 m of road distance from `FIX` — deliberately in the narrow band
+   *  that only `MIN_WARNABLE_REMAINING_METERS` closes. Below ~333 m the
+   *  absolute shortfall margin already makes "short" unreachable (the module
+   *  states that arithmetic), so a dest any closer would pass this test for
+   *  the wrong reason. */
+  const NEAR = { label: "The corner", lat: 39.74253, lon: -104.99 };
+
+  function sessionWithDest(
+    dest: { label: string; lat: number; lon: number },
+    device: RideSessionDevice = DEVICE,
+  ): RideSessionStore {
+    const store = sessionAt(device, true);
+    store.dispatch({ type: "setDest", dest });
+    return store;
+  }
+
+  it("names the shortfall when the feed's range will not cover the trip", () => {
+    wire(sessionWithDest(FAR), { rangeMetersFor: () => 1200 });
+    openRideModal({ fastForwardTo: "6" });
+    const text = root().textContent ?? "";
+    expect(text).toContain("may not reach Home");
+    // The figures, and no instruction: we do not know whether the answer is a
+    // different scooter, a shorter trip, or walking the last block.
+    expect(text).toMatch(/miles of range/);
+    expect(text).not.toMatch(/you should|try a|pick another/i);
+  });
+
+  it("says NOTHING when the feed gave no range — the confidence floor", () => {
+    // §11.5: "the item most likely to produce a wrong claim". No observation
+    // means no warning, not a hedged one.
+    wire(sessionWithDest(FAR), { rangeMetersFor: () => null });
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").not.toMatch(/may not reach/);
+  });
+
+  it("says nothing when no range lookup was supplied at all", () => {
+    wire(sessionWithDest(FAR));
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").not.toMatch(/may not reach/);
+  });
+
+  it("says nothing when the range comfortably covers the trip", () => {
+    wire(sessionWithDest(FAR), { rangeMetersFor: () => 40_000 });
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").not.toMatch(/may not reach/);
+  });
+
+  it("says nothing about a destination four hundred metres away", () => {
+    // A rider who has to walk the last two minutes does not need telling, and
+    // this is where the straight-line estimate is least reliable relative to
+    // the distance it is estimating. The verdict here IS "short" — only the
+    // warnability floor silences it.
+    wire(sessionWithDest(NEAR), { rangeMetersFor: () => 50 });
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").not.toMatch(/may not reach/);
+  });
+
+  it("says nothing when the rider named no destination", () => {
+    // No "where", so no "will it reach".
+    wire(sessionAt(DEVICE, true), { rangeMetersFor: () => 10 });
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").not.toMatch(/may not reach/);
+  });
+
+  it("never blocks the start", () => {
+    // It refuses QUIETLY. The rider is standing at the scooter looking at its
+    // own gauge; both figures here are estimates, and a wizard that refused to
+    // proceed on this evidence would be wrong often enough to be worth
+    // defeating.
+    wire(sessionWithDest(FAR), { rangeMetersFor: () => 1200 });
+    openRideModal({ fastForwardTo: "6" });
+    expect(buttonWithText("I already started").disabled).toBe(false);
+    for (const a of anchors()) expect(a.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("falls back to 'your destination' for a place with no name", () => {
+    wire(sessionWithDest({ ...FAR, label: "" }), { rangeMetersFor: () => 1200 });
+    openRideModal({ fastForwardTo: "6" });
+    expect(root().textContent ?? "").toContain("may not reach your destination");
+  });
+});

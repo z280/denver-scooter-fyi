@@ -106,6 +106,11 @@ import {
   fetchSurveyOptions as defaultFetchSurveyOptions,
   submitRiderStory as defaultSubmitRiderStory,
 } from "./api.ts";
+import {
+  preRideReachSentence,
+  rideReach,
+  shouldWarnReach,
+} from "./ride-reach.ts";
 import { mountStoryPanel, type StoryPanel } from "./rider-story-sheet.ts";
 
 // ---------------------------------------------------------------------------
@@ -193,6 +198,15 @@ export interface RideScreenStartDeps {
    *  `crypto.getRandomValues`. Only used for a private/guest ride's local
    *  `trackKeyId` — a real server ride's id comes from the API response. */
   randomBytes?(n: number): Uint8Array;
+  /** §11.5's BEFORE half: `current_range_meters` for the chosen vehicle, from
+   *  the UNFILTERED feed, or null when the feed has no figure for it.
+   *
+   *  The same narrow method the HUD takes for the during-ride warning, and for
+   *  the same two reasons: this screen has no other business knowing a GBFS
+   *  property name, and a stub for a test is one function instead of a
+   *  FeatureCollection. Optional — omitted, there is no observation, and the
+   *  confidence floor says nothing rather than guessing. */
+  rangeMetersFor?(vehicleIdentifier: string): number | null;
   /** Injected for tests; defaults to `submitDeviceReport` from reports.ts.
    *  Carries this screen's "It won't start" report — see
    *  `ride-failed-start.ts` for why this screen is where that button belongs
@@ -536,6 +550,53 @@ function buildStartScreen(
     return btn;
   }
 
+  /** §11.5's "Before": refuse quietly rather than cheerfully.
+   *
+   *  A line of copy, never a gate on starting. The rider is standing at the
+   *  scooter and can see its own gauge, both figures are estimates (a straight
+   *  line standing in for a road, an operator's projection standing in for a
+   *  model), and a wizard that refused to proceed on this evidence would be
+   *  wrong often enough to be worth defeating.
+   *
+   *  THIS SCREEN, AND NOT SCREEN 2 OR 4, for a reason worth recording because
+   *  §11.5 names Screen 2: Screen 2 knows neither the destination nor the
+   *  battery — it is disambiguation, and on the common flow the destination is
+   *  not chosen yet. Screen 4 has both but only renders when navigation is on,
+   *  which is off by default, so a warning that lived there would be absent
+   *  from most rides. Screen 6 is the one seat every ride passes through
+   *  holding both facts.
+   *
+   *  It reuses the during-ride verdict with nothing travelled, rather than a
+   *  second rule: a rider told nothing here and then warned eight metres into
+   *  the ride would rightly conclude the warning is noise.
+   *
+   *  Silent for an own-device ride (no Veo range figure exists), for a ride
+   *  with no destination (no question to answer), before the first fix, and
+   *  whenever the feed gave no range — the confidence floor, which is the
+   *  whole design of this feature. */
+  function appendReachNote(): void {
+    const doc = deps.session.current();
+    const device = doc ? selectedDevice(doc.device) : null;
+    const id = device?.vehicleIdentifier ?? null;
+    if (!doc || !doc.dest || id === null) return;
+    const range = deps.rangeMetersFor?.(id) ?? null;
+    const input = {
+      startRangeMeters: range,
+      travelledMeters: 0,
+      at: fix,
+      dest: { lat: doc.dest.lat, lon: doc.dest.lon },
+    };
+    if (!shouldWarnReach({ ...input, alreadyWarned: false })) return;
+    const sentence = preRideReachSentence(rideReach(input), doc.dest.label);
+    if (sentence === null) return;
+    const note = el("p", "ride-wizard__hint ride-wizard__hint--warning", sentence);
+    // Announced, because it is new information appearing under a lede the
+    // rider has already read — and polite, because they are mid-task.
+    note.setAttribute("role", "status");
+    note.setAttribute("aria-live", "polite");
+    root.append(note);
+  }
+
   /** Shared by both the real-device and own-device idle renders. */
   function appendWaitingAndError(): void {
     if (fix === null) {
@@ -609,6 +670,7 @@ function buildStartScreen(
         `Tap Open in Veo, then unlock the scooter in the app. Ride mode begins ${START_COUNTDOWN_S}s later — or tap "I already started" if you've already unlocked it.`,
       ),
     );
+    appendReachNote();
     appendWaitingAndError();
 
     const plate = device.plate || null;

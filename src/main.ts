@@ -1798,6 +1798,10 @@ map.on("load", async () => {
   wireRideScreenStart({
     session: rideSession,
     locate,
+    // §11.5's "Before": the same unfiltered range lookup the HUD takes for the
+    // during-ride warning, from the same object, so the two tiers of one
+    // question cannot be reading different numbers.
+    rangeMetersFor: (id) => devices.rangeMetersFor(id),
     // F3's other half of the Screen 6 → HUD handoff (see `onComplete` above):
     // a TRACKED ride's `track_signing` only exists in this hook's argument,
     // so this is the one place that can seed `track-store`. Fire-and-forget —

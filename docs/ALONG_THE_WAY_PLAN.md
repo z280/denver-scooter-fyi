@@ -2568,6 +2568,36 @@ confidence floor: no warning at all unless the model has a range observation
 for that vehicle class, because "you might not make it" said wrongly teaches
 the rider to ignore it.
 
+> **BOTH HALVES SHIPPED.** `ride-reach.ts` holds the arithmetic and the
+> confidence floor; `ride-announce.ts` speaks the During warning once; Screen 6
+> renders the Before line.
+>
+> **The Before half landed on Screen 6 alone, not "Screen 2/6".** Screen 2 was
+> checked and cannot do it: it knows neither the destination nor the battery —
+> it is disambiguation, and on the common flow the destination is not chosen
+> yet. Screen 4 has both facts but renders only when navigation is on, which is
+> off by default, so a warning living there would be absent from most rides —
+> the same reason this feature does not depend on a route. Screen 6 is the one
+> seat every ride passes through holding both.
+>
+> **It is the During verdict with nothing travelled, not a second rule.** A
+> rider told nothing on Screen 6 and then warned eight metres into the ride
+> would rightly conclude the warning is noise. Only the sentence differs, and
+> only because "range left" is the wrong words for a ride that has not started.
+>
+> **It refuses quietly, which means a line of copy and never a gate.** The
+> rider is standing at the scooter looking at its own gauge, both figures are
+> estimates (a straight line standing in for a road, an operator's projection
+> standing in for a model), and a wizard that refused to proceed on this
+> evidence would be wrong often enough to be worth defeating. It names the fact
+> and the destination and gives no instruction — we do not know whether the
+> answer is a different scooter, a shorter trip, or riding it and walking the
+> last block.
+>
+> Silent for an own-device ride, for a ride with no destination, before the
+> first fix, inside the 400 m warnability floor, and whenever the feed gave no
+> range. Every gate fails to silence.
+
 ### 11.6 Out of the zone, and the data we do not have
 
 The expensive ending is parking somewhere that costs a fee. The app cannot warn
