@@ -383,6 +383,18 @@ export interface PlanListInput {
    *  requires nothing is 100% for every vehicle in the city, which is an empty
    *  opinion dressed up as agreement. */
   spec?: RideSpec | null;
+  /** Whether the rider HAS an ideal scooter, which is not the same question as
+   *  whether one is in force for this search.
+   *
+   *  `spec` answers "what should I score shares against", and goes null the
+   *  moment the sheet is stood down. Reading the prompt off that null told a
+   *  rider who had made one — and then turned it off for one trip, or simply
+   *  never projected it onto the map filters — that they had never made one,
+   *  under a button offering to set up the thing they already had.
+   *
+   *  Defaults to `spec !== null`, which is what every caller predating this
+   *  field meant: the sheet they passed was the only one there was. */
+  hasSpec?: boolean;
   /** What `matches` needs for `mustReach`. Same object the search used, so the
    *  share cannot disagree with the filter about the same vehicle. */
   matchContext?: MatchContext;
@@ -402,6 +414,7 @@ export interface PlanListInput {
 export function planListView(input: PlanListInput): PlanListView {
   const { result, rate } = input;
   const spec = input.spec ?? null;
+  const hasSpec = input.hasSpec ?? spec !== null;
   const destinationLabel = input.destinationLabel ?? null;
   const baseline = savingBaseline(result);
 
@@ -463,12 +476,15 @@ export function planListView(input: PlanListInput): PlanListView {
     // Asked only when there is a multi-scooter plan on offer. Prompting a
     // rider to configure an ideal scooter on a list of one-scooter plans is
     // asking them to answer a question nothing is about to use.
-    needsSpec: spec === null && ordered.some((r) => r.plan.handOffs > 0),
-    // Only when there IS a sheet and it asks for something. The summary is
-    // handed in rather than composed here, for the same reason `interviewNote`
-    // is: naming models is not this module's job.
+    needsSpec: !hasSpec && ordered.some((r) => r.plan.handOffs > 0),
+    // Only when the rider HAS a sheet and it asks for something — not only
+    // while it is in force. The row carries the switch that puts a stood-down
+    // sheet back; hiding it the moment the sheet goes off makes turning it off
+    // a one-way door. The summary is handed in rather than composed here, for
+    // the same reason `interviewNote` is: naming models is not this module's
+    // job.
     idealSpec:
-      input.idealSpecSummary && spec !== null
+      input.idealSpecSummary && hasSpec
         ? { summary: input.idealSpecSummary, inUse: input.idealSpecInUse ?? true }
         : null,
     estimateNote: ESTIMATE_NOTE,

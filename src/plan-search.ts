@@ -72,6 +72,12 @@ export interface PlanSearchDeps {
    *  Optional, so a caller that has no notion of a configured spec — tests,
    *  and anything predating the preference — behaves exactly as before. */
   activeSpec?(): RideSpec | null;
+  /** Whether the rider HAS a sheet, regardless of whether it is in force for
+   *  this search. `activeSpec` goes null when they stand it down, and the
+   *  offer to set one up must not appear to somebody who has one and simply
+   *  turned it off. Absent reads as "the one in `activeSpec` is all there
+   *  is", which is what every caller before this existed meant. */
+  hasSavedSpec?(): boolean;
   rate(): RatePlan;
   taxRate(): number;
   now(): number;
@@ -188,6 +194,7 @@ export function searchPlans(
       idealSpecSummary: deps.idealSpecSummary?.() ?? null,
       idealSpecInUse: deps.idealSpecInUse?.() ?? true,
       spec: deps.activeSpec ? deps.activeSpec() : null,
+      hasSpec: deps.hasSavedSpec?.(),
       // The SAME context the search matched with, so the share and the filter
       // cannot disagree about the same vehicle.
       matchContext: { dest: { lat: dest.lat, lon: dest.lon } },

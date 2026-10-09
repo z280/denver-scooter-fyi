@@ -9853,6 +9853,20 @@ input[data-ride-keypad="on"] {
 .planlist__close {
   cursor: pointer;
 }
+/* The answer to "why did nothing happen when I tapped that?". Louder than a
+   note because it is about the rider's own action and not about the list, and
+   it has to be seen over a list that just repainted underneath it. */
+.planlist__notice {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  border-left: 3px solid var(--fail);
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .planlist__notes {
   margin-top: 8px;
   display: flex;

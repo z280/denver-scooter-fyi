@@ -11,6 +11,7 @@ panels directly with fixtures, against the real stylesheet).
 
 | File | What it shows |
 | --- | --- |
+| `chosen-pins.png` | The two chosen-scooter markers on the real map: a blue ⭐ on the scooter you start on, an orange 📍 on the hand-off. Taken against the dev server rather than the harness — these are map layers, and the harness has no map. |
 | `nav-prefs.png` | Navigation preferences, Calling dibs: auto-dibs on by default, and the SMS switch greyed with the reason — this profile has a number nobody has verified. |
 | `trip-clear.png` | Your trip, mid two-leg plan, with "Clear my trip" below the planning preference. |
 | `trip-clear-confirm.png` | The same panel one tap later. The confirm is in the panel, not a `window.confirm`, and `refresh()` disarms it. |
