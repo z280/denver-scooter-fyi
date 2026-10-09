@@ -4263,7 +4263,12 @@ function clearTrip(): void {
  *  says is off. */
 function activeSpecForSearch(): RideSpec {
   if (!useIdealSpec) return defaultSpec();
-  return rideSpecPanel?.activeSpec() ?? defaultSpec();
+  // THE SAVED SHEET, NOT THE MAP ATTACHMENT. `activeSpec()` is only non-null
+  // while "Show only my ideal scooters" is lit, and it goes out again the
+  // moment any filter is nudged. Reading the planner's sheet from it meant a
+  // rider who had saved one got searches that ignored it, under a prompt
+  // telling them they had never made one.
+  return rideSpecPanel?.savedSpec() ?? defaultSpec();
 }
 
 function planSearchDeps(): PlanSearchDeps {
@@ -4294,7 +4299,11 @@ function planSearchDeps(): PlanSearchDeps {
     // Null when the rider stood the sheet down, which is what makes the ideal
     // SHARE stop being computed and the chip stop being shown: a share against
     // a sheet that is not in force is a number about nothing.
-    activeSpec: () => (useIdealSpec ? rideSpecPanel?.activeSpec() ?? null : null),
+    activeSpec: () => (useIdealSpec ? rideSpecPanel?.savedSpec() ?? null : null),
+    // Asked separately BECAUSE `activeSpec` goes null the moment they stand
+    // the sheet down. This is the question the "set one up" prompt is really
+    // asking, and it is about the rider, not about this search.
+    hasSavedSpec: () => (rideSpecPanel?.savedSpec() ?? null) !== null,
     // Written against the spec BEFORE the interview narrowed it, which is the
     // only comparison that can tell whether the answer changed anything — and
     // the only honest basis for claiming it did.
@@ -4302,7 +4311,7 @@ function planSearchDeps(): PlanSearchDeps {
     // claim an answer was honoured when the ladder gave it up to find anything
     // at all — which it did, sitting directly under "we had to give up: Model".
     idealSpecSummary: () => {
-      const sheet = rideSpecPanel?.activeSpec();
+      const sheet = rideSpecPanel?.savedSpec();
       return sheet ? specSummary(sheet, (key) => MODEL_NAMES[key]) : null;
     },
     idealSpecInUse: () => useIdealSpec,

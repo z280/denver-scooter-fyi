@@ -281,6 +281,53 @@ describe("activeSpec", () => {
 });
 
 // ---------------------------------------------------------------------------
+// savedSpec — what the rider HAS, which is not what the map is showing
+// ---------------------------------------------------------------------------
+describe("savedSpec", () => {
+  // The bug this exists for: the planner read the rider's sheet off
+  // `activeSpec`, so a rider who had saved one but never lit the map toggle
+  // was told they had never made one.
+  it("is the rider's spec with nothing attached to the map", async () => {
+    saveLocalSpec(COMMUTER);
+    const handle = harness().wire();
+    await flush();
+    expect(handle.activeSpec()).toBeNull();
+    expect(handle.savedSpec()).toEqual(COMMUTER);
+  });
+
+  it("survives the filter edit that detaches the map", async () => {
+    saveLocalSpec(COMMUTER);
+    const h = harness();
+    const handle = h.wire();
+    await flush();
+    toggle().checked = true;
+    toggle().dispatchEvent(new Event("change"));
+    await flush();
+    expect(handle.activeSpec()).toEqual(COMMUTER);
+
+    h.edit({ minBattery: 90 });
+    expect(handle.activeSpec()).toBeNull();
+    // The map stopped showing only their scooters. They did not stop having a
+    // preference.
+    expect(handle.savedSpec()).toEqual(COMMUTER);
+  });
+
+  it("is null, with no name, for a rider who has none", async () => {
+    const handle = harness().wire();
+    await flush();
+    expect(handle.savedSpec()).toBeNull();
+    expect(handle.savedSpecName()).toBeNull();
+  });
+
+  it("names the spec it returns", async () => {
+    saveLocalSpec(COMMUTER);
+    const handle = harness().wire();
+    await flush();
+    expect(handle.savedSpecName()).toBe(LOCAL_SPEC_NAME);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The attached spec and the selected spec are different things
 // ---------------------------------------------------------------------------
 describe("when the list reloads while a spec is attached", () => {

@@ -76,6 +76,19 @@ export interface RideSpecPanelHandle {
   /** Its NAME, for a surface that wants to say which spec it is honouring —
    *  the ride HUD's Show row (§6.4). Null when nothing is attached. */
   activeSpecName(): string | null;
+  /** The spec the rider HAS — their selection in this panel — whether or not
+   *  it is projected onto the map filters. Null only when they have none.
+   *
+   *  NOT `activeSpec`, and the difference is the whole point. Attachment is a
+   *  fact about the MAP: it ends the moment the rider nudges any filter, and
+   *  it never starts unless they tapped "Show only my ideal scooters". A
+   *  rider's sheet says what they will ride, and the planner wants that
+   *  whether or not the map is currently filtered to it. Reading the planner's
+   *  sheet off the attachment meant a rider with a saved spec was told they
+   *  had none. */
+  savedSpec(): RideSpec | null;
+  /** Its name, for a surface that wants to say which one it is honouring. */
+  savedSpecName(): string | null;
   destroy(): void;
 }
 
@@ -646,6 +659,15 @@ export function wireRideSpecPanel(
     activeSpecName(): string | null {
       // Same source as `activeSpec`, for the same reason.
       return attachment.attachedName;
+    },
+    savedSpec(): RideSpec | null {
+      // The selection, not the attachment: see the interface. Populated by the
+      // `refreshSpecs(null)` at wire time, so this answers correctly for a
+      // rider who never opens this drawer at all.
+      return chosen?.spec ?? null;
+    },
+    savedSpecName(): string | null {
+      return chosen?.name ?? null;
     },
     destroy(): void {
       for (const fn of cleanupFns.splice(0)) fn();

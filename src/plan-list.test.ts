@@ -509,4 +509,83 @@ describe("the ideal-scooter split, through the view", () => {
     expect(v.rows).toHaveLength(0);
     expect(v.idealSplitNote).toBeNull();
   });
+
+  // HAVING A SPEC AND USING IT ARE DIFFERENT QUESTIONS, and the list used to
+  // answer both from the same null. A rider who had saved one and stood it
+  // down for this search — or whose sheet was simply not projected onto the
+  // map filters — was told they had never made one, under a button offering
+  // to set up the thing they had already set up.
+  it("does not claim a rider has no spec when they stood theirs down", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      // Not in force for this search, hence no `spec` to score shares with...
+      spec: null,
+      // ...but the rider has one.
+      hasSpec: true,
+      idealSpecSummary: "Cosmo",
+      idealSpecInUse: false,
+    });
+    expect(v.needsSpec).toBe(false);
+  });
+
+  // The switch that puts it back lives in the `idealSpec` row. Hiding that row
+  // the moment the sheet goes off is a one-way door: the rider turns it off,
+  // the control vanishes, and the only way back is another drawer.
+  it("keeps the row that turns a stood-down spec back on", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: null,
+      hasSpec: true,
+      idealSpecSummary: "Cosmo",
+      idealSpecInUse: false,
+    });
+    expect(v.idealSpec).toEqual({ summary: "Cosmo", inUse: false });
+  });
+
+  // No share is scored against a sheet that is not in force: a percentage
+  // computed from a filter nobody applied is a number about nothing.
+  it("still scores no share while the spec is stood down", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: null,
+      hasSpec: true,
+      idealSpecSummary: "Cosmo",
+      idealSpecInUse: false,
+    });
+    expect(v.rows[0].idealShare).toBeNull();
+    expect(v.idealSplitNote).toBeNull();
+  });
+
+  // The prompt is still right for the rider it was written for.
+  it("still offers to set one up when there is genuinely none", () => {
+    const v = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: null,
+      hasSpec: false,
+    });
+    expect(v.needsSpec).toBe(true);
+    expect(v.idealSpec).toBeNull();
+  });
+
+  // Back-compat: every caller predating `hasSpec` meant "the spec I passed is
+  // the only one there is", and a default that said otherwise would make the
+  // prompt appear to riders who have one.
+  it("falls back to the spec itself when hasSpec is not given", () => {
+    const withSpec = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+      spec: COSMO_SPEC,
+    });
+    expect(withSpec.needsSpec).toBe(false);
+
+    const without = planListView({
+      result: result({ plans: [idealHeavy], walkOnly }),
+      rate: rate("resident"),
+    });
+    expect(without.needsSpec).toBe(true);
+  });
 });
