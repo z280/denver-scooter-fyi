@@ -15,104 +15,105 @@
   --stats-fg-muted: var(--fg-muted, #5b6675);
   --stats-border: var(--border, #dfe3ea);
   --stats-accent: var(--accent, #0066ff);
+  --stats-surface: var(--bg-subtle, #f3f5f8);
 }
 /* ---------- Rider stats drawer ----------
-   One headline figure, its provenance, and a per-model list. The hierarchy
-   is deliberate and is the point: the rate is large, the sentence that makes
-   it quotable (window, sample, radius) sits directly under it in muted text,
-   and the models are a plain list rather than a chart — a bar chart of four
-   models is decoration, and this panel is read for its numbers. */
+   A short stack of cards, one figure each. Every card has the same shape:
+   a kicker, the figure large with its label beside it, at most a couple of
+   plain lines, and the meta line (window · sample) in muted text directly
+   under them. One column at every width: the drawer is narrow, and a figure
+   is read top to bottom, not scanned across a grid. */
 .stats-title {
   margin: 0 0 4px;
   font-size: 15px;
   font-weight: 650;
 }
 .stats-standfirst {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   font-size: 12.5px;
   color: var(--stats-fg-muted);
   line-height: 1.45;
 }
-.stats-headline {
+.stat-cards {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
 }
-.stats-headline__value {
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1;
-  /* Tabular so the figure doesn't jiggle between renders as digits change. */
-  font-variant-numeric: tabular-nums;
+.stat-card {
+  padding: 10px 12px;
+  border: 1px solid var(--stats-border);
+  border-radius: 10px;
+  background: var(--stats-surface);
+  min-width: 0;
 }
-.stats-headline__label {
-  font-size: 13px;
-  color: var(--stats-fg-muted);
-}
-/* "about 1 in 11" — the form people repeat, beside the percentage and never
-   instead of it: the ratio is remembered, the percentage can be checked. */
-.stats-headline__odds {
-  flex-basis: 100%;
-  font-size: 12px;
-  color: var(--stats-fg-muted);
-}
-/* Not styled as a footnote to be skipped. A rate without its window, sample
-   and radius is the figure that gets quoted back at you naked, so it is the
-   same weight as the standfirst and sits against the headline. */
-.stats-provenance {
-  margin: 0 0 16px;
-  font-size: 11.5px;
-  color: var(--stats-fg-muted);
-  line-height: 1.5;
-}
-.stats-subtitle {
-  margin: 0 0 8px;
-  font-size: 12px;
+.stat-card__kicker {
+  margin: 0 0 4px;
+  font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--stats-fg-muted);
 }
-.stat-list {
-  margin: 0 0 16px;
-  padding: 0;
-  list-style: none;
-}
-.stat-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--stats-border);
-}
-.stat-row:last-child {
-  border-bottom: 0;
-}
-.stat-row__name {
+.stat-card__figure {
+  margin: 0;
   font-size: 13px;
-  font-weight: 600;
+  line-height: 1.35;
+  color: var(--stats-fg);
+  overflow-wrap: anywhere;
 }
-.stat-row__value {
-  font-size: 14px;
-  font-weight: 650;
+.stat-card__value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  /* Tabular so the figure doesn't jiggle between renders. */
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  margin-right: 2px;
 }
-/* A thin sample reads as a sentence, not as a number: it must not look like
-   a measurement sitting next to the real ones. */
-.stat-row__value--thin {
-  font-size: 11.5px;
-  font-weight: 500;
+.stat-card__label {
+  color: var(--stats-fg-muted);
+}
+.stat-card__figure--second {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--stats-border);
+}
+.stat-card__value--second {
+  font-size: 18px;
+}
+.stat-card__figure.is-thin .stat-card__label {
   font-style: italic;
+}
+.stat-card__odds,
+.stat-card__line {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--stats-fg);
+}
+.stat-card__odds {
+  color: var(--stats-fg-muted);
+  font-size: 12px;
+}
+.stat-card__mix {
+  font-variant-numeric: tabular-nums;
   color: var(--stats-fg-muted);
 }
-.stat-row__sample {
-  grid-column: 1 / -1;
+.stat-card__method {
+  font-size: 11.5px;
+  color: var(--stats-fg-muted);
+}
+/* Window · sample. Not styled as a footnote to be skipped: a figure without
+   it is the one that gets quoted back at you naked. */
+.stat-card__meta {
+  margin: 6px 0 0;
   font-size: 11px;
+  line-height: 1.4;
   color: var(--stats-fg-muted);
   font-variant-numeric: tabular-nums;
+}
+.stat-card__window {
+  font-weight: 600;
 }
 .stats-empty {
   margin: 0;
@@ -132,34 +133,10 @@
 }
 
 /* The story slot, between the figures and the cross-promotion. Separated by a
-   rule because it is a change of mode — the reader stops reading and is asked
-   something — and empty in the embed, where it collapses to nothing. */
+   rule because it is a change of mode: the reader stops reading and is asked
+   something. Empty in the embed, where it collapses to nothing. */
 .stats-story:not(:empty) {
   margin: 16px 0;
   padding-top: 14px;
   border-top: 1px solid var(--stats-border);
-}
-
-/* "Never left the spot": the second headline. Same type scale as the first so
-   the pair reads as two answers to related questions, with its own
-   disclosure line directly under it (its window is not the first figure's). */
-.stats-headline--stayed {
-  margin-top: 4px;
-}
-.stats-stayed-detail {
-  margin-bottom: 4px;
-  font-variant-numeric: tabular-nums;
-}
-/* Under the floor the detail line IS the figure, so it reads as a sentence. */
-.stats-stayed-detail--thin {
-  font-style: italic;
-}
-.stat-row__stayed {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--stats-fg-muted);
-  font-variant-numeric: tabular-nums;
-}
-.stat-row__stayed--thin {
-  font-style: italic;
 }

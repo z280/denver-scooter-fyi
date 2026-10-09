@@ -1,48 +1,62 @@
-// Rider stats: what share of rentals ended where they began.
+// Rider stats: a handful of the best numbers about Denver's Veo fleet.
 //
-// THE NUMBER. `/api/v1/fleet/outcomes` aggregates counters the ingest
-// increments the moment each rental completes, counting since they were reset
-// (scooter-fyi-api sql/089) so that they describe one 25 m ring.
-// Because Veo's feed marks a vehicle `is_reserved` while it is IN USE rather
-// than while somebody holds a booking, a "no-go" is an ATTEMPT: a rider
-// unlocked a vehicle and it took them nowhere. That is why it is worth putting
-// on screen at all.
+// WHAT IS ON THE PANEL. Up to seven cards, each one figure with its window and
+// its sample on screen (`docs/ANALYTICS_PLAN.md`: every figure carries its
+// window and sample; scooter.fyi reports, it does not argue):
 //
-// THE VOICE, which is the whole reason this module is shaped the way it is.
-// `docs/ANALYTICS_PLAN.md` states the rule: **same numbers, different verbs.
-// scooter.fyi reports. WSYV argues.** A rider deserves to know what share of
-// rentals go nowhere for the same reason they deserve a battery level — it is
-// consumer information about a service. scooter.fyi is pro-rider and is not an
-// advocacy platform; it takes no position on who is to blame, and the copy
-// below never supplies one. A counted rental is one that ended where it began; the cause
-// might be the vehicle, the app, the weather, or somebody changing their mind
-// after unlocking, and this panel does not pretend to know which.
+//   now      vehicles on the map and how many are in use, plus the model mix
+//            (`/devices/history/hourly`: the last feed cycle of this hour)
+//   rides    rides yesterday and the busiest hour (`/analytics/rides`, hourly)
+//   range    the median real-world range on the map right now, beside Veo's
+//            own estimate (the map's already-loaded feed; drawer only)
+//   gather   the neighbourhood with the most vehicles (`/analytics/devices-by-region`)
+//   dwell    average time a parked vehicle waits for its next ride (`/analytics/dwell`)
+//   equity   the Equity Area share in the contract's 6-9 AM window (`/compliance/daily/latest`)
+//   outcomes "ended where they began" and "never left the spot" (`/fleet/outcomes`)
 //
-// So `VOICES` is a copy table and nothing else. It selects words. It must
-// never select a different filter, window or threshold — the moment the two
-// properties can disagree about a number, neither is worth quoting, and the
-// numbers are the only asset either site has.
+// Failed starts used to be the whole panel. They are one card now, last
+// among the figures, because they are one fact about the fleet among several.
 //
-// THREE THINGS ARE ALWAYS RENDERED, because a percentage without them is the
-// kind of figure that gets quoted back at you naked:
+// EACH CARD STANDS ALONE. The fetches run in parallel and a failed one hides
+// its own card, not the panel. A card also hides when what came back is not
+// safe to show: a stale sample, or a window that reaches back across a
+// counting change.
 //
-//   * the window — the counters run from their reset (sql/089, 2026-10-07),
-//     so this is "since <date>" and NOT "today". An unlabelled rate reads as
-//     "now".
-//   * the radius — the codebase holds three different ideas of how far is
-//     "moved" (ANALYTICS_PLAN §0.2). Until that is settled the figure says
-//     which circle it was counted at instead of letting a reader assume.
-//   * the sample — the fleet total, and for a model under the floor, "not
-//     enough rides yet" in place of a percentage. A model with n=7 keeps its
-//     counts and loses its rate; it does not quietly vanish from the list,
-//     because a list that drops its thin rows looks complete and isn't.
+// COUNTING ERAS. Rides, dwell and failed starts were counted three different
+// ways (changes at 2026-08-10 04:15Z and 2026-10-06 01:36Z; the API sends them
+// as `counting_changes` and `comparable_since`). Every figure here is from the
+// current era only: rides keep only buckets at or after `comparable_since`,
+// dwell is requested over whole Denver days inside the era and dropped if the
+// server's window starts earlier, and the outcome counters must have started
+// after the fix. `KNOWN_COMPARABLE_SINCE` is a floor, not the answer: a newer
+// `comparable_since` from the server always wins.
+//
+// THE VOICE. The same renderer serves `/embed/stats.html`, which
+// weseeyouveo.com frames (`?voice=civic`). Same numbers, different verbs:
+// `VOICES` selects words and nothing else. It must never select a different
+// filter, window or threshold. The moment the two sites can disagree about a
+// number, neither is worth quoting.
 
 import {
+  fetchCompliance,
+  fetchDeviceHistoryHourly,
   fetchFleetOutcomes,
-  NoDataError,
-  type FleetOutcomeModel,
+  type BoundaryLayer,
+  type ComplianceResponse,
+  type DeviceHistoryHour,
   type FleetOutcomesResponse,
 } from "./api.ts";
+import {
+  fetchAnalyticsDevicesByRegion,
+  fetchAnalyticsDwell,
+  fetchAnalyticsRides,
+  type AnalyticsCountingEras,
+  type AnalyticsDevicesByRegionResponse,
+  type AnalyticsDwellResponse,
+  type AnalyticsRidesResponse,
+} from "./analytics-api.ts";
+import { formatKm, OBSERVED_METERS_PER_SOC_POINT } from "./range-facts.ts";
+import { prettyRegion } from "./util.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -55,59 +69,118 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+const TZ = "America/Denver";
+
+/** The latest counting change the frontend knows about (dc292b6). A floor:
+ *  the server's own `comparable_since` overrides it when later. */
+export const KNOWN_COMPARABLE_SINCE = "2026-10-06T01:36:00Z";
+
+/** The last hourly fleet sample counts as "now" for this long. Past it the
+ *  ingest has stalled and "right now" would be a lie. */
+const NOW_MAX_AGE_MS = 90 * 60_000;
+
+/** Neighbourhood averages are taken over this many days. Vehicle counts are
+ *  snapshots, which no counting change touched. */
+const GATHER_DAYS = 7;
+
 /** Which site is rendering. The parameter behind `/embed/stats?voice=`.
  *
- *  `rider` is scooter.fyi: practical, second person, about your next trip.
- *  `civic` is weseeyouveo.com: the same figures addressed to a city rather
- *  than to a rider. Neither changes what is counted. */
+ *  `rider` is scooter.fyi: practical, second person where it helps.
+ *  `civic` is weseeyouveo.com: the same figures in the third person.
+ *  Neither changes what is counted. */
 export type StatsVoice = "rider" | "civic";
 
 export interface VoiceCopy {
-  /** Panel heading. */
   title: string;
-  /** One line under the heading, before any number. */
   standfirst: string;
-  /** Label on the headline rate. */
-  headlineLabel: string;
-  /** Label beside the raw count when the fleet is under the sample floor —
-   *  the first thing on screen after a counter reset. */
-  underFloorLabel: (rentals: string) => string;
-  /** Label on the second headline: the "never left the spot" rate. */
-  stayedLabel: string;
-  /** The one sentence that says how the two figures differ. */
-  stayedExplainer: (radius: string) => string;
-  /** Label over the per-model breakdown. */
-  modelsLabel: string;
-  /** Shown when the feed came back with nothing counted. */
-  empty: string;
-  /** Shown when the feed could not be reached at all. */
+  now: { kicker: string; label: string; inUse: (n: string) => string; window: string };
+  rides: {
+    kicker: string;
+    label: string;
+    busiest: (hour: string, n: string, since: string) => string;
+  };
+  range: {
+    kicker: string;
+    label: string;
+    veo: (km: string) => string;
+    method: string;
+    stale: (pct: string) => string;
+    window: string;
+  };
+  gather: { kicker: string; label: string; line: (avg: string, now: string) => string };
+  dwell: { kicker: string; label: string; method: string };
+  equity: {
+    kicker: string;
+    label: (window: string) => string;
+    verdict: (threshold: string, pass: boolean | null) => string;
+  };
+  outcomes: {
+    kicker: string;
+    label: (radius: string) => string;
+    roundTrips: string;
+    underFloor: (n: string) => string;
+    stayedLabel: (radius: string) => string;
+  };
+  /** Shown when no card could be built. */
   unavailable: string;
-  /** Cross-promotion: the other property, named and linked. */
   crossPromo: { lead: string; label: string; href: string };
 }
 
+// The outcome copy is the same in both voices on purpose: it is a definition,
+// and a definition has one wording. "Ended where they began" is END
+// displacement, so a round trip back to the rack counts; "never left the
+// spot" is the maximum-distance counter and only ever labels that figure.
+const OUTCOMES_COPY: VoiceCopy["outcomes"] = {
+  kicker: "Back where it started",
+  label: (r) => `of rentals ended within ${r} of where they began`,
+  roundTrips: "That includes riders who rode off and came back to the same spot. The count does not say why.",
+  underFloor: (n) => `rentals ended where they began, of ${n}. Too few for a rate yet.`,
+  stayedLabel: (r) => `never left the spot: the vehicle never got more than ${r} from where it was unlocked.`,
+};
+
 export const VOICES: Record<StatsVoice, VoiceCopy> = {
   rider: {
-    // Every line says what is COUNTED: a rental whose drop point is within
-    // the radius of its unlock point. Not "went nowhere" or "never became a
-    // trip" — a loop ride back to the same rack was a trip and is counted.
-    // Consumer information, stated as such. No villain, named or implied.
-    title: "How often does a rental end where it began?",
+    title: "Denver's Veo fleet, by the numbers",
     standfirst:
-      "Every unlock we have counted, and how many ended back where they started. Useful before you tap one.",
-    // "ended where they began", not "never left": what is counted is END
-    // displacement (unlock point to drop point), so a ride that looped back
-    // to the same rack counts too. "Never left the spot" is the SECOND
-    // figure, backed by the maximum-distance counter (scooter-fyi-api#142),
-    // and only ever labels that one.
-    headlineLabel: "of rentals ended where they began",
-    underFloorLabel: (n) => `rentals ended where they began, of ${n} — too few for a rate yet`,
-    stayedLabel: "Never left the spot",
-    stayedExplainer: (r) =>
-      `The first figure includes riders who rode off and came back to the same spot; ` +
-      `this one counts only scooters that never got more than ${r} from where they were unlocked.`,
-    modelsLabel: "By model",
-    empty: "No rentals counted yet. This fills in as the fleet gets ridden.",
+      "A few figures from Veo's public feed. Each says when it was counted and how many it was counted over.",
+    now: {
+      kicker: "Right now",
+      label: "vehicles on the map",
+      inUse: (n) => `${n} of them are out on a ride.`,
+      window: "Latest feed update",
+    },
+    rides: {
+      kicker: "Yesterday",
+      label: "rides started in Denver",
+      busiest: (h, n, since) => `Busiest hour since ${since}: ${h}, with ${n} rides.`,
+    },
+    range: {
+      kicker: "Real-world range",
+      label: "is how far a typical vehicle on the map will take you on its current charge",
+      veo: (km) => `Veo's own estimate for the same vehicles: ${km}.`,
+      method: `Ours is battery % × ${OBSERVED_METERS_PER_SOC_POINT} m, measured by following Denver vehicles from full to empty.`,
+      stale: (p) => `${p} of these readings are from vehicles parked an hour or more, so the charge may be out of date.`,
+      window: "Latest feed update",
+    },
+    gather: {
+      kicker: "Where they gather",
+      label: "has more vehicles on the map than any other neighbourhood",
+      line: (avg, now) => `${avg} on average, ${now} right now.`,
+    },
+    dwell: {
+      kicker: "Between rides",
+      label: "is how long a parked vehicle waits for its next rider, on average",
+      method: "Timed from arrival to departure at each stop. Stops still open, or longer than 30 days, are left out.",
+    },
+    equity: {
+      kicker: "Equity Areas",
+      label: (w) => `of the fleet was in Denver's Equity Areas, ${w}`,
+      verdict: (t, pass) =>
+        pass === null
+          ? `The contract asks for at least ${t}.`
+          : `The contract asks for at least ${t}; ${pass ? "this window met it" : "this window fell short"}.`,
+    },
+    outcomes: OUTCOMES_COPY,
     unavailable: "Stats are unavailable right now. The map is unaffected.",
     crossPromo: {
       lead: "Following Denver's scooter contract?",
@@ -116,22 +189,47 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     },
   },
   civic: {
-    title: "Rentals that ended where they began",
+    title: "Denver's Veo fleet, measured",
     standfirst:
-      "Measured from Veo's own public feed: unlocks whose rental ended within the counting radius of where it started.",
-    // "ended where they began", not "never left": what is counted is END
-    // displacement (unlock point to drop point), so a ride that looped back
-    // to the same rack counts too. "Never left the spot" is the SECOND
-    // figure, backed by the maximum-distance counter (scooter-fyi-api#142),
-    // and only ever labels that one.
-    headlineLabel: "of rentals ended where they began",
-    underFloorLabel: (n) => `rentals ended where they began, of ${n} — too few for a rate yet`,
-    stayedLabel: "Never left the spot",
-    stayedExplainer: (r) =>
-      `The first figure includes riders who rode off and came back to the same spot; ` +
-      `this one counts only scooters that never got more than ${r} from where they were unlocked.`,
-    modelsLabel: "By model",
-    empty: "No rentals counted yet.",
+      "Counted by Scooter.fyi from Veo's public feed. Each figure gives the window and the sample it was counted over.",
+    now: {
+      kicker: "Right now",
+      label: "vehicles in Veo's Denver feed",
+      inUse: (n) => `${n} of them are on a ride.`,
+      window: "Latest feed update",
+    },
+    rides: {
+      kicker: "Yesterday",
+      label: "rides started in Denver",
+      busiest: (h, n, since) => `Busiest hour since ${since}: ${h}, with ${n} rides.`,
+    },
+    range: {
+      kicker: "Real-world range",
+      label: "is the median range of the fleet on its current charge",
+      veo: (km) => `Veo's own estimate for the same vehicles: ${km}.`,
+      method: `Scooter.fyi's figure is battery % × ${OBSERVED_METERS_PER_SOC_POINT} m, measured by following Denver vehicles from full to empty.`,
+      stale: (p) => `${p} of these readings are from vehicles parked an hour or more, so the charge may be out of date.`,
+      window: "Latest feed update",
+    },
+    gather: {
+      kicker: "Where they gather",
+      label: "has more vehicles in the feed than any other neighbourhood",
+      line: (avg, now) => `${avg} on average, ${now} at the latest update.`,
+    },
+    dwell: {
+      kicker: "Between rides",
+      label: "is the average time a parked vehicle waits for its next rental",
+      method: "Timed from arrival to departure at each stop. Stops still open, or longer than 30 days, are left out.",
+    },
+    equity: {
+      kicker: "Equity Areas",
+      label: (w) => `of the fleet was in Denver's official Equity Areas, ${w}`,
+      verdict: (t, pass) =>
+        pass === null
+          ? `Exhibit B of the contract sets ${t}.`
+          : `Exhibit B of the contract sets ${t}. ${pass ? "Met" : "Not met"} in this window.`,
+    },
+    outcomes: OUTCOMES_COPY,
     unavailable: "Stats are unavailable right now.",
     crossPromo: {
       lead: "Riding today?",
@@ -141,245 +239,493 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
   },
 };
 
-/** A rate as a percentage with one decimal, or null straight through.
- *
- *  One decimal because the difference between 9.1% and 9% is the difference
- *  between a measurement and a round number, and this one was measured. */
-export function formatRate(rate: number | null): string | null {
-  if (rate === null || !Number.isFinite(rate)) return null;
+// ---------- Formatting ----------
+
+/** A rate as a percentage with one decimal, or null straight through. */
+export function formatRate(rate: number | null | undefined): string | null {
+  if (rate === null || rate === undefined || !Number.isFinite(rate)) return null;
   return `${(rate * 100).toFixed(1)}%`;
 }
 
-/** "1 in 11" — the headline rate said the way people repeat it.
- *
- *  Shown BESIDE the percentage, never instead of it: the ratio is what gets
- *  remembered and the percentage is what can be checked. */
+/** "about 1 in 20": shown beside the percentage, never instead of it. */
 export function formatOdds(rate: number | null): string | null {
   if (rate === null || rate <= 0 || rate > 1) return null;
   return `about 1 in ${Math.round(1 / rate)}`;
 }
 
 export function formatCount(n: number): string {
-  return n.toLocaleString("en-US");
+  return Math.round(n).toLocaleString("en-US");
 }
 
-/** Metres, rounded, for the provenance line. */
 function formatMeters(m: number): string {
   return `${Math.round(m)} m`;
 }
 
-/** "Since October 7, 2026": the window's start, from the server's own record
- *  of when the counters were reset, as a Denver calendar date. */
+/** The popup's km rule (range-facts.ts), so the two never disagree. */
+export { formatKm };
+
+/** "5 h 42 min", or "48 min" under an hour. */
+export function formatMinutes(min: number): string {
+  const total = Math.round(min);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
+function parseDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "October 6": an instant as a Denver calendar date. */
+export function denverDay(d: Date, withWeekday = false): string {
+  return d.toLocaleDateString("en-US", {
+    timeZone: TZ,
+    month: "long",
+    day: "numeric",
+    ...(withWeekday ? { weekday: "long" } : {}),
+  });
+}
+
+/** "2026-10-07": the Denver calendar date of an instant. */
+export function denverDateKey(d: Date): string {
+  // en-CA formats as YYYY-MM-DD.
+  return d.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+
+function denverHour(d: Date): number {
+  return Number(
+    d.toLocaleString("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" }),
+  );
+}
+
+/** The instant of Denver midnight starting a YYYY-MM-DD date. */
+export function denverMidnight(dateKey: string): Date {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  for (const offset of [6, 7, 5, 8]) {
+    const t = new Date(Date.UTC(y, m - 1, d, offset));
+    if (denverHour(t) === 0 && denverDateKey(t) === dateKey) return t;
+  }
+  return new Date(Date.UTC(y, m - 1, d, 7));
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + days, 12));
+  return t.toISOString().slice(0, 10);
+}
+
+/** "4–5 PM, October 6": one hour bucket in Denver time. */
+export function hourRangeText(start: Date): string {
+  return windowRangeText(start, new Date(start.getTime() + 3_600_000));
+}
+
+/** "6–9 AM, October 8": a window inside one Denver day. */
+function windowRangeText(start: Date, end: Date): string {
+  const fmt = (d: Date) =>
+    d.toLocaleString("en-US", { timeZone: TZ, hour: "numeric", hour12: true });
+  const [a, ap] = fmt(start).split(/\s+/u);
+  const [b, bp] = fmt(end).split(/\s+/u);
+  const range = ap === bp ? `${a}–${b} ${bp}` : `${a} ${ap}–${b} ${bp}`;
+  return `${range}, ${denverDay(start)}`;
+}
+
+// ---------- Counting eras ----------
+
+/** Where the current counting method begins for a response: its own
+ *  `comparable_since`, or the known floor, whichever is later. */
+export function eraStart(resp?: AnalyticsCountingEras | null): Date {
+  const floor = new Date(KNOWN_COMPARABLE_SINCE);
+  const own = parseDate(resp?.comparable_since ?? null);
+  return own && own > floor ? own : floor;
+}
+
+/** How many whole Denver days, ending today, begin at or after `era`: the
+ *  `days` to ask a day-aligned endpoint (dwell) for so its window does not
+ *  reach back across the change. 0 when not even today qualifies. */
+export function eraDays(era: Date, now: Date): number {
+  let key = denverDateKey(now);
+  let n = 0;
+  while (denverMidnight(key) >= era && n < 366) {
+    n += 1;
+    key = shiftDateKey(key, -1);
+  }
+  return n;
+}
+
+// ---------- The data ----------
+
+/** The fields of a live-feed vehicle the range card reads. Loose on purpose:
+ *  the map's feature type may or may not declare `estimated_range_meters`. */
+export interface RangeDevice {
+  properties: {
+    estimated_range_meters?: unknown;
+    current_range_meters?: unknown;
+    battery_reading?: unknown;
+  };
+}
+
+/** Everything the cards are built from. Every source is nullable: null is
+ *  "that fetch failed or was not made", and hides only its own card. */
+export interface StatsData {
+  now: Date;
+  outcomes: FleetOutcomesResponse | null;
+  fleet: DeviceHistoryHour | null;
+  rides: AnalyticsRidesResponse | null;
+  gather: AnalyticsDevicesByRegionResponse | null;
+  dwell: AnalyticsDwellResponse | null;
+  equity: ComplianceResponse | null;
+  devices: readonly RangeDevice[] | null;
+}
+
+/** One card, before it becomes DOM. `meta` is the window and sample of each
+ *  figure on the card; every card has at least one. */
+interface CardModel {
+  key: string;
+  kicker: string;
+  value: string;
+  label: string;
+  odds?: string | null;
+  lines: { text: string; className?: string }[];
+  meta: { window: string; sample: string }[];
+  /** A second figure on the same card, with its own meta. */
+  second?: { value: string | null; label: string; meta: { window: string; sample: string }; thin?: boolean };
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+// ---------- Cards ----------
+
+export function nowCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const f = data.fleet;
+  const at = parseDate(f?.hour);
+  if (!f || !at || f.total <= 0) return null;
+  // The bucket is the hour; the sample is the last cycle in it. An hour
+  // older than this means the ingest stalled.
+  if (data.now.getTime() - at.getTime() > NOW_MAX_AGE_MS) return null;
+  const lines: CardModel["lines"] = [];
+  if (typeof f.reserved === "number") {
+    lines.push({ text: copy.now.inUse(formatCount(f.reserved)) });
+  }
+  if (f.models) {
+    const mix = Object.entries(f.models)
+      .map(([model, c]) => [model, c.available + c.reserved + c.out_of_service] as const)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([model, n]) => `${model} ${formatCount(n)}`);
+    if (mix.length > 0) lines.push({ text: mix.join(" · "), className: "stat-card__mix" });
+  }
+  return {
+    key: "now",
+    kicker: copy.now.kicker,
+    value: formatCount(f.total),
+    label: copy.now.label,
+    lines,
+    meta: [{ window: copy.now.window, sample: `all ${formatCount(f.total)} vehicles in the feed` }],
+  };
+}
+
+export function ridesCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const r = data.rides;
+  if (!r || !Array.isArray(r.series)) return null;
+  const era = eraStart(r);
+  const buckets = r.series
+    .map((b) => ({ ...b, at: parseDate(b.bucket) }))
+    .filter((b): b is typeof b & { at: Date } => b.at !== null && b.at >= era);
+  const yesterday = shiftDateKey(denverDateKey(data.now), -1);
+  // Yesterday counts only if all of it is in the current era and complete.
+  if (denverMidnight(yesterday) < era) return null;
+  const day = buckets.filter((b) => denverDateKey(b.at) === yesterday);
+  if (day.length < 23 || day.some((b) => b.partial)) return null;
+  const total = day.reduce((s, b) => s + b.total, 0);
+
+  const lines: CardModel["lines"] = [];
+  // The busiest hour is picked from whole Denver days inside the era, so
+  // "since <date>" names a day the era fully covers.
+  const firstDay = denverDateKey(era);
+  const fromDay = denverMidnight(firstDay) >= era ? denverMidnight(firstDay) : denverMidnight(shiftDateKey(firstDay, 1));
+  const complete = buckets.filter((b) => !b.partial && b.at >= fromDay);
+  let busiestSample = "";
+  if (complete.length > 0) {
+    const top = complete.reduce((a, b) => (b.total > a.total ? b : a));
+    const since = denverDay(complete[0].at);
+    lines.push({ text: copy.rides.busiest(hourRangeText(top.at), formatCount(top.total), since) });
+    busiestSample = `; busiest of ${formatCount(complete.length)} complete hours`;
+  }
+  return {
+    key: "rides",
+    kicker: copy.rides.kicker,
+    value: formatCount(total),
+    label: copy.rides.label,
+    lines,
+    meta: [{
+      window: denverDay(denverMidnight(yesterday), true),
+      sample: `${formatCount(total)} rides counted${busiestSample}`,
+    }],
+  };
+}
+
+export function rangeCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const devs = data.devices;
+  if (!devs || devs.length === 0) return null;
+  const ours: number[] = [];
+  const veo: number[] = [];
+  let stale = 0;
+  for (const d of devs) {
+    const e = num(d.properties.estimated_range_meters);
+    if (e === null) continue;
+    ours.push(e);
+    const v = num(d.properties.current_range_meters);
+    if (v !== null) veo.push(v);
+    if (d.properties.battery_reading === "stale") stale += 1;
+  }
+  const m = median(ours);
+  if (m === null) return null;
+  const lines: CardModel["lines"] = [];
+  const mv = median(veo);
+  if (mv !== null) lines.push({ text: copy.range.veo(formatKm(mv)) });
+  lines.push({ text: copy.range.method, className: "stat-card__method" });
+  if (stale / ours.length >= 0.5) {
+    lines.push({
+      text: copy.range.stale(`${Math.round((stale / ours.length) * 100)}%`),
+      className: "stat-card__method",
+    });
+  }
+  return {
+    key: "range",
+    kicker: copy.range.kicker,
+    value: formatKm(m),
+    label: copy.range.label,
+    lines,
+    meta: [{ window: copy.range.window, sample: `median of ${formatCount(ours.length)} vehicles` }],
+  };
+}
+
+export function gatherCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const g = data.gather;
+  if (!g || !Array.isArray(g.regions)) return null;
+  const ranked = g.regions.filter((r) => typeof r.average === "number" && r.cycles > 0);
+  if (ranked.length === 0) return null;
+  const top = ranked.reduce((a, b) => ((b.average ?? 0) > (a.average ?? 0) ? b : a));
+  const start = parseDate(g.window_start);
+  return {
+    key: "gather",
+    kicker: copy.gather.kicker,
+    value: prettyRegion(top.region, g.region_type as BoundaryLayer),
+    label: copy.gather.label,
+    lines: [{
+      text: copy.gather.line(
+        formatCount(top.average ?? 0),
+        top.now === null ? "none" : formatCount(top.now),
+      ),
+    }],
+    meta: [{
+      window: start ? `Since ${denverDay(start)}` : `Last ${GATHER_DAYS} days`,
+      sample: `${formatCount(top.cycles)} feed cycles, ${formatCount(ranked.length)} neighbourhoods`,
+    }],
+  };
+}
+
+export function dwellCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const d = data.dwell;
+  if (!d || !Array.isArray(d.regions)) return null;
+  const start = parseDate(d.window_start);
+  // A window that opens before the current counting method averages two
+  // methods together. Not shown, rather than shown with a footnote.
+  if (!start || start < eraStart(d)) return null;
+  let weighted = 0;
+  let n = 0;
+  for (const region of d.regions) {
+    for (const cell of Object.values(region.by_model)) {
+      if (cell.average_minutes === null || cell.dwells <= 0) continue;
+      weighted += cell.average_minutes * cell.dwells;
+      n += cell.dwells;
+    }
+  }
+  if (n === 0) return null;
+  return {
+    key: "dwell",
+    kicker: copy.dwell.kicker,
+    value: formatMinutes(weighted / n),
+    label: copy.dwell.label,
+    lines: [{ text: copy.dwell.method, className: "stat-card__method" }],
+    meta: [{ window: `Since ${denverDay(start)}`, sample: `${formatCount(n)} stops` }],
+  };
+}
+
+export function equityCard(data: StatsData, copy: VoiceCopy, threshold = 30): CardModel | null {
+  const e = data.equity;
+  const pct = num(e?.avg_percent_all_devices_equity ?? null);
+  const start = parseDate(e?.window_start_ts);
+  const end = parseDate(e?.window_end_ts);
+  if (!e || pct === null || !start || !end) return null;
+  const span = windowRangeText(start, end);
+  return {
+    key: "equity",
+    kicker: copy.equity.kicker,
+    value: `${pct.toFixed(1)}%`,
+    label: copy.equity.label(span.split(",")[0]),
+    // Only the server's boolean decides met / not met, never a rounding here.
+    lines: [{ text: copy.equity.verdict(`${threshold}%`, e.compliance_equity_pass ?? null) }],
+    meta: [{ window: span, sample: `${formatCount(e.snapshot_count)} feed cycles` }],
+  };
+}
+
+/** "Since October 6": the outcome counters' window, from the server's record
+ *  of when they were reset, as a Denver date. */
 export function windowText(data: FleetOutcomesResponse): string {
   if (data.window === "since_reset") {
-    const at = data.counted_since_at ? new Date(data.counted_since_at) : null;
-    if (at && !Number.isNaN(at.getTime())) {
-      const day = at.toLocaleDateString("en-US", {
-        timeZone: "America/Denver", day: "numeric", month: "long", year: "numeric",
-      });
-      return `Since ${day}`;
-    }
-    return "Since the counters were last reset";
+    const at = parseDate(data.counted_since_at);
+    return at ? `Since ${denverDay(at)}` : "Since the counters were last reset";
   }
-  // An API older than the reset.
   if (data.window === "lifetime") return "All rentals we have seen";
   return data.window;
 }
 
-/** An ISO instant as a Denver calendar date ("October 8, 2026"), or null. */
-function denverDate(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return null;
-  return at.toLocaleDateString("en-US", {
-    timeZone: "America/Denver", day: "numeric", month: "long", year: "numeric",
-  });
-}
-
-/** True when the payload carries the "never left the spot" counter at all
- *  (scooter-fyi-api#142). An older API sends none of the fields, and then the
- *  second figure is simply not drawn — not drawn as zero. */
 export function hasStayed(data: FleetOutcomesResponse): boolean {
   return typeof data.stayed_rentals === "number" && typeof data.stayed === "number";
 }
 
-/** "since October 8, 2026" for the stayed counter's own window, which opened
- *  two days after the no-go counter's and must not borrow its date. */
-export function stayedWindowText(data: FleetOutcomesResponse): string {
-  const day = denverDate(data.stayed_counted_since);
-  return day ? `since ${day}` : "since the counter started";
-}
-
-/** The line under the stayed figure: sample, radius, window — the same three
- *  disclosures the first figure carries. With the rate withheld it says
- *  how far the count has to go instead of printing 0%. */
-export function stayedDetailText(data: FleetOutcomesResponse): string {
-  const n = formatCount(data.stayed_rentals ?? 0);
-  const radius = formatMeters(data.stayed_radius_meters ?? 50);
-  if (formatRate(data.stayed_rate ?? null) === null) {
-    const day = denverDate(data.stayed_counted_since);
-    const since = day ? `Counting since ${day}` : "Counting since the counter started";
-    return `${since} — not enough rentals yet (${n} of ${formatCount(data.min_rentals_for_rate)})`;
+export function outcomesCard(data: StatsData, copy: VoiceCopy): CardModel | null {
+  const o = data.outcomes;
+  if (!o || o.rentals <= 0) return null;
+  // Failed starts were under-counted until the 2026-10-06 fix. A counter
+  // window that opened before it (or an API too old to say) is not shown.
+  const since = parseDate(o.counted_since_at);
+  if (o.window !== "since_reset" || !since || since < new Date(KNOWN_COMPARABLE_SINCE)) {
+    return null;
   }
-  return `${formatCount(data.stayed ?? 0)} of ${n} rentals · within ${radius} · ${stayedWindowText(data)}`;
-}
-
-/** The provenance line. Not a footnote in the sense of "ignorable" — it is
- *  what makes the figure above it quotable, and it is built from the payload
- *  rather than hard-coded so it cannot drift from what was counted. */
-export function provenanceText(data: FleetOutcomesResponse): string {
-  return (
-    `${windowText(data)} — ${formatCount(data.rentals)} across ` +
-    `${formatCount(data.vehicles)} vehicles. A rental is counted here when it ended ` +
-    `within ${formatMeters(data.radius_meters)} of where it was unlocked; a ` +
-    `ride that looped back to the same spot counts too. It does not say why.`
-  );
-}
-
-function modelRow(m: FleetOutcomeModel, floor: number, stayedLabel?: string): HTMLElement {
-  const row = el("li", "stat-row");
-  row.append(el("span", "stat-row__name", m.model));
-
-  const rate = formatRate(m.no_go_rate);
-  if (rate === null) {
-    // Thin sample. The counts stay — this row is honest about being thin,
-    // which is a different statement from being absent.
-    row.append(el("span", "stat-row__value stat-row__value--thin", "not enough rides yet"));
-    row.append(
-      el(
-        "span",
-        "stat-row__sample",
-        `${formatCount(m.rentals)} rentals — a rate needs ${formatCount(floor)}`,
-      ),
-    );
-  } else {
-    row.append(el("span", "stat-row__value", rate));
-    row.append(
-      el(
-        "span",
-        "stat-row__sample",
-        `${formatCount(m.no_gos)} of ${formatCount(m.rentals)} rentals`,
-      ),
-    );
+  const c = copy.outcomes;
+  const radius = formatMeters(o.radius_meters);
+  const rate = formatRate(o.no_go_rate);
+  const card: CardModel = {
+    key: "outcomes",
+    kicker: c.kicker,
+    value: rate ?? formatCount(o.no_gos),
+    label: rate ? c.label(radius) : c.underFloor(formatCount(o.rentals)),
+    odds: rate ? formatOdds(o.no_go_rate) : null,
+    lines: [{ text: c.roundTrips }],
+    meta: [{
+      window: windowText(o),
+      sample: `${formatCount(o.no_gos)} of ${formatCount(o.rentals)} rentals`,
+    }],
+  };
+  if (hasStayed(o)) {
+    const sRate = formatRate(o.stayed_rate ?? null);
+    const sSince = parseDate(o.stayed_counted_since);
+    const n = formatCount(o.stayed_rentals ?? 0);
+    card.second = {
+      value: sRate,
+      label: c.stayedLabel(formatMeters(o.stayed_radius_meters ?? 50)),
+      thin: sRate === null,
+      meta: {
+        window: sSince ? `Since ${denverDay(sSince)}` : "Since the counter started",
+        sample: sRate === null
+          ? `${n} rentals; a rate needs ${formatCount(o.min_rentals_for_rate)}`
+          : `${formatCount(o.stayed ?? 0)} of ${n} rentals`,
+      },
+    };
   }
-  if (typeof m.stayed_rentals === "number" && stayedLabel) {
-    // The second figure for the same model, on its own line under the first
-    // so the row reads "ended where began … / never left …" top to bottom.
-    const stayedRate = formatRate(m.stayed_rate ?? null);
-    const n = formatCount(m.stayed_rentals);
-    row.append(
-      el(
-        "span",
-        stayedRate === null
-          ? "stat-row__stayed stat-row__stayed--thin"
-          : "stat-row__stayed",
-        stayedRate === null
-          ? `${stayedLabel}: not enough rentals yet (${n} of ${formatCount(floor)})`
-          : `${stayedLabel}: ${stayedRate} — ${formatCount(m.stayed ?? 0)} of ${n} rentals`,
-      ),
-    );
-  }
-  return row;
+  return card;
 }
 
-/** Build the panel from a payload. Pure DOM, no fetching — which is what
- *  lets the embed and the drawer share one implementation, and lets the
- *  tests assert the copy without a network. */
+/** The cards in the order they appear. The lead is what the fleet is doing
+ *  now; failed starts sit last among the figures. */
+const CARD_BUILDERS = [nowCard, ridesCard, rangeCard, gatherCard, dwellCard, equityCard, outcomesCard];
+
+export function buildCards(data: StatsData, voice: StatsVoice = "rider"): CardModel[] {
+  const copy = VOICES[voice];
+  const out: CardModel[] = [];
+  for (const build of CARD_BUILDERS) {
+    try {
+      const card = build(data, copy);
+      if (card) out.push(card);
+    } catch (err) {
+      // One malformed payload costs its own card, never the panel.
+      console.error("stats card failed", err);
+    }
+  }
+  return out;
+}
+
+function metaLine(meta: { window: string; sample: string }): HTMLElement {
+  const p = el("p", "stat-card__meta");
+  p.append(el("span", "stat-card__window", meta.window));
+  p.append(document.createTextNode(" · "));
+  p.append(el("span", "stat-card__sample", meta.sample));
+  return p;
+}
+
+function renderCard(card: CardModel): HTMLElement {
+  const section = el("section", "stat-card");
+  section.dataset.card = card.key;
+  section.append(el("h4", "stat-card__kicker", card.kicker));
+  const fig = el("p", "stat-card__figure");
+  fig.append(el("strong", "stat-card__value", card.value));
+  fig.append(document.createTextNode(" "));
+  fig.append(el("span", "stat-card__label", card.label));
+  section.append(fig);
+  if (card.odds) section.append(el("p", "stat-card__odds", card.odds));
+  for (const line of card.lines) {
+    section.append(el("p", line.className ? `stat-card__line ${line.className}` : "stat-card__line", line.text));
+  }
+  for (const m of card.meta) section.append(metaLine(m));
+  if (card.second) {
+    const s = card.second;
+    const fig2 = el("p", s.thin ? "stat-card__figure stat-card__figure--second is-thin" : "stat-card__figure stat-card__figure--second");
+    if (s.value) {
+      fig2.append(el("strong", "stat-card__value stat-card__value--second", s.value));
+      fig2.append(document.createTextNode(" "));
+    }
+    fig2.append(el("span", "stat-card__label", s.value ? s.label : capitalise(s.label)));
+    section.append(fig2);
+    section.append(metaLine(s.meta));
+  }
+  return section;
+}
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Build the panel from whatever loaded. Pure DOM, no fetching: the embed
+ *  and the drawer share it, and the tests assert it without a network. */
 export function buildFleetStats(
-  data: FleetOutcomesResponse,
+  data: StatsData,
   voice: StatsVoice = "rider",
 ): DocumentFragment {
   const copy = VOICES[voice];
   const frag = document.createDocumentFragment();
-
   frag.append(el("h3", "stats-title", copy.title));
-  frag.append(el("p", "stats-standfirst", copy.standfirst));
 
-  if (data.rentals <= 0) {
-    // Right after a reset this is what is on screen, so it still says which
-    // window it is empty for.
-    frag.append(el("p", "stats-empty", `${copy.empty} (${windowText(data)}.)`));
+  const cards = buildCards(data, voice);
+  if (cards.length === 0) {
+    frag.append(el("p", "stats-empty", copy.unavailable));
     return frag;
   }
+  frag.append(el("p", "stats-standfirst", copy.standfirst));
+  const grid = el("div", "stat-cards");
+  for (const card of cards) grid.append(renderCard(card));
+  frag.append(grid);
 
-  const headline = el("div", "stats-headline");
-  const rate = formatRate(data.no_go_rate);
-  if (rate === null) {
-    // The fleet itself under the floor. Possible on a fresh deployment, and
-    // the counts are the only honest thing to show.
-    headline.append(el("strong", "stats-headline__value", formatCount(data.no_gos)));
-    headline.append(
-      el(
-        "span",
-        "stats-headline__label",
-        copy.underFloorLabel(formatCount(data.rentals)),
-      ),
-    );
-  } else {
-    headline.append(el("strong", "stats-headline__value", rate));
-    headline.append(el("span", "stats-headline__label", copy.headlineLabel));
-    const odds = formatOdds(data.no_go_rate);
-    if (odds) headline.append(el("span", "stats-headline__odds", odds));
-  }
-  frag.append(headline);
-
-  frag.append(el("p", "stats-provenance", provenanceText(data)));
-
-  if (hasStayed(data)) {
-    // The second headline: same shape as the first, so the two read as a
-    // pair, and the same disclosures (sample, radius, window) on its own
-    // line, because its window is its own.
-    const stayed = el("div", "stats-headline stats-headline--stayed");
-    const stayedRate = formatRate(data.stayed_rate ?? null);
-    if (stayedRate !== null) {
-      stayed.append(el("strong", "stats-headline__value", stayedRate));
-    }
-    stayed.append(el("span", "stats-headline__label", copy.stayedLabel));
-    frag.append(stayed);
-    frag.append(
-      el(
-        "p",
-        stayedRate === null
-          ? "stats-provenance stats-stayed-detail stats-stayed-detail--thin"
-          : "stats-provenance stats-stayed-detail",
-        stayedDetailText(data),
-      ),
-    );
-    frag.append(
-      el(
-        "p",
-        "stats-provenance stats-stayed-explainer",
-        copy.stayedExplainer(formatMeters(data.stayed_radius_meters ?? 50)),
-      ),
-    );
-  }
-
-  if (data.by_model.length > 0) {
-    frag.append(el("h4", "stats-subtitle", copy.modelsLabel));
-    const list = el("ul", "stat-list");
-    for (const m of data.by_model) {
-      list.append(
-        modelRow(m, data.min_rentals_for_rate, hasStayed(data) ? copy.stayedLabel : undefined),
-      );
-    }
-    frag.append(list);
-  }
-
-  // The story offer goes here, between the figures and the cross-promotion:
-  // a reader who has just seen what the fleet did is primed, and this is the
-  // only one of the three asking moments where they came to READ rather than
-  // to ride — the one place the question can be asked without standing
-  // between somebody and their trip. `docs/RIDER_VOICE_PLAN.md` §3.3.
-  //
-  // Mounted by the host rather than built here, so this module stays a pure
-  // renderer and the panel keeps its one implementation.
+  // The story offer: between the figures and the cross-promotion, where a
+  // reader has come to READ rather than to ride (docs/RIDER_VOICE_PLAN.md
+  // §3.3). Mounted by the host, so this module stays a pure renderer.
   const storyHost = el("div", "stats-story");
   storyHost.dataset.role = "story-host";
   frag.append(storyHost);
 
-  // Cross-promotion, one line, at the bottom. The two properties point at
-  // each other because they serve different questions, not because they are
-  // the same project wearing two hats.
   const promo = el("p", "stats-promo");
   promo.append(document.createTextNode(`${copy.crossPromo.lead} `));
   const link = el("a", undefined, copy.crossPromo.label);
@@ -388,26 +734,84 @@ export function buildFleetStats(
   link.rel = "noopener noreferrer";
   promo.append(link);
   frag.append(promo);
-
   return frag;
 }
 
-/** Per-panel network budget: a hung feed must become "unavailable" rather
- *  than leaving the drawer on its loading placeholder forever. The same
- *  reasoning as `compliance.ts`, and the same number. */
+// ---------- Loading ----------
+
+/** A hung feed must become a missing card rather than leaving the drawer on
+ *  its loading placeholder. The same number as `compliance.ts`. */
 const STATS_FETCH_TIMEOUT_MS = 12_000;
 
-/** Fetch and render. Every throw lands in the catch — a drawer stuck on
- *  "Loading…" is the failure mode this guards, because the placeholder is
- *  static markup and only a successful replaceChildren clears it. */
 export interface FleetStatsHooks {
-  /** Fill the story slot, once the figures are on screen. Optional: the
-   *  embed does not mount one, because a panel that posts a rider's words to
-   *  a third party has no business running inside somebody else\'s page
-   *  frame, where the consent UI is not in the reader\'s own context. */
+  /** Fill the story slot once the figures are on screen. The embed does not
+   *  mount one: a panel that posts a rider's words to a third party has no
+   *  business inside somebody else's page frame. */
   mountStory?(host: HTMLElement): void;
+  /** The map's already-loaded live feed, for the range card. Absent in the
+   *  embed, which then shows no range card rather than pulling the whole
+   *  feed (several MB) into somebody else's page for one median. */
+  devices?(): readonly RangeDevice[] | null;
+  /** Open the Equity Compliance drawer. Equity compliance is a statistic,
+   *  so its door is here, not in Tools (owner, 2026-10-09). Absent in the
+   *  embed, which has no such drawer. */
+  openCompliance?(): void;
+  /** Injectable clock, for tests. */
+  now?(): Date;
 }
 
+/** The door to the Equity Compliance drawer: on the Equity Areas card when
+ *  that card rendered, otherwise after the cards, so a failed compliance
+ *  fetch never strands the drawer. */
+export function attachComplianceDoor(root: HTMLElement, open: () => void): void {
+  const btn = el("button", "preset-btn stats-compliance-door", "Equity compliance: daily status and calendar →");
+  btn.type = "button";
+  btn.addEventListener("click", open);
+  const card = root.querySelector<HTMLElement>('.stat-card[data-card="equity"]');
+  if (card) {
+    card.append(btn);
+    return;
+  }
+  const grid = root.querySelector<HTMLElement>(".stat-cards");
+  if (grid) grid.after(btn);
+  else root.append(btn);
+}
+
+async function settle<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch {
+    return null;
+  }
+}
+
+/** Dwell over whole Denver days inside the current era. If the server says
+ *  the era began later than the floor, ask once more with that. */
+async function loadDwell(now: Date, signal: AbortSignal): Promise<AnalyticsDwellResponse | null> {
+  let era = eraStart(null);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const days = eraDays(era, now);
+    if (days < 1) return null;
+    const res = await fetchAnalyticsDwell("city", days, signal);
+    const serverEra = eraStart(res);
+    const start = parseDate(res.window_start);
+    if (start && start >= serverEra) return res;
+    if (serverEra.getTime() === era.getTime()) return null;
+    era = serverEra;
+  }
+  return null;
+}
+
+/** Hourly rides from the start of the current era (capped at the API's 31
+ *  days); the card drops any bucket before `comparable_since` itself. */
+function loadRides(now: Date, signal: AbortSignal): Promise<AnalyticsRidesResponse> {
+  const days = Math.min(31, Math.max(2, eraDays(eraStart(null), now) + 1));
+  return fetchAnalyticsRides({ days, granularity: "hour" }, signal);
+}
+
+/** Fetch everything the cards need, in parallel, and render once. Every
+ *  throw lands in a catch: a drawer stuck on "Loading…" is the failure mode
+ *  this guards, because the placeholder is static markup. */
 export async function renderFleetStats(
   root: HTMLElement,
   voice: StatsVoice = "rider",
@@ -415,25 +819,46 @@ export async function renderFleetStats(
 ): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), STATS_FETCH_TIMEOUT_MS);
+  const signal = controller.signal;
   try {
-    const data = await fetchFleetOutcomes(controller.signal);
+    const now = hooks.now?.() ?? new Date();
+    const [outcomes, history, rides, gather, dwell, equity] = await Promise.all([
+      settle(fetchFleetOutcomes(signal)),
+      settle(fetchDeviceHistoryHourly(1, signal)),
+      settle(loadRides(now, signal)),
+      settle(fetchAnalyticsDevicesByRegion("neighborhood", GATHER_DAYS, signal)),
+      settle(loadDwell(now, signal)),
+      settle(fetchCompliance(signal)),
+    ]);
+    let devices: readonly RangeDevice[] | null = null;
+    try {
+      devices = hooks.devices?.() ?? null;
+    } catch {
+      devices = null;
+    }
+    const hours = history?.hours ?? [];
+    const data: StatsData = {
+      now,
+      outcomes,
+      fleet: hours.length > 0 ? hours[hours.length - 1] : null,
+      rides,
+      gather,
+      dwell,
+      equity,
+      devices,
+    };
     root.replaceChildren(buildFleetStats(data, voice));
+    if (hooks.openCompliance) attachComplianceDoor(root, hooks.openCompliance);
     const storyHost = root.querySelector<HTMLElement>('[data-role="story-host"]');
     if (storyHost) hooks.mountStory?.(storyHost);
   } catch (err) {
+    console.error("fleet stats failed", err);
     const copy = VOICES[voice];
     const frag = document.createDocumentFragment();
     frag.append(el("h3", "stats-title", copy.title));
-    // NoDataError is the server saying "not yet", which is a different
-    // sentence from "we could not reach it".
-    frag.append(
-      el(
-        "p",
-        "stats-empty",
-        err instanceof NoDataError ? copy.empty : copy.unavailable,
-      ),
-    );
+    frag.append(el("p", "stats-empty", copy.unavailable));
     root.replaceChildren(frag);
+    if (hooks.openCompliance) attachComplianceDoor(root, hooks.openCompliance);
   } finally {
     clearTimeout(timer);
   }

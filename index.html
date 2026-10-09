@@ -1111,12 +1111,11 @@
     </aside>
 
     <!-- ---------- Rider stats drawer ---------- -->
-    <!-- The panel reports and does not argue: scooter.fyi is pro-rider, not
-         an advocacy platform (docs/ANALYTICS_PLAN.md, THE VOICE). What share
-         of rentals go nowhere is consumer information about a service, like a
-         battery level — so the copy says what was counted and never who is to
-         blame. The same numbers carry a civic voice on weseeyouveo.com; the
-         voice selects words only, never a different filter or window.
+    <!-- A handful of the best figures about the fleet, one card each, every
+         card with its window and sample. The panel reports and does not argue
+         (docs/ANALYTICS_PLAN.md, THE VOICE). The same numbers carry a civic
+         voice on weseeyouveo.com; the voice selects words only, never a
+         different filter or window.
 
          Everything inside #fleet-stats is built by fleet-stats.ts. The
          placeholder below is the ONLY static content, and only a successful
@@ -1127,7 +1126,7 @@
         <button class="drawer-close" type="button" aria-label="Close Rider stats">&times;</button>
       </header>
       <div class="drawer-body">
-        <div id="fleet-stats" class="fleet-stats" role="status" aria-live="polite" aria-label="Rental outcome statistics">
+        <div id="fleet-stats" class="fleet-stats" role="status" aria-live="polite" aria-label="Fleet statistics">
           <div class="compliance-loading">Loading stats…</div>
         </div>
         <!-- Outside #fleet-stats on purpose: fleet-stats.ts owns that node and
@@ -1136,10 +1135,10 @@
         <section class="control-group stats-analytics-link" aria-labelledby="stats-analytics-label">
           <h3 id="stats-analytics-label" class="control-label">Fleet analytics</h3>
           <p class="control-hint">
-            Rides, failed starts, fleet status, equity-area share and dwell
-            times, by hour, day, week or month, for Denver or one area.
+            These figures and more, charted by hour, day, week or month, for
+            Denver or one area.
           </p>
-          <a class="preset-btn" href="/analytics">📊 Fleet analytics</a>
+          <a class="preset-btn" href="/analytics">More charts →</a>
         </section>
       </div>
     </aside>

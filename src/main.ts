@@ -5415,13 +5415,23 @@ function wireDrawers(): void {
       tripPanel.refresh();
     }
     // Rendered on open rather than at boot: the map does not need it, and a
-    // rider who never opens the drawer should not pay for the fetch. Every
-    // open re-fetches — the endpoint carries an ETag keyed to the counters,
-    // so a repeat open is a 304 and the panel is never stale after a rental
-    // is counted.
+    // rider who never opens the drawer should not pay for the fetches. Every
+    // open re-fetches, so the panel is never older than the drawer's opening.
     if (id === "stats") {
       void renderFleetStats(need("fleet-stats"), "rider", {
         mountStory: mountStatsStory,
+        // The range card reads the feed the map already holds: no second
+        // download of the whole fleet for one median.
+        devices: () => devices.allFeatures(),
+        // Equity compliance is a statistic: its drawer opens from here, not
+        // from Tools. The tab is offscreen by design (see index.html).
+        openCompliance: () => {
+          const tab = document.querySelector<HTMLButtonElement>(
+            '.drawer-tab[data-drawer="compliance"]',
+          );
+          if (!tab) throw new Error("compliance drawer tab missing");
+          tab.click();
+        },
       }).catch((e) => {
         console.error("fleet stats render failed", e);
       });
