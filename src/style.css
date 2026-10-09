@@ -10827,3 +10827,36 @@ button.dibs-cert__close.btn-close:hover {
 .account-tabs {
   background: var(--bg-panel-solid);
 }
+
+/* ---------- Card × in the top-right CORNER (owner, 2026-10-09) ----------
+   The owner: "the X should be top right". As in-flow children of their heads
+   these ×s inherited the card's padding and sat well inside the corner. Pinned
+   to the card instead (each card is `position: relative`, above); the head
+   reserves the corner so a long title never runs under the button. 6 px keeps
+   the 44 px target inside the card's rounded corner with the 34 px face ~11 px
+   from both edges. The ride wizard is excluded, as above: its × shares a row
+   with Next. */
+.qr-scan__card .qr-scan__close.btn-close,
+.device-features__card .device-features__close.btn-close,
+.equity-receipt__card .equity-receipt__close.btn-close,
+.ride-preflight__card .ride-preflight__close.btn-close,
+.admin-analytics__card .admin-analytics__close.btn-close,
+.home-bar__sheet .home-bar__close.btn-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  margin: 0;
+  z-index: 1;
+}
+.qr-scan__head,
+.device-features__head,
+.equity-receipt__head,
+.ride-preflight__head,
+.admin-analytics__head,
+.home-bar__head {
+  padding-right: 48px;
+  /* The pinned × is 44 px from a 6 px inset: the head must be at least that
+     tall or the first row under it (Confirm Features' "+12 pts") runs into
+     the circle. */
+  min-height: 40px;
+}
