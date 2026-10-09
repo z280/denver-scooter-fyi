@@ -125,6 +125,13 @@ export function createArrivalPanel(
   panel.append(head, close, body);
   root.replaceChildren(panel);
 
+  /** The last live claim this panel saw, kept so the panel can say the claim
+   *  EXPIRED rather than silently dropping the line. `deps.dibs()` re-reads
+   *  the store, and the store only hands back live claims — so without this
+   *  the expired branch below was unreachable in the app: the clock simply
+   *  vanished at zero, which reads as "something broke", not "you lost it". */
+  let lastDibs: Dibs | null = null;
+
   /** The two clocks that matter while walking, and only when they matter.
    *
    *  Before they set off, the one that can lose them the scooter is the
@@ -134,10 +141,14 @@ export function createArrivalPanel(
    *  both at once would be two countdowns competing for the same glance, and
    *  the rider would have to work out which one was about to hurt them. */
   function dibsLine(): HTMLElement | null {
-    const d = deps.dibs?.() ?? null;
+    const live = deps.dibs?.() ?? null;
+    if (live) lastDibs = live;
+    // Gone before it ran out — released from Tools, or ridden. Nothing to say.
+    else if (lastDibs && dibsMsLeft(lastDibs) > 0) lastDibs = null;
+    const d = live ?? lastDibs;
     if (!d) return null;
     const left = dibsMsLeft(d);
-    if (left <= 0) return el("p", "arrival__dibs is-urgent", "✋ Your dibs expired");
+    if (left <= 0) return dibsEl(true, "✋ Your dibs expired");
 
     const mins = (ms: number): string => {
       const m = Math.floor(ms / 60_000);
@@ -145,18 +156,46 @@ export function createArrivalPanel(
     };
     if (d.startedWalkingAt === null) {
       const graceLeft = Math.max(0, d.claimedAt + DIBS_START_GRACE_MS - Date.now());
-      return el(
-        "p",
-        `arrival__dibs${graceLeft <= 3 * 60_000 ? " is-urgent" : ""}`,
-        `✋ Start walking within ${mins(graceLeft)} or your dibs expire`,
+      return dibsEl(
+        graceLeft <= 3 * 60_000,
+        "✋ Start walking within ",
+        mins(graceLeft),
+        " or your dibs expire",
       );
     }
-    return el(
-      "p",
-      `arrival__dibs${left <= 5 * 60_000 ? " is-urgent" : ""}`,
-      `✋ Dibs hold for another ${mins(left)}`,
-    );
+    return dibsEl(left <= 5 * 60_000, "✋ Dibs hold for another ", mins(left), "");
   }
+
+  /** One dibs line. The time is its own element so it can be read at a glance
+   *  (bigger, tabular figures) without changing the sentence around it — the
+   *  line's text is exactly what it always was. */
+  function dibsEl(urgent: boolean, lead: string, time?: string, tail?: string): HTMLElement {
+    const p = el("p", `arrival__dibs${urgent ? " is-urgent" : ""}`);
+    if (time === undefined) {
+      p.textContent = lead;
+      return p;
+    }
+    p.append(
+      document.createTextNode(lead),
+      el("strong", "arrival__dibs-time", time),
+      document.createTextNode(tail ?? ""),
+    );
+    return p;
+  }
+
+  /** Repaint just the clock, wherever it is on the current face. The walking
+   *  face is rebuilt on every GPS fix, but a rider standing still — or one who
+   *  has arrived, whose face is not rebuilt at all — would otherwise watch a
+   *  clock that never moves. */
+  function refreshDibsLine(): void {
+    if (destroyed || gone) return;
+    const next = dibsLine();
+    const cur = body.querySelector(".arrival__dibs");
+    if (cur && next) cur.replaceWith(next);
+    else if (cur) cur.remove();
+    else if (next) body.prepend(next);
+  }
+  const dibsTimer = deps.dibs ? window.setInterval(refreshDibsLine, 15_000) : 0;
 
   function renderWalking(state: WalkState): void {
     title.textContent = `🚶 ${formatWalkLeg(state)}`;
@@ -193,6 +232,11 @@ export function createArrivalPanel(
     // puts things it does not expect you to touch.
     sub.textContent = "Ready when you are";
     body.replaceChildren();
+
+    // The claim is still running while they stand here choosing a route, and
+    // that is when somebody walks up and asks — so the clock stays.
+    const dibs = dibsLine();
+    if (dibs) body.append(dibs);
 
     // Named and changeable, before a single route is computed against it.
     const destRow = el("div", "arrival__dest");
@@ -344,8 +388,11 @@ export function createArrivalPanel(
   return {
     update(state) {
       if (destroyed || gone) return;
-      if (state.arrived) setArrived();
-      else if (!arrived) renderWalking(state);
+      if (state.arrived) {
+        if (arrived) refreshDibsLine();
+        else setArrived();
+      } else if (!arrived) renderWalking(state);
+      else refreshDibsLine();
     },
     refreshDestination() {
       if (destroyed || gone || !arrived) return;
@@ -372,6 +419,7 @@ export function createArrivalPanel(
     },
     destroy() {
       destroyed = true;
+      window.clearInterval(dibsTimer);
       root.replaceChildren();
     },
   };

@@ -1842,6 +1842,153 @@ body.ride-active .arrival {
   display: none;
 }
 
+/* ====================================================================== */
+/* ---------- Dibs bar: what shows after "🛴 I'll ride this one" ---------- */
+/* Dibs-specific selectors ONLY, kept in this one block so the app-wide
+   close/primary-button restyle can land beside it without a conflict.
+
+   What was wrong (measured at 390×844 and 360×640, see PR):
+   - The "You've got dibs" toast and the arrival panel were BOTH pinned to the
+     home bar's slot (same `bottom`), the toast on top (z 45 vs 29). For its
+     nine seconds the toast hid the dibs clock and "I'm at the scooter"
+     entirely; the five-minute and "taken" alerts landed in the same place.
+   - `.arrival__dibs.is-urgent` and `.dibs-toast--urgent` read `--danger`,
+     which no theme defines, so the "urgent" clock was not red at all, and
+     the urgent toast used `--fail` (#c62828), ~3:1 on the dark panel.
+   - Several targets under 44px: the toast's View/Dismiss (36px), the
+     panel's × (34px), Change (36px), "It won't start" (38px).
+   - The countdown was a minute figure buried mid-sentence at 12.5px. */
+
+:root {
+  --dibs-urgent-ink: #9b1c13;
+}
+:root[data-theme="dark"] {
+  --dibs-urgent-ink: #ffb4ab;
+}
+
+/* THE TOAST GOES TO THE TOP. The bottom-centre slot belongs to the home bar
+   at rest and to the arrival panel during a walk, and a notice about the
+   walk must not sit on the walk. Under the top bar is where the app's other
+   transient notices (the discovery tips) already appear, and it leaves the
+   panel's clock and the walk route's far end in view. */
+.dibs-toast {
+  top: calc(var(--topbar-h) + var(--float-inset));
+  bottom: auto;
+  /* Same corner and finish as the arrival panel and the dibs sheets. */
+  border-radius: 18px;
+  padding: 10px 10px 10px 14px;
+  animation-name: dibs-toast-drop;
+}
+@keyframes dibs-toast-drop {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.dibs-toast__view {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 10px 14px;
+}
+.dibs-toast__view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.dibs-toast--urgent .dibs-toast__text strong {
+  color: var(--dibs-urgent-ink);
+}
+/* TWO BUTTONS GET THEIR OWN ROW. The move-watch alert ("Someone's riding X
+   right now" + Show me + Dismiss) shares this toast, and with both buttons
+   beside the text the sentence was squeezed into a 91px column, six lines
+   tall, at 360px. The sentence keeps the full width; the buttons split the
+   row under it. */
+.dibs-toast:has(.dibs-toast__view ~ .dibs-toast__view) {
+  flex-wrap: wrap;
+}
+.dibs-toast:has(.dibs-toast__view ~ .dibs-toast__view) .dibs-toast__text {
+  flex-basis: calc(100% - 40px);
+}
+.dibs-toast:has(.dibs-toast__view ~ .dibs-toast__view) .dibs-toast__view {
+  flex: 1 1 0;
+}
+/* A long disclosure must not push the button to a sliver at 360px. */
+@media (max-width: 380px) {
+  .dibs-toast {
+    gap: 8px;
+  }
+  .dibs-toast__glyph {
+    font-size: 17px;
+  }
+  .dibs-toast__view {
+    padding: 10px 12px;
+  }
+}
+
+/* The clock: a status row, left-aligned so it reads with the title above it,
+   with the time itself larger and in tabular figures so it can be read in
+   one glance from arm's length and does not jitter as it ticks. */
+.arrival__dibs {
+  display: block;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.arrival__dibs-time {
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.arrival__dibs.is-urgent {
+  color: var(--dibs-urgent-ink);
+  border-color: color-mix(in srgb, var(--dibs-urgent-ink) 35%, transparent);
+}
+
+/* 44px targets without changing what anything looks like: the hit area
+   grows by 6px a side (34px × → 46px, 36px Change → 48px tall), the drawn
+   shape does not. Kept to pseudo-elements so the shared
+   round-✕ face rule (and its upcoming restyle) is untouched. */
+.arrival__close::after,
+.arrival__dest-change::after,
+.dibs-cert__close::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.arrival__dest-change {
+  position: relative;
+}
+.arrival__action--quiet {
+  min-height: 44px;
+}
+/* The certificate's share control — the validation link — is the one a
+   rider presses mid-argument, one-handed. */
+.dibs-cert__copy {
+  min-height: 44px;
+}
+
+/* SHORT PHONES. At 360×640 the walking face took a quarter of the screen;
+   tighten the chrome around the content rather than shrink the content. */
+@media (max-height: 700px) {
+  .arrival {
+    padding: 12px 12px 10px;
+  }
+  .arrival__body {
+    margin-top: 10px;
+  }
+  .arrival__title {
+    font-size: 16px;
+  }
+  .arrival__action--primary {
+    min-height: 50px;
+  }
+}
+/* ---------- end Dibs bar ---------- */
+/* ====================================================================== */
+
 /* ---------- Metal: the finish on NAVIGATION, and nothing else ---------- */
 /* NO BRUSHED-SILVER IN THE TOP BAR. Not on the hamburger, not on Profile,
    and not on locate or zoom either.

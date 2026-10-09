@@ -220,6 +220,48 @@ describe("the dibs clock on the chip", () => {
     expect(line()).toContain("expired");
   });
 
+  it("says the claim expired when the store stops returning it at zero", () => {
+    // The store only hands back LIVE claims, so in the app an expired claim
+    // arrives as null. The panel must still say what happened rather than
+    // silently dropping the clock.
+    let held: ReturnType<typeof claim> | null = claim({ startedWalkingAt: Date.now() });
+    const p = mount({ dibs: () => held });
+    p.update(BASE);
+    expect(line()).toMatch(/Dibs hold for another/);
+    held = null;
+    // Pretend the 25 minutes ran out: the panel remembers the claim it saw.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 26 * 60_000;
+    try {
+      p.update({ ...BASE, remainingMeters: 200 });
+      expect(line()).toContain("Your dibs expired");
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("drops the line, not a false 'expired', when the claim is released early", () => {
+    let held: ReturnType<typeof claim> | null = claim();
+    const p = mount({ dibs: () => held });
+    p.update(BASE);
+    held = null;
+    p.update({ ...BASE, remainingMeters: 200 });
+    expect(root.querySelector(".arrival__dibs")).toBeNull();
+  });
+
+  it("sets the time apart so it reads at a glance, without changing the sentence", () => {
+    mount({ dibs: () => claim({ startedWalkingAt: Date.now() }) }).update(BASE);
+    expect(root.querySelector(".arrival__dibs .arrival__dibs-time")?.textContent).toMatch(/^\d+ min$/);
+    expect(line()).toMatch(/^✋ Dibs hold for another \d+ min$/);
+  });
+
+  it("keeps the clock on the arrived face", () => {
+    const p = mount({ dibs: () => claim({ startedWalkingAt: Date.now() }) });
+    p.update({ ...BASE, arrived: true });
+    expect(root.querySelector(".arrival.is-arrived .arrival__dibs")).not.toBeNull();
+    expect(line()).toMatch(/Dibs hold for another/);
+  });
+
   it("says nothing at all when the rider never called dibs", () => {
     // Most walks are not claims, and a clock for a claim that does not exist
     // is noise on the one surface that has to stay glanceable.
