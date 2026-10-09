@@ -28,7 +28,9 @@
 // (never innerHTML), a `cleanupFns[]` teardown list, a real focus trap.
 
 import { isAuthenticated } from "./map-auth.js";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
+import { applyNativeNumericInput, sanitizeNumeric } from "./ride-keypad.ts";
 import { track } from "./telemetry.ts";
 import { FEATURE_FILTER_KEYS, type FeatureFilterKey } from "./device-features.ts";
 import { ALL_MODELS, MODEL_NAMES, type ModelKey } from "./model-catalog.ts";
@@ -453,12 +455,22 @@ export function wireRideSpecPanel(
       ),
     );
 
-    const walk = el("input");
-    walk.type = "number";
-    walk.min = "1";
-    walk.max = "15";
+    // `text` + a numeric keypad rather than `type="number"`, so the field can
+    // be undo-free: WebKit edits a number field itself, every digit lands in the
+    // page-wide undo queue, and iOS offers it back as "Undo Typing" on every
+    // bump of a ride (see `ios-shake-undo.ts`; same trade as the plate fields in
+    // `ride-keypad.ts`). The 1–15 bound was always enforced by the `change`
+    // handler below, not by the browser, so nothing a rider can enter changes.
+    const walk = el("input", "spec-sheet__walk");
+    walk.type = "text";
+    applyNativeNumericInput(walk, { maxLength: 2 });
     walk.value = String(draft.maxWalkMinutes);
     walk.setAttribute("aria-label", "Longest walk to a scooter, in minutes");
+    walk.addEventListener("input", () => {
+      const clean = sanitizeNumeric(walk.value, 2);
+      if (clean !== walk.value) walk.value = clean;
+    });
+    markUndoFree(walk);
     walk.addEventListener("change", () => {
       const n = Number(walk.value);
       draft = {

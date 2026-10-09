@@ -20,6 +20,7 @@ import {
   type EquityAreaCollection,
 } from "./equity-areas.ts";
 import { EquityAreaMap, explainerHtml, indicatorState } from "./equity-map.ts";
+import { setRideLive } from "./ios-shake-undo.ts";
 
 const MAP = JSON.parse(
   readFileSync("public/equity-areas.geojson", "utf8"),
@@ -390,6 +391,25 @@ describe("the receipt button", () => {
     const root = openModal.mock.results[0].value as HTMLElement;
     root.querySelector<HTMLButtonElement>("[data-equity-receipt]")!.click();
     expect(openForm).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer the form while a ride is live", () => {
+    // The chip stays tappable through the riding view, and the form's date
+    // and time pickers are edits WebKit makes itself — undo entries the
+    // undo-free guard cannot keep out, offered back as "Undo Typing" on every
+    // bump (ios-shake-undo.ts). The explainer still opens; the door waits.
+    setRideLive(true);
+    try {
+      const openModal = modalHost();
+      const openForm = vi.fn();
+      const eq = new EquityAreaMap(fakeMap() as never, document.createElement("button"), openModal, openForm);
+      eq.explain();
+      expect(openModal).toHaveBeenCalledTimes(1);
+      const root = openModal.mock.results[0].value as HTMLElement;
+      expect(root.querySelector("[data-equity-receipt]")).toBeNull();
+    } finally {
+      setRideLive(false);
+    }
   });
 
   it("opens the form from the chip's explainer", () => {

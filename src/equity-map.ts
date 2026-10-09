@@ -34,6 +34,7 @@
 // map, which is the thing on screen.
 
 import type { Map as MLMap } from "maplibre-gl";
+import { isRideLive } from "./ios-shake-undo.ts";
 import { bandBefore } from "./map-bands.ts";
 import type {
   InspectHit,
@@ -174,7 +175,16 @@ export class EquityAreaMap implements InspectSource {
    *  behind it. Both entry points (the chip, the triple-tap) go through here
    *  so neither can end up with a dead button. */
   private openExplainer(title: string, areaName: string | null): void {
-    const openForm = this.openReceiptForm;
+    // NOT WHILE A RIDE IS LIVE. The chip stays on screen through the riding
+    // view (the HUD is a transparent, click-through frame there), so the
+    // explainer is one tap away mid-ride — and the receipt form behind it has
+    // a date and a time picker, which WebKit edits itself and the undo-free
+    // guard cannot cover (`ios-shake-undo.ts`). Anything they put in the undo
+    // queue mid-ride is offered back as "Undo Typing" on every bump. There is
+    // also nothing to file yet: a receipt is for a ride that has ended. The
+    // explainer itself has no fields, so it still opens; only the door to the
+    // form waits for the ride to finish.
+    const openForm = isRideLive() ? undefined : this.openReceiptForm;
     if (!openForm) {
       this.openModal(title, explainerHtml(areaName));
       return;

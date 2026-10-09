@@ -45,6 +45,7 @@ import {
   type DiscountReportResult,
 } from "./api.ts";
 import { RATE_PLANS, type RatePlanKey } from "./config.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { plateFromQr } from "./qr-utility.ts";
@@ -584,6 +585,14 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
     i.type = "text";
     i.inputMode = inputMode;
     i.setAttribute("autocomplete", autocomplete);
+    // Every text box here is a short structured figure (plate, minutes, a
+    // dollar amount), so there is no autocorrect to lose by keeping its edits
+    // out of WebKit's page-wide undo queue — and an entry left there is what
+    // iOS offers back as "Undo Typing" on every bump of the NEXT ride (see
+    // `ios-shake-undo.ts`). The date and time pickers below are not text
+    // fields and cannot be guarded this way; that is why `equity-map.ts` does
+    // not offer this form while a ride is live.
+    markUndoFree(i);
     return i;
   }
 

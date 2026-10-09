@@ -392,3 +392,48 @@ describe("the ladder re-renders when the model choice changes", () => {
     expect(ladderText()).toContain("any seated model");
   });
 });
+
+describe("the walk box stays out of the iOS undo queue", () => {
+  // `type="number"` is edited by WebKit itself, so every digit landed in the
+  // page-wide undo queue that iOS offers back as "Undo Typing" on every bump
+  // of a ride. It is a text box with a numeric keypad now, undo-free, and the
+  // 1–15 bound it always had is still enforced in JS (ios-shake-undo.ts).
+  async function walkBox(): Promise<HTMLInputElement> {
+    saveLocalSpec({ ...defaultSpec(), models: null });
+    harness().wire();
+    await flush();
+    editBtn().click();
+    await flush();
+    return document.querySelector<HTMLInputElement>(".ranks-modal .spec-sheet__walk")!;
+  }
+
+  it("is an undo-free text box with the numeric keypad", async () => {
+    const walk = await walkBox();
+    expect(walk.type).toBe("text");
+    expect(walk.getAttribute("data-undo-free")).toBe("on");
+    expect(walk.getAttribute("inputmode")).toBe("numeric");
+    expect(walk.getAttribute("pattern")).toBe("[0-9]*");
+    expect(walk.maxLength).toBe(2);
+    expect(walk.value).toBe(String(defaultSpec().maxWalkMinutes));
+  });
+
+  it("keeps the 1–15 clamp a number field's change handler applied", async () => {
+    const walk = await walkBox();
+    for (const [typed, kept] of [
+      ["40", "15"],
+      ["0", "1"],
+      ["7", "7"],
+    ] as const) {
+      walk.value = typed;
+      walk.dispatchEvent(new Event("change"));
+      expect(walk.value).toBe(kept);
+    }
+  });
+
+  it("drops anything that is not a digit as it is typed", async () => {
+    const walk = await walkBox();
+    walk.value = "1a.";
+    walk.dispatchEvent(new Event("input"));
+    expect(walk.value).toBe("1");
+  });
+});

@@ -9559,7 +9559,10 @@ input[data-ride-keypad="on"] {
 .range-row input[type="range"] {
   flex: 1;
 }
-.range-row input[type="number"] {
+.range-row input[type="number"],
+.range-row .spec-sheet__walk {
+  /* The walk box is `type="text"` + a numeric keypad (undo-free; see
+     ride-spec-panel.ts), so it is named by class rather than by type. */
   width: 5em;
 }
 /* The relaxation ladder, shown rather than described: a rider who can see

@@ -400,6 +400,36 @@ describe("clearing again, mid-ride", () => {
     btn.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     expect(frames()).toBe(0);
   });
+
+  // The 2026-10-09 audit: number/date/time boxes are edited by WebKit itself
+  // and can never be guarded, yet the second shot skipped them because they are
+  // not "text fields". None is reachable over the riding view today; this is
+  // the net for the next one.
+  it.each(["number", "date", "time", "datetime-local", "password"])(
+    "takes another shot when a %s box is left mid-ride",
+    (type) => {
+      setRideLive(true);
+      const box = field({ type, guard: false });
+      box.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      expect(frames()).toBe(1);
+    },
+  );
+
+  it("leaves a number box alone when no ride is running", () => {
+    const box = field({ type: "number", guard: false });
+    box.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    expect(frames()).toBe(0);
+  });
+
+  it.each(["checkbox", "radio", "range", "file", "color"])(
+    "ignores a %s, which never enters the undo queue",
+    (type) => {
+      setRideLive(true);
+      const box = field({ type, guard: false });
+      box.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      expect(frames()).toBe(0);
+    },
+  );
 });
 
 describe("coalescing the teardown", () => {
