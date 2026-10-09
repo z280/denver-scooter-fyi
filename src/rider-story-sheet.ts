@@ -168,7 +168,7 @@ export function mountStoryPanel(
         el(
           "p",
           "story-panel__hint",
-          "A Denver rider-advocacy project. They collect riders' accounts; we don't speak for them and they don't speak for us.",
+          "Our sister site for Denver riders: it collects riders' stories about Veo.",
         ),
       );
 
