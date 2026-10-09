@@ -446,7 +446,7 @@ describe("the ideal-scooter split, through the view", () => {
     });
     expect(v.rows[0].idealShare).toBeNull();
     expect(v.rows[0].chips.some((c) => c.kind === "ideal_share")).toBe(false);
-    expect(v.idealSplitNote).toBeNull();
+    expect(v.priorityNote).toBeNull();
   });
 
   it("offers to set one up, but only where a split is actually on the table", () => {
@@ -481,21 +481,21 @@ describe("the ideal-scooter split, through the view", () => {
       result: result({ plans: [idealLight, idealHeavy], walkOnly }),
       rate: rate("resident"),
       spec: COSMO_SPEC,
-      idealSplit: "prefer_ideal",
+      routePriority: "comfort",
     });
     expect(v.rows[0].idealShare).toBeGreaterThan(v.rows[1].idealShare!);
-    expect(v.idealSplitNote).toContain("ideal scooter");
+    expect(v.priorityNote).toContain("ideal scooter");
   });
 
-  it("leaves the planner's order alone under 'cheapest first'", () => {
+  it("leaves the planner's order alone under a price-led priority", () => {
     const v = planListView({
       result: result({ plans: [idealLight, idealHeavy], walkOnly }),
       rate: rate("resident"),
       spec: COSMO_SPEC,
-      idealSplit: "cheapest",
+      routePriority: "savings",
     });
     expect(v.rows[0].idealShare).toBeLessThan(v.rows[1].idealShare!);
-    expect(v.idealSplitNote).toBeNull();
+    expect(v.priorityNote).toBeNull();
   });
 
   it("orders AFTER the cap, so a promoted plan is never one about to be hidden", () => {
@@ -503,11 +503,11 @@ describe("the ideal-scooter split, through the view", () => {
       result: result({ plans: [idealLight, idealHeavy], walkOnly }),
       rate: rate("resident"),
       spec: COSMO_SPEC,
-      idealSplit: "prefer_ideal",
+      routePriority: "comfort",
       handOffCap: 0,
     });
     expect(v.rows).toHaveLength(0);
-    expect(v.idealSplitNote).toBeNull();
+    expect(v.priorityNote).toBeNull();
   });
 
   // HAVING A SPEC AND USING IT ARE DIFFERENT QUESTIONS, and the list used to
@@ -556,7 +556,7 @@ describe("the ideal-scooter split, through the view", () => {
       idealSpecInUse: false,
     });
     expect(v.rows[0].idealShare).toBeNull();
-    expect(v.idealSplitNote).toBeNull();
+    expect(v.priorityNote).toBeNull();
   });
 
   // The prompt is still right for the rider it was written for.

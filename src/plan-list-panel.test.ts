@@ -49,7 +49,7 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     freeMinutes: null,
     capNote: null,
     interviewNote: null,
-    idealSplitNote: null,
+    priorityNote: null,
     needsSpec: false,
     idealSpec: null,
     ...over,

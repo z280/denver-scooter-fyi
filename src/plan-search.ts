@@ -19,7 +19,7 @@
 //   * `now` IS PASSED, never defaulted to `Date.now()` inside the search.
 
 import { handOffCap } from "./plan-prefs.ts";
-import { idealSplit } from "./ideal-share.ts";
+import { routePriority, type FleetPoint } from "./route-priority.ts";
 import {
   rankPlans,
   type LngLat,
@@ -164,6 +164,24 @@ export function buildContext(
   };
 }
 
+/** The fleet as bare points, for `route-priority.ts`'s Flexibility count.
+ *
+ *  A projection and not a pass-through: that module is pure and knows nothing
+ *  about GeoJSON, and handing it the features would make the shape of our
+ *  feed its problem. Features without coordinates are dropped rather than
+ *  defaulted to (0, 0), which would plant a scooter in the Atlantic and count
+ *  it as company for every swap on earth. */
+function fleetPoints(feats: readonly FleetFeature[]): FleetPoint[] {
+  const out: FleetPoint[] = [];
+  for (const f of feats) {
+    const c = f.geometry?.coordinates;
+    if (!c || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) continue;
+    if (!f.properties) continue;
+    out.push({ properties: f.properties, lat: c[1], lon: c[0] });
+  }
+  return out;
+}
+
 /** Search, and shape the result into §2.4's rows. */
 export function searchPlans(
   deps: PlanSearchDeps,
@@ -172,7 +190,8 @@ export function searchPlans(
   const from = deps.origin();
   if (!from) return { kind: "no_fix" };
   const ctx = buildContext(deps, from, dest);
-  const result = rankPlans([...deps.fleet()], ctx);
+  const feats = [...deps.fleet()];
+  const result = rankPlans(feats, ctx);
   const freeMinutes = planningFreeMinuteEstimate(deps, ctx.rate);
   return {
     kind: "ok",
@@ -198,7 +217,10 @@ export function searchPlans(
       // The SAME context the search matched with, so the share and the filter
       // cannot disagree about the same vehicle.
       matchContext: { dest: { lat: dest.lat, lon: dest.lon } },
-      idealSplit: idealSplit(),
+      routePriority: routePriority(),
+      // The SAME fleet the search ran on, so Flexibility's count of what is
+      // standing at a swap cannot disagree with the plan that chose it.
+      fleet: fleetPoints(feats),
     }),
   };
 }

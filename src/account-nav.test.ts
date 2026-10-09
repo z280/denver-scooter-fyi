@@ -7,7 +7,7 @@ import { DIBS_SMS_SETTING_ID, DIBS_SMS_TOGGLE_ID, buildNavPanel } from "./accoun
 import { _resetFavoritesForTests, loadFavorites } from "./favorites.ts";
 import { readSlot } from "./favorite-slots.ts";
 import { MAX_HAND_OFFS_KEY, handOffCap } from "./plan-prefs.ts";
-import { idealSplit } from "./ideal-share.ts";
+import { ROUTE_PRIORITY_OPTIONS, routePriority } from "./route-priority.ts";
 
 const fakeStorage = () => {
   const store = new Map<string, string>();
@@ -174,12 +174,37 @@ describe("trip plans", () => {
     expect(hintOf()!.length).toBeGreaterThan(0);
   });
 
-  it("saves the split preference", () => {
+  it("saves the routing priority, whichever of the four it is", () => {
     buildNavPanel(host);
     const split = select("When a trip is split");
-    split.value = "prefer_ideal";
-    change(split);
-    expect(idealSplit()).toBe("prefer_ideal");
+    for (const option of ROUTE_PRIORITY_OPTIONS) {
+      split.value = option.value;
+      change(split);
+      expect(routePriority()).toBe(option.value);
+    }
+  });
+
+  it("offers all four priorities, each with its own hint", () => {
+    // Two of them — the Equity Area hunt and the fewest-hand-offs rider —
+    // had nowhere to go under the two-option control this replaced.
+    buildNavPanel(host);
+    const split = select("When a trip is split");
+    expect([...split.options].map((o) => o.value)).toEqual([
+      "comfort",
+      "savings",
+      "flexibility",
+      "simplicity",
+    ]);
+    const hintOf = () =>
+      split.parentElement!.querySelector(".account-hint")!.textContent ?? "";
+    const seen = new Set<string>();
+    for (const option of ROUTE_PRIORITY_OPTIONS) {
+      split.value = option.value;
+      change(split);
+      expect(hintOf().length).toBeGreaterThan(0);
+      seen.add(hintOf());
+    }
+    expect(seen.size).toBe(ROUTE_PRIORITY_OPTIONS.length);
   });
 
   it("says plainly when the split preference has nothing to prefer yet", () => {

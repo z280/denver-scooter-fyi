@@ -24,13 +24,13 @@
 
 import type { RankPlansResult, TripPlan, TripLeg } from "./along-the-way.ts";
 import { capNote, capPlans, type HandOffCap } from "./plan-prefs.ts";
+import { idealShare, idealShareChip } from "./ideal-share.ts";
 import {
-  idealShare,
-  idealShareChip,
-  idealSplitNote,
-  reorderForIdealShare,
-  type IdealSplit,
-} from "./ideal-share.ts";
+  orderByPriority,
+  routePriorityNote,
+  type FleetPoint,
+  type RoutePriority,
+} from "./route-priority.ts";
 import type { RatePlan } from "./config.ts";
 import {
   equityDisclosures,
@@ -158,7 +158,7 @@ export interface PlanListView {
    *  or null. Said only when it MOVED something: a standing explanation of a
    *  preference that changed nothing is a line riders learn to skip, and then
    *  miss on the day it matters. */
-  idealSplitNote: string | null;
+  priorityNote: string | null;
   /** True when no "ideal scooter" is configured. The surface offers to set one
    *  up — a preference about which scooter you get is worth nothing until the
    *  app knows which scooter you want. */
@@ -410,7 +410,21 @@ export interface PlanListInput {
   matchContext?: MatchContext;
   /** How to break a near-tie on price. Defaults to the cheapest-first
    *  behaviour every caller had before this preference existed. */
-  idealSplit?: IdealSplit;
+  /** Where along the route to swap, and on whose terms.
+   *
+   *  ABSENT MEANS "NOBODY ASKED", and the planner's own order survives
+   *  untouched. Not a default of `comfort`: this is a pure view function, and
+   *  a view that silently applies a preference its caller never expressed
+   *  cannot be used to test anything else — every assertion about the list
+   *  would be entangled with a reordering nobody requested. The real caller
+   *  (`plan-search.ts`) always passes the rider's stored answer, so the
+   *  absent case is for tests and for callers that predate the preference. */
+  routePriority?: RoutePriority;
+  /** For Flexibility, which asks whether other scooters the rider would
+   *  accept are standing at the swap. Absent is not empty — see
+   *  `swapCompany` — so a caller with no fleet to offer leaves it out and
+   *  Flexibility falls back to price rather than demoting every plan. */
+  fleet?: readonly FleetPoint[] | null;
 }
 
 /** Turn a search result into the rows §2.4 describes.
@@ -473,16 +487,23 @@ export function planListView(input: PlanListInput): PlanListView {
   // rather than a list half of which is about to be removed — otherwise a
   // promoted plan could be hidden a line later and the note would explain a
   // reordering nobody can observe.
-  const { rows: ordered, moved } = reorderForIdealShare(
-    kept,
-    input.idealSplit ?? "cheapest",
-  );
+  const priority = input.routePriority ?? null;
+  const order =
+    priority === null
+      ? { rows: [...kept], moved: false, capUnmet: false }
+      : orderByPriority(kept, priority, {
+          spec,
+          fleet: input.fleet,
+          match: input.matchContext,
+        });
+  const ordered = order.rows;
 
   return {
     rows: ordered,
     capNote: capNote(hidden, cap),
     interviewNote: input.interviewNote ?? null,
-    idealSplitNote: idealSplitNote(moved, spec !== null),
+    priorityNote:
+      priority === null ? null : routePriorityNote(order, priority, spec !== null),
     // Asked only when there is a multi-scooter plan on offer. Prompting a
     // rider to configure an ideal scooter on a list of one-scooter plans is
     // asking them to answer a question nothing is about to use.

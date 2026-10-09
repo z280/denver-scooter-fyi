@@ -33,10 +33,10 @@ import {
   type FavoriteSlotId,
 } from "./favorite-slots.ts";
 import {
-  IDEAL_SPLIT_OPTIONS,
-  idealSplit,
-  setIdealSplit,
-} from "./ideal-share.ts";
+  ROUTE_PRIORITY_OPTIONS,
+  routePriority,
+  setRoutePriority,
+} from "./route-priority.ts";
 import {
   HAND_OFF_CAP_OPTIONS,
   handOffCap,
@@ -193,32 +193,42 @@ export function buildNavPanel(
   capWrap.append(capSelect, capHint, capStatus.node);
   planning.append(capWrap);
 
-  // HOW a split trip divides, once the rider has accepted one. Separate from
-  // the cap above because they answer different questions: the cap is "will I
-  // switch at all", this is "given that I am switching, which one do I want to
-  // be on for most of it". A rider who capped hand-offs at zero never sees
-  // this one fire, and that is fine — it costs them one row they can ignore,
-  // where folding the two into a single control would mean neither said what
-  // it meant.
+  // WHERE ALONG THE ROUTE to swap, once the rider has accepted a split.
+  // Separate from the cap above because they answer different questions: the
+  // cap is "will I switch at all", this is "given that I am switching, on
+  // whose terms". A rider who capped hand-offs at zero never sees this one
+  // fire, and that is fine — it costs them one row they can ignore, where
+  // folding the two into a single control would mean neither said what it
+  // meant.
+  //
+  // FOUR OPTIONS AND NOT TWO. Its ancestor offered "More of my ideal scooter"
+  // against "Cheapest", which is this same axis flattened to the point where
+  // two of the four answers had nowhere to go: a rider hunting the Equity
+  // Area discount and a rider who simply wants the fewest hand-offs were both
+  // filed under "Cheapest", and the list behaved identically for them.
   const splitStatus = makeStatus();
   const splitWrap = el("div", "account-field");
   splitWrap.append(el("span", "control-label", "When a trip is split"));
   const splitSelect = el("select", "select");
   splitSelect.setAttribute("aria-label", "When a trip is split");
-  for (const option of IDEAL_SPLIT_OPTIONS) {
+  for (const option of ROUTE_PRIORITY_OPTIONS) {
     const opt = el("option", undefined, option.label);
     opt.value = option.value;
     splitSelect.append(opt);
   }
   const splitHint = el("p", "account-hint");
   const paintSplitHint = (): void => {
-    const chosen = IDEAL_SPLIT_OPTIONS.find((o) => o.value === splitSelect.value);
+    const chosen = ROUTE_PRIORITY_OPTIONS.find((o) => o.value === splitSelect.value);
     splitHint.textContent = chosen?.hint ?? "";
   };
   splitSelect.addEventListener("change", () => {
-    const next = splitSelect.value === "cheapest" ? "cheapest" : "prefer_ideal";
+    // Read back through the option list rather than casting the raw value: a
+    // <select> can only hold what we put in it today, and a cast would stop
+    // being true the moment somebody adds a fifth option elsewhere.
+    const next = ROUTE_PRIORITY_OPTIONS.find((o) => o.value === splitSelect.value);
+    if (!next) return;
     paintSplitHint();
-    splitStatus.set(setIdealSplit(next) ? "Saved." : NOT_PERSISTED);
+    splitStatus.set(setRoutePriority(next.value) ? "Saved." : NOT_PERSISTED);
   });
   splitWrap.append(splitSelect, splitHint, splitStatus.node);
   planning.append(splitWrap);
@@ -491,7 +501,7 @@ export function buildNavPanel(
     const cap = handOffCap();
     capSelect.value = cap === null ? "any" : String(cap);
     paintCapHint();
-    splitSelect.value = idealSplit();
+    splitSelect.value = routePriority();
     paintSplitHint();
     const hasSpec = deps.hasIdealSpec?.() ?? false;
     splitNeedsSpec.textContent = hasSpec
