@@ -546,16 +546,29 @@ function select(
   let pickupList = byProgress;
   let equityPickups = 0;
   if (hunting && endable.length > byProgress.length) {
+    // THE QUOTA IS A CEILING, NOT THE ONLY ONE. Capped against the pool it is
+    // displacing as well as against itself, and the arithmetic is why: with
+    // `pickups: 2` and four area vehicles, an uncapped reserve made the slice
+    // `byProgress.slice(0, 2 - 4)`, and a NEGATIVE end index counts from the
+    // end in JS, so it silently returned []. The pool came back four long
+    // against a budget of two, with every progress-ranked pickup evicted.
+    //
+    // `- 1` keeps one of them alive. The progress ranking is what lets a plan
+    // REACH the destination; a pool made entirely of midpoints can hand the
+    // rider off and then strand them. On the default budget of 12 this is not
+    // binding — the quota of 4 is — and it only does work on the narrow
+    // budgets a candidates response can set.
+    const room = Math.min(EQUITY_PICKUP_QUOTA, Math.max(0, byProgress.length - 1));
     const chosen = new Set(byProgress);
     const reserve = endable
       .filter((c) => !chosen.has(c) && isInEquityArea(c.at.lng, c.at.lat) === true)
-      .slice(0, EQUITY_PICKUP_QUOTA);
+      .slice(0, room);
     if (reserve.length > 0) {
       // Inside the budget, not on top of it: drop the WEAKEST progress-ranked
       // entries to make room, so a server that narrowed `bounds.pickups` for
       // performance still gets the pool size it asked for.
       equityPickups = reserve.length;
-      pickupList = [...byProgress.slice(0, bounds.pickups - reserve.length), ...reserve];
+      pickupList = [...byProgress.slice(0, byProgress.length - reserve.length), ...reserve];
     }
   }
 

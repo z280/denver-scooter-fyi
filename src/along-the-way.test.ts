@@ -1168,6 +1168,36 @@ describe("rankPlans — the Equity Area hunt", () => {
     expect(res.equityPickups).toBe(0);
   });
 
+  it("never spends more pickups than the budget, however many areas there are", async () => {
+    // REVIEWER'S FINDING, and it bites harder than a count: `reserve` was
+    // capped at EQUITY_PICKUP_QUOTA (4) but not at the budget, so with
+    // `pickups: 2` and four eligible area vehicles the slice became
+    // `byProgress.slice(0, 2 - 4)` — and a NEGATIVE end index is read from
+    // the end in JS, so it silently returned []. The pool came back with
+    // four entries against a budget of two, and every progress-ranked pickup
+    // was evicted: no vehicle near the destination survived at all.
+    await withEquityAreas();
+    const crowded = [
+      feature(nearEq(-1950), { device_id: "starter", vehicle_identifier: "starter" }),
+      feature(nearEq(-100), { device_id: "area-1", vehicle_identifier: "area-1" }),
+      feature(EQ, { device_id: "area-2", vehicle_identifier: "area-2" }),
+      feature(nearEq(100), { device_id: "area-3", vehicle_identifier: "area-3" }),
+      feature(nearEq(200), { device_id: "area-4", vehicle_identifier: "area-4" }),
+      feature(nearEq(1800), { device_id: "near-dest-1", vehicle_identifier: "near-dest-1" }),
+      feature(nearEq(1850), { device_id: "near-dest-2", vehicle_identifier: "near-dest-2" }),
+    ];
+    const res = rankPlans(crowded, eqCtx({ seekEquitySwaps: true }));
+
+    expect(res.equityPickups).toBeLessThanOrEqual(2);
+    const ridden = new Set(everyVehicle(res));
+    ridden.delete("starter");
+    expect(ridden.size).toBeLessThanOrEqual(2);
+    // And the hunt never takes the pool over entirely: a plan still has to be
+    // able to REACH the destination, which is what the progress ranking is
+    // for. One survivor is the floor.
+    expect([...ridden].some((v) => v.startsWith("near-dest"))).toBe(true);
+  });
+
   it("does not displace the pool when there is nothing in an area", async () => {
     await withEquityAreas();
     const noArea = [
