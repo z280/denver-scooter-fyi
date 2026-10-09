@@ -1,12 +1,7 @@
-// @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { countdownFor, formatCountdown, wireMyDibs } from "./my-dibs.ts";
-import {
-  DIBS_START_GRACE_MS,
-  setDibsReleaseHook,
-  type Dibs,
-} from "./dibs.ts";
+import { countdownFor, formatCountdown } from "./my-dibs.ts";
+import { DIBS_START_GRACE_MS, type Dibs } from "./dibs.ts";
 
 const T0 = 1_770_000_000_000;
 
@@ -65,93 +60,5 @@ describe("the countdown", () => {
     const late = countdownFor(claim(), T0 + 8 * 60_000);
     expect(calm.urgent).toBe(false);
     expect(late.urgent).toBe(true);
-  });
-});
-
-describe("the My dibs list", () => {
-  let section: HTMLElement;
-  let list: HTMLElement;
-
-  // The release hook is module state in dibs.ts, so one left armed here goes
-  // on firing through every later test — the same hazard favorites.ts's own
-  // reset helper exists for.
-  afterEach(() => setDibsReleaseHook(null));
-
-  beforeEach(() => {
-    localStorage.clear();
-    document.body.replaceChildren();
-    section = document.createElement("section");
-    list = document.createElement("ul");
-    section.append(list);
-    document.body.append(section);
-  });
-
-  const mount = (over: Partial<Parameters<typeof wireMyDibs>[0]> = {}) =>
-    wireMyDibs({
-      section,
-      list,
-      onOpenCertificate: () => {},
-      onChanged: () => {},
-      now: () => T0,
-      ...over,
-    });
-
-  it("hides the whole section when nothing is held", () => {
-    // An empty "My dibs" heading is a permanent reminder of a feature you
-    // are not using.
-    const h = mount();
-    expect(section.hidden).toBe(true);
-    h.destroy();
-  });
-
-  it("shows a row per held claim, with its clock", () => {
-    localStorage.setItem(
-      "scooter-fyi-dibs",
-      JSON.stringify({ v: 1, dibs: [claim()] }),
-    );
-    const h = mount();
-    expect(section.hidden).toBe(false);
-    expect(list.querySelectorAll(".my-dibs__row")).toHaveLength(1);
-    expect(list.textContent).toContain("Lunar 🐸 928");
-    expect(list.querySelector(".my-dibs__clock")?.textContent).toContain("to set off");
-    h.destroy();
-  });
-
-  it("releases LOCALLY and tells the server, in that order", () => {
-    // Local first so the button answers instantly; the server call is what
-    // every other rider's map reads, and skipping it would leave the claim
-    // live for them — and reading as a stranger's to the person who just
-    // released it.
-    localStorage.setItem(
-      "scooter-fyi-dibs",
-      JSON.stringify({ v: 1, dibs: [claim()] }),
-    );
-    // The server is told through `dibs.ts`'s release hook, which every
-    // giving-up in the app now goes through — this panel used to call the API
-    // itself, which left the other four release buttons telling the server
-    // nothing. Asserted on the hook rather than on a dep of this panel,
-    // because the hook is where the guarantee actually lives now.
-    const released = vi.fn();
-    setDibsReleaseHook(released);
-    const onChanged = vi.fn();
-    const h = mount({ onChanged });
-
-    list.querySelector<HTMLButtonElement>(".my-dibs__btn--release")!.click();
-
-    expect(released).toHaveBeenCalledTimes(1);
-    expect(released.mock.calls[0][0].vehicleIdentifier).toBe("aaaa1111bbbb2222");
-    expect(onChanged).toHaveBeenCalledTimes(1);
-    // Gone from storage, and the section folds away with it.
-    expect(localStorage.getItem("scooter-fyi-dibs")).not.toContain("aaaa1111bbbb2222");
-    expect(section.hidden).toBe(true);
-    h.destroy();
-  });
-
-  it("stops ticking once destroyed", () => {
-    // The interval outliving the panel would repaint a detached list forever.
-    const clear = vi.spyOn(window, "clearInterval");
-    mount().destroy();
-    expect(clear).toHaveBeenCalled();
-    clear.mockRestore();
   });
 });

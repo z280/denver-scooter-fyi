@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./geocode.ts", () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
 
-import { buildNavPanel } from "./account-nav.ts";
+import { DIBS_SMS_SETTING_ID, DIBS_SMS_TOGGLE_ID, buildNavPanel } from "./account-nav.ts";
 import { _resetFavoritesForTests, loadFavorites } from "./favorites.ts";
 import { readSlot } from "./favorite-slots.ts";
 import { MAX_HAND_OFFS_KEY, handOffCap } from "./plan-prefs.ts";
@@ -204,5 +204,20 @@ describe("refresh", () => {
     handle.refresh();
 
     expect(select("Switching scooters").value).toBe("0");
+  });
+});
+
+describe("the dibs SMS switch, as the certificate's link finds it", () => {
+  it("is the Calling dibs SMS checkbox, under ids the certificate link targets", () => {
+    buildNavPanel(host);
+    const input = host.querySelector<HTMLInputElement>(`#${DIBS_SMS_TOGGLE_ID}`);
+    const label = host.querySelector<HTMLElement>(`#${DIBS_SMS_SETTING_ID}`);
+    expect(input?.type).toBe("checkbox");
+    expect(label?.contains(input!)).toBe(true);
+    expect(label?.textContent).toContain("Notify me via SMS if my dibs are disrespected");
+    // Focusable even while the switch is disabled (no verified phone), so the
+    // link can still land on it and the hint beside it.
+    expect(label?.tabIndex).toBe(-1);
+    expect(input?.closest(".account-section")?.textContent).toContain("Calling dibs");
   });
 });

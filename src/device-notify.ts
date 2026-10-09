@@ -23,7 +23,23 @@
 //   * `ride_end` — the scooter the rider has just finished riding. One, for a
 //     few hours, offered once at the end of the ride.
 //
-// Both origins answer "is this vehicle still available to ME", which is the
+//   * `admin` — added by PLATE from the Tools drawer, by a session the server
+//     calls an admin (2026-10-09, owner request). The one origin that needs no
+//     connection to the vehicle, which is exactly why it is not a rider
+//     feature: it is an operator's tool for following up a specific scooter
+//     (a misparked one, a reported one), and it is offered only to the handful
+//     of accounts already trusted with every admin surface in the app. Capped
+//     at ten and alive for a day, so even an admin's list is not a standing
+//     subscription. See `WATCH_RULES.admin`.
+//
+//     The gate is the UI's, because a watch is client-side: nothing here can
+//     stop somebody hand-writing a row into localStorage, and nothing here
+//     ever could — this browser is the only party it informs. What the gate
+//     does guarantee is that no ordinary rider is ever OFFERED it, and admin
+//     watches are dropped when the session stops being an admin's
+//     (`dropAdminWatches`).
+//
+// The first two answer "is this vehicle still available to ME", which is the
 // question the feature was for. Neither can be pointed at a vehicle the rider
 // has never been to, because arming one requires having claimed it (and walked
 // toward it) or ridden it.
@@ -75,9 +91,12 @@ import { distanceMeters, type LngLat } from "./locate.ts";
 
 export const NOTIFY_MOVED_KEY = "scooter-fyi-notify-moved";
 
-/** Where a watch is allowed to come from. See the header: these two are the
- *  whole list, and adding a third is a policy change, not a feature. */
-export type WatchOrigin = "dibs" | "ride_end";
+/** Where a watch is allowed to come from. See the header: these three are the
+ *  whole list, and adding a fourth is a policy change, not a feature. */
+export type WatchOrigin = "dibs" | "ride_end" | "admin";
+
+/** Every origin, for validation and for tests that walk the policy. */
+export const WATCH_ORIGINS: readonly WatchOrigin[] = ["dibs", "ride_end", "admin"];
 
 /** The policy, as data, so every caller is held to the same numbers and the
  *  tests can read them rather than restate them.
@@ -101,12 +120,20 @@ export const WATCH_RULES: Record<
   // Two hours: long enough for "can I get it again after dinner", short
   // enough that it is not a subscription to wherever it ends up overnight.
   ride_end: { max: 1, ttlMs: 2 * 60 * 60_000 },
+  // Admin, by plate. TEN, because an operator following up a batch of reports
+  // wants more than a rider's one or two, and a list longer than ten is no
+  // longer something anyone reads in a drawer. TWENTY-FOUR HOURS, because a
+  // follow-up is a today job — and a watch that outlived its day would be the
+  // standing subscription the header refuses, just held by somebody trusted.
+  // Adding an eleventh drops the OLDEST admin watch, the same per-origin
+  // eviction as the other two (`addWatch`); the form says so before it does.
+  admin: { max: 10, ttlMs: 24 * 60 * 60_000 },
 };
 
 /** Total ceiling, derived rather than declared so it cannot drift from the
  *  rules above. Used for the storage read's own sanity slice. */
 export const MAX_WATCHED_DEVICES =
-  WATCH_RULES.dibs.max + WATCH_RULES.ride_end.max;
+  WATCH_RULES.dibs.max + WATCH_RULES.ride_end.max + WATCH_RULES.admin.max;
 
 /** How far a scooter has to be from where we started watching before we call it
  *  moved.
@@ -188,7 +215,7 @@ function isValidWatch(w: unknown): w is WatchedDevice {
     Number.isFinite(r.lon) &&
     typeof r.since === "number" &&
     Number.isFinite(r.since) &&
-    (r.origin === "dibs" || r.origin === "ride_end") &&
+    WATCH_ORIGINS.includes(r.origin as WatchOrigin) &&
     typeof r.expiresAt === "number" &&
     Number.isFinite(r.expiresAt)
   );
@@ -303,6 +330,17 @@ export function watchMoved(watch: WatchedDevice): WatchedDevice[] {
 export function unwatchMoved(vehicleIdentifier: string): WatchedDevice[] {
   const next = removeWatch(loadWatches(), vehicleIdentifier);
   persist(next);
+  return next;
+}
+
+/** Drop every admin-origin watch — the session that added them is no longer an
+ *  admin's (signed out, or the server stopped saying so). Returns the new list.
+ *  A no-op write is skipped, so calling it on every signed-out render costs a
+ *  read. */
+export function dropAdminWatches(): WatchedDevice[] {
+  const current = loadWatches();
+  const next = current.filter((w) => w.origin !== "admin");
+  if (next.length !== current.length) persist(next);
   return next;
 }
 

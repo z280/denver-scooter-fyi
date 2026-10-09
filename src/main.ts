@@ -1,6 +1,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 import "./stats.css";
+import "./tools-drawer.css";
 
 import {
   fetchDevicesAuto,
@@ -26,8 +27,13 @@ import {
 } from "./ride-reentry.ts";
 import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
-import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
-import { openDibsCertificate, showDibsAlertToast } from "./dibs-certificate.ts";
+import { wireToolsMine, type ToolsMineHandle } from "./tools-mine.ts";
+import {
+  openDibsCertificate,
+  setDibsSmsSettingsOpener,
+  showDibsAlertToast,
+} from "./dibs-certificate.ts";
+import { DIBS_SMS_SETTING_ID, DIBS_SMS_TOGGLE_ID } from "./account-nav.ts";
 import { createDibsNotifier, requestDibsNotifications } from "./dibs-notify.ts";
 import {
   Devices,
@@ -159,14 +165,11 @@ import {
   startTrip,
   tripComplete,
 } from "./trip-legs.ts";
-import {
-  showMovedToast,
-  wireDeviceNotifyPanel,
-  type DeviceNotifyPanelHandle,
-} from "./device-notify-panel.ts";
+import { showMovedToast } from "./device-notify-panel.ts";
 import {
   WATCH_RULES,
   createDeviceNotifier,
+  dropAdminWatches,
   isWatched,
   loadWatches,
   requestMovedNotifications,
@@ -233,6 +236,8 @@ import { createRideTrail } from "./ride-trail.ts";
 import { createRideRouteLine } from "./ride-route-line.ts";
 import { createRoutePreview } from "./route-preview.ts";
 import { openAnalyticsReport } from "./admin-analytics.ts";
+import { openAdminModal } from "./admin-modal.ts";
+import { wireAdminDrawer } from "./admin-drawer.ts";
 import {
   buildLocalDataPanel,
   type LocalDataHandle,
@@ -601,17 +606,9 @@ const clusters = new Clusters(
   need<HTMLSelectElement>("cluster-region-layer"),
   overlays,
 );
-// Tools drawer: confirm features for a scooter identified by its QR code
-// alone — no map tap, no vehicle preselected. The scan is mandatory (it is
-// the only statement of WHICH scooter), so the modal opens in requireQr
-// mode; status is unknowable until the server resolves the scan, and the
-// modal hides its status badge when no vehicle is passed.
-need<HTMLButtonElement>("tools-confirm-qr").addEventListener("click", () => {
-  openConfirmFeatures({
-    requireQr: true,
-    status: "needs_features_confirmed",
-  });
-});
+// No "Confirm features by QR" in Tools any more (2026-10-09): the ribbon's
+// Scan button below does exactly that in its `features` mode, so the Tools
+// copy was a second door to one modal.
 // The ribbon's QR tool: one scan, a dial in front of it deciding what the scan
 // does. See `qr-utility.ts` for why it is a dial and not two buttons, and
 // `qr-ride-scan.ts` for the four things a scan can mean to a ride. The listener
@@ -648,24 +645,60 @@ need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () =>
 });
 // Public, unlike the admin reports below — the hourly fleet history is the
 // same aggregate count the map footer already shows, just over time.
-// The compliance calendar, reachable from two places on purpose: Tools,
-// where a rider browsing what the app can do will find it, and inside
-// Equity Compliance, where someone already reading today's number wants
-// "and what about the other days".
-for (const id of ["tools-compliance-calendar", "compliance-open-calendar"]) {
-  need<HTMLButtonElement>(id).addEventListener("click", () => {
-    openComplianceCalendar();
-  });
+// The dibs certificate's "Text me about this dib: turn SMS on or off". The
+// switch is on the Account drawer's Navigation tab, under Calling dibs
+// (`account-nav.ts`), so this opens that drawer on that tab — through the same
+// `accountTab` deep-link stamp the leaderboard and the sign-in hints use — and
+// then brings the switch into view and focuses it. Already open on another
+// tab: pick Navigation from the strip instead, because a second click on the
+// account button would close the drawer.
+function openDibsSmsSetting(): void {
+  const btn = document.querySelector<HTMLButtonElement>(
+    '.topbar__right .drawer-tab[data-drawer="account"]',
+  );
+  if (!btn) return;
+  if (btn.classList.contains("is-active")) {
+    document
+      .querySelector<HTMLButtonElement>('#drawer-account .account-tab[data-tab="nav"]')
+      ?.click();
+  } else {
+    btn.dataset.accountTab = "nav";
+    btn.click();
+  }
+  // Two frames: one for the drawer and tab to become visible, one for layout,
+  // or scrollIntoView measures a panel that is still display:none.
+  window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => {
+      const label = document.getElementById(DIBS_SMS_SETTING_ID);
+      if (!label) return;
+      label.scrollIntoView({ block: "center", behavior: "smooth" });
+      const input = document.getElementById(DIBS_SMS_TOGGLE_ID) as HTMLInputElement | null;
+      // A disabled switch cannot take focus; its label can, and the hint
+      // beside it is the thing to read when it is disabled. Retried, because
+      // a drawer still sliding in refuses focus until it has arrived.
+      const target = input && !input.disabled ? input : label;
+      for (const ms of [0, 200, 450]) {
+        window.setTimeout(() => {
+          if (document.activeElement !== target) target.focus({ preventScroll: true });
+        }, ms);
+      }
+      label.classList.add("is-pinged");
+      window.setTimeout(() => label.classList.remove("is-pinged"), 2400);
+    }),
+  );
 }
+setDibsSmsSettingsOpener(openDibsSmsSetting);
+
+// The compliance calendar lives inside Equity Compliance, where someone
+// already reading today's number wants "and what about the other days". Tools
+// carried a second copy of this button until 2026-10-09; one door to the
+// drawer is enough, and the calendar is the drawer's own second section.
+need<HTMLButtonElement>("compliance-open-calendar").addEventListener("click", () => {
+  openComplianceCalendar();
+});
 
 need<HTMLButtonElement>("tools-devices-history").addEventListener("click", () => {
   openAnalyticsReport("devices");
-});
-need<HTMLButtonElement>("tools-admin-traffic").addEventListener("click", () => {
-  openAnalyticsReport("traffic");
-});
-need<HTMLButtonElement>("tools-admin-events").addEventListener("click", () => {
-  openAnalyticsReport("events");
 });
 // Mode switches sweep every open floating surface (closeAllPopups).
 registerPopupCloser(() => devices.closePopup());
@@ -706,8 +739,58 @@ let qualityOn: QualityFilter = "any";
 let featuresOn: ReadonlySet<FeatureFilterKey> = new Set();
 let lastAreaState: AreaFilterState | null = null;
 // Chip-clear + preset hooks, assigned by their wire* functions.
-/** "Notify me if moved", in the Tools drawer. Null until boot wires it. */
-let notifyPanel: DeviceNotifyPanelHandle | null = null;
+/** The top of the Tools drawer: every dib and watch, one row per scooter
+ *  (`tools-mine.ts`). Null until boot wires it. */
+let toolsMine: ToolsMineHandle | null = null;
+/** The last admin answer the server gave, kept because the account drawer can
+ *  resolve it before the map has loaded and the Tools list exists. */
+let adminSessionOn = false;
+/** The add-a-watch-by-plate host: `tools-mine.ts` builds its form into it,
+ *  the ⚙ Admin drawer shows it. Created here so both can hold it before
+ *  either is wired. */
+const adminWatchHost = document.createElement("div");
+adminWatchHost.id = "tools-mine-admin";
+adminWatchHost.hidden = true;
+/** Assigned inside wireAccount(): the account drawer's own reactions to a
+ *  rejected token and to this session's admin rights being revoked. */
+let accountAuthLost: () => void = () => {};
+let accountAdminRevoked: () => void = () => {};
+/** ⚙ Admin — every admin control, behind a tab only an admin sees. */
+const adminDrawer = wireAdminDrawer({
+  tab: (() => {
+    const t = document.querySelector<HTMLElement>('.drawer-tab[data-drawer="admin"]');
+    if (!t) throw new Error("Missing the ⚙ Admin tab");
+    return t;
+  })(),
+  body: need("admin-panel"),
+  close: () => need("drawer-admin").querySelector<HTMLButtonElement>(".drawer-close")?.click(),
+  watchHost: adminWatchHost,
+  openManageAdmins: () =>
+    openAdminModal({
+      onAuthLost: () => accountAuthLost(),
+      // Removing your OWN row is the one action here that changes what this
+      // session may do; the client's copy of "am I admin" is pushed once per
+      // token, so it has to be dropped here — which hides this very drawer.
+      onAdminRevoked: () => accountAdminRevoked(),
+    }),
+  openReport: (kind) => openAnalyticsReport(kind),
+});
+/** The one place the admin flag lands (fe#48's push, from the account
+ *  drawer's /auth/session read, sign-out, or self-removal). Everything that
+ *  differs for an admin follows it live. */
+function applyAdminSession(on: boolean): void {
+  // Popups: admins skip the proximity gates (issue #18).
+  devices.setAdminSession(on);
+  adminSessionOn = on;
+  adminDrawer.setAdmin(on);
+  toolsMine?.setAdmin(on);
+  // A session that stops being an admin's takes its admin watches with it
+  // (device-notify.ts, WATCH_RULES.admin).
+  if (!on) {
+    dropAdminWatches();
+    toolsMine?.refresh();
+  }
+}
 
 /** The thing that actually tells the rider. Created eagerly rather than at
  *  boot, because the bell's handler and the panel's Stop both need to clear its
@@ -726,7 +809,7 @@ const deviceNotifier = createDeviceNotifier({
   // was armed with is stale the moment the thing moves.
   onFired: (watch) => {
     unwatchMoved(watch.vehicleIdentifier);
-    notifyPanel?.refresh();
+    toolsMine?.refresh();
     devices.refreshOpenPopup();
   },
 });
@@ -1442,30 +1525,52 @@ map.on("load", async () => {
   wireIgnoreDibs();
   wireDibsAlerts();
   wireReachFilter();
-  // "Notify me if moved", in Tools where Favorite Scooters used to be. The
-  // popup's 🔔 and this panel's Stop buttons write to the same local store, so
-  // there is one list and one set of sentences rather than two that drift.
-  notifyPanel = wireDeviceNotifyPanel({
-    section: need("tools-notify-moved"),
-    list: need("notify-moved-list"),
-    status: need("notify-moved-status"),
+  // Every dib and every watch, one row per scooter, at the top of Tools —
+  // `tools-mine.ts`. Its Stop goes through the notifier as well as the store,
+  // so a watch re-armed later does not inherit the old one's miss count or
+  // already-fired flag; its Release re-fetches claims so the map un-dims.
+  toolsMine = wireToolsMine({
+    section: need("tools-mine"),
+    list: need("tools-mine-list"),
+    status: need("tools-mine-status"),
+    adminHost: adminWatchHost,
     locate,
-    onShowOnMap: (w) => map.easeTo({ center: [w.lon, w.lat], zoom: 17 }),
-    // Dropping a watch from the panel has to un-press the bell on an open
-    // popup and clear the notifier's bookkeeping for that vehicle, or a
-    // re-armed watch inherits a miss count from the one before it.
-    // The panel's Stop goes through here rather than straight to the store, so
-    // the notifier's per-vehicle bookkeeping is cleared in the same breath — a
-    // watch re-armed later must not inherit the old one's miss count or its
-    // already-fired flag.
-    remove: (vehicleIdentifier) => {
-      const next = unwatchMoved(vehicleIdentifier);
-      deviceNotifier.forget(vehicleIdentifier);
-      return next;
+    // Re-read rather than closing over the row's copy: the server registration
+    // may have landed since the list was built, and that copy has the QR.
+    onOpenCertificate: (d: Dibs) => openDibsCertificate(dibsOn(d.vehicleIdentifier) ?? d),
+    onShowOnMap: (w) => showMovedDevice(w),
+    onDibsChanged: () => refreshLiveDibs(),
+    onWatchStopped: (vid) => {
+      deviceNotifier.forget(vid);
+      devices.refreshOpenPopup();
     },
-    // ...and the bell on an open popup has to un-press.
-    onChanged: () => devices.refreshOpenPopup(),
+    onWatchAdded: (vid) => {
+      deviceNotifier.forget(vid);
+      void requestMovedNotifications();
+      devices.refreshOpenPopup();
+    },
+    // Admin add-by-plate: the resolve endpoint names a vehicle; the live feed
+    // supplies where it is and what the rest of the app calls it.
+    findVehicle: (vid, plate) => {
+      const f = devices
+        .allFeatures()
+        .find((x) => x.properties.vehicle_identifier === vid);
+      if (!f) return null;
+      const p = f.properties;
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      return {
+        name: vehicleDisplayName(
+          p.public_name ?? null,
+          plate,
+          p.vehicle_model_name ?? null,
+          p.plate_suffix ? String(p.plate_suffix) : null,
+        ),
+        lat,
+        lon,
+      };
+    },
   });
+  toolsMine.setAdmin(adminSessionOn);
   // NO BELL ON THE DEVICE POPUP. There used to be one, and removing it is the
   // point rather than a side effect — see `device-notify.ts`'s header. A watch
   // armable from any scooter on the map is a "tell me when this address's
@@ -1510,7 +1615,7 @@ map.on("load", async () => {
     });
     deviceNotifier.forget(claim.vehicleIdentifier);
     void requestMovedNotifications();
-    notifyPanel?.refresh();
+    toolsMine?.refresh();
     return `We'll tell you if ${claim.vehicleName} moves before you get there.`;
   };
 
@@ -1535,21 +1640,9 @@ map.on("load", async () => {
     });
     deviceNotifier.forget(vehicleIdentifier);
     void requestMovedNotifications();
-    notifyPanel?.refresh();
+    toolsMine?.refresh();
     return true;
   };
-
-  // My dibs, in Tools. Kept in step with the map: releasing one from here has
-  // to un-dim that scooter and rebuild any open popup, which is exactly what
-  // `refreshLiveDibs` already does for a claim landing.
-  myDibs = wireMyDibs({
-    section: need("tools-my-dibs"),
-    list: need("my-dibs-list"),
-    onOpenCertificate: (d: Dibs) => openDibsCertificate(d),
-    // Re-fetch rather than mutate a local copy: the server has just been told
-    // to expire the row, and its answer is the one every other rider sees.
-    onChanged: () => refreshLiveDibs(),
-  });
 
   // Direct manipulation: clicking a visible region polygon toggles it in
   // the area filter (clicks on device dots/clusters keep their popups).
@@ -3683,7 +3776,6 @@ let dibsClaimant = "Someone with the app";
  *  whether somebody has called it rather than gaining the notice a beat
  *  later. Failure is silent and total — no claims visible is the same as no
  *  claims, and a dibs lookup must never be why the map stops updating. */
-let myDibs: MyDibsHandle | null = null;
 
 /** How often held claims are re-checked for an alert.
  *
@@ -3932,7 +4024,7 @@ function refreshLiveDibs(): void {
       devices.setVehicleDibs(dibs);
       // A claim made from a scooter popup has to show up in Tools without a
       // reload — this is the one place that runs on every dibs change.
-      myDibs?.refresh();
+      toolsMine?.refresh();
     })
     .catch(() => {
       /* the map is the point; this is a garnish on it */
@@ -5285,7 +5377,7 @@ function wireDrawers(): void {
     // Same for the watch list in Tools: a watch can be armed from a map popup
     // or fire and remove itself while the drawer is shut, so re-read on every
     // open. It reads `localStorage`, so this costs nothing.
-    if (id === "tools") notifyPanel?.refresh();
+    if (id === "tools") toolsMine?.refresh();
     // Same, for the same reason and more so: every figure on the trip panel —
     // the destination, the route's own ETA, which leg is current, the planning
     // preference — can change while this drawer is shut, and a ride changes
@@ -5642,14 +5734,18 @@ function wireAccount(): void {
       if (!tabs.isEnabled(tabs.selected())) tabs.select("inride", { force: true });
 
       if (auth) {
+        // The ⚙ Admin drawer's Manage admins modal reports back through
+        // these, so a rejected token or a self-removal there lands exactly as
+        // it would have from the badge it used to live in.
+        accountAuthLost = () => render();
+        accountAdminRevoked = () => {
+          if (signedIn?.revokeAdmin) signedIn.revokeAdmin();
+          else applyAdminSession(false);
+        };
         signedIn = renderSignedInAccount(loginHost, auth, {
-          setAdminSession: (on2) => {
-            devices.setAdminSession(on2);
-            // The Tools drawer's Admin tools section exists only for a
-            // session the server has called an admin; the analytics
-            // endpoints behind its buttons are require_admin regardless.
-            need("tools-admin").hidden = !on2;
-          },
+          // The ⚙ Admin tab, its drawer, the popups' proximity bypass and the
+          // admin watch form all follow this one push.
+          setAdminSession: (on2) => applyAdminSession(on2),
           // A rejected token has already been cleared from storage;
           // re-running render() lands in the signed-out branch.
           onAuthLost: () => render(),
@@ -5689,8 +5785,7 @@ function wireAccount(): void {
         buildSignedOut();
         // A signed-out map must not keep showing the previous session's
         // admin affordances — same reasoning as the home/work pin clear.
-        devices.setAdminSession(false);
-        need("tools-admin").hidden = true;
+        applyAdminSession(false);
       }
 
       if (tabs.isEnabled("local")) {

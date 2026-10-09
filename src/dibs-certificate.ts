@@ -24,11 +24,23 @@ import {
   type Dibs,
 } from "./dibs.ts";
 import type { DibsAlert } from "./dibs-notify.ts";
+import { dibsSmsAlerts } from "./dibs-prefs.ts";
 import { fyiSvg, markSvg } from "./mark.ts";
 import { track } from "./telemetry.ts";
 
 export interface DibsCertificateHandle {
   close(): void;
+}
+
+/** Where "turn SMS on or off" goes. The switch itself lives in the Account
+ *  drawer's Navigation tab, under Calling dibs (`account-nav.ts`), and only
+ *  `main.ts` can open a drawer — so it registers the way there, and a
+ *  certificate opened before it has (or in a test) simply has no link rather
+ *  than one that goes nowhere. */
+let smsSettingsOpener: (() => void) | null = null;
+
+export function setDibsSmsSettingsOpener(fn: (() => void) | null): void {
+  smsSettingsOpener = fn;
 }
 
 /** Open the certificate over everything. Returns a handle so a caller that
@@ -225,8 +237,31 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   }
   rules.append(summary, list);
 
+  // THE WAY TO THE SMS SWITCH. A certificate is where a rider is thinking
+  // about this claim, and "will I hear if somebody takes it" is the question
+  // it raises — so the answer is one tap away, and says which way it is set
+  // now. The certificate closes on the way, because the drawer it opens sits
+  // underneath it.
+  let smsRow: HTMLElement | null = null;
+  const openSms = smsSettingsOpener;
+  if (openSms) {
+    smsRow = el("p", "dibs-cert__sms");
+    const link = el("button", "dibs-cert__sms-link", "Text me about this dib: turn SMS on or off");
+    link.type = "button";
+    link.addEventListener("click", () => {
+      track("dibs", { action: "sms_settings" });
+      dismiss();
+      openSms();
+    });
+    smsRow.append(
+      link,
+      el("span", "dibs-cert__sms-state", dibsSmsAlerts() ? "SMS alerts are on" : "SMS alerts are off"),
+    );
+  }
+
   card.append(close, brand, title, body, live, qrWrap, qrCap);
   if (copyRow) card.append(copyRow);
+  if (smsRow) card.append(smsRow);
   card.append(rules, fine);
   backdrop.append(card);
   document.body.append(backdrop);

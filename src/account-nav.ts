@@ -125,6 +125,10 @@ function makeStatus(): StatusLine {
   };
 }
 
+/** The dibs SMS switch's ids — see the Calling dibs section below. */
+export const DIBS_SMS_TOGGLE_ID = "dibs-sms-toggle";
+export const DIBS_SMS_SETTING_ID = "dibs-sms-setting";
+
 function section(title: string): HTMLElement {
   const sec = el("section", "account-section");
   sec.append(el("h3", "account-section__title", title));
@@ -260,6 +264,13 @@ export function buildNavPanel(
   const smsLabel = el("label", "switch account-switch");
   const smsInput = el("input");
   smsInput.type = "checkbox";
+  // Named, because the dibs certificate links here ("turn SMS on or off") and
+  // has to find the switch to scroll to it. `DIBS_SMS_SETTING_ID` is the
+  // label, focusable even while the switch is disabled for want of a phone —
+  // that is when the hint beside it matters most.
+  smsInput.id = DIBS_SMS_TOGGLE_ID;
+  smsLabel.id = DIBS_SMS_SETTING_ID;
+  smsLabel.tabIndex = -1;
   smsLabel.append(
     smsInput,
     el("span", undefined, "Notify me via SMS if my dibs are disrespected"),

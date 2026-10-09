@@ -6,12 +6,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  MAX_WATCHED_DEVICES,
   MISSING_TICKS_BEFORE_GONE,
   MOVED_METERS,
   NOTIFY_MOVED_KEY,
   WATCH_RULES,
   addWatch,
   createDeviceNotifier,
+  dropAdminWatches,
   isAlertable,
   isWatched,
   loadWatches,
@@ -467,5 +469,53 @@ describe("the notifier", () => {
     notifier.check([w], lookupOf({ [w.vehicleIdentifier]: eastOf(300) }));
     expect(inApp).toHaveBeenCalledTimes(1);
     expect(onFired).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the admin watch rule (add by plate, admins only)", () => {
+  const vid = (n: number) => n.toString(16).padStart(16, "0");
+
+  it("is ten at once, for a day", () => {
+    // A follow-up is a today job, and a list longer than ten is no longer read.
+    expect(WATCH_RULES.admin).toEqual({ max: 10, ttlMs: 24 * 60 * 60_000 });
+  });
+
+  it("does not loosen the rider rules beside it", () => {
+    expect(WATCH_RULES.dibs.max).toBe(2);
+    expect(WATCH_RULES.ride_end).toEqual({ max: 1, ttlMs: 2 * 60 * 60_000 });
+    expect(MAX_WATCHED_DEVICES).toBe(13);
+  });
+
+  it("caps admin watches at ten, dropping the oldest admin one and nothing else", () => {
+    let list: WatchedDevice[] = [
+      watch({ vehicleIdentifier: "d".repeat(16), origin: "dibs" }),
+      watch({ vehicleIdentifier: "e".repeat(16), origin: "ride_end" }),
+    ];
+    for (let i = 1; i <= 11; i++) {
+      list = addWatch(list, watch({ vehicleIdentifier: vid(i), origin: "admin", since: i }));
+    }
+    const admin = list.filter((w) => w.origin === "admin");
+    expect(admin).toHaveLength(10);
+    expect(admin.some((w) => w.vehicleIdentifier === vid(1))).toBe(false);
+    expect(list.some((w) => w.origin === "dibs")).toBe(true);
+    expect(list.some((w) => w.origin === "ride_end")).toBe(true);
+    expect(watchSlotsLeft(list, "admin")).toBe(0);
+    // ...and the rider's own slots are untouched by an admin's list.
+    expect(watchSlotsLeft(list, "dibs")).toBe(1);
+  });
+
+  it("survives a storage round trip, and expires on its own clock", () => {
+    const now = 1_800_000_000_000;
+    watchMoved(watch({ origin: "admin", since: now, expiresAt: now + WATCH_RULES.admin.ttlMs }));
+    expect(loadWatches(now + 60_000).map((w) => w.origin)).toEqual(["admin"]);
+    expect(loadWatches(now + WATCH_RULES.admin.ttlMs + 1)).toEqual([]);
+  });
+
+  it("is dropped, alone, when the session stops being an admin's", () => {
+    watchMoved(watch({ vehicleIdentifier: "a".repeat(16), origin: "dibs" }));
+    watchMoved(watch({ vehicleIdentifier: "b".repeat(16), origin: "admin" }));
+    const next = dropAdminWatches();
+    expect(next.map((w) => w.origin)).toEqual(["dibs"]);
+    expect(loadWatches().map((w) => w.origin)).toEqual(["dibs"]);
   });
 });
