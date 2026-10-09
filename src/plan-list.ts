@@ -99,6 +99,20 @@ export interface PlanRow {
   /** This row IS the walk-only plan. The surface treats it differently — there
    *  is no vehicle to claim and no cost to show. */
   isWalkOnly: boolean;
+  /** The vehicle leg TWO starts on — where the rider swaps — or null on a plan
+   *  with no hand-off.
+   *
+   *  Carried so a surface can offer to go and look at it. The hand-off is the
+   *  part of a split plan a rider cannot picture from the text: "park it and
+   *  take another" names an action but not a PLACE, and the place is what
+   *  decides whether the plan is acceptable. Leg one's vehicle is already
+   *  `firstVehicle` and is not a swap — it is the walk the rider is about to
+   *  take.
+   *
+   *  `DeviceProperties` carries no coordinates, so a surface that wants to put
+   *  this on a map looks the feature up by `device_id`, exactly as
+   *  `takePlanRow` already does for the first vehicle and the hand-off list. */
+  switchoverVehicle: TripLeg["vehicle"] | null;
 }
 
 export interface PlanListView {
@@ -134,6 +148,11 @@ export interface PlanListView {
    *  hidden" does not answer it. Null when nothing was hidden, which is the
    *  common case and the default. */
   capNote: string | null;
+  /** What the rider's interview answer did to this search, in their terms, or
+   *  null. Said BECAUSE the complaint this answers was that the answer
+   *  vanished: a rider who is told "showing Cosmos, which is what you asked
+   *  for" can see their input arrived. */
+  interviewNote: string | null;
   /** The ideal-split preference reordered this list, in the rider's own words,
    *  or null. Said only when it MOVED something: a standing explanation of a
    *  preference that changed nothing is a line riders learn to skip, and then
@@ -143,6 +162,21 @@ export interface PlanListView {
    *  up — a preference about which scooter you get is worth nothing until the
    *  app knows which scooter you want. */
   needsSpec: boolean;
+  /** The rider's ideal scooter, when they HAVE one, so the surface can ask
+   *  whether to proceed with it instead of silently applying it.
+   *
+   *  WHY ASKING IS BETTER THAN APPLYING. The sheet is standing state: it was
+   *  filled in once and binds every search afterwards. That is right for a
+   *  preference and wrong for THIS trip, where a rider in a hurry may happily
+   *  take the scruffy scooter they would normally decline — and until they can
+   *  see the sheet is in force, a short list reads as an empty city rather than
+   *  as their own filter. So it is named, with a way to stand it down for this
+   *  search and a way to go and change it.
+   *
+   *  Null when there is nothing to confirm: either no spec at all (`needsSpec`
+   *  covers that) or a spec that asks for nothing, where offering to turn it
+   *  off would invent a choice. */
+  idealSpec: { summary: string; inUse: boolean } | null;
 }
 
 export const ESTIMATE_NOTE =
@@ -326,6 +360,24 @@ export interface PlanListInput {
    *  that explains what the SEARCH gave up — into something that also covers a
    *  setting the rider could change in two taps. */
   handOffCap?: HandOffCap;
+  /** One line naming what the rider's interview answer did to this search, or
+   *  null when it did nothing (or was never asked).
+   *
+   *  PASSED IN AND NOT DERIVED, because this module knows nothing about the
+   *  wizard and should not start: it is handed a `spec` that has already been
+   *  narrowed, and cannot tell which of the narrowing came from a sheet the
+   *  rider filled in months ago and which from a question asked on the way out
+   *  of the door. `interview-spec.ts` can, so it writes the sentence and this
+   *  only finds it a place to sit. */
+  interviewNote?: string | null;
+  /** The rider's ideal scooter in one line (`specSummary`), or null/absent when
+   *  there is nothing to confirm. Handed in, not composed here. */
+  idealSpecSummary?: string | null;
+  /** Whether that sheet was actually applied to THIS search. False after the
+   *  rider stands it down, which is what lets the surface show the sheet and
+   *  its own off-state in the same row. Defaults true, which is what every
+   *  caller before the control existed meant. */
+  idealSpecInUse?: boolean;
   /** The rider's saved "ideal scooter", or null when they have not made one.
    *  Null is NOT `defaultSpec()`: a share computed against a spec that
    *  requires nothing is 100% for every vehicle in the city, which is an empty
@@ -355,7 +407,8 @@ export function planListView(input: PlanListInput): PlanListView {
 
   const allRows = result.plans.map((plan): PlanRow => {
     const saving = baseline ? startInAreaSaving(plan, baseline, rate) : null;
-    const first = rideLegs(plan)[0];
+    const ridden = rideLegs(plan);
+    const first = ridden[0];
     // THE PLAN'S OWN SHAPE, not `plan === result.walkOnly`.
     //
     // Identity happens to hold today — `searchOnce` pushes the same object into
@@ -377,6 +430,10 @@ export function planListView(input: PlanListInput): PlanListView {
       disclosures: equityDisclosures(plan, rate, saving),
       saving,
       firstVehicle: first?.vehicle ?? null,
+      // Leg TWO's vehicle: where the rider swaps. `?? null` and not `!`,
+      // because a one-scooter plan has no second ride leg and the walk-only
+      // plan has none at all.
+      switchoverVehicle: ridden[1]?.vehicle ?? null,
       idealShare: idealShare(plan, spec, input.matchContext ?? {}),
       isWalkOnly,
     };
@@ -401,11 +458,19 @@ export function planListView(input: PlanListInput): PlanListView {
   return {
     rows: ordered,
     capNote: capNote(hidden, cap),
+    interviewNote: input.interviewNote ?? null,
     idealSplitNote: idealSplitNote(moved, spec !== null),
     // Asked only when there is a multi-scooter plan on offer. Prompting a
     // rider to configure an ideal scooter on a list of one-scooter plans is
     // asking them to answer a question nothing is about to use.
     needsSpec: spec === null && ordered.some((r) => r.plan.handOffs > 0),
+    // Only when there IS a sheet and it asks for something. The summary is
+    // handed in rather than composed here, for the same reason `interviewNote`
+    // is: naming models is not this module's job.
+    idealSpec:
+      input.idealSpecSummary && spec !== null
+        ? { summary: input.idealSpecSummary, inUse: input.idealSpecInUse ?? true }
+        : null,
     estimateNote: ESTIMATE_NOTE,
     relaxedLabels: result.relaxed.map((f) => RELAXED_FIELD_LABEL[f]),
     capRelaxed: result.capRelaxed,

@@ -34,6 +34,7 @@ function row(over: Partial<PlanRow> = {}): PlanRow {
     firstVehicle: { device_id: "d1", vehicle_identifier: "v1" } as PlanRow["firstVehicle"],
     idealShare: null,
     isWalkOnly: false,
+    switchoverVehicle: null,
     ...over,
   };
 }
@@ -47,8 +48,10 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
     riskWarning: null,
     freeMinutes: null,
     capNote: null,
+    interviewNote: null,
     idealSplitNote: null,
     needsSpec: false,
+    idealSpec: null,
     ...over,
   };
 }
@@ -56,13 +59,14 @@ function view(over: Partial<PlanListView> = {}): PlanListView {
 function mount(v: PlanListView, deps: Partial<Parameters<typeof createPlanListPanel>[2]> = {}) {
   const root = document.createElement("div");
   document.body.append(root);
+  // SPREAD, not an allow-list. This used to name each optional dep, so every
+  // control added to the panel was silently un-wired in every test that tried
+  // to exercise it — three of them, until this changed. The two required ones
+  // still get a default so a caller can omit them.
   const handle = createPlanListPanel(root, v, {
-    onChoose: deps.onChoose ?? vi.fn(),
-    onCancel: deps.onCancel ?? vi.fn(),
-    ...(deps.onRefresh ? { onRefresh: deps.onRefresh } : {}),
-    ...(deps.onCorrectFreeMinutes
-      ? { onCorrectFreeMinutes: deps.onCorrectFreeMinutes }
-      : {}),
+    onChoose: vi.fn(),
+    onCancel: vi.fn(),
+    ...deps,
   });
   return { root, handle };
 }
@@ -133,10 +137,124 @@ describe("the plan list panel", () => {
     expect(root.textContent).toContain("Nothing we can offer");
   });
 
-  it("closes on the ✕", () => {
+  it("asks whether to proceed with the ideal scooter, and offers to configure it", () => {
+    // The sheet is standing state applied to every search. A rider in a hurry
+    // may happily take the scruffy scooter they normally decline — and until
+    // they can SEE the sheet is in force, a short list reads as an empty city
+    // rather than as their own filter.
+    const onToggleIdealSpec = vi.fn();
+    const onConfigureSpec = vi.fn();
+    const { root } = mount(
+      view({ idealSpec: { summary: "Cosmo · 40%+ battery", inUse: true } }),
+      { onToggleIdealSpec, onConfigureSpec },
+    );
+    expect(root.textContent).toContain("Cosmo · 40%+ battery");
+
+    const box = root.querySelector<HTMLInputElement>(".planlist__specswitch input")!;
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(onToggleIdealSpec).toHaveBeenCalledWith(false);
+
+    root.querySelector<HTMLButtonElement>(".planlist__specedit")!.click();
+    expect(onConfigureSpec).toHaveBeenCalled();
+  });
+
+  it("shows the sheet as a statement when the host cannot act on it", () => {
+    // A live-looking switch that does nothing is worse than a plain sentence.
+    const { root } = mount(
+      view({ idealSpec: { summary: "Apollo", inUse: true } }),
+      {},
+    );
+    expect(
+      root.querySelector<HTMLInputElement>(".planlist__specswitch input")!.disabled,
+    ).toBe(true);
+  });
+
+  it("reflects the sheet being stood down", () => {
+    const { root } = mount(
+      view({ idealSpec: { summary: "Apollo", inUse: false } }),
+      { onToggleIdealSpec: vi.fn() },
+    );
+    expect(
+      root.querySelector<HTMLInputElement>(".planlist__specswitch input")!.checked,
+    ).toBe(false);
+  });
+
+  it("offers the interview's own three answers, marking the current one", () => {
+    // Same question the wizard asked, changeable without walking back through
+    // it — so the same values and, as far as a button allows, the same words.
+    const onSetPriority = vi.fn();
+    const { root } = mount(view(), {
+      priority: () => "quality",
+      onSetPriority,
+    });
+    const btns = [...root.querySelectorAll<HTMLButtonElement>(".planlist__priobtn")];
+    expect(btns).toHaveLength(3);
+    expect(btns.map((b) => b.getAttribute("aria-pressed"))).toEqual([
+      "false",
+      "true",
+      "false",
+    ]);
+    btns[2].click();
+    expect(onSetPriority).toHaveBeenCalledWith("distance");
+  });
+
+  it("offers no priority control when the host cannot re-solve", () => {
+    const { root } = mount(view(), {});
+    expect(root.querySelectorAll(".planlist__priobtn")).toHaveLength(0);
+  });
+
+  it("offers the 🔍 only on a plan that has a hand-off", () => {
+    // "Park it and take another" names an action, not a PLACE — and the place
+    // decides whether the plan is acceptable at all.
+    const onShowSwitchover = vi.fn();
+    const swap = { device_id: "dev-2" } as PlanRow["switchoverVehicle"];
+    const { root } = mount(
+      view({
+        rows: [
+          { ...row(), switchoverVehicle: swap },
+          { ...row(), switchoverVehicle: null },
+        ],
+      }),
+      { onShowSwitchover },
+    );
+    const peeks = [...root.querySelectorAll<HTMLButtonElement>(".planlist__peek")];
+    expect(peeks).toHaveLength(1);
+    // The glyph is decorative; the label carries the meaning.
+    expect(peeks[0].getAttribute("aria-label")).toMatch(/swap/i);
+    peeks[0].click();
+    expect(onShowSwitchover).toHaveBeenCalledTimes(1);
+    expect(onShowSwitchover.mock.calls[0][0].switchoverVehicle).toBe(swap);
+  });
+
+  it("offers no 🔍 when the host cannot act on it", () => {
+    const { root } = mount(
+      view({
+        rows: [
+          {
+            ...row(),
+            switchoverVehicle: { device_id: "dev-2" } as PlanRow["switchoverVehicle"],
+          },
+        ],
+      }),
+      {},
+    );
+    expect(root.querySelectorAll(".planlist__peek")).toHaveLength(0);
+  });
+
+  it("dismisses through a labelled button, not a corner ✕", () => {
+    // It had a corner ✕ while it floated over the map. In the Recommended
+    // drawer that ✕ stacked under the drawer's OWN close button — two in one
+    // corner, one of which shuts the whole menu. The label also says what
+    // happens: the ranked scooters are below, and that is where the rider lands.
     const onCancel = vi.fn();
     const { root } = mount(view(), { onCancel });
-    root.querySelector<HTMLButtonElement>(".planlist__close")!.click();
+    const dismiss = root.querySelector<HTMLButtonElement>(".planlist__dismiss");
+    expect(dismiss).toBeTruthy();
+    expect(dismiss!.textContent).toMatch(/scooter/i);
+    expect(root.querySelector(".planlist__close")).toBeNull();
+    dismiss!.click();
     expect(onCancel).toHaveBeenCalled();
   });
 
@@ -286,34 +404,8 @@ describe("the plan list panel", () => {
   });
 });
 
-describe("the card looks like a scroll when it is one", () => {
-  it("marks itself at-end when nothing is below the fold", () => {
-    // happy-dom reports zero for every layout figure, so `scrollHeight` and
-    // `clientHeight` are both 0 — which is exactly the un-scrollable case, and
-    // the one where a fade over the final button would make a live control
-    // look disabled.
-    const host = document.createElement("div");
-    document.body.append(host);
-    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
-    expect(host.querySelector(".planlist")?.classList.contains("is-at-end")).toBe(true);
-  });
-
-  it("drops the mark once there is content below, and restores it at the bottom", () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    createPlanListPanel(host, view(), { onChoose: () => {}, onCancel: () => {} });
-    const card = host.querySelector<HTMLElement>(".planlist")!;
-
-    // Stand in for layout happy-dom will not do: a card twice as tall as its
-    // window, scrolled to the top.
-    Object.defineProperty(card, "scrollHeight", { value: 600, configurable: true });
-    Object.defineProperty(card, "clientHeight", { value: 300, configurable: true });
-    card.scrollTop = 0;
-    card.dispatchEvent(new Event("scroll"));
-    expect(card.classList.contains("is-at-end")).toBe(false);
-
-    card.scrollTop = 300;
-    card.dispatchEvent(new Event("scroll"));
-    expect(card.classList.contains("is-at-end")).toBe(true);
-  });
-});
+// NO SCROLL-EDGE TESTS. The card used to be a fixed overlay and so its own
+// scroll container; a `mask-image` fade and an `is-at-end` class kept a
+// half-scrolled row from reading as a button clipped flat. It is a section
+// inside the Recommended drawer now and the DRAWER scrolls, so there is no
+// inner edge to clip anything and nothing for the panel to measure.

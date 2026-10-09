@@ -203,3 +203,111 @@ describe("the panel", () => {
     ).toBe(false);
   });
 });
+
+describe("Clear my trip", () => {
+  function mountClear(
+    opts: {
+      dest?: TripPanelState["dest"];
+      onClear?: () => void;
+      blocked?: string | null;
+    } = {},
+  ) {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const onClear = opts.onClear ?? vi.fn();
+    const handle = buildTripPanel(host, {
+      state: () => state({ dest: opts.dest === undefined ? HOME : opts.dest }),
+      onClear,
+      clearBlockedReason: () => opts.blocked ?? null,
+    });
+    const btn = (label: string) =>
+      [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+        (b) => b.textContent === label,
+      );
+    return { host, handle, onClear, btn };
+  }
+
+  it("asks before it clears", () => {
+    // It throws away a destination the rider typed and a plan they chose, and
+    // nothing else in the app remembers either.
+    const { onClear, btn } = mountClear();
+    btn("Clear my trip")!.click();
+    expect(onClear).not.toHaveBeenCalled();
+
+    expect(btn("Yes, clear it")).toBeDefined();
+    btn("Yes, clear it")!.click();
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes 'Keep it' for an answer", () => {
+    const { onClear, btn } = mountClear();
+    btn("Clear my trip")!.click();
+    btn("Keep it")!.click();
+    expect(onClear).not.toHaveBeenCalled();
+    expect(btn("Clear my trip")).toBeDefined();
+    expect(btn("Yes, clear it")).toBeUndefined();
+  });
+
+  it("disarms the confirm when the drawer is reopened", () => {
+    // A half-answered "are you sure?" found later is one tap from throwing the
+    // trip away, and the rider's answer was for the moment they were asked.
+    const { handle, btn } = mountClear();
+    btn("Clear my trip")!.click();
+    handle.refresh();
+    expect(btn("Yes, clear it")).toBeUndefined();
+    expect(btn("Clear my trip")).toBeDefined();
+  });
+
+  it("re-reads the host's state after clearing instead of assuming", () => {
+    // Whatever the clear did or did not manage to drop, the panel shows what
+    // is actually there afterwards.
+    const host = document.createElement("div");
+    document.body.append(host);
+    let dest: TripPanelState["dest"] = HOME;
+    buildTripPanel(host, {
+      state: () => state({ dest }),
+      onClear: () => {
+        dest = null;
+      },
+      clearBlockedReason: () => null,
+    });
+    const btn = (label: string) =>
+      [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+        (b) => b.textContent === label,
+      );
+    btn("Clear my trip")!.click();
+    btn("Yes, clear it")!.click();
+    expect(host.textContent).toContain("No destination yet");
+  });
+
+  it("refuses out loud during a ride rather than hiding the button", () => {
+    const { onClear, btn, host } = mountClear({
+      blocked: "You're on a ride. End it first.",
+    });
+    const clear = btn("Clear my trip")!;
+    expect(clear.disabled).toBe(true);
+    expect(host.textContent).toContain("End it first");
+    clear.click();
+    expect(onClear).not.toHaveBeenCalled();
+    expect(btn("Yes, clear it")).toBeUndefined();
+  });
+
+  it("is absent when there is nothing to clear", () => {
+    // An enabled button that does nothing teaches the rider it does nothing.
+    const { btn, host } = mountClear({ dest: null });
+    expect(btn("Clear my trip")).toBeUndefined();
+    expect(host.textContent).toContain("No destination yet");
+  });
+
+  it("is absent when the host wired no handler", () => {
+    // The host owns the session doc, the pending trip, the ledger and the
+    // pins. This module can reach none of them, so a button here without one
+    // would clear nothing at all.
+    const host = document.createElement("div");
+    document.body.append(host);
+    buildTripPanel(host, { state: () => state() });
+    expect(
+      [...host.querySelectorAll("button")].some((b) => b.textContent === "Clear my trip"),
+    ).toBe(false);
+  });
+});

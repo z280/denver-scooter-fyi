@@ -9,7 +9,9 @@ import {
   type BoundaryLayer,
   type DeviceInclude,
   fetchProfile,
+  claimDibsAsMine,
   liveDibs,
+  registerDibs,
   releaseDibs,
   updateProfile,
   type SavedPlace,
@@ -26,7 +28,7 @@ import { initialTheme, mountThemeModes, startSunSync } from "./theme.ts";
 import { RecenterControl } from "./recenter.ts";
 import { wireMyDibs, type MyDibsHandle } from "./my-dibs.ts";
 import { openDibsCertificate, showDibsAlertToast } from "./dibs-certificate.ts";
-import { createDibsNotifier } from "./dibs-notify.ts";
+import { createDibsNotifier, requestDibsNotifications } from "./dibs-notify.ts";
 import {
   Devices,
   DEVICE_INTERACTIVE_LAYERS,
@@ -69,7 +71,7 @@ import {
   openConfirmFeatures,
   type FeatureFilterKey,
 } from "./device-features.ts";
-import { Locate } from "./locate.ts";
+import { Locate, distanceMeters } from "./locate.ts";
 import {
   MicromobilityZones,
   type ZoneGroup,
@@ -148,7 +150,7 @@ import { submitDeviceReport } from "./reports.ts";
 import { learnFromReceipt } from "./cost-calibration.ts";
 import { precheckReceipt } from "./receipt-precheck.ts";
 import { buildTripPanel, type TripPanelHandle } from "./trip-panel.ts";
-import { peekPendingTrip } from "./pending-trip.ts";
+import { clearPendingTrip, peekPendingTrip } from "./pending-trip.ts";
 import {
   activeTrip,
   endTrip,
@@ -178,14 +180,18 @@ import {
   type RideSpecPanelHandle,
 } from "./ride-spec-panel.ts";
 import {
+  callDibs,
   dibsExpiresAt,
   dibsOn,
   dropDibs,
+  registerClaim,
+  setDibsReleaseHook,
   recordProgress,
   saveDibs,
   type Dibs,
   loadDibs,
 } from "./dibs.ts";
+import { autoDibs, dibsSmsAlerts } from "./dibs-prefs.ts";
 import {
   setPendingTrip,
   takePendingTrip,
@@ -198,7 +204,7 @@ import {
 } from "./free-minutes-control.ts";
 import type { RideSpan } from "./free-minutes.ts";
 import { createPlanListPanel, type PlanListPanelHandle } from "./plan-list-panel.ts";
-import { defaultSpec } from "./ride-spec.ts";
+import { defaultSpec, specSummary, type RideSpec } from "./ride-spec.ts";
 import {
   TWO_PASSENGER_MIN_BATTERY,
   TWO_PASSENGER_MODELS,
@@ -208,6 +214,12 @@ import {
   twoPassengerNote,
   twoPassengers,
 } from "./passenger-mode.ts";
+import {
+  applyInterview,
+  interviewNote,
+  type InterviewAnswers,
+} from "./interview-spec.ts";
+import { MODEL_NAMES } from "./model-catalog.ts";
 import type { PlanRow } from "./plan-list.ts";
 import {
   planningFreeMinuteEstimate,
@@ -252,8 +264,9 @@ import { installUndoFreeTyping } from "./ios-shake-undo.ts";
 import {
   initChrome,
   installBrandMark,
-  isRibbonOpen,
   setRibbonOpen,
+  yieldRibbonToDrawer,
+  restoreRibbonAfterDrawer,
   closeAllPopups,
   registerPopupCloser,
 } from "./chrome.ts";
@@ -375,6 +388,23 @@ const rideRouteLine = createRideRouteLine(map);
 const routePreview = createRoutePreview(map);
 // The destination/start pins the home bar puts on the map.
 const tripPins = createTripPins(map);
+
+/** Whether the signed-in profile carries a PROVED phone number.
+ *
+ *  Null until the profile answers, and null again when there is no session —
+ *  which the Navigation tab renders as "sign in and verify a phone", not as
+ *  "you have no phone". Conflating the two tells a rider with a verified number
+ *  to go and verify it.
+ *
+ *  DECLARED HERE, ABOVE EVERY READER, and that is the whole reason this is not
+ *  down with the other ride-flow state: `wireAccount()` runs at module load and
+ *  builds the Navigation panel, whose `phoneVerified` dep reads this on its
+ *  first paint. A `let` further down the file is in its temporal dead zone at
+ *  that moment, which is a ReferenceError that stops main.ts before a single
+ *  vehicle is drawn — the exact failure `scripts/smoke.mjs` was written for,
+ *  and this one was caught by a screenshot run rather than by tsc or vitest,
+ *  neither of which can see initialisation order. */
+let phoneVerified: boolean | null = null;
 // The walk to the scooter, drawn with the same module as the ride route but
 // its own source ids and its own colour — see ride-route-line.ts's prefix.
 const walkLine = createRideRouteLine(map, "walk-route");
@@ -1364,6 +1394,20 @@ map.on("load", async () => {
   // one, and an honest anonymous form when there is not — never a fabricated
   // identity, since the whole artifact is an assertion about who did what.
   devices.setDibsClaimant(() => dibsClaimant);
+  // GIVING UP A CLAIM HAS TO REACH THE SERVER, from every button that does it.
+  //
+  // `dropDibs` is the one funnel: the map popup's ✋ Release, "I'm switching
+  // scooters", backing out of the walk, and "it won't ride". Four of those
+  // told the server nothing, so the row stayed live for up to twenty-five
+  // minutes — dimming that scooter on everybody else's map, and, now that the
+  // SMS watch exists, able to text the rider about a scooter they had
+  // deliberately walked away from or swapped out of.
+  //
+  // Wired here rather than inside `dibs.ts` because that module must not
+  // import the API client, the same rule `favorites.ts` follows.
+  setDibsReleaseHook((released) => {
+    if (released.registration) void releaseDibs(released.registration.id);
+  });
   // A signed-out rider is the common case and not an error — skip the fetch
   // rather than burning a guaranteed 401, same as ride-screen-dest does.
   if (isAuthenticated()) {
@@ -1502,9 +1546,6 @@ map.on("load", async () => {
     section: need("tools-my-dibs"),
     list: need("my-dibs-list"),
     onOpenCertificate: (d: Dibs) => openDibsCertificate(d),
-    onRelease: (d: Dibs) => {
-      if (d.registration) void releaseDibs(d.registration.id);
-    },
     // Re-fetch rather than mutate a local copy: the server has just been told
     // to expire the row, and its answer is the one every other rider sees.
     onChanged: () => refreshLiveDibs(),
@@ -3402,6 +3443,7 @@ function wireModes(): void {
       sel.dispatchEvent(new Event("change"));
     }
   };
+  closeDrawer = () => setDrawer(null);
   const setDrawer = (id: string | null): void => {
     const open = document.querySelector<HTMLButtonElement>(".drawer-tab.is-active");
     if (open && open.dataset.drawer !== id) open.click();
@@ -3510,16 +3552,27 @@ function wireModes(): void {
     // home of the ranked list (and keeps re-ranking with the filters).
     onInterviewDone: (priority, typeChoice, from, carryOverFilters) => {
       setWizardDocked(false);
-      const finish = (): void => {
-        recommended?.setContext({ from, priority, typeChoice });
-        setDrawer("recommended");
-      };
+      // KEPT, so the planner can read it. This is the one line whose absence
+      // was the whole complaint: the answer used to go to `recommended` and
+      // stop there, so the plan list — the thing "need wheels" actually opens —
+      // was built as if the rider had never been asked.
+      interviewAnswers = { priority, typeChoice };
+      // The ranked scooters, which are the path a rider falls back to when they
+      // dismiss the plans. Same answers, so the two agree.
+      recommended?.setContext({ from, priority, typeChoice });
+      setDrawer("recommended");
       // "Carry over my filters" is now the only behaviour there is: nothing
       // wiped them, so they are still applied and rankDevices() already ranks
       // over visibleFeatures(). The option survives in the interview as a
       // statement of intent; there is simply nothing left to restore.
       void carryOverFilters;
-      finish();
+      // And the plans, above the scooters in that same drawer — but only when
+      // there is a destination to plan TO. The wizard is also entered from the
+      // onboarding card and the top bar, where the rider has asked for a map of
+      // what is nearby and named nowhere to go; a plan list needs a
+      // destination, so those entries correctly get the scooters alone.
+      const trip = peekPendingTrip();
+      if (trip?.dest) openPlanList(trip.dest);
     },
   });
 
@@ -3538,8 +3591,13 @@ function wireModes(): void {
     // recover fields a lean payload had dropped.
     //
     // Recommendations are still scoped to one Find-a-ride session: drop them
-    // so re-entering never shows a stale list from the prior answers.
+    // so re-entering never shows a stale list from the prior answers. The
+    // interview answer and the plan list go with them for the same reason —
+    // letting last trip's "I want a Cosmo" steer the next trip's plans is the
+    // bug this restructure fixed, pointed the other way.
     recommended?.clear();
+    interviewAnswers = null;
+    closePlanList();
     // ...and close the drawer they were in, if it is the one open. Picking a
     // scooter off the ranked list is the moment that list stops being useful,
     // and leaving it open parks a panel over the map right when the rider
@@ -3917,18 +3975,23 @@ function wireHomeBar(): HomeBarHandle {
         return planStartedTrip({ dest, start });
       }
       setPendingTrip({ dest, wheels, start });
-      // "Need wheels" opens the PLAN LIST (§2.4) — one to four ways to get
-      // there, each with its legs, its total time and its cost including every
-      // unlock. That is what the Phase 2 engine was built to answer, and until
-      // now nothing in the app asked it: `rankPlans` shipped tested and
-      // unreachable.
+      // "Need wheels" ASKS BEFORE IT ANSWERS, which is the ordering the rider
+      // asked for and the reason this is not one line.
       //
-      // The map chooser is not replaced, it is underneath — `openPlanList`
-      // enters find-wheels mode too, so dismissing the list leaves the rider on
-      // a map that is already in the right state, and a rider with no GPS fix
-      // gets it instead of a list computed from a guessed origin.
+      // It used to call `openPlanList(dest)` directly, and that function called
+      // `enterFindWheels()` — which starts the wizard. So a rider got the
+      // interview ("what matters most?") and the plan list at the same moment,
+      // two surfaces over one map, and the interview's answer was handed to
+      // `recommend.ts` while the plans were built from the saved spec alone. The
+      // answer was not weighed and rejected; it never arrived.
+      //
+      // Now the wizard runs first and `onInterviewDone` builds the plans from
+      // what it heard. The wizard skips its own consent and location steps when
+      // a fix already exists and remembers a saved answer, so for a returning
+      // rider this is still one tap to a list — it is just a list that knows
+      // what they want.
       if (wheels === "need") {
-        openPlanList(dest);
+        enterFindWheels();
         return;
       }
       // "Got my own" has no vehicle to choose and nowhere to walk to. The
@@ -4075,6 +4138,12 @@ let exitFindWheels: () => void = () => {};
  *  to leave, and two modules had already had to learn about the seam. Assigned
  *  by `wireModes`; a no-op before it runs. */
 let enterFindWheels: () => void = () => {};
+/** Shut whichever drawer is open. Published for the same reason
+ *  `enterFindWheels` is: `setDrawer` is a closure inside `wireDrawers`, and
+ *  module-level code (here, the plan list's 🔍) needs to get the panel out of
+ *  the way of the map it is about to point at. Inert until that wiring runs,
+ *  which is before any of this is reachable. */
+let closeDrawer: () => void = () => {};
 
 /** The plan list, while it is on screen. One at a time: two of these would be
  *  two surfaces arguing about one decision. */
@@ -4091,43 +4160,78 @@ let tripPanel: TripPanelHandle | null = null;
  *  a rider with a full hour that we cannot see their rides. */
 let todaysRides: readonly RideSpan[] | null = null;
 
-/** The ribbon was open when the plan list took over, and we closed it.
+/** The wizard interview's answer, for as long as this trip lasts.
  *
- *  Remembered so dismissing the list PUTS IT BACK. A surface that quietly
- *  collapses a rider's navigation and leaves it collapsed has not made room,
- *  it has taken something. */
-let ribbonClosedForPlanList = false;
+ *  THE WHOLE POINT OF THE RESTRUCTURE. The interview used to hand its answer to
+ *  `recommend.ts` and nowhere else, so the plan list — which is what "need
+ *  wheels" actually opens — was built from the saved `RideSpec` alone and had
+ *  never heard of it. A rider answered "I want a Cosmo" and got plans ranked as
+ *  though they had said nothing. Held here so `planSearchDeps` can compose it
+ *  over the spec, exactly as Two Passengers is composed.
+ *
+ *  Cleared on leaving the flow, with the recommendations: it is an answer about
+ *  THIS trip, and letting it steer the next one would be the same bug pointed
+ *  the other way. */
+let interviewAnswers: InterviewAnswers | null = null;
 
-/** Give the plan list the width it needs, and give it back afterwards.
+/** Whether the rider's ideal scooter is applied to THIS search.
  *
- *  The card had already been moved out from under the ribbon with
- *  `--ribbon-gutter`, and on a 412px phone that leaves it about 325px wide —
- *  which is not enough for the leg lines it has to carry ("Ride Cosmo Onward
- *  🌳 500 19 min to Cosmo Liftoff 🍉 167" is a long sentence and there are
- *  three of them). So this is the owner's second option taken deliberately:
- *  we really do need the space.
+ *  Standing state asked about per trip. The sheet binds every search once it is
+ *  filled in, which is right for a preference and wrong for the trip where the
+ *  rider is in a hurry and would take the scruffy scooter they normally
+ *  decline. Defaults true — it is their sheet and they meant it — and resets
+ *  with the rest of the flow, because standing it down is a decision about one
+ *  journey. */
+let useIdealSpec = true;
+
+
+/** Drop the plan list, leaving the rider on the ranked scooters below it.
  *
- *  `persist: false` is the whole of the courtesy. The rider's stored ribbon
- *  preference is untouched, so this is a borrow rather than a setting change,
- *  and it is handed back on dismiss. */
+ *  NO RIBBON BORROW ANY MORE, and no close/teardown split either. Both existed
+ *  because the list was a card floating over the map: at 412px it ran under the
+ *  open ribbon, so opening it closed the strip and dismissing it handed the
+ *  strip back — and because every re-solve re-opened the list, that round trip
+ *  had to be split in two or the ribbon flapped once per search. The list is a
+ *  section of the Recommended drawer now. The drawer was never under the
+ *  ribbon, so there is nothing to borrow and nothing to give back.
+ *
+ *  DISMISSING IS NOT CLOSING THE DRAWER. The scooter list is right below this
+ *  section and is the path the rider was always on; emptying the section leaves
+ *  them on it, in place. Closing the whole drawer would take away the thing
+ *  they fell back to. */
 function closePlanList(): void {
-  teardownPlanList();
-  if (ribbonClosedForPlanList) {
-    ribbonClosedForPlanList = false;
-    setRibbonOpen(true);
-  }
-}
-
-/** Drop the panel WITHOUT handing the ribbon back.
- *
- *  Separate from `closePlanList` because re-opening the list — which every
- *  re-solve does — went through the full close first, so the ribbon was handed
- *  back and immediately borrowed again: one visible flap of the strip per
- *  search, for nothing. The borrow is a property of "the list is up", not of
- *  "this particular panel instance is up". */
-function teardownPlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
+}
+
+/** "Clear my trip" — throw away everywhere the trip is written down.
+ *
+ *  THE WHOLE POINT IS THAT IT IS ONE BUTTON. The destination lives on the ride
+ *  session doc, the pending trip lives in its own store, the hand-offs live in
+ *  the trip ledger, and the pins and the route line live on the map. A rider
+ *  who says "I'm not going anywhere" means all five, and before this they had
+ *  no way to say it at all: the only exits were arriving and starting a
+ *  different trip.
+ *
+ *  Called only when `clearBlockedReason` says it may be (no live ride) — the
+ *  guard lives beside the button, which is where the rider is told about it.
+ *  `rideSession.replace(null)` is the pre-ride doc, the one the wizard built
+ *  to hold a destination; dropping it is what makes the home bar go back to
+ *  asking "Where to?". */
+function clearTrip(): void {
+  clearPendingTrip();
+  endTrip();
+  rideSession.replace(null);
+  tripPins.clear();
+  rideRouteLine.clear();
+  // The plan and the answers that shaped it. Keeping an interview answer past
+  // the trip it was given for is the bug the plan-list restructure fixed —
+  // last trip's "I want a Cosmo" has no business steering the next one.
+  closePlanList();
+  interviewAnswers = null;
+  recommended?.clear();
+  exitFindWheels();
+  track("trip_cleared", {});
 }
 
 /** What `rankPlans` needs, gathered from the live app.
@@ -4136,6 +4240,17 @@ function teardownPlanList(): void {
  *  rather than a lookup — in particular that the fleet is `allFeatures()` and
  *  never the filtered view, because a rider's leftover map filters are a view
  *  and the SPEC is what says what they will ride. */
+/** The sheet this search should run on.
+ *
+ *  One function so the spec, the interview note and the ideal share cannot
+ *  disagree about whether the rider's sheet is in force — three readings of the
+ *  same question is how a list gets filtered by something its own explanation
+ *  says is off. */
+function activeSpecForSearch(): RideSpec {
+  if (!useIdealSpec) return defaultSpec();
+  return rideSpecPanel?.activeSpec() ?? defaultSpec();
+}
+
 function planSearchDeps(): PlanSearchDeps {
   return {
     fleet: () => devices.allFeatures(),
@@ -4147,12 +4262,42 @@ function planSearchDeps(): PlanSearchDeps {
     // map filters are a view and this is a fact about the trip. Composed over
     // the rider's own spec rather than replacing it: two passengers is a
     // constraint on top of what they like, not instead of it.
-    spec: () => applyTwoPassengers(rideSpecPanel?.activeSpec() ?? defaultSpec()),
+    // TWO LAYERS OVER THE RIDER'S OWN SHEET, in increasing order of how much
+    // they were thinking about it. `applyInterview` is the question the wizard
+    // asked on the way out of the door, so it only ever NARROWS and never adds
+    // a hard requirement — the ladder can give all of it up. `applyTwoPassengers`
+    // is outermost because it is the one hard physical fact in the stack: a
+    // one-seater cannot carry two people at any ranking.
+    spec: () =>
+      applyTwoPassengers(
+        applyInterview(activeSpecForSearch(), interviewAnswers),
+      ),
     // The same value WITHOUT the default, which is the only way to tell "no
     // preference" from "a preference that happens to accept everything". The
     // list uses it to decide whether a share is worth computing and whether to
     // offer to set one up.
-    activeSpec: () => rideSpecPanel?.activeSpec() ?? null,
+    // Null when the rider stood the sheet down, which is what makes the ideal
+    // SHARE stop being computed and the chip stop being shown: a share against
+    // a sheet that is not in force is a number about nothing.
+    activeSpec: () => (useIdealSpec ? rideSpecPanel?.activeSpec() ?? null : null),
+    // Written against the spec BEFORE the interview narrowed it, which is the
+    // only comparison that can tell whether the answer changed anything — and
+    // the only honest basis for claiming it did.
+    // `relaxed` comes from the search that just ran, so the sentence cannot
+    // claim an answer was honoured when the ladder gave it up to find anything
+    // at all — which it did, sitting directly under "we had to give up: Model".
+    idealSpecSummary: () => {
+      const sheet = rideSpecPanel?.activeSpec();
+      return sheet ? specSummary(sheet, (key) => MODEL_NAMES[key]) : null;
+    },
+    idealSpecInUse: () => useIdealSpec,
+    interviewNote: (relaxed) =>
+      interviewNote(
+        activeSpecForSearch(),
+        interviewAnswers,
+        (key) => MODEL_NAMES[key],
+        relaxed,
+      ),
     rate: () => planFor(effectiveRatePlan()),
     taxRate: () => currentTaxRate(),
     now: () => Date.now(),
@@ -4236,28 +4381,49 @@ function openPlanList(dest: TripPlace): void {
   const deps = planSearchDeps();
   const first = searchPlans(deps, dest);
   if (first.kind !== "ok") {
-    enterFindWheels();
+    // `no_fix`: no GPS, so no origin, and a plan list computed from a guessed
+    // one walks the rider to a scooter that is not near them.
+    //
+    // THIS USED TO CALL `enterFindWheels()`, which was right when the plan list
+    // was the FIRST thing "need wheels" opened — falling back to the map
+    // chooser was strictly better than a wrong list. It is wrong now: the
+    // interview has already run by the time this is reached, and
+    // `enterFindWheels` starts the wizard, so this would re-ask the rider the
+    // question they just answered.
+    //
+    // The honest fallback is the one the rider is already on. They are standing
+    // in the Recommended drawer with the ranked scooters below this section, so
+    // leaving it empty puts them on exactly the path they would have dismissed
+    // the plans to reach — with a line saying why, because a section that asked
+    // for plans and silently shows none reads as a failure rather than a
+    // missing fix.
+    const why = document.createElement("p");
+    why.className = "planlist__note planlist__note--quiet";
+    why.textContent =
+      "We need your location to work out the ways there. The scooters below " +
+      "are ranked for what you asked for.";
+    need("plan-list").replaceChildren(why);
     return;
   }
-  teardownPlanList();
-  // Before the panel is built, so it is never laid out against a width it is
-  // about to lose. Guarded on the flag as well as the state: a second open
-  // over an already-borrowed ribbon must not record a second borrow, or
-  // dismissing the list would leave the strip shut.
-  if (!ribbonClosedForPlanList && isRibbonOpen()) {
-    setRibbonOpen(false);
-    ribbonClosedForPlanList = true;
-  }
-  // The map still shows the fleet the plans are drawn from, so find-wheels mode
-  // stays on underneath: dismissing the list reveals a map that is already in
-  // the right state rather than one that has to be put there.
-  enterFindWheels();
+  closePlanList();
+  // NO `enterFindWheels()` HERE, and removing it is the fix the rider asked
+  // for. It was called so that dismissing the list revealed a map already in
+  // find-wheels state — a reasonable thing to want, except `enterFindWheels`
+  // also runs `wizard.start()`. So "need wheels" put an interview on screen AND
+  // a list of plans over the top of it, two surfaces asking for the same tap,
+  // with the interview's answer going nowhere near the plans.
+  //
+  // The interview comes FIRST now (see `onPlanTrip`), and its answer is what
+  // these plans are built from. By the time this runs the rider has already
+  // answered, so there is nothing left to start.
   const resolve = (): void => {
     const again = searchPlans(deps, dest);
     if (again.kind === "ok") planListPanel?.update(again.view);
   };
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
+    // Empties this section and leaves the drawer open on the ranked scooters
+    // below — the old path, continued in place.
     onCancel: () => closePlanList(),
     // "My ideal scooter" lives in the Filters drawer, which is where it has
     // always lived and where a rider who already knows about it will look for
@@ -4287,6 +4453,30 @@ function openPlanList(dest: TripPlace): void {
       }
     },
     onRefresh: resolve,
+    // Standing the sheet down, or putting it back. Re-solves rather than just
+    // re-labelling: the sheet is a FILTER, so turning it off can change which
+    // plans exist and in what order, not only what the row above them says.
+    onToggleIdealSpec: (on) => {
+      useIdealSpec = on;
+      resolve();
+    },
+    // The same three answers the interview offers, changeable in place. Also a
+    // re-solve, for the same reason, and it writes the same state the wizard
+    // wrote — so a rider who changes their mind here and then re-enters the
+    // flow finds their new answer, not the one they abandoned.
+    priority: () => interviewAnswers?.priority ?? null,
+    onSetPriority: (priority) => {
+      interviewAnswers = {
+        // The model only matters to the "type" answer, and the wizard already
+        // asked it. Keeping the previous choice means switching to Condition
+        // and back does not silently forget which model they wanted.
+        typeChoice: interviewAnswers?.typeChoice ?? "cosmo",
+        priority,
+      };
+      resolve();
+    },
+    // 🔍 — put the hand-off on the map and get out of the way.
+    onShowSwitchover: (row) => showSwitchover(row),
     onCorrectFreeMinutes: (minutes) => {
       saveCorrection(Date.now(), minutes);
       // Re-price rather than just re-label. The free-minute balance is SEARCH
@@ -4305,6 +4495,35 @@ function openPlanList(dest: TripPlace): void {
   void refreshTodaysRides().then((changed) => {
     if (changed) resolve();
   });
+}
+
+/** Put the scooter the rider SWAPS TO on the map, and minimise the drawer.
+ *
+ *  WHY THE DRAWER HAS TO GO. The point of the tap is to see a place, and on a
+ *  phone the drawer is most of the screen — leaving it open would centre the
+ *  map on a vehicle behind the panel the rider tapped. So the drawer closes and
+ *  the plans stay built: re-opening the Recommended tab brings the list back
+ *  exactly as it was, because `closePlanList` was not called.
+ *
+ *  `DeviceProperties` carries no coordinates, so the feature is looked up by
+ *  `device_id` against `allFeatures()` — the unfiltered fleet, and deliberately
+ *  so. The planner searches unfiltered, so a plan can legitimately hand off to
+ *  a vehicle the rider's map filters are hiding; looking it up in the filtered
+ *  view would make the button do nothing on exactly those plans.
+ *
+ *  `jumpToDevice` centres it either way and opens the popup only for a vehicle
+ *  the display filters keep, which is the honest outcome: the rider is shown
+ *  where the swap is even when the scooter itself is filtered off the map. */
+function showSwitchover(row: PlanRow): void {
+  const props = row.switchoverVehicle;
+  if (!props) return;
+  const feat = devices
+    .allFeatures()
+    .find((f) => f.properties.device_id === props.device_id);
+  if (!feat) return;
+  const [lng, lat] = feat.geometry.coordinates;
+  closeDrawer();
+  devices.jumpToDevice(props.device_id, lng, lat);
 }
 
 /** Today's tracked rides, for the free-minute estimate. Resolves to whether the
@@ -4467,6 +4686,69 @@ function beginWalkToVehicle(info: {
   closePlanList();
   document.body.classList.add("arrival-open");
 
+  // CLAIMING IS PART OF GOING, and this is where every route into a walk meets.
+  //
+  // The device popup's "I'll ride this one" has always called dibs — the
+  // sentence that picks a scooter is the sentence that claims it. A scooter
+  // picked off a PLAN said the same thing and claimed nothing, because that
+  // route into the walk went through here instead. So it claims here too, which
+  // also covers the two other ways in (a tap on the map, resuming a claim from
+  // a toast) rather than leaving each to remember.
+  //
+  // `callDibs` is idempotent on the vehicle identifier, so the popup's own
+  // claim a moment earlier is returned rather than duplicated — the two paths
+  // can both run without fighting.
+  //
+  // Guarded on the rider's answer (`autoDibs`, default on) and on there BEING
+  // an identifier: dibs is keyed on it, and a private scooter or a payload
+  // without one has nothing to claim.
+  if (info.vehicleIdentifier && autoDibs()) {
+    const here = locate.current();
+    const claim = callDibs({
+      vehicleIdentifier: info.vehicleIdentifier,
+      vehicleName: info.name,
+      plate: info.plate,
+      claimedBy: dibsClaimant,
+      startMeters: here
+        ? distanceMeters(here, { lat: info.lat, lng: info.lng })
+        : 0,
+      lat: info.lat,
+      lon: info.lng,
+    });
+    // The watch rides along, exactly as it does from the popup: a rider being
+    // told they have dibs is the same breath in which to say we will warn them
+    // if it goes. Both are best-effort — `armDibsWatch` refuses past its own
+    // slot limits and `requestDibsNotifications` can be denied — and neither
+    // may stop the walk starting.
+    armDibsWatch(claim);
+    void requestDibsNotifications();
+    // AND IT HAS TO REACH THE SERVER. `callDibs` writes the phone's copy;
+    // the certificate's timestamp, every other rider's dimmed map and the
+    // SMS watch all read the row. A claim made here and never registered
+    // was a claim only this phone believed in.
+    //
+    // Guarded on `registration`: `callDibs` is idempotent on the vehicle
+    // identifier, so a claim the device popup already registered a moment
+    // ago comes back with its row attached and must not be inserted twice.
+    // `registerClaim` owns what happens if the rider does not wait: it
+    // declines when the popup already has a POST in flight for this scooter,
+    // and on completion it only attaches the row if the SAME claim is still
+    // held — releasing it instead of resurrecting a claim the rider dropped
+    // mid-flight.
+    registerClaim(claim, async () => {
+      const reg = await registerDibs({
+        vehicle_identifier: claim.vehicleIdentifier,
+        vehicle_name: claim.vehicleName,
+        plate: claim.plate,
+        claimed_by: claim.claimedBy,
+        lat: info.lat,
+        lon: info.lng,
+        notify_sms: dibsSmsAlerts(),
+      });
+      return { id: reg.id, verifyUrl: reg.verify_url, qrUrl: reg.qr_url };
+    });
+  }
+
   const panel = createArrivalPanel(need("arrival-panel"), {
     vehicle: { name: info.name, plate: info.plate ?? undefined },
     // Re-read, never captured: `onChangeDestination` below rewrites the
@@ -4491,6 +4773,17 @@ function beginWalkToVehicle(info: {
       });
     },
     onChooseRoute: () => {
+      // "I'VE GOT IT." The one moment the rider declares they are taking
+      // THIS scooter, and the only chance to stop the server texting them
+      // about their own rental: its alert fires on "a rental started on this
+      // vehicle", which is all the fleet feed says, and the commonest such
+      // rental is the claimant's own. Fire-and-forget — a rider about to
+      // unlock a scooter should not wait on us, and the worst case of it not
+      // landing is one honest-but-unnecessary text.
+      const held = info.vehicleIdentifier
+        ? dibsOn(info.vehicleIdentifier)
+        : null;
+      if (held?.registration) void claimDibsAsMine(held.registration.id);
       endWalkFlow();
       // Straight to route triage. The wizard still owns starting a ride — it
       // is where the session doc, the track store and the Veo handoff live —
@@ -4962,6 +5255,14 @@ function wireDrawers(): void {
       drawer.classList.toggle("is-open", open);
       drawer.setAttribute("aria-hidden", String(!open));
     }
+    // SCREEN SPACE. On a phone an open drawer covers the map and the ribbon
+    // slides out on top of it, so the strip stands aside while a drawer is
+    // up and comes back when it closes. This loop is also what makes the
+    // profile drawer and the map drawers mutually exclusive — the top bar's
+    // profile button carries `.drawer-tab`, so it is one of `tabs` and
+    // `setActive` shuts every other drawer to open it, and vice versa.
+    if (id) yieldRibbonToDrawer();
+    else restoreRibbonAfterDrawer();
     // "(live)" has to mean it: re-fetch the tally every time the panel is
     // shown rather than once at boot, and drop the in-flight fetch when it
     // is hidden again.
@@ -5012,6 +5313,21 @@ function wireDrawers(): void {
         showOnMap: (target) => {
           map.easeTo({ center: [target.lon, target.lat], zoom: 16 });
         },
+        // "I'm not going anywhere, just reset the map."
+        //
+        // A live ride is the one case this refuses. "Clear my trip" is a
+        // tidy-up, and silently ending a ride in progress — with its clock,
+        // its cost and, on a tracked ride, its recording — is not a tidy-up.
+        // It says so rather than hiding the button, so the refusal reads as a
+        // refusal.
+        clearBlockedReason: () => {
+          const doc = rideSession.current();
+          if (doc !== null && isRideLive(doc)) {
+            return "You're on a ride. End it first and this will clear everything that's left.";
+          }
+          return null;
+        },
+        onClear: clearTrip,
       });
       tripPanel.refresh();
     }
@@ -5249,6 +5565,7 @@ function wireAccount(): void {
     // Whether an "ideal scooter" exists, so the split preference can say
     // plainly that it has nothing to prefer yet.
     hasIdealSpec: () => rideSpecPanel?.activeSpec() != null,
+    phoneVerified: () => phoneVerified,
     // Redraw the map's home/work pins. The pins follow the SLOTS now, not the
     // profile's `home_lat`/`work_lat` columns — which is what makes them
     // appear for a signed-out rider, and what stops them disagreeing with the
@@ -5292,6 +5609,10 @@ function wireAccount(): void {
       renderedKey = key;
       signedIn?.dispose();
       signedIn = null;
+      // Back to "we have not looked", not to "no phone": the next render must
+      // not tell a signed-out rider their verified number is missing.
+      phoneVerified = null;
+      nav?.refresh();
       loginPanel?.dispose();
       loginPanel = null;
       cancelGoogle();
@@ -5336,6 +5657,13 @@ function wireAccount(): void {
           // device's own store is `saved-places-sync.ts`'s job; `undefined`
           // (an older deployment) is passed straight through, because only
           // that module should decide what silence means.
+          // The SMS dibs alert needs a number we have proved. Pushed rather
+          // than fetched by the Navigation tab, which has no API client and is
+          // built once, outside render().
+          onPhoneVerified: (verified) => {
+            phoneVerified = verified;
+            nav?.refresh();
+          },
           onSavedPlaces: (places) => {
             syncSavedPlacesFromProfile(places, savedPlacesDeps);
             // The slot rows are rendered from the store, and a merge can have

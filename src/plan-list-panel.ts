@@ -18,6 +18,7 @@
 
 import { parseCorrection } from "./free-minutes-control.ts";
 import type { PlanListView, PlanRow } from "./plan-list.ts";
+import type { RidePriority } from "./recommend.ts";
 
 export interface PlanListPanelDeps {
   /** The rider picked a plan with a vehicle to walk to. */
@@ -38,6 +39,22 @@ export interface PlanListPanelDeps {
    *  still shown as a sentence: "the app can do this and you have not set it
    *  up" is worth knowing even where this surface cannot open it. */
   onConfigureSpec?(): void;
+  /** The rider stood their ideal scooter down for this search, or put it back.
+   *  Absent and the sheet is shown as a read-only statement, which is still
+   *  worth having: knowing a filter is in force explains a short list. */
+  onToggleIdealSpec?(inUse: boolean): void;
+  /** The three answers the find-wheels interview offers, so a rider can change
+   *  their mind without walking back through it. Same values and the same
+   *  words, because they are the same question.
+   *
+   *  `priority()` reads the current answer rather than capturing it: the wizard
+   *  may have set it a moment ago and this panel is rebuilt on every re-solve. */
+  priority?(): RidePriority | null;
+  onSetPriority?(priority: RidePriority): void;
+  /** "Show me where I swap." Minimises this drawer and puts the hand-off
+   *  vehicle on the map. Offered per row and only on a row that HAS a
+   *  hand-off. */
+  onShowSwitchover?(row: PlanRow): void;
 }
 
 export interface PlanListPanelHandle {
@@ -46,6 +63,21 @@ export interface PlanListPanelHandle {
   update(view: PlanListView): void;
   destroy(): void;
 }
+
+/** The interview's three answers, with the wizard's own wording — shortened
+ *  only where a button cannot carry a sentence. The SAME words matter: a rider
+ *  who answered "Least walking distance" a moment ago should recognise the
+ *  control that lets them change it.
+ *
+ *  Option 4 ("use existing map filters") is deliberately absent. It is not a
+ *  fourth priority — the wizard's own comment says nothing wipes the filters
+ *  any more, so it describes an intent with no behaviour behind it. Offering it
+ *  here would be a button that does nothing. */
+const PRIORITY_OPTIONS: readonly { value: RidePriority; label: string }[] = [
+  { value: "type", label: "Exact type" },
+  { value: "quality", label: "Condition" },
+  { value: "distance", label: "Least walking" },
+];
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -68,12 +100,21 @@ export function createPlanListPanel(
   const panel = el("div", "planlist");
   const head = el("div", "planlist__head");
   head.append(el("div", "planlist__title", "How to get there"));
-  // Shape, size and centring come from style.css's shared dismiss rule, which
-  // `.planlist__close` is listed in — a dismiss is the one control that is the
-  // same shape everywhere in the app.
-  const close = el("button", "planlist__close", "×");
+  // A LABELLED BUTTON AT THE END, not a corner ×, and the move into the drawer
+  // is what decided that.
+  //
+  // This used to be a 34px × pinned to the card's top-right by the shared
+  // dismiss rule, which works on a card floating over a map and does not work
+  // here: `.planlist` is no longer `position: fixed`, so the absolute × landed
+  // against the DRAWER and stacked underneath the drawer's own close button.
+  // Two ×s in one corner, and a tap on the wrong one closes the whole menu.
+  //
+  // It also says what it does now, which a × cannot. Dismissing this section
+  // is not closing anything — the ranked scooters are immediately below and
+  // that is where the rider lands, so "Pick a scooter myself" names the thing
+  // that is about to happen.
+  const close = el("button", "planlist__dismiss", "Pick a scooter myself");
   close.type = "button";
-  close.setAttribute("aria-label", "Close");
   close.addEventListener("click", () => deps.onCancel());
 
   const notes = el("div", "planlist__notes");
@@ -85,8 +126,12 @@ export function createPlanListPanel(
   // rider who sets a spec up wants the list to change under them.
   const specPrompt = el("div", "planlist__specprompt");
   specPrompt.hidden = true;
+  // ABOVE THE PLANS, with the free-minute figure, because both are INPUTS to
+  // every row below. A rider who reads a short list and only then finds the
+  // filter that shortened it has been told the city is empty.
+  const controls = el("div", "planlist__controls");
   const body = el("div", "planlist__body");
-  panel.append(head, close, notes, free, specPrompt, body);
+  panel.append(head, notes, free, controls, specPrompt, body, close);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -108,6 +153,13 @@ export function createPlanListPanel(
           "flagged scooter.",
         cls: "planlist__note--warn",
       });
+    }
+    // WHAT THE RIDER ASKED FOR, first among the quiet notes. It goes above the
+    // cap and the ordering because it is the only one that answers "did this
+    // list hear me at all" — and that question is why this note exists: the
+    // interview's answer used to reach the scooter ranking and never the plans.
+    if (v.interviewNote) {
+      lines.push({ text: v.interviewNote, cls: "planlist__note--quiet" });
     }
     // The rider's own cap, said plainly. Not a warning — nothing went wrong and
     // nothing was given up by the search; they asked for this. But it goes
@@ -286,13 +338,39 @@ export function createPlanListPanel(
       return card;
     }
 
+    const actions = el("div", "planlist__actions");
     const go = el("button", "planlist__go", "Take this one");
     go.type = "button";
     go.addEventListener("click", () => {
       if (destroyed) return;
       deps.onChoose(row);
     });
-    card.append(go);
+    actions.append(go);
+
+    // 🔍 WHERE DO I SWAP. Only on a row that HAS a hand-off, and only when the
+    // host can act on it.
+    //
+    // The hand-off is the one part of a split plan the text cannot convey.
+    // "Park it and take another" names an action, not a PLACE — and the place
+    // is what decides whether the plan is acceptable at all: a swap on the
+    // rider's own route is nothing, a swap three blocks off it is the reason to
+    // pick a different row. So this is a LOOK and not a commitment: it puts the
+    // vehicle on the map and leaves the plan unchosen, which is why it sits
+    // beside "Take this one" rather than replacing it.
+    if (row.switchoverVehicle && deps.onShowSwitchover) {
+      const peek = el("button", "planlist__peek", "🔍");
+      peek.type = "button";
+      // The glyph is decorative and unreadable to a screen reader; the label
+      // carries the whole meaning, and names the SWAP rather than the icon.
+      peek.setAttribute("aria-label", "Show me where I swap scooters");
+      peek.title = "Show me where I swap scooters";
+      peek.addEventListener("click", () => {
+        if (destroyed) return;
+        deps.onShowSwitchover?.(row);
+      });
+      actions.append(peek);
+    }
+    card.append(actions);
     return card;
   }
 
@@ -313,27 +391,71 @@ export function createPlanListPanel(
     body.replaceChildren(...v.rows.map((row) => renderRow(row)));
   }
 
-  /** Tell the card whether anything is below the fold.
+  // NO SCROLL-EDGE FADE ANY MORE. This card used to be a fixed overlay and so
+  // its own scroll container, which clipped a half-scrolled row's button flat
+  // against its bottom edge; a `mask-image` fade and an `is-at-end` class
+  // existed to make that read as "there is more below". The card is a section
+  // inside the Recommended drawer now, and the DRAWER scrolls — so there is no
+  // inner edge to clip anything, and nothing for the panel to measure. CSS
+  // cannot ask whether a box overflows, which is why this had to live here;
+  // once the box stopped overflowing, so did the reason.
+
+  /** "Proceed with your ideal scooter?" and the three interview answers.
    *
-   *  The card fades its last few pixels so a half-scrolled row reads as "there
-   *  is more" rather than as a button clipped flat by the card's edge — which
-   *  is what it looked like, and what prompted this. But a fade over the FINAL
-   *  button makes a live control look disabled, and a card too short to scroll
-   *  has nothing to hint at, so both of those turn it off.
+   *  ONE BLOCK because they are one question asked twice over: the sheet is the
+   *  standing answer and the priority is this trip's. Separating them would put
+   *  two preference controls in one card with nothing saying how they relate.
    *
-   *  CSS cannot ask whether a box overflows, so this is the one thing only the
-   *  panel can answer. The 2px slack absorbs sub-pixel scroll positions, which
-   *  otherwise leave the fade on at the very bottom on a fractional-DPR
-   *  display. */
-  function syncScrollEdge(): void {
-    const atEnd =
-      panel.scrollHeight - panel.clientHeight - panel.scrollTop <= 2;
-    panel.classList.toggle("is-at-end", atEnd);
+   *  Rendered only where there is something to decide — no sheet and no
+   *  `onSetPriority` wiring means an empty block, which `:empty` hides. */
+  function renderControls(v: PlanListView): void {
+    controls.replaceChildren();
+    if (v.idealSpec) {
+      const row = el("div", "planlist__specrow");
+      const label = el("label", "planlist__specswitch");
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = v.idealSpec.inUse;
+      // Disabled rather than hidden when the host cannot act on it: the
+      // SENTENCE is the useful part, and a live-looking switch that does
+      // nothing is worse than a plain statement.
+      box.disabled = !deps.onToggleIdealSpec;
+      box.addEventListener("change", () => deps.onToggleIdealSpec?.(box.checked));
+      label.append(box, el("span", undefined, "Use my ideal scooter"));
+      row.append(label);
+      row.append(el("p", "planlist__specsummary", v.idealSpec.summary));
+      if (deps.onConfigureSpec) {
+        const edit = el("button", "planlist__specedit", "Configure");
+        edit.type = "button";
+        edit.addEventListener("click", () => deps.onConfigureSpec?.());
+        row.append(edit);
+      }
+      controls.append(row);
+    }
+    if (deps.onSetPriority) {
+      const current = deps.priority?.() ?? null;
+      const group = el("div", "planlist__prio");
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", "What matters most");
+      group.append(el("p", "planlist__priohead", "What matters most"));
+      for (const opt of PRIORITY_OPTIONS) {
+        const btn = el("button", "planlist__priobtn", opt.label);
+        btn.type = "button";
+        const on = current === opt.value;
+        btn.classList.toggle("is-on", on);
+        // `aria-pressed` and not `aria-selected`: these are toggle buttons in a
+        // group, not tabs, and nothing here reveals a panel.
+        btn.setAttribute("aria-pressed", String(on));
+        btn.addEventListener("click", () => deps.onSetPriority?.(opt.value));
+        group.append(btn);
+      }
+      controls.append(group);
+    }
   }
-  panel.addEventListener("scroll", syncScrollEdge, { passive: true });
 
   function render(v: PlanListView): void {
     renderNotes(v);
+    renderControls(v);
     renderFree(v);
     renderSpecPrompt(v);
     renderBody(v);
@@ -343,11 +465,6 @@ export function createPlanListPanel(
       again.addEventListener("click", () => deps.onRefresh?.());
       body.append(again);
     }
-    // After the rows exist, because the answer depends on how tall they made
-    // it. A re-render can also shorten the list past the point of scrolling at
-    // all — a cap applied in the drawer does exactly that — so this runs on
-    // every render and not only the first.
-    syncScrollEdge();
   }
 
   render(view);
@@ -359,7 +476,6 @@ export function createPlanListPanel(
     },
     destroy() {
       destroyed = true;
-      panel.removeEventListener("scroll", syncScrollEdge);
       root.replaceChildren();
     },
   };

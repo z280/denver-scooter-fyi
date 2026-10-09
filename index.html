@@ -200,6 +200,30 @@
         </svg>
         <span class="drawer-tab__label">Recommended</span>
       </button>
+      <!-- NEXT TO RECOMMENDED, deliberately. "Available devices" and "where am
+           I going" are the two halves of one question, and a rider comparing
+           them was crossing four unrelated tabs — Areas, Leaderboard, Stats,
+           Scan — to do it. The plan list now lives inside Recommended, which
+           makes the adjacency load-bearing rather than tidy: this tab is where
+           the destination and the ETA those plans are for are read. -->
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="trip"
+        aria-pressed="false"
+        aria-controls="drawer-trip"
+        title="Your trip"
+      >
+        <!-- Map pin with a dot: the destination, which is what this reads back.
+             Deliberately not a route line or an arrow — both of those read as
+             "navigate", and this tab navigates nothing; it tells you what you
+             already agreed to. -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z" />
+          <circle cx="12" cy="10" r="2.6" />
+        </svg>
+        <span class="drawer-tab__label">Your trip</span>
+      </button>
       <button
         class="drawer-tab"
         type="button"
@@ -275,24 +299,6 @@
           <rect x="10" y="10" width="4" height="4" rx="1" />
         </svg>
         <span class="drawer-tab__label">Scan</span>
-      </button>
-      <button
-        class="drawer-tab"
-        type="button"
-        data-drawer="trip"
-        aria-pressed="false"
-        aria-controls="drawer-trip"
-        title="Your trip"
-      >
-        <!-- Map pin with a dot: the destination, which is what this reads back.
-             Deliberately not a route line or an arrow — both of those read as
-             "navigate", and this tab navigates nothing; it tells you what you
-             already agreed to. -->
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z" />
-          <circle cx="12" cy="10" r="2.6" />
-        </svg>
-        <span class="drawer-tab__label">Your trip</span>
       </button>
       <button
         class="drawer-tab"
@@ -707,6 +713,20 @@
         <button class="drawer-close" type="button" aria-label="Close Recommended Devices">&times;</button>
       </header>
       <div class="drawer-body">
+        <!-- THE RIDE OPTIONS LIVE HERE, above the scooters, and that placement
+             is the fix rather than a detail. "Need wheels" used to open the
+             plan list as a card floating over the map AND start the find-wheels
+             wizard behind it, so a rider got an interview and a list of plans
+             at the same time, competing for the same tap. The plans are now one
+             section of the menu the ranked scooters were always in: dismissing
+             them leaves the rider on the scooter list, in place, which is the
+             old path continued rather than a different surface.
+
+             Empty until a trip is being planned, and `:empty` keeps it from
+             holding a gap for a rider who opened this drawer to browse. -->
+        <section class="control-group" id="plan-list" aria-live="polite">
+          <!-- populated by plan-list-panel.ts via main.ts's openPlanList() -->
+        </section>
         <section class="control-group" id="recommended-body" aria-live="polite">
           <!-- populated by recommend.ts -->
         </section>
@@ -1336,10 +1356,6 @@
          knew. Built by arrival-panel.ts; this is only the mount point. -->
     <div id="arrival-panel"></div>
 
-    <!-- The plan list (frontend plan §2.4): one to four ways to get there,
-         opened by "need wheels" on the home bar. Built by
-         plan-list-panel.ts; this is only the mount point. -->
-    <div id="plan-list"></div>
 
     <!-- Home bar (bottom center): "Where are you going?" — the surface that
          replaced the three-way mode bar. Built by home-bar.ts; this is only

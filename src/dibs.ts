@@ -291,10 +291,127 @@ export function saveDibs(updated: Dibs, now: number = Date.now()): void {
   persist([updated, ...rest]);
 }
 
+/** Fires when a claim is DELIBERATELY given up, with the claim that was.
+ *
+ *  THE SEAM TO THE SERVER, shaped exactly like `favorites.ts`'s sync hook and
+ *  for the same reason: this module must not import the API client.
+ *
+ *  WHY IT HAS TO BE HERE rather than at the call sites. `dropDibs` is the one
+ *  funnel every giving-up goes through — the map popup's ✋ Release, "I'm
+ *  switching scooters", backing out of the walk, and reporting a scooter that
+ *  will not ride. Four of those five used to drop the phone's copy and tell
+ *  the server nothing, so the row stayed live for up to twenty-five minutes:
+ *  still dimming that scooter on everybody else's map, and — once the SMS
+ *  watch shipped — still able to text the rider about a scooter they had
+ *  deliberately walked away from. An alert about an abandoned claim is the
+ *  worst thing that channel can say.
+ *
+ *  Only a DELIBERATE drop fires it. Expiry does not: the server holds its own
+ *  `expires_at` and reaches the same conclusion on its own clock, so there is
+ *  nothing to tell it.
+ *
+ *  One listener, not a set: there is one server. */
+let releaseHook: ((released: Dibs) => void) | null = null;
+
+export function setDibsReleaseHook(fn: ((released: Dibs) => void) | null): void {
+  releaseHook = fn;
+}
+
+/** Give a claim up. Tells the server too — see `setDibsReleaseHook`. */
 export function dropDibs(vehicleIdentifier: string, now: number = Date.now()): Dibs[] {
-  const next = loadDibs(now).filter((d) => d.vehicleIdentifier !== vehicleIdentifier);
+  const before = loadDibs(now);
+  const next = before.filter((d) => d.vehicleIdentifier !== vehicleIdentifier);
   persist(next);
+  // Only what this call actually removed, and only when it removed something:
+  // dropping a vehicle no claim was held on must not fire a release.
+  // ...and only when there is something to tell the server ABOUT. A claim
+  // whose registration has not landed has no row id, so there is nothing to
+  // release by — `registerClaim` handles that case instead, at the one moment
+  // the id and the knowledge that it is unwanted exist together.
+  const gone = before.find(
+    (d) => d.vehicleIdentifier === vehicleIdentifier && d.registration !== null,
+  );
+  // AFTER the write, so the phone's copy is already correct if the hook throws
+  // — the local drop is what the rider just watched happen, and it must not be
+  // undone by a network layer having a bad day.
+  if (gone) {
+    try {
+      releaseHook?.(gone);
+    } catch {
+      /* the row expires on its own clock regardless */
+    }
+  }
   return next;
+}
+
+/** Vehicles with a registration POST in flight. */
+const registering = new Set<string>();
+
+/** Register a claim with the server and attach the row it returns.
+ *
+ *  THE WHOLE LIFECYCLE IN ONE PLACE, because the interesting part is what
+ *  happens when the rider does not wait. Registration is a network round
+ *  trip; a rider can release, switch scooters, back out of the walk or
+ *  report the thing unrideable before it lands. The naive shape — POST, then
+ *  `saveDibs({ ...claim, registration })` — is wrong in three ways at once,
+ *  and all three end as a live server row nobody can release and the SMS
+ *  watch is happily watching:
+ *
+ *    1. The drop could not release it: the local claim had no row id yet, so
+ *       `dropDibs`'s release hook had nothing to send.
+ *    2. `saveDibs` then RESURRECTS the dropped claim on the rider's phone,
+ *       because it writes unconditionally.
+ *    3. Dropped and re-claimed in the meantime is a DIFFERENT claim with its
+ *       own timestamp, and attaching this row to it hands the new claim the
+ *       old one's certificate.
+ *
+ *  So the completion re-reads the store and only attaches when the SAME claim
+ *  is still held — same vehicle and same `claimedAt`. Otherwise it releases
+ *  the row it just created, which is the only moment anything can.
+ *
+ *  It writes back onto the CURRENTLY held claim rather than the snapshot the
+ *  caller captured: `recordProgress` may have moved `bestMeters` or set
+ *  `startedWalkingAt` while the request was in flight, and the old shape
+ *  silently threw those away.
+ *
+ *  `post` is injected because this module must not import the API client —
+ *  the same rule the release hook follows. */
+export function registerClaim(
+  claim: Dibs,
+  post: () => Promise<NonNullable<Dibs["registration"]>>,
+  now: () => number = Date.now,
+): void {
+  // Already has a row, or one is on its way. Without the second test the
+  // popup's claim and the walk's auto-claim both register the same scooter —
+  // `callDibs` is idempotent and hands the walk a claim whose registration
+  // has not landed yet — and the loser's row is orphaned, live and watched.
+  if (claim.registration !== null) return;
+  if (registering.has(claim.vehicleIdentifier)) return;
+  registering.add(claim.vehicleIdentifier);
+  void post()
+    .then((registration) => {
+      const held = loadDibs(now()).find(
+        (d) => d.vehicleIdentifier === claim.vehicleIdentifier,
+      );
+      if (held && held.claimedAt === claim.claimedAt) {
+        saveDibs({ ...held, registration }, now());
+        return;
+      }
+      try {
+        releaseHook?.({ ...claim, registration });
+      } catch {
+        /* the row expires on its own clock regardless */
+      }
+    })
+    .catch(() => {
+      /* the certificate falls back to this phone's own timestamp */
+    })
+    .finally(() => registering.delete(claim.vehicleIdentifier));
+}
+
+/** Test seam: forget any in-flight registrations. */
+export function _resetDibsRegistrationsForTests(): void {
+  registering.clear();
 }
 
 export function dibsOn(

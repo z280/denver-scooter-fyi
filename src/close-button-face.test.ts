@@ -1,4 +1,4 @@
-// The nine dismissals that share one rule, and the face that rule forgot.
+// The eight dismissals that share one rule, and the face that rule forgot.
 //
 // WHAT WENT WRONG, because the shape of it is the point. Six surfaces each had
 // a near-identical × rule; they were consolidated into one shared rule to stop
@@ -22,12 +22,11 @@ import { readSource } from "../tests/helpers/source-text.ts";
 
 const css = readSource("src/style.css");
 
-/** The nine in the shared rule. Listed here rather than parsed out of the
+/** The eight in the shared rule. Listed here rather than parsed out of the
  *  stylesheet on purpose: if somebody adds a tenth dismissal to that selector
  *  list and not to this one, the new test failure is the reminder. */
 const SHARED = [
   "arrival__close",
-  "planlist__close",
   "home-bar__close",
   "qr-scan__close",
   "device-features__close",
@@ -37,7 +36,7 @@ const SHARED = [
   "ride-modal__close",
 ];
 
-/** The declaration block whose selector list contains all nine. */
+/** The declaration block whose selector list contains all eight. */
 function sharedBlock(): string {
   const anchor = css.indexOf(".ride-modal__close {");
   expect(anchor).toBeGreaterThan(-1);
@@ -49,7 +48,7 @@ function sharedBlock(): string {
 describe("the shared dismiss rule carries a face, not just a shape", () => {
   const block = sharedBlock();
 
-  it("still covers all nine surfaces", () => {
+  it("still covers all eight surfaces", () => {
     const selectorStart = css.lastIndexOf("\n\n", css.indexOf(".ride-modal__close {"));
     const selectors = css.slice(selectorStart, css.indexOf(".ride-modal__close {"));
     for (const name of SHARED.slice(0, -1)) {

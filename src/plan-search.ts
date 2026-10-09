@@ -36,6 +36,7 @@ import {
 } from "./free-minutes.ts";
 import type { TripPlace } from "./pending-trip.ts";
 import { planListView, type PlanListView } from "./plan-list.ts";
+import type { SpecField } from "./ride-spec.ts";
 import type { RideSpec } from "./ride-spec.ts";
 
 export type FleetFeature = GeoJSON.Feature<GeoJSON.Point, DeviceProperties>;
@@ -47,6 +48,16 @@ export interface PlanSearchDeps {
   origin(): LngLat | null;
   /** The rider's "ideal scooter", or the default sheet. */
   spec(): RideSpec;
+  /** One line naming what the rider's interview answer did to this search, or
+   *  null. Optional: a host that never asks the interview has nothing to say,
+   *  and this module neither knows nor cares what the question was. */
+  interviewNote?(relaxed: readonly SpecField[]): string | null;
+  /** The rider's ideal scooter in one line, for the "proceed with this?" row,
+   *  or null when there is nothing to confirm. */
+  idealSpecSummary?(): string | null;
+  /** Whether that sheet is in force for this search. Absent reads as true,
+   *  which is what every caller before the control existed meant. */
+  idealSpecInUse?(): boolean;
   /** The same spec, but NULL when the rider has not configured one.
    *
    *  A second accessor rather than a nullable `spec()`, because the two
@@ -170,6 +181,12 @@ export function searchPlans(
       // either of these in the drawer and comes back gets the list they just
       // asked for.
       handOffCap: handOffCap(),
+      // The host writes this: only it knows what the rider was asked and what
+      // they answered. Absent in a caller that never ran the interview, which
+      // reads as "nothing to say".
+      interviewNote: deps.interviewNote?.(result.relaxed) ?? null,
+      idealSpecSummary: deps.idealSpecSummary?.() ?? null,
+      idealSpecInUse: deps.idealSpecInUse?.() ?? true,
       spec: deps.activeSpec ? deps.activeSpec() : null,
       // The SAME context the search matched with, so the share and the filter
       // cannot disagree about the same vehicle.

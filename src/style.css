@@ -1888,7 +1888,6 @@ body.ride-active .arrival {
    prove it is a control. Quiet ink, because a dismiss should never compete
    with the thing it dismisses. */
 .arrival__close,
-.planlist__close,
 .home-bar__close,
 .qr-scan__close,
 .device-features__close,
@@ -1919,7 +1918,6 @@ body.ride-active .arrival {
   transition: background 140ms ease, color 140ms ease;
 }
 .arrival__close:hover,
-.planlist__close:hover,
 .home-bar__close:hover,
 .qr-scan__close:hover,
 .device-features__close:hover,
@@ -1935,7 +1933,6 @@ body.ride-active .arrival {
    the UA's. Offset outward so it reads as a ring around the circle rather
    than as a second border inside it. */
 .arrival__close:focus-visible,
-.planlist__close:focus-visible,
 .home-bar__close:focus-visible,
 .qr-scan__close:focus-visible,
 .device-features__close:focus-visible,
@@ -1949,7 +1946,6 @@ body.ride-active .arrival {
 }
 @media (prefers-reduced-motion: reduce) {
   .arrival__close,
-  .planlist__close,
   .home-bar__close,
   .qr-scan__close,
   .device-features__close,
@@ -1987,17 +1983,14 @@ body.ride-active .arrival {
 .ride-preflight__close,
 .admin-analytics__close,
 .home-bar__close,
-/* The plan list joins this rule rather than carrying a sixth near-identical
-   copy, which is the thing this block exists to have stopped. It reserves its
-   corner the same way (`.planlist__head` has the padding) and needs no
-   `position: relative` of its own: `.planlist` is `position: fixed`, which is
-   already a containing block. */
-.planlist__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
-}
+/* The plan list has NO corner × any more. It had one, pinned here by the shared
+   dismiss rule, which depended on `.planlist` being `position: fixed` to be its
+   containing block. In the drawer that is gone, so the absolute × positioned
+   against the DRAWER and stacked under the drawer's own close button — two ×s
+   in one corner, one of which closes the whole menu. It is a labelled in-flow
+   button now (`.planlist__dismiss`), which is also the honest shape: dismissing
+   this section lands the rider on the scooters below it rather than closing
+   anything. */
 .qr-scan__head,
 .device-features__head,
 .equity-receipt__head,
@@ -5599,9 +5592,12 @@ body.is-map-picking .ride-modal {
   padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.04);
+  /* A ROW now: the step button takes the width it can and the 🔍 sits at the
+     end of it. The text stack that used to be this element's job moved down
+     to .nav-hud__step-btn, which is the flex child that owns it. */
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 :root[data-theme="dark"] .nav-hud__step { background: rgba(255, 255, 255, 0.06); }
 .nav-hud__step.is-current {
@@ -5620,6 +5616,23 @@ body.is-map-picking .ride-modal {
   width: 100%;
 }
 .nav-hud__step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 🔍 Show me this turn. `min-width`/`flex-shrink` because the instruction
+   beside it is long and would otherwise squeeze the glyph to nothing; 32px
+   square is the smallest comfortable tap target that still fits the row. */
+.nav-hud__step-peek {
+  all: unset;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 15px;
+  background: rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="dark"] .nav-hud__step-peek { background: rgba(255, 255, 255, 0.1); }
+.nav-hud__step-peek:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav-hud__step-text { font-weight: 700; font-size: 13.5px; }
 .nav-hud__step-streets { font-size: 12px; opacity: 0.75; }
 
@@ -9933,59 +9946,39 @@ input[data-ride-keypad="on"] {
    and a details block do not fit a phone — capped against the viewport rather
    than a fixed height so it does not grow past the home bar it floats above.
    --------------------------------------------------------------------------- */
+/* IN THE DRAWER, NOT OVER THE MAP, and the whole of this rule is shorter for
+   it. This card used to be `position: fixed` and centred over the map, which
+   cost it a stack of workarounds that are all deleted here:
+
+     * `left: calc(50% + var(--ribbon-gutter) / 2)` and a width that subtracted
+       the gutter, because at 94vw the card ran under the open ribbon and lost
+       the left edge of every row;
+     * a `--ribbon-gutter` BORROW in main.ts that closed the ribbon on open and
+       handed it back on dismiss, plus a teardown/close split so that
+       re-solving did not flap the strip once per search;
+     * a `mask-image` fade and an `is-at-end` class, because a fixed card is its
+       own scroll container and clipped the next row's button flat against its
+       bottom edge.
+
+   A section inside the drawer has none of those problems: the drawer owns the
+   scrolling, the width and the stacking, and the ribbon was never over it. What
+   is left is the card's own skin, so it still reads as one thing among the
+   drawer's other groups. */
 .planlist {
-  position: fixed;
-  /* CENTRED IN WHAT IS LEFT, not in the viewport. At 94vw on a phone this card
-     ran clean under the open ribbon, which sits at z-index 32 and so covered
-     the left edge of every row: headlines read "o scooters, one hand-off" and
-     the leg lines lost their numbers. `--ribbon-gutter` is the variable the
-     drawers and chips already offset from and it collapses to 0 with the
-     strip, so a closed ribbon leaves this centred exactly as before. */
-  left: calc(50% + var(--ribbon-gutter) / 2);
-  bottom: calc(
-    calc(env(safe-area-inset-bottom) + var(--float-inset)) + var(--brand-h) +
-      var(--float-inset)
-  );
-  transform: translateX(-50%);
-  z-index: 29;
-  width: min(calc(94vw - var(--ribbon-gutter)), 460px);
-  max-height: min(70vh, 620px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* The extra bottom padding is the other half of the fade below: it gives the
-     last row somewhere to end, so the card's own edge never cuts a button. */
-  padding: 14px 14px 22px;
+  padding: 14px;
   background: var(--metal-bg);
   color: var(--metal-fg);
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--shadow);
-  /* A SCROLL THAT LOOKS LIKE A SCROLL. Mid-scroll, the card clipped the next
-     row's blue action button flat against its bottom edge, which reads as a
-     rendering fault rather than as "there is more below" — the screenshot that
-     prompted this showed a stray blue bar and nothing to explain it. The mask
-     fades the last few pixels of content out instead.
-
-     `mask-image` rather than an overlay element: the card is a scroll
-     container, so an absolutely-positioned gradient inside it would scroll
-     away with the content, and one outside it would have to track the card's
-     rounded corners. */
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0,
-    #000 calc(100% - 18px),
-    transparent 100%
-  );
 }
-/* Scrolled to the end — or never scrollable at all — there is nothing below to
-   hint at, and a fade over the final button makes a live control look
-   disabled. The class is set by the panel, which is the only thing that can
-   know; CSS cannot ask whether a box overflows. */
-.planlist.is-at-end {
-  mask-image: none;
+/* No gap for a drawer opened just to browse the ranked scooters. */
+#plan-list:empty {
+  display: none;
 }
+/* No corner to reserve any more — see `.planlist__dismiss`. */
 .planlist__head {
-  padding-right: 52px;
+  display: flex;
 }
 .planlist__title {
   color: var(--fg);
@@ -10132,6 +10125,170 @@ input[data-ride-keypad="on"] {
   font-weight: 650;
   cursor: pointer;
 }
+/* "Proceed with my ideal scooter?" and the three interview answers, above the
+   plans because both are INPUTS to every row below. A rider who reads a short
+   list and only then finds the filter that shortened it has been told the city
+   is empty. */
+.planlist__controls:empty {
+  display: none;
+}
+.planlist__controls {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-subtle);
+}
+.planlist__specrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.planlist__specswitch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+}
+/* The sheet itself, quieter than the switch that governs it: it is there to be
+   recognised, not read word by word. Full width so a long sheet wraps under the
+   switch rather than shoving Configure off the row. */
+.planlist__specsummary {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.planlist__specedit {
+  appearance: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.planlist__specedit:hover {
+  background: var(--bg-panel);
+}
+.planlist__specedit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The heading is a flex ITEM of the wrapping group below (it is appended into
+   it so the label and its buttons are one element for a screen reader), so it
+   needs the full-width basis or it sits beside the first button instead of
+   above the row. */
+.planlist__priohead {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+/* Wrap rather than scroll: three short labels fit two-up on a phone, and a
+   horizontally scrolling row of three hides one of them behind a gesture
+   nothing announces. */
+.planlist__prio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.planlist__priobtn {
+  appearance: none;
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.planlist__priobtn.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.planlist__priobtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* "Take this one" and, on a split plan, the 🔍 beside it. */
+.planlist__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.planlist__actions .planlist__go {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+/* Square, so it reads as an icon button next to a wide labelled one rather than
+   as a second, smaller action competing with it. The glyph carries no meaning
+   for a screen reader — the aria-label does. */
+.planlist__peek {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 44px;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.planlist__peek:hover {
+  background: var(--bg-panel);
+}
+.planlist__peek:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The way out of this section, and deliberately the quietest control in it: a
+   rider who wants one of the plans above should not have their eye pulled down
+   here. Full width because it is the last thing in the card and a half-width
+   button with dead space beside it reads as a layout fault. */
+.planlist__dismiss {
+  margin-top: 10px;
+  width: 100%;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.planlist__dismiss:hover {
+  color: var(--fg);
+  background: var(--bg-subtle);
+}
+.planlist__dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .planlist__again {
   min-height: 40px;
   border-radius: 12px;
@@ -10400,6 +10557,24 @@ input[data-ride-keypad="on"] {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+/* "Clear my trip", below the preference and divided off from it: it is the
+   one destructive control on a reading surface, and it should not read as
+   another row of information. The two confirm buttons sit side by side. */
+.trippanel__clear {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+}
+.trippanel__clear .account-hint { flex: 1 1 100%; margin: 0; }
+.trippanel__clear .text-btn:disabled { opacity: 0.5; cursor: default; }
+/* `--fail` and not `--danger`: --danger is referenced in three older rules
+   but defined nowhere, so it resolves to inherited text. --fail is the real
+   token, and it has a dark-mode value. */
+.text-btn.is-danger { color: var(--fail); }
 .trippanel__prefvalue {
   margin: 0;
   font-size: 15px;

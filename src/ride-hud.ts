@@ -1789,6 +1789,26 @@ export class RideHud {
       onManeuver: (maneuver) => {
         this.navManeuver = maneuver;
       },
+      // 🔍 on a directions row: fly to that junction from the rider's own
+      // approach, and STOP FOLLOWING while they look.
+      //
+      // `suspendFollow()` is the whole reason this is wired here rather than
+      // left to the overlay: without it the next GPS fix — within a second —
+      // would ease the camera straight back onto the rider, and the preview
+      // would read as a glitch. It is the same state a deliberate pan puts
+      // the map in, which is exactly what this is, so the re-center control
+      // lights up and says so and one tap puts everything back.
+      onPreviewStep: (preview) => {
+        this.suspendFollow();
+        this.map.easeTo({
+          // Copied out of the readonly tuple MapLibre will not take.
+          center: [preview.center[0], preview.center[1]],
+          bearing: preview.bearing,
+          zoom: preview.zoom,
+          pitch: preview.pitch,
+          duration: 650,
+        });
+      },
       onRouteUpdate: (update) => {
         // An off-route re-route swapped the guidance geometry in place —
         // redraw the drawn pathway to match, same color (a re-route only

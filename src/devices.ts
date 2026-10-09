@@ -27,6 +27,11 @@ import {
 import { canReach, estimatedArrivalPercent } from "./reach.ts";
 import { reverseGeocode } from "./geocode.ts";
 import { emptyFC } from "./util.ts";
+import { dibsSmsAlerts } from "./dibs-prefs.ts";
+import {
+  yieldRibbonToDrawer,
+  restoreRibbonAfterDrawer,
+} from "./chrome.ts";
 import { pointInAny, type IndexedFeature } from "./geo.ts";
 import {
   computeBatteryThresholds,
@@ -56,7 +61,7 @@ import {
   canCallDibs,
   dibsOn,
   dropDibs,
-  saveDibs,
+  registerClaim,
   type Dibs,
 } from "./dibs.ts";
 import { requestDibsNotifications } from "./dibs-notify.ts";
@@ -2049,6 +2054,10 @@ export class Devices {
         )
         .addTo(map);
       this.popup = popup;
+      // The device card is the other surface that needs the whole phone:
+      // it is nearly full-width, and the ribbon slides out across it. Same
+      // borrow-and-return as a drawer.
+      yieldRibbonToDrawer();
       nudgePopupIntoView(map, popup);
       // Remembered so setAdminSession can rebuild this popup if the admin
       // flag lands while it is open — its gates captured the old value.
@@ -2059,6 +2068,7 @@ export class Devices {
         if (this.popup === popup) {
           this.popup = null;
           this.openPopupFor = null;
+          restoreRibbonAfterDrawer();
         }
       });
 
@@ -2313,31 +2323,30 @@ export class Devices {
             // nothing here — every alert still lands in the app.
             void requestDibsNotifications();
             this.refreshOpenPopup();
-            void registerDibs({
-              vehicle_identifier: claim.vehicleIdentifier,
-              vehicle_name: claim.vehicleName,
-              plate: claim.plate,
-              claimed_by: claim.claimedBy,
-              // The catalogue's own name — "Veo Cosmo" — IS the device name.
-              // There is no separate provider field: printing one produced
-              // "Veo Veo Cosmo Veo Cosmo" on the certificate.
-              device_type: model?.name ?? props.vehicle_model_name ?? "",
-              lat: at.lat,
-              lon: at.lon,
-            })
-              .then((reg) => {
-                saveDibs({
-                  ...claim,
-                  registration: {
-                    id: reg.id,
-                    verifyUrl: reg.verify_url,
-                    qrUrl: reg.qr_url,
-                  },
-                });
-              })
-              .catch(() => {
-                /* the certificate says the time is from this phone */
+            // See `registerClaim`: it declines a second POST for a scooter
+            // already registering, and on completion attaches the row only if
+            // this same claim is still held — otherwise it releases it rather
+            // than bringing back a claim the rider dropped while waiting.
+            registerClaim(claim, async () => {
+              const reg = await registerDibs({
+                vehicle_identifier: claim.vehicleIdentifier,
+                vehicle_name: claim.vehicleName,
+                plate: claim.plate,
+                claimed_by: claim.claimedBy,
+                // The catalogue's own name — "Veo Cosmo" — IS the device name.
+                // There is no separate provider field: printing one produced
+                // "Veo Veo Cosmo Veo Cosmo" on the certificate.
+                device_type: model?.name ?? props.vehicle_model_name ?? "",
+                lat: at.lat,
+                lon: at.lon,
+                // The rider's standing answer, sent WITH the claim rather than
+                // stored server-side as a preference — sql/097's rule, and the
+                // reason is that a claim should be honoured under the answer it
+                // was made under.
+                notify_sms: dibsSmsAlerts(),
               });
+              return { id: reg.id, verifyUrl: reg.verify_url, qrUrl: reg.qr_url };
+            });
           };
 
           if (vid) {
