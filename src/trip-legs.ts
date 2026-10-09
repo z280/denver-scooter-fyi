@@ -306,6 +306,39 @@ export function legDestination(trip: ActiveTrip): TripDest | null {
   return trip.handOffs[trip.completed.length] ?? trip.dest;
 }
 
+/** Where to seed the wizard's `dest` for the leg about to be ridden.
+ *
+ *  THE ONE RULE, in one place. It used to be an expression inlined at the
+ *  wizard's open hook, spelled as "if there is a pending trip AND an active
+ *  trip AND this leg ends at a hand-off, use the hand-off; otherwise use the
+ *  pending trip's destination". Three of those four cases are wrong:
+ *
+ *    * ON LEG TWO THERE IS NO PENDING TRIP. `takePendingTrip` consumed it when
+ *      the wizard opened for leg one, and nothing puts it back — so the whole
+ *      branch was skipped, no `setDest` was dispatched at all, and the leg ran
+ *      with whatever destination the doc happened to carry. Proven: the old
+ *      expression returns `null` for leg 2 of 2.
+ *    * A WIZARD REOPENED for the same leg hits the same hole, for the same
+ *      reason: the pending trip is a one-shot and the reopen is the second
+ *      shot.
+ *    * AND THE FALLBACK WAS THE PENDING TRIP rather than the trip's own
+ *      destination, so the one store that actually knows where the rider is
+ *      going was consulted last.
+ *
+ *  The trip is the authority when there is one: its next hand-off if a leg
+ *  remains, else its own destination. `fallback` is only for a ride with no
+ *  trip ledger at all, which is the ordinary one-scooter case.
+ *
+ *  Returns null only when nothing anywhere knows a destination — a free ride,
+ *  or a wizard opened cold. */
+export function legTarget(
+  trip: ActiveTrip | null,
+  fallback: TripDest | null = null,
+): TripDest | null {
+  if (trip === null) return fallback;
+  return legDestination(trip) ?? fallback;
+}
+
 /** True when this leg ends at a hand-off rather than at the destination, which
  *  is what lets a surface say "to your next scooter" instead of "to Home". */
 export function legEndsAtHandOff(trip: ActiveTrip): boolean {

@@ -12,6 +12,7 @@ import {
   endTrip,
   legBadge,
   legDestination,
+  legTarget,
   legEndsAtHandOff,
   onFinalLeg,
   recordLeg,
@@ -276,5 +277,66 @@ describe("where THIS leg actually goes", () => {
     const trip = activeTrip()!;
     expect(trip.handOffs).toHaveLength(1);
     expect(legDestination(trip)).toEqual({ label: "A", lat: 39.73, lon: -105.0 });
+  });
+});
+
+describe("legTarget — where the wizard is seeded", () => {
+  // THE BUG THIS EXISTS FOR. The rule used to be an expression inlined at the
+  // wizard's open hook, reading "if there is a PENDING trip and an active trip
+  // and this leg ends at a hand-off, use the hand-off, else use the pending
+  // trip's destination". It routed leg two to nowhere and leg one correctly
+  // only by luck of the pending trip still being there.
+  const HOME = { label: "Home", lat: 39.7285, lon: -105.0345 };
+  const A = { label: "Liftoff 🍉 167", lat: 39.73, lon: -105.0 };
+  const B = { label: "Perseus 🎯 619", lat: 39.75, lon: -104.97 };
+
+  it("sends leg one to the hand-off, not the far end", () => {
+    const trip = startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] })!;
+    expect(legTarget(trip, HOME)).toEqual(A);
+  });
+
+  it("sends the LAST leg to the destination", () => {
+    startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] });
+    recordLeg({ rideId: "r1", costCents: 1, meters: 1, seconds: 1, endedAtMs: 1 });
+    expect(legTarget(activeTrip(), HOME)).toEqual(HOME);
+  });
+
+  it("still answers on leg two when the pending trip is long gone", () => {
+    // `takePendingTrip` is a one-shot, consumed opening the wizard for leg
+    // one. The old expression skipped its whole branch here and dispatched no
+    // destination at all — the leg ran with whatever the doc carried.
+    startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] });
+    recordLeg({ rideId: "r1", costCents: 1, meters: 1, seconds: 1, endedAtMs: 1 });
+    expect(legTarget(activeTrip(), null)).toEqual(HOME);
+  });
+
+  it("walks a three-scooter plan hand-off by hand-off", () => {
+    startTrip({ plannedRides: 3, dest: HOME, handOffs: [A, B] });
+    expect(legTarget(activeTrip(), null)).toEqual(A);
+    recordLeg({ rideId: "r1", costCents: 1, meters: 1, seconds: 1, endedAtMs: 1 });
+    expect(legTarget(activeTrip(), null)).toEqual(B);
+    recordLeg({ rideId: "r2", costCents: 1, meters: 1, seconds: 1, endedAtMs: 1 });
+    expect(legTarget(activeTrip(), null)).toEqual(HOME);
+  });
+
+  it("prefers the trip's own destination over the fallback", () => {
+    // The ledger is the store that knows. The pending trip is a seed for the
+    // case where no ledger exists, not a second opinion.
+    startTrip({ plannedRides: 2, dest: HOME, handOffs: [A] });
+    recordLeg({ rideId: "r1", costCents: 1, meters: 1, seconds: 1, endedAtMs: 1 });
+    expect(legTarget(activeTrip(), { label: "Wrong", lat: 1, lon: 2 })).toEqual(HOME);
+  });
+
+  it("uses the fallback for an ordinary one-scooter ride", () => {
+    expect(legTarget(null, HOME)).toEqual(HOME);
+  });
+
+  it("is null when nothing anywhere knows — a free ride", () => {
+    expect(legTarget(null, null)).toBeNull();
+  });
+
+  it("falls back when a trip was recorded with no destination at all", () => {
+    const trip = startTrip({ plannedRides: 2, dest: null, handOffs: [] })!;
+    expect(legTarget(trip, HOME)).toEqual(HOME);
   });
 });

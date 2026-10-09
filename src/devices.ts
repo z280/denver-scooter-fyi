@@ -2829,14 +2829,30 @@ export class Devices {
   }
 
   /** Center the map on a device and open its popup — used by the
-   *  worth-the-walk suggestion, and by the ride wizard's `?ride=` deep-link
-   *  entry (hence public: `ride-deeplink.ts` lands the rider on the scanned
-   *  device). Note the popup only opens for a device the map's display filters
-   *  currently keep — a filtered-out device still gets centered. */
-  jumpToDevice(deviceId: string, lng: number, lat: number): void {
+   *  worth-the-walk suggestion, by the ride wizard's `?ride=` deep-link entry
+   *  (hence public: `ride-deeplink.ts` lands the rider on the scanned
+   *  device), and by the plan list's hand-off preview. Note the popup only
+   *  opens for a device the map's display filters currently keep — a
+   *  filtered-out device still gets centered.
+   *
+   *  `opts.zoom` sets the level outright; without it the camera only ever
+   *  zooms IN to 15.5, never out, so a rider already looking closely keeps
+   *  their view. */
+  jumpToDevice(
+    deviceId: string,
+    lng: number,
+    lat: number,
+    opts: { zoom?: number } = {},
+  ): void {
     this.map.easeTo({
       center: [lng, lat],
-      zoom: Math.max(this.map.getZoom(), 15.5),
+      // `zoom` SETS the level; the default only raises it. The difference
+      // matters for the hand-off preview, whose whole question is "which
+      // kerb is it on" — `Math.max` leaves a rider looking at the city at
+      // 12 right where they started, several blocks of guessing away from
+      // an answer. An explicit zoom is a promise about what fills the
+      // screen, so it overrides rather than negotiates.
+      zoom: opts.zoom ?? Math.max(this.map.getZoom(), 15.5),
     });
     const feat = this.filtered().find(
       (f) => f.properties.device_id === deviceId,
