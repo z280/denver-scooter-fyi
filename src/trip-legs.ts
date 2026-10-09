@@ -401,3 +401,50 @@ export function tripComplete(trip: ActiveTrip): boolean {
 export function legBadge(trip: ActiveTrip): string {
   return `Leg ${currentLeg(trip)} of ${trip.plannedRides}`;
 }
+
+/** What a chosen plan should be recorded as, decided before anything is
+ *  written down or anyone starts walking.
+ *
+ *  `stale` is the one that matters and the one that was missing. A plan with
+ *  two rides whose SECOND vehicle can no longer be found is not a one-scooter
+ *  ride — the rider chose a split for a reason, usually that one scooter
+ *  cannot make the distance, and the app is not entitled to decide the reason
+ *  has lapsed. Treating it as an ordinary ride walked them to the first
+ *  scooter and, with no ledger to read, routed them to the FINAL destination:
+ *  the exact wrong-destination bug `legTarget` exists to prevent, arriving by
+ *  a different door and without even a leg badge to give it away. */
+export type PlanLedger =
+  | { kind: "single" }
+  | { kind: "stale" }
+  | { kind: "trip"; handOffs: readonly TripDest[] };
+
+/** Decide it. Pure, and generic over the vehicle, so the rule can be tested
+ *  without a map, a feed or a DOM — `main.ts` owns looking a vehicle up and
+ *  naming it, and passes that in as `place`.
+ *
+ *  WHY TRUNCATE AND THEN REFUSE, rather than skipping the gap. These are
+ *  POSITIONAL: hand-off `i` is where leg `i + 1` begins. Dropping an
+ *  unlocatable middle vehicle and closing the gap would route leg two to leg
+ *  three's pickup, which is worse than not going. So the list stops at the
+ *  first vehicle it cannot place, and a multi-ride plan left with no hand-offs
+ *  at all is stale rather than single.
+ *
+ *  A plan that loses only its LATER hand-offs still runs: the rider can be
+ *  taken as far as the hand-offs that were found, and the next leg re-solves
+ *  from where they actually are. */
+export function planLedger<V>(
+  rideVehicles: readonly (V | null)[],
+  place: (vehicle: V) => TripDest | null,
+): PlanLedger {
+  if (rideVehicles.length < 2) return { kind: "single" };
+  const handOffs: TripDest[] = [];
+  // Leg one's own pickup is the walk the rider is about to take, so it is not
+  // a hand-off and is skipped.
+  for (const v of rideVehicles.slice(1)) {
+    if (v === null) break;
+    const at = place(v);
+    if (at === null) break;
+    handOffs.push(at);
+  }
+  return handOffs.length === 0 ? { kind: "stale" } : { kind: "trip", handOffs };
+}

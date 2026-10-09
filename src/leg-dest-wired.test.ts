@@ -50,14 +50,49 @@ describe("the wizard's destination comes from the trip ledger", () => {
     expect(seed).not.toContain("legEndsAtHandOff");
   });
 
-  it("will not record a multi-leg trip it found no hand-off for", () => {
-    // A ledger saying "2 rides" with an empty hand-off list routes to the far
-    // end anyway and badges the rider "Leg 1 of 2" while doing it. Two lies
-    // for the price of one unlocatable vehicle.
+  it("decides single / stale / trip through planLedger, not inline", () => {
+    // The rule is `planLedger`'s, where it can be tested. `main.ts` keeps only
+    // the map lookup, which it alone can do.
     const body = main.slice(main.indexOf("function takePlanRow("));
     const upToWalk = body.slice(0, body.indexOf("beginWalkToVehicle"));
-    expect(upToWalk).toContain("handOffs.length === 0");
+    expect(upToWalk).toContain("planLedger(");
     expect(upToWalk).toContain("startTrip({");
+  });
+
+  it("does not start walking on a plan whose hand-off has gone", () => {
+    // THE REVIEWER'S FINDING, and the sharpest form of the original bug. The
+    // first draft of this branch called `endTrip()` and fell through: pins,
+    // close the list, walk to the first scooter — with no ledger, so
+    // `legTarget` handed back the pending FINAL destination and the rider who
+    // chose two scooters rode one to the far end, badgeless and silent.
+    //
+    // Position is the whole assertion: the `return` must come before anything
+    // that commits the rider. Asserting only that the branch exists would pass
+    // on exactly the code that shipped the bug.
+    const body = main.slice(main.indexOf("function takePlanRow("));
+    const stale = body.indexOf('ledger.kind === "stale"');
+    expect(stale).toBeGreaterThan(-1);
+    const refusal = body.slice(stale, body.indexOf("\n  }", stale));
+    expect(refusal).toContain("return;");
+    // ...and the refusal itself commits nothing.
+    expect(refusal).not.toContain("beginWalkToVehicle");
+    expect(refusal).not.toContain("closePlanList()");
+    expect(refusal).not.toContain("chosenPins.set(");
+    // The walk is downstream of the return, not inside the branch.
+    expect(body.indexOf("beginWalkToVehicle")).toBeGreaterThan(
+      stale + refusal.length,
+    );
+  });
+
+  it("tells the rider why, and puts a current list in front of them", () => {
+    // A refusal that only says "no" leaves them tapping the same dead row.
+    const body = main.slice(main.indexOf("function takePlanRow("));
+    const stale = body.indexOf('ledger.kind === "stale"');
+    const refusal = body.slice(stale, body.indexOf("\n  }", stale));
+    expect(refusal).toContain("notice(STALE_HANDOFF_NOTICE)");
+    expect(refusal).toContain("replanPlanList?.()");
+    // And it drops the marks from the plan it just refused.
+    expect(refusal).toContain("chosenPins.clear()");
   });
 });
 

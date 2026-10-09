@@ -156,8 +156,10 @@ import {
   activeTrip,
   endTrip,
   legTarget,
+  planLedger,
   startTrip,
   tripComplete,
+  type TripDest,
 } from "./trip-legs.ts";
 import {
   showMovedToast,
@@ -4159,6 +4161,20 @@ let closeDrawer: () => void = () => {};
 /** The plan list, while it is on screen. One at a time: two of these would be
  *  two surfaces arguing about one decision. */
 let planListPanel: PlanListPanelHandle | null = null;
+/** Re-run the search behind the open plan list, from outside the closure that
+ *  owns it. Held here for exactly one caller: `takePlanRow`, which refuses a
+ *  plan whose hand-off has gone and must put a list built from the CURRENT
+ *  fleet in front of the rider rather than the one they just tapped. Null
+ *  whenever no list is open. */
+let replanPlanList: (() => void) | null = null;
+
+/** Said when a chosen multi-scooter plan's hand-off vehicle is no longer in
+ *  the feed. Names what went wrong, whose fault it is not, and what just
+ *  happened to the list — a refusal that only says "no" leaves the rider
+ *  tapping the same dead row. */
+const STALE_HANDOFF_NOTICE =
+  "That plan's second scooter is gone — someone else got there first. " +
+  "Here are the ways there now.";
 /** §11.9's reading surface. Built on the drawer's first open, never at boot. */
 let tripPanel: TripPanelHandle | null = null;
 
@@ -4213,6 +4229,9 @@ let useIdealSpec = true;
 function closePlanList(): void {
   planListPanel?.destroy();
   planListPanel = null;
+  // Goes with the panel: a re-solve that repaints a destroyed list is a
+  // search run for nobody, and holding the closure keeps the dest alive.
+  replanPlanList = null;
 }
 
 /** "Clear my trip" — throw away everywhere the trip is written down.
@@ -4448,6 +4467,7 @@ function openPlanList(dest: TripPlace): void {
     const again = searchPlans(deps, dest);
     if (again.kind === "ok") planListPanel?.update(again.view);
   };
+  replanPlanList = resolve;
   planListPanel = createPlanListPanel(need("plan-list"), first.view, {
     onChoose: (row) => takePlanRow(row),
     // Empties this section and leaves the drawer open on the ranked scooters
@@ -4628,64 +4648,69 @@ function takePlanRow(row: PlanRow): void {
   const rideVehicles = row.plan.legs
     .filter((l) => l.mode === "ride")
     .map((l) => l.vehicle ?? null);
-  const rideLegs = rideVehicles.length;
-  // Hoisted out of the branch below because the MAP wants it too: the pins
-  // drawn further down mark the same hand-offs the ledger records, and
-  // reading them from one list is what stops the two disagreeing.
-  const handOffs: { label: string; lat: number; lon: number }[] = [];
-  if (rideLegs >= 2) {
+  // THE RULE LIVES IN `planLedger`, not here. Deciding single / stale / trip
+  // from a plan and a fleet is the kind of thing `main.ts` cannot be tested
+  // on, and the branch that got it wrong — a multi-ride plan whose hand-off
+  // has vanished — is exactly the one worth a test. This module keeps only
+  // what it alone can do: looking a vehicle up on the map and naming it.
+  //
+  // `TripLeg.vehicle` is `DeviceProperties`, which carries no coordinates, so
+  // the same feature lookup `takePlanRow` already does for the first vehicle
+  // is how a position is had.
+  const ledger = planLedger(rideVehicles, (v) => {
+    const feat = devices
+      .allFeatures()
+      .find((f) => f.properties.device_id === v.device_id);
+    if (!feat) return null;
+    const [hLng, hLat] = feat.geometry.coordinates;
+    return {
+      label: vehicleDisplayName(
+        v.public_name,
+        null,
+        v.vehicle_model_name,
+        v.plate_suffix,
+      ),
+      lat: hLat,
+      lon: hLng,
+    };
+  });
+
+  if (ledger.kind === "stale") {
+    // REFUSE THE PLAN, and do not fall through. Falling through walks the
+    // rider to the first scooter with no ledger behind them, so `legTarget`
+    // finds no leg and hands back the PENDING FINAL destination: somebody who
+    // chose a two-scooter plan is sent on a one-scooter ride to the far end,
+    // silently, without even the "Leg 1 of 2" badge to give it away. That is
+    // the wrong-destination bug this whole change exists to kill, arriving by
+    // a different door.
+    //
+    // The plan is stale, not wrong: the hand-off vehicle was in the feed when
+    // the list was built and is not now. So say that, re-solve against the
+    // fleet as it is, and leave the rider on the list to choose from what
+    // actually exists.
+    endTrip();
+    chosenPins.clear();
+    planListPanel?.notice(STALE_HANDOFF_NOTICE);
+    replanPlanList?.();
+    return;
+  }
+
+  // Hoisted because the MAP wants it too: the pins drawn further down mark the
+  // same hand-offs the ledger records, and reading them from one list is what
+  // stops the two disagreeing.
+  const handOffs: readonly TripDest[] =
+    ledger.kind === "trip" ? ledger.handOffs : [];
+
+  if (ledger.kind === "trip") {
     const pending = peekPendingTrip()?.dest ?? null;
-    // WHERE EACH HAND-OFF HAPPENS: the pickup point of legs 2..N, which is
-    // simply where the vehicle each of those legs starts on is standing right
-    // now. Leg one's own pickup is the walk the rider is about to take, so it
-    // is not a hand-off and is skipped.
-    //
-    // `TripLeg.vehicle` is `DeviceProperties`, which carries no coordinates —
-    // the same feature lookup `takePlanRow` already does for the first vehicle
-    // is how a position is had. A vehicle that cannot be located TRUNCATES the
-    // list rather than leaving a gap, because these are positional and a gap
-    // would route leg two to leg three's pickup.
-    for (const v of rideVehicles.slice(1)) {
-      if (!v) break;
-      const feat = devices
-        .allFeatures()
-        .find((f) => f.properties.device_id === v.device_id);
-      if (!feat) break;
-      const [hLng, hLat] = feat.geometry.coordinates;
-      handOffs.push({
-        label: vehicleDisplayName(
-          v.public_name,
-          null,
-          v.vehicle_model_name,
-          v.plate_suffix,
-        ),
-        lat: hLat,
-        lon: hLng,
-      });
-    }
-    // NO HAND-OFFS LOCATED, NO TRIP. The loop above truncates rather than
-    // leaving a gap, so an unlocatable second vehicle yields an empty list —
-    // and a ledger that says "2 rides" with nowhere to hand off is a trip
-    // that lies twice over: the badge reads "Leg 1 of 2" and `legTarget`,
-    // having no hand-off to find, routes the rider to the far end. Straight
-    // past the scooter they chose this plan FOR.
-    //
-    // Recording no trip instead makes the app honest: it is an ordinary
-    // one-scooter ride to the destination, which is exactly what the rider
-    // will experience. Reproduced in `trip-legs.test.ts` — an empty hand-off
-    // list is the one shape that silently re-targets a multi-leg plan.
-    if (handOffs.length === 0) {
-      endTrip();
-    } else {
-      startTrip({
-        plannedRides: rideLegs,
-        dest:
-          pending === null
-            ? null
-            : { label: pending.label, lat: pending.lat, lon: pending.lon },
-        handOffs,
-      });
-    }
+    startTrip({
+      plannedRides: rideVehicles.length,
+      dest:
+        pending === null
+          ? null
+          : { label: pending.label, lat: pending.lat, lon: pending.lon },
+      handOffs,
+    });
   } else {
     // Choosing a one-scooter plan is also the rider saying this is the trip
     // now, so any ledger from an abandoned multi-leg plan goes with it.

@@ -61,6 +61,17 @@ export interface PlanListPanelHandle {
   /** Repaint against a fresh search. Keeps the panel open, because a rider
    *  mid-read should not have it close under them. */
   update(view: PlanListView): void;
+  /** Say why the tap the rider just made did not do what they expected.
+   *
+   *  Separate from the view's notes because it is about an ACTION and not
+   *  about the list: it has to survive the re-solve that follows it, which
+   *  replaces every other line on the panel, and it has to be gone by the
+   *  time the rider taps something else. `update` clears it for that reason —
+   *  a stale "that plan is gone" over a list that has since changed is the
+   *  same lie in the other direction.
+   *
+   *  Null clears it. */
+  notice(text: string | null): void;
   destroy(): void;
 }
 
@@ -117,6 +128,13 @@ export function createPlanListPanel(
   close.type = "button";
   close.addEventListener("click", () => deps.onCancel());
 
+  // ABOVE EVERYTHING, including the notes: it answers "why did nothing
+  // happen when I tapped that?", which a rider asks before they read anything
+  // else on the panel.
+  const notice = el("div", "planlist__notice");
+  notice.hidden = true;
+  notice.setAttribute("role", "status");
+
   const notes = el("div", "planlist__notes");
   // ABOVE THE PLANS, not below them. The free-minute figure is an INPUT to every
   // price in the list, so a rider who reads a price and then finds the control
@@ -131,7 +149,7 @@ export function createPlanListPanel(
   // filter that shortened it has been told the city is empty.
   const controls = el("div", "planlist__controls");
   const body = el("div", "planlist__body");
-  panel.append(head, notes, free, controls, specPrompt, body, close);
+  panel.append(head, notice, notes, free, controls, specPrompt, body, close);
   root.replaceChildren(panel);
 
   function renderNotes(v: PlanListView): void {
@@ -469,10 +487,22 @@ export function createPlanListPanel(
 
   render(view);
 
+  const setNotice = (text: string | null): void => {
+    notice.textContent = text ?? "";
+    notice.hidden = text === null;
+  };
+
   return {
     update(next) {
       if (destroyed) return;
+      // Before the render, not after: a notice about the list the rider was
+      // just looking at does not describe the one about to replace it.
+      setNotice(null);
       render(next);
+    },
+    notice(text) {
+      if (destroyed) return;
+      setNotice(text);
     },
     destroy() {
       destroyed = true;

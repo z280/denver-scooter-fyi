@@ -15,6 +15,7 @@ import {
   legTarget,
   legEndsAtHandOff,
   onFinalLeg,
+  planLedger,
   recordLeg,
   startTrip,
   tripComplete,
@@ -338,5 +339,87 @@ describe("legTarget — where the wizard is seeded", () => {
   it("falls back when a trip was recorded with no destination at all", () => {
     const trip = startTrip({ plannedRides: 2, dest: null, handOffs: [] })!;
     expect(legTarget(trip, HOME)).toEqual(HOME);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// planLedger — single, stale, or a trip
+// ---------------------------------------------------------------------------
+describe("planLedger", () => {
+  interface V {
+    id: string;
+  }
+  /** Everything is findable except the ids named here. */
+  const placer =
+    (missing: string[] = []) =>
+    (v: V) =>
+      missing.includes(v.id)
+        ? null
+        : { label: v.id, lat: 39.7 + Number(v.id.slice(1)) / 1000, lon: -105 };
+
+  it("calls a one-ride plan single, with no hand-offs to find", () => {
+    expect(planLedger([{ id: "v1" }], placer())).toEqual({ kind: "single" });
+  });
+
+  it("calls a walk-only plan single rather than stale", () => {
+    // No rides at all is not a plan that lost anything.
+    expect(planLedger([], placer())).toEqual({ kind: "single" });
+  });
+
+  it("records a trip for every hand-off it can place", () => {
+    const l = planLedger([{ id: "v1" }, { id: "v2" }, { id: "v3" }], placer());
+    expect(l.kind).toBe("trip");
+    // Leg one's pickup is the walk, so it is NOT a hand-off: two rides after
+    // the first, two hand-offs.
+    expect(l.kind === "trip" && l.handOffs.map((h) => h.label)).toEqual([
+      "v2",
+      "v3",
+    ]);
+  });
+
+  // THE REGRESSION. A two-scooter plan whose second scooter has gone is not a
+  // one-scooter ride: the rider chose the split for a reason. Calling it
+  // `single` walked them to the first vehicle with no ledger behind them, and
+  // `legTarget` then handed back the final destination.
+  it("calls a two-ride plan stale when its hand-off cannot be placed", () => {
+    expect(planLedger([{ id: "v1" }, { id: "v2" }], placer(["v2"]))).toEqual({
+      kind: "stale",
+    });
+  });
+
+  it("is never single for a multi-ride plan, however much it lost", () => {
+    // The distinction the bug collapsed: "you only need one scooter" and "the
+    // second scooter you were promised is gone" are different sentences.
+    for (const missing of [["v2"], ["v2", "v3"]]) {
+      const l = planLedger([{ id: "v1" }, { id: "v2" }, { id: "v3" }], placer(missing));
+      expect(l.kind).not.toBe("single");
+    }
+  });
+
+  it("stops at the first hand-off it cannot place, and keeps the ones before", () => {
+    // Hand-offs are POSITIONAL — hand-off i is where leg i+1 begins — so
+    // closing the gap would route leg two to leg three's pickup. Truncating
+    // leaves a shorter trip that is true as far as it goes; the next leg
+    // re-solves from wherever the rider actually is.
+    const l = planLedger(
+      [{ id: "v1" }, { id: "v2" }, { id: "v3" }, { id: "v4" }],
+      placer(["v3"]),
+    );
+    expect(l.kind === "trip" && l.handOffs.map((h) => h.label)).toEqual(["v2"]);
+  });
+
+  it("treats a leg with no vehicle at all as the same kind of gap", () => {
+    expect(planLedger([{ id: "v1" }, null], placer())).toEqual({ kind: "stale" });
+  });
+
+  it("never asks where the first vehicle is", () => {
+    // That one the rider walks to; `takePlanRow` looks it up separately. A
+    // `place` call for it would be a second lookup and a chance to disagree.
+    const asked: string[] = [];
+    planLedger([{ id: "v1" }, { id: "v2" }], (v: V) => {
+      asked.push(v.id);
+      return { label: v.id, lat: 39.7, lon: -105 };
+    });
+    expect(asked).toEqual(["v2"]);
   });
 });
