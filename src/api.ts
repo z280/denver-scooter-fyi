@@ -106,6 +106,20 @@ export interface DeviceProperties {
   /** Failed starts among the last 3 completed rentals, 0–3; ≥ 2 is
    *  high risk on its own. Public (API sql/087). */
   recent_rentals_no_go?: number | null;
+  /** Lifetime-since-reset rentals and how many ended within 25 m of the
+   *  start (the "ended where they began" counter). */
+  rentals_observed?: number | null;
+  rentals_no_go?: number | null;
+  /** Rentals since the stayed counter started (scooter-fyi-api#142) and how
+   *  many of them never left 50 m of the unlock point. The Smart Ride grade
+   *  is computed from these, so round trips do not count against a vehicle. */
+  rentals_stayed?: number | null;
+  rentals_observed_stayed_era?: number | null;
+  /** Server grade; null until the vehicle has 5 rentals in the stayed era
+   *  (so null for every vehicle on the first day after the deploy). Not
+   *  rendered by this app yet; any UI that shows it must render null as
+   *  "Not enough rides yet", never as a blank or a zero. */
+  smart_ride_grade?: string | number | null;
   /** When the device first appeared at its current spot (dwell start). Public. */
   first_observed_at_location?: string;
   /** Peer-relative dwell: this device's dwell percentile among its H3
@@ -1062,6 +1076,14 @@ export interface FleetOutcomeModel {
   /** Null under `min_rentals_for_rate` — the counts are still there, and the
    *  copy for that case is "not enough rides yet", not a hidden row. */
   no_go_rate: number | null;
+  // ----- "Never left the spot" (scooter-fyi-api#142, sql/099). Optional
+  // because an API older than that deploy does not send them.
+  /** Rentals counted by the stayed counter (its own, younger window). */
+  stayed_rentals?: number;
+  /** Of those, how many never got more than `stayed_radius_meters` away. */
+  stayed?: number;
+  /** Null under `min_rentals_for_rate` stayed rentals. */
+  stayed_rate?: number | null;
 }
 
 export interface FleetOutcomesResponse {
@@ -1083,6 +1105,26 @@ export interface FleetOutcomesResponse {
   min_rentals_for_rate: number;
   vehicles: number;
   by_model: FleetOutcomeModel[];
+  // ----- "Never left the spot" (scooter-fyi-api#142, sql/099). A different
+  // question from `no_go_rate`: that one is END displacement inside
+  // `radius_meters` (a round trip back to the rack counts); this one is the
+  // MAXIMUM distance — the vehicle never got more than `stayed_radius_meters`
+  // from where it was unlocked. It has its own, younger window. All optional:
+  // an API older than that deploy sends none of them.
+  /** "since_stayed_counter". */
+  stayed_window?: string;
+  /** When the stayed counter started, ISO 8601. */
+  stayed_counted_since?: string | null;
+  /** The migration that started it ("sql/099"). */
+  stayed_counted_since_migration?: string | null;
+  stayed_radius_meters?: number;
+  /** Rentals the stayed counter has seen (the sample). */
+  stayed_rentals?: number;
+  stayed?: number;
+  /** Null under `min_rentals_for_rate` stayed rentals. */
+  stayed_rate?: number | null;
+  /** The server's one-line definition, for tooltips/provenance. */
+  stayed_definition?: string | null;
 }
 
 /** Share of rentals that ended where they began, fleet-wide and by model.

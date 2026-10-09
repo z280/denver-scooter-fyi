@@ -26,6 +26,7 @@ import {
   formatOdds,
   formatRate,
   provenanceText,
+  stayedDetailText,
   windowText,
   type StatsVoice,
 } from "./fleet-stats.ts";
@@ -366,5 +367,109 @@ describe("no copy claims more than end displacement", () => {
   it("an empty panel still states its window", () => {
     expect(render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] }).textContent)
       .toContain("Since October 7, 2026");
+  });
+});
+
+describe("never left the spot (scooter-fyi-api#142)", () => {
+  const stayedFields: Partial<FleetOutcomesResponse> = {
+    stayed_window: "since_stayed_counter",
+    // 02:01Z on 9 Oct is the evening of 8 Oct in Denver.
+    stayed_counted_since: "2026-10-09T02:01:13.687070+00:00",
+    stayed_counted_since_migration: "sql/099",
+    stayed_radius_meters: 50,
+    stayed_rentals: 4_210,
+    stayed: 88,
+    stayed_rate: 0.0209,
+    stayed_definition: "never left the spot",
+  };
+
+  it("adds a second headline with rate, sample, radius and its own Denver-dated window", () => {
+    const h = render(stayedFields);
+    const second = h.querySelector(".stats-headline--stayed");
+    expect(second?.textContent).toContain("2.1%");
+    expect(second?.textContent).toContain("Never left the spot");
+    const detail = h.querySelector(".stats-stayed-detail")?.textContent ?? "";
+    expect(detail).toContain("88 of 4,210 rentals");
+    expect(detail).toContain("within 50 m");
+    expect(detail).toContain("since October 8, 2026");
+    // The first figure keeps its own window and wording.
+    expect(h.textContent).toContain("Since October 7, 2026");
+    expect(h.querySelector(".stats-headline")?.textContent).toContain("ended where they began");
+  });
+
+  it("explains the difference between the two figures in one sentence", () => {
+    const text = render(stayedFields).querySelector(".stats-stayed-explainer")?.textContent ?? "";
+    expect(text).toContain("rode off and came back to the same spot");
+    expect(text).toContain("never got more than 50 m from where they were unlocked");
+  });
+
+  it("shows 'Counting since … — not enough rentals yet (n of 200)' instead of 0% when the rate is withheld", () => {
+    const h = render({ ...stayedFields, stayed_rentals: 57, stayed: 2, stayed_rate: null });
+    const second = h.querySelector(".stats-headline--stayed");
+    expect(second?.querySelector(".stats-headline__value")).toBeNull();
+    expect(second?.textContent).not.toContain("%");
+    expect(h.querySelector(".stats-stayed-detail")?.textContent).toBe(
+      "Counting since October 8, 2026 — not enough rentals yet (57 of 200)",
+    );
+    expect(
+      stayedDetailText(payload({ ...stayedFields, stayed_rentals: 0, stayed: 0, stayed_rate: null })),
+    ).toContain("(0 of 200)");
+  });
+
+  it("renders a measured zero as 0.0%, not as 'not enough rentals'", () => {
+    const h = render({ ...stayedFields, stayed: 0, stayed_rate: 0 });
+    expect(h.querySelector(".stats-headline--stayed")?.textContent).toContain("0.0%");
+  });
+
+  it("draws nothing extra against an API that predates the counter", () => {
+    const h = render();
+    expect(h.querySelector(".stats-headline--stayed")).toBeNull();
+    expect(h.querySelector(".stat-row__stayed")).toBeNull();
+    expect(h.textContent).not.toContain("Never left the spot");
+  });
+
+  it("adds the stayed figure to each model row, thin rows as a sentence", () => {
+    const h = render({
+      ...stayedFields,
+      by_model: [
+        {
+          model: "Cosmo", rentals: 200_000, no_gos: 18_000, vehicles: 7_000, no_go_rate: 0.09,
+          stayed_rentals: 3_000, stayed: 60, stayed_rate: 0.02,
+        },
+        {
+          model: "Apollo", rentals: 9_463, no_gos: 523, vehicles: 983, no_go_rate: 0.0553,
+          stayed_rentals: 10, stayed: 1, stayed_rate: null,
+        },
+      ],
+    });
+    const rows = h.querySelectorAll(".stat-row");
+    expect(rows[0].querySelector(".stat-row__stayed")?.textContent).toBe(
+      "Never left the spot: 2.0% — 60 of 3,000 rentals",
+    );
+    const thin = rows[1].querySelector(".stat-row__stayed");
+    expect(thin?.textContent).toBe("Never left the spot: not enough rentals yet (10 of 200)");
+    expect(thin?.classList.contains("stat-row__stayed--thin")).toBe(true);
+    // The no-go figure for the row is untouched.
+    expect(rows[1].textContent).toContain("5.5%");
+  });
+
+  it("renders the same stayed numbers under either voice", () => {
+    const figs = (v: StatsVoice) =>
+      Array.from(
+        render(stayedFields, v).querySelectorAll(
+          ".stats-headline__value, .stats-stayed-detail, .stat-row__stayed",
+        ),
+      )
+        .map((n) => n.textContent)
+        .join("|");
+    expect(figs("rider")).toBe(figs("civic"));
+  });
+
+  it("keeps the stayed copy free of blame in both voices", () => {
+    const forbidden =
+      /\b(fail(s|ed|ing|ure)?|broken|neglect\w*|blame|refus\w+|abandon\w+|should|must|demand\w*|monopol\w+)\b/i;
+    for (const copy of Object.values(VOICES)) {
+      expect(`${copy.stayedLabel} ${copy.stayedExplainer("50 m")}`).not.toMatch(forbidden);
+    }
   });
 });
