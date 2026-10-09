@@ -1,58 +1,205 @@
 // @vitest-environment happy-dom
 //
-// The rider-stats panel.
+// The rider-stats panel: a handful of cards, each one figure with its window
+// and sample.
 //
-// Two kinds of assertion here, and the second kind is the reason this file is
-// long. The first is arithmetic and formatting. The second pins the VOICE and
-// the DISCLOSURES, because both are requirements rather than taste:
+// What is pinned here, and why each is a requirement rather than taste:
 //
-//   * scooter.fyi is pro-rider and is NOT an advocacy platform. The copy
-//     reports what was counted and never assigns blame — the same figures
-//     carry a civic voice on weseeyouveo.com, and the voice may select words
-//     only. If a `voice` ever changed a filter, a window or a threshold, the
-//     two properties could disagree about a number and neither would be worth
-//     quoting. That is the regression the "same numbers" test exists for.
-//   * window, sample and radius are always on screen. A percentage without
-//     them gets quoted back at you naked, and this one is cumulative — an
-//     unlabelled rate reads as "today" when it is every rental we have seen.
+//   * every card carries its window and its sample. A figure without them is
+//     the one that gets quoted back at you naked.
+//   * counting eras. Rides, dwell and failed starts were counted three ways;
+//     a figure whose window reaches back across 2026-10-06 01:36Z (or a later
+//     `comparable_since` from the server) is not shown at all.
+//   * each card stands alone: one failed fetch hides one card.
+//   * same numbers, different verbs. The civic voice (weseeyouveo.com's embed)
+//     may select words only, never a figure.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { FleetOutcomesResponse } from "./api.ts";
+import type {
+  ComplianceResponse,
+  DeviceHistoryHour,
+  FleetOutcomesResponse,
+} from "./api.ts";
+import type {
+  AnalyticsDevicesByRegionResponse,
+  AnalyticsDwellResponse,
+  AnalyticsRidesResponse,
+} from "./analytics-api.ts";
 import {
   VOICES,
+  buildCards,
   buildFleetStats,
-  renderFleetStats,
+  denverMidnight,
+  eraDays,
+  eraStart,
+  formatKm,
+  formatMinutes,
   formatOdds,
   formatRate,
-  provenanceText,
-  stayedDetailText,
-  windowText,
+  hourRangeText,
+  renderFleetStats,
+  type RangeDevice,
+  type StatsData,
   type StatsVoice,
 } from "./fleet-stats.ts";
 
-function payload(over: Partial<FleetOutcomesResponse> = {}): FleetOutcomesResponse {
+// 20:30 MDT on Thursday, October 8, 2026. "Yesterday" is October 7.
+const NOW = new Date("2026-10-09T02:30:00Z");
+const ERA = "2026-10-06T01:36:00+00:00";
+
+/** A UTC instant as the API writes a bucket: ISO with the Denver offset
+ *  (MDT, -06:00, until November 1). */
+function denverIso(t: number): string {
+  return `${new Date(t - 6 * 3_600_000).toISOString().slice(0, 19)}-06:00`;
+}
+
+function outcomes(over: Partial<FleetOutcomesResponse> = {}): FleetOutcomesResponse {
   return {
     window: "since_reset",
     counted_since: "sql/089",
-    counted_since_at: "2026-10-07T18:00:00+00:00",
+    counted_since_at: "2026-10-07T04:12:57Z",
     radius_meters: 25,
-    rentals: 214_846,
-    no_gos: 19_551,
-    no_go_rate: 0.091,
+    rentals: 49_037,
+    no_gos: 2_412,
+    no_go_rate: 0.0492,
     min_rentals_for_rate: 200,
-    vehicles: 7_534,
-    by_model: [
-      { model: "Rover", rentals: 300, no_gos: 150, vehicles: 12, no_go_rate: 0.5 },
-      {
-        model: "Cosmo",
-        rentals: 200_000,
-        no_gos: 18_000,
-        vehicles: 7_000,
-        no_go_rate: 0.09,
-      },
-      { model: "Halo", rentals: 7, no_gos: 3, vehicles: 2, no_go_rate: null },
+    vehicles: 6_721,
+    stayed_window: "since_stayed_counter",
+    stayed_counted_since: "2026-10-09T02:01:13Z",
+    stayed_radius_meters: 50,
+    stayed_rentals: 451,
+    stayed: 9,
+    stayed_rate: 0.02,
+    by_model: [],
+    ...over,
+  };
+}
+
+function fleet(over: Partial<DeviceHistoryHour> = {}): DeviceHistoryHour {
+  return {
+    hour: "2026-10-09T02:00:00+00:00",
+    total: 7_601,
+    available: 7_133,
+    reserved: 236,
+    out_of_service: 232,
+    models: {
+      Astro: { reserved: 35, available: 2_328, out_of_service: 50 },
+      Cosmo: { reserved: 138, available: 3_900, out_of_service: 156 },
+      Rover: { reserved: 0, available: 19, out_of_service: 1 },
+      Apollo: { reserved: 63, available: 886, out_of_service: 25 },
+    },
+    ...over,
+  };
+}
+
+/** Hourly rides from 18:00 MDT Oct 5 (before the era) to the current,
+ *  partial hour. Every hour is 1,000 rides except two: a pre-era hour of
+ *  9,999 that must never be called the busiest, and 4-5 PM on Oct 7. */
+function rides(over: Partial<AnalyticsRidesResponse> = {}): AnalyticsRidesResponse {
+  const series = [];
+  const start = Date.parse("2026-10-06T00:00:00Z");
+  const end = Date.parse("2026-10-09T02:00:00Z");
+  for (let t = start; t <= end; t += 3_600_000) {
+    const bucket = denverIso(t);
+    let total = 1_000;
+    if (t === start) total = 9_999;
+    if (bucket === "2026-10-07T16:00:00-06:00") total = 2_500;
+    series.push({
+      bucket,
+      by_model: { Cosmo: total },
+      total,
+      ...(t === end ? { partial: true } : {}),
+    });
+  }
+  return {
+    window_start: "2026-10-06T00:00:00Z",
+    window_end: "2026-10-09T03:00:00Z",
+    timezone: "America/Denver",
+    granularity: "hour",
+    region: { type: "city", name: "Denver" },
+    models: ["Cosmo"],
+    series,
+    rides: series.reduce((s, b) => s + b.total, 0),
+    data_through: "2026-10-09T02:30:00Z",
+    definition: "A ride is a vehicle that moved from one stop to another.",
+    comparable_since: ERA,
+    ...over,
+  };
+}
+
+function gather(): AnalyticsDevicesByRegionResponse {
+  return {
+    window_start: "2026-10-02T06:00:00Z",
+    window_end: "2026-10-09T03:00:00Z",
+    timezone: "America/Denver",
+    region_type: "neighborhood",
+    as_of: "2026-10-09T02:20:01Z",
+    regions: [
+      { region: "NB_CentralPark", now: 231, average: 232.2, cycles: 4_763 },
+      { region: "NB_FivePoints", now: 493, average: 504.8, cycles: 4_763 },
+      { region: "NB_Baker", now: 135, average: null, cycles: 0 },
     ],
+    definition: "Vehicles the feed shows inside the region.",
+  };
+}
+
+function dwell(over: Partial<AnalyticsDwellResponse> = {}): AnalyticsDwellResponse {
+  return {
+    window_start: "2026-10-06T06:00:00Z",
+    window_end: "2026-10-09T03:00:00Z",
+    timezone: "America/Denver",
+    region_type: "city",
+    models: ["Apollo", "Cosmo"],
+    regions: [
+      {
+        region: "Denver",
+        by_model: {
+          Apollo: { dwells: 100, average_minutes: 200 },
+          Cosmo: { dwells: 300, average_minutes: 400 },
+          Rover: { dwells: 6, average_minutes: null },
+        },
+      },
+    ],
+    min_dwells_for_average: 30,
+    data_through: "2026-10-08T20:21:31Z",
+    definition: "Dwell is how long a vehicle stayed at a stop.",
+    comparable_since: ERA,
+    ...over,
+  };
+}
+
+function equity(over: Partial<ComplianceResponse> = {}): ComplianceResponse {
+  return {
+    sla_date: "2026-10-08",
+    window_start_ts: "2026-10-08T12:00:00+00:00",
+    window_end_ts: "2026-10-08T15:00:00+00:00",
+    snapshot_count: 91,
+    avg_percent_all_devices_equity: 15.15,
+    compliance_equity_pass: false,
+    ...over,
+  } as ComplianceResponse;
+}
+
+function devices(): RangeDevice[] {
+  return [
+    { properties: { estimated_range_meters: 20_000, current_range_meters: 25_000, battery_reading: "stale" } },
+    { properties: { estimated_range_meters: 27_300, current_range_meters: 34_030, battery_reading: "stale" } },
+    { properties: { estimated_range_meters: 30_000, current_range_meters: 40_000, battery_reading: "fresh" } },
+    { properties: { estimated_range_meters: null, current_range_meters: 10_000 } },
+  ];
+}
+
+function data(over: Partial<StatsData> = {}): StatsData {
+  return {
+    now: NOW,
+    outcomes: outcomes(),
+    fleet: fleet(),
+    rides: rides(),
+    gather: gather(),
+    dwell: dwell(),
+    equity: equity(),
+    devices: devices(),
     ...over,
   };
 }
@@ -64,147 +211,200 @@ beforeEach(() => {
   document.body.replaceChildren(host);
 });
 
-function render(over: Partial<FleetOutcomesResponse> = {}, voice: StatsVoice = "rider") {
-  host.replaceChildren(buildFleetStats(payload(over), voice));
+function render(over: Partial<StatsData> = {}, voice: StatsVoice = "rider"): HTMLElement {
+  host.replaceChildren(buildFleetStats(data(over), voice));
   return host;
 }
 
-describe("formatting", () => {
-  it("keeps one decimal, because 9.1% was measured and 9% is a round number", () => {
-    expect(formatRate(0.091)).toBe("9.1%");
-    expect(formatRate(0.5)).toBe("50.0%");
+function card(key: string, over: Partial<StatsData> = {}, voice: StatsVoice = "rider") {
+  return render(over, voice).querySelector<HTMLElement>(`[data-card="${key}"]`);
+}
+
+const ALL_CARDS = ["now", "rides", "range", "gather", "dwell", "equity", "outcomes"];
+
+describe("the cards", () => {
+  it("renders all seven, in order, with failed starts not leading", () => {
+    const keys = Array.from(render().querySelectorAll<HTMLElement>(".stat-card")).map(
+      (c) => c.dataset.card,
+    );
+    expect(keys).toEqual(ALL_CARDS);
+    expect(keys[0]).not.toBe("outcomes");
   });
 
-  it("passes a withheld rate straight through as null", () => {
+  it("puts a window and a sample on every card", () => {
+    for (const voice of ["rider", "civic"] as const) {
+      for (const c of Array.from(render({}, voice).querySelectorAll(".stat-card"))) {
+        const metas = c.querySelectorAll(".stat-card__meta");
+        expect(metas.length, `${voice} ${c.getAttribute("data-card")}`).toBeGreaterThan(0);
+        for (const m of Array.from(metas)) {
+          expect(m.querySelector(".stat-card__window")?.textContent?.trim()).toBeTruthy();
+          expect(m.querySelector(".stat-card__sample")?.textContent?.trim()).toBeTruthy();
+        }
+      }
+    }
+  });
+
+  it("right now: vehicles on the map, in use, and the model mix", () => {
+    const text = card("now")?.textContent ?? "";
+    expect(text).toContain("7,601");
+    expect(text).toContain("236 of them are out on a ride");
+    expect(text).toContain("Cosmo 4,194 · Astro 2,413 · Apollo 974 · Rover 20");
+  });
+
+  it("right now: hidden when the latest sample is stale", () => {
+    expect(card("now", { fleet: fleet({ hour: "2026-10-08T22:00:00+00:00" }) })).toBeNull();
+  });
+
+  it("right now: keeps the total when the status breakdown is unknown", () => {
+    const text = card("now", { fleet: fleet({ reserved: null, models: null }) })?.textContent ?? "";
+    expect(text).toContain("7,601");
+    expect(text).not.toContain("on a ride");
+  });
+
+  it("rides: yesterday's total and the busiest current-era hour", () => {
+    const text = card("rides")?.textContent ?? "";
+    // 23 hours at 1,000 and 4-5 PM at 2,500.
+    expect(text).toContain("25,500");
+    expect(text).toContain("rides started in Denver");
+    expect(text).toContain("4–5 PM, October 7, with 2,500 rides");
+    // Hours start at the first whole Denver day of the era (01:36Z Oct 6 is
+    // still Oct 5 in Denver).
+    expect(text).toContain("Busiest hour since October 6");
+    expect(text).toContain("Wednesday, October 7");
+    // The 9,999 hour predates the counting fix.
+    expect(text).not.toContain("9,999");
+  });
+
+  it("range: our median beside Veo's, with the method", () => {
+    const text = card("range")?.textContent ?? "";
+    expect(text).toContain("27 km");
+    expect(text).toContain("Veo's own estimate for the same vehicles: 34 km.");
+    expect(text).toContain("battery % × 364 m");
+    expect(text).toContain("full to empty");
+    expect(text).toContain("median of 3 vehicles");
+    // Two of three readings are stale.
+    expect(text).toContain("67% of these readings");
+  });
+
+  it("range: no card without the map's feed (the embed)", () => {
+    expect(card("range", { devices: null })).toBeNull();
+    expect(card("range", { devices: [{ properties: {} }] })).toBeNull();
+  });
+
+  it("where they gather: the neighbourhood with the highest average", () => {
+    const text = card("gather")?.textContent ?? "";
+    expect(text).toContain("Five Points");
+    expect(text).toContain("505 on average, 493 right now");
+    expect(text).toContain("4,763 feed cycles, 2 neighbourhoods");
+    expect(text).toContain("Since October 2");
+  });
+
+  it("dwell: the stop-weighted average, ignoring withheld cells", () => {
+    const text = card("dwell")?.textContent ?? "";
+    // (100 × 200 + 300 × 400) / 400 = 350 min.
+    expect(text).toContain("5 h 50 min");
+    expect(text).toContain("400 stops");
+    expect(text).toContain("Since October 6");
+  });
+
+  it("equity: the 6-9 AM share against 30%, with the server's verdict", () => {
+    const text = card("equity")?.textContent ?? "";
+    expect(text).toContain("15.2%");
+    expect(text).toContain("6–9 AM");
+    expect(text).toContain("at least 30%");
+    expect(text).toContain("fell short");
+    expect(text).toContain("91 feed cycles");
+    const met = card("equity", { equity: equity({ compliance_equity_pass: true }) })?.textContent;
+    expect(met).toContain("met it");
+  });
+
+  it("equity: hidden when the day has no equity figure", () => {
+    expect(card("equity", { equity: equity({ avg_percent_all_devices_equity: null }) })).toBeNull();
+  });
+
+  it("outcomes: ended where they began, with round trips, beside never left the spot", () => {
+    const c = card("outcomes")!;
+    const text = c.textContent ?? "";
+    expect(text).toContain("4.9%");
+    expect(text).toContain("ended within 25 m of where they began");
+    expect(text).toContain("came back to the same spot");
+    expect(text).toContain("2,412 of 49,037 rentals");
+    expect(text).toContain("2.0%");
+    expect(text).toContain("never left the spot");
+    expect(text).toContain("more than 50 m");
+    expect(text).toContain("9 of 451 rentals");
+    // Each figure has its own window.
+    expect(c.querySelectorAll(".stat-card__meta")).toHaveLength(2);
+  });
+
+  it("outcomes: counts, not a rate, under the floor", () => {
+    const c = card("outcomes", {
+      outcomes: outcomes({ rentals: 40, no_gos: 4, no_go_rate: null, stayed_rentals: 10, stayed: 0, stayed_rate: null }),
+    })!;
+    const fig = c.querySelector(".stat-card__figure")!;
+    expect(fig.textContent).toContain("Too few for a rate yet");
+    expect(fig.textContent).not.toContain("%");
+    expect(c.textContent).toContain("a rate needs 200");
+  });
+});
+
+describe("counting eras", () => {
+  it("drops rides when yesterday is not wholly inside the server's era", () => {
+    expect(card("rides", { rides: rides({ comparable_since: "2026-10-07T12:00:00Z" }) })).toBeNull();
+  });
+
+  it("never lets an older comparable_since pull the window back", () => {
+    // The known floor wins over a server that has not heard of the fix.
+    expect(eraStart({ comparable_since: "2026-08-10T04:15:00Z" }).toISOString())
+      .toBe("2026-10-06T01:36:00.000Z");
+    expect(card("rides", { rides: rides({ comparable_since: "2026-08-10T04:15:00Z" }) })?.textContent)
+      .not.toContain("9,999");
+  });
+
+  it("drops dwell whose window opens before the era", () => {
+    expect(card("dwell", { dwell: dwell({ window_start: "2026-10-05T06:00:00Z" }) })).toBeNull();
+    expect(card("dwell", { dwell: dwell({ comparable_since: "2026-10-07T00:00:00Z" }) })).toBeNull();
+  });
+
+  it("drops failed starts counted from before the fix, or from an old API", () => {
+    expect(card("outcomes", { outcomes: outcomes({ counted_since_at: "2026-09-01T00:00:00Z" }) })).toBeNull();
+    expect(card("outcomes", { outcomes: outcomes({ window: "lifetime", counted_since_at: null }) })).toBeNull();
+  });
+
+  it("asks dwell only for whole Denver days inside the era", () => {
+    const era = new Date(ERA);
+    // Oct 6, 7 and 8 start after 01:36Z on Oct 6 (which is still Oct 5 in Denver).
+    expect(eraDays(era, NOW)).toBe(3);
+    expect(eraDays(new Date("2026-10-08T07:00:00Z"), NOW)).toBe(0);
+    expect(denverMidnight("2026-10-07").toISOString()).toBe("2026-10-07T06:00:00.000Z");
+    // After the November fall-back, midnight is 07:00Z.
+    expect(denverMidnight("2026-11-05").toISOString()).toBe("2026-11-05T07:00:00.000Z");
+  });
+});
+
+describe("formatting", () => {
+  it("keeps one decimal on a rate and passes null through", () => {
+    expect(formatRate(0.0492)).toBe("4.9%");
     expect(formatRate(null)).toBeNull();
   });
 
-  it("gives the ratio people actually repeat", () => {
-    expect(formatOdds(0.091)).toBe("about 1 in 11");
-    expect(formatOdds(0.5)).toBe("about 1 in 2");
-  });
-
-  it("has no ratio for a zero or a withheld rate", () => {
-    // "1 in Infinity" is the bug this guards.
+  it("gives the ratio people repeat, and none for zero", () => {
+    expect(formatOdds(0.0492)).toBe("about 1 in 20");
     expect(formatOdds(0)).toBeNull();
-    expect(formatOdds(null)).toBeNull();
-  });
-});
-
-describe("the disclosures that make the figure quotable", () => {
-  it("says the window opens at the reset, with its date, not today", () => {
-    // The counters were reset (sql/089). An unlabelled percentage reads as
-    // "now"; this one says when it started counting.
-    expect(render().textContent).toContain("Since October 7, 2026");
   });
 
-  it("still labels an older API's lifetime window", () => {
-    expect(render({ window: "lifetime", counted_since_at: null }).textContent)
-      .toContain("All rentals we have seen");
+  it("formats km like the popup and minutes as hours", () => {
+    expect(formatKm(27_300)).toBe("27 km");
+    expect(formatKm(9_960)).toBe("10 km");
+    expect(formatKm(4_240)).toBe("4.2 km");
+    expect(formatMinutes(48)).toBe("48 min");
+    expect(formatMinutes(342)).toBe("5 h 42 min");
+    expect(formatMinutes(120)).toBe("2 h");
   });
 
-  it("describes end displacement, not a maximum: loop rides count", () => {
-    const text = render().textContent ?? "";
-    expect(text).toContain("ended within 25 m of where it was unlocked");
-    expect(text).toContain("looped back");
-    expect(text).not.toContain("stayed within");
-  });
-
-  it("states the sample: rentals and vehicles", () => {
-    const text = render().textContent ?? "";
-    expect(text).toContain("214,846");
-    expect(text).toContain("7,534");
-  });
-
-  it("states the radius it was counted at", () => {
-    // The app holds three different ideas of how far is "moved" (16 m, 25 m,
-    // 50 m — docs/ANALYTICS_PLAN.md §0.2). The figure always
-    // travels with the circle it was measured against.
-    expect(render().textContent).toContain("25 m");
-  });
-
-  it("reads the radius off the payload rather than printing a constant", () => {
-    expect(provenanceText(payload({ radius_meters: 50 }))).toContain("50 m");
-    expect(provenanceText(payload({ radius_meters: 50 }))).not.toContain("25 m");
-  });
-
-  it("says the number does not explain itself", () => {
-    // A no-go is an attempt that went nowhere. The cause might be the
-    // vehicle, the app, the weather, or a rider changing their mind — the
-    // panel counts and must not attribute.
-    expect(render().textContent).toContain("does not say why");
-  });
-});
-
-describe("the headline", () => {
-  it("leads with the rate and the ratio", () => {
-    const text = render().textContent ?? "";
-    expect(text).toContain("9.1%");
-    expect(text).toContain("about 1 in 11");
-    expect(text).toContain("ended where they began");
-    // "Never left the kerb" describes a maximum distance, which is not what
-    // is counted (end displacement). It must not come back unbacked.
-    expect(text).not.toContain("never left the kerb");
-  });
-
-  it("shows counts instead of a rate when the whole fleet is under the floor", () => {
-    // Possible on a fresh deployment. The counts are the only honest thing
-    // to put on screen, and "0.0%" would be a lie about a thin sample.
-    const headline = render({ rentals: 40, no_gos: 4, no_go_rate: null }).querySelector(
-      ".stats-headline",
-    );
-    expect(headline?.textContent).toContain("too few for a rate yet");
-    // No invented percentage over a sample of 40 — "0.0%" or "10.0%" here
-    // would be a confident-looking figure the counts do not support.
-    expect(headline?.textContent).not.toContain("%");
-  });
-
-  it("reports nothing counted as nothing counted", () => {
-    const text = render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] })
-      .textContent ?? "";
-    expect(text).toContain("No rentals counted yet");
-    // No headline, no provenance line about a sample of zero.
-    expect(text).not.toContain("ended where they began");
-  });
-});
-
-describe("the per-model list", () => {
-  it("renders every model the server sent, in the order it sent them", () => {
-    // The server ranks worst publishable rate first; re-sorting here would
-    // put the panel and the API at odds about what the finding is.
-    const names = Array.from(render().querySelectorAll(".stat-row__name")).map(
-      (n) => n.textContent,
-    );
-    expect(names).toEqual(["Rover", "Cosmo", "Halo"]);
-  });
-
-  it("keeps a thin model visible, with its counts and no percentage", () => {
-    // A list that silently drops its thin rows looks complete and is not.
-    const rows = render().querySelectorAll(".stat-row");
-    const halo = rows[2];
-    expect(halo.textContent).toContain("Halo");
-    expect(halo.textContent).toContain("not enough rides yet");
-    expect(halo.textContent).toContain("7 rentals");
-    expect(halo.textContent).toContain("needs 200");
-    expect(halo.querySelector(".stat-row__value--thin")).not.toBeNull();
-  });
-
-  it("shows a published model's numerator and denominator, not just its rate", () => {
-    const cosmo = render().querySelectorAll(".stat-row")[1];
-    expect(cosmo.textContent).toContain("9.0%");
-    expect(cosmo.textContent).toContain("18,000 of 200,000 rentals");
-  });
-
-  it("renders a flawless model as 0.0% rather than as unknown", () => {
-    // Zero is a finding — "this one always goes" — and must not be confused
-    // with the withheld null that means "we don't know yet".
-    const row = render({
-      by_model: [
-        { model: "Perfect", rentals: 5_000, no_gos: 0, vehicles: 90, no_go_rate: 0 },
-      ],
-    }).querySelector(".stat-row");
-    expect(row?.textContent).toContain("0.0%");
-    expect(row?.querySelector(".stat-row__value--thin")).toBeNull();
+  it("names an hour in Denver time", () => {
+    expect(hourRangeText(new Date("2026-10-06T22:00:00Z"))).toBe("4–5 PM, October 6");
+    expect(hourRangeText(new Date("2026-10-06T17:00:00Z"))).toBe("11 AM–12 PM, October 6");
   });
 });
 
@@ -213,18 +413,14 @@ describe("the voice", () => {
     expect(Object.keys(VOICES).sort()).toEqual(["civic", "rider"]);
   });
 
-  it("renders the same numbers under either voice", () => {
-    // THE rule from docs/ANALYTICS_PLAN.md: same numbers, different verbs.
-    // The voice selects a copy table. If it could ever select a filter, a
-    // window or a threshold, scooter.fyi and weseeyouveo.com could publish
-    // different figures for the same question, and the numbers are the only
-    // asset either site has.
+  it("renders the same figures and windows under either voice", () => {
     const figures = (voice: StatsVoice) =>
-      Array.from(render({}, voice).querySelectorAll(".stat-row__value, .stats-headline__value"))
+      Array.from(render({}, voice).querySelectorAll(".stat-card__value, .stat-card__meta"))
         .map((n) => n.textContent)
         .join("|");
-    expect(figures("rider")).toBe(figures("civic"));
-    expect(provenanceText(payload())).toContain("25 m"); // identical by construction
+    expect(figures("civic")).toBe(figures("rider"));
+    expect(buildCards(data(), "civic").map((c) => c.key))
+      .toEqual(buildCards(data(), "rider").map((c) => c.key));
   });
 
   it("renders different words under each voice", () => {
@@ -233,243 +429,157 @@ describe("the voice", () => {
     );
   });
 
-  it("never names a culprit in either voice", () => {
-    // scooter.fyi is pro-rider, not anti-anybody, and the civic voice is
-    // WSYV's to argue in — not this panel's. Neither copy table may carry
-    // the verbs that turn a measurement into an accusation.
+  it("keeps the civic voice in the third person", () => {
+    const text = render({}, "civic").querySelector(".stat-cards")?.textContent ?? "";
+    expect(text).not.toMatch(/\b(you|your|we|our)\b/i);
+  });
+
+  /** Every string either copy table can produce, with sample arguments. */
+  function allCopy(voice: StatsVoice): string {
+    const c = VOICES[voice];
+    return [
+      c.title, c.standfirst, c.unavailable, c.crossPromo.lead,
+      c.now.kicker, c.now.label, c.now.inUse("1"), c.now.window,
+      c.rides.kicker, c.rides.label, c.rides.busiest("4–5 PM", "1", "October 6"),
+      c.range.kicker, c.range.label, c.range.veo("34 km"), c.range.method, c.range.stale("80%"), c.range.window,
+      c.gather.kicker, c.gather.label, c.gather.line("1", "2"),
+      c.dwell.kicker, c.dwell.label, c.dwell.method,
+      c.equity.kicker, c.equity.label("6–9 AM"),
+      c.equity.verdict("30%", true), c.equity.verdict("30%", false), c.equity.verdict("30%", null),
+      c.outcomes.kicker, c.outcomes.label("25 m"), c.outcomes.roundTrips,
+      c.outcomes.underFloor("40"), c.outcomes.stayedLabel("50 m"),
+    ].join(" ");
+  }
+
+  it("never names a culprit or argues, in either voice", () => {
     const forbidden =
       /\b(fail(s|ed|ing|ure)?|broken|neglect\w*|blame|refus\w+|abandon\w+|should|must|demand\w*|monopol\w+)\b/i;
-    for (const [name, copy] of Object.entries(VOICES)) {
-      const words = [
-        copy.title,
-        copy.standfirst,
-        copy.headlineLabel,
-        copy.modelsLabel,
-        copy.empty,
-        copy.unavailable,
-        copy.crossPromo.lead,
-      ].join(" ");
-      expect(words, `${name} voice`).not.toMatch(forbidden);
-      // Nor Veo by name as the subject of a verb. Naming the operator as the
-      // source of the data is fine; this panel does not make it an actor.
-      expect(words, `${name} voice`).not.toMatch(/\bVeo (is|was|has|does|keeps|leaves)\b/);
-    }
-  });
-});
-
-describe("cross-promotion", () => {
-  it("points each site at the other, not at itself", () => {
-    const link = (voice: StatsVoice) =>
-      render({}, voice).querySelector<HTMLAnchorElement>(".stats-promo a");
-    expect(link("rider")?.href).toContain("weseeyouveo.com");
-    expect(link("civic")?.href).toContain("scooter.fyi");
-  });
-
-  it("opens the other property without handing it a handle on this page", () => {
-    const a = render().querySelector<HTMLAnchorElement>(".stats-promo a");
-    expect(a?.target).toBe("_blank");
-    expect(a?.rel).toContain("noopener");
-    expect(a?.rel).toContain("noreferrer");
-  });
-});
-
-
-describe("the story slot", () => {
-  it("sits between the figures and the cross-promotion", () => {
-    // A reader who has just seen what the fleet did is primed, and this is
-    // the only asking moment where they came to read rather than to ride.
-    const host = render();
-    const slot = host.querySelector('[data-role="story-host"]');
-    expect(slot).not.toBeNull();
-    const promo = host.querySelector(".stats-promo")!;
-    expect(slot!.compareDocumentPosition(promo) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    const models = host.querySelector(".stat-list")!;
-    expect(models.compareDocumentPosition(slot!) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-  });
-
-  it("is left empty by the renderer itself", () => {
-    // The panel is mounted by the host. Keeping it out of this module is what
-    // lets the figures render identically in the embed, which must NOT carry
-    // a consent UI inside somebody else's page frame.
-    expect(render().querySelector('[data-role="story-host"]')?.childNodes.length)
-      .toBe(0);
-  });
-
-  it("is not offered at all when there is nothing to report yet", () => {
-    // No figures, no primed reader — just an empty panel.
-    const host = render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] });
-    expect(host.querySelector('[data-role="story-host"]')).toBeNull();
-  });
-
-  it("hands the slot to the host only after the figures are on screen", async () => {
-    const mountStory = vi.fn();
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify(payload()), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    try {
-      await renderFleetStats(host, "rider", { mountStory });
-      expect(mountStory).toHaveBeenCalledTimes(1);
-      const slot = mountStory.mock.calls[0][0] as HTMLElement;
-      expect(slot.isConnected).toBe(true);
-      expect(host.textContent).toContain("9.1%");
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("asks for no slot when the feed could not be read", async () => {
-    const mountStory = vi.fn();
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValue(new Error("offline"));
-    try {
-      await renderFleetStats(host, "rider", { mountStory });
-      expect(mountStory).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-});
-
-describe("the window across Denver's date line", () => {
-  it("names the Denver date, not the UTC one", () => {
-    // 03:00Z on 7 Oct is still the evening of 6 Oct in Denver (MDT).
-    expect(windowText(payload({ counted_since_at: "2026-10-07T03:00:00+00:00" })))
-      .toBe("Since October 6, 2026");
-    expect(windowText(payload({ counted_since_at: "2026-10-07T07:00:00+00:00" })))
-      .toBe("Since October 7, 2026");
-  });
-
-  it("follows daylight saving: 06:30Z is the previous Denver day in winter (MST)", () => {
-    expect(windowText(payload({ counted_since_at: "2026-12-15T06:30:00+00:00" })))
-      .toBe("Since December 14, 2026");
-  });
-});
-
-describe("no copy claims more than end displacement", () => {
-  it("the under-floor screen (what shows right after a reset) says what is counted", () => {
     for (const voice of ["rider", "civic"] as const) {
-      const text = render({ rentals: 40, no_gos: 4, no_go_rate: null }, voice).textContent ?? "";
-      expect(text).toContain("ended where they began");
-      for (const banned of ["went nowhere", "never produced", "never left the kerb", "turned into a trip"]) {
-        expect(text).not.toContain(banned);
-      }
+      const words = allCopy(voice);
+      expect(words, voice).not.toMatch(forbidden);
+      expect(words, voice).not.toMatch(/\bVeo (is|was|has|does|keeps|leaves)\b/);
+      // The old disclaimer style is gone.
+      expect(words, voice).not.toMatch(/speak for/i);
     }
-  });
-
-  it("an empty panel still states its window", () => {
-    expect(render({ rentals: 0, no_gos: 0, no_go_rate: null, by_model: [] }).textContent)
-      .toContain("Since October 7, 2026");
   });
 });
 
-describe("never left the spot (scooter-fyi-api#142)", () => {
-  const stayedFields: Partial<FleetOutcomesResponse> = {
-    stayed_window: "since_stayed_counter",
-    // 02:01Z on 9 Oct is the evening of 8 Oct in Denver.
-    stayed_counted_since: "2026-10-09T02:01:13.687070+00:00",
-    stayed_counted_since_migration: "sql/099",
-    stayed_radius_meters: 50,
-    stayed_rentals: 4_210,
-    stayed: 88,
-    stayed_rate: 0.0209,
-    stayed_definition: "never left the spot",
-  };
-
-  it("adds a second headline with rate, sample, radius and its own Denver-dated window", () => {
-    const h = render(stayedFields);
-    const second = h.querySelector(".stats-headline--stayed");
-    expect(second?.textContent).toContain("2.1%");
-    expect(second?.textContent).toContain("Never left the spot");
-    const detail = h.querySelector(".stats-stayed-detail")?.textContent ?? "";
-    expect(detail).toContain("88 of 4,210 rentals");
-    expect(detail).toContain("within 50 m");
-    expect(detail).toContain("since October 8, 2026");
-    // The first figure keeps its own window and wording.
-    expect(h.textContent).toContain("Since October 7, 2026");
-    expect(h.querySelector(".stats-headline")?.textContent).toContain("ended where they began");
-  });
-
-  it("explains the difference between the two figures in one sentence", () => {
-    const text = render(stayedFields).querySelector(".stats-stayed-explainer")?.textContent ?? "";
-    expect(text).toContain("rode off and came back to the same spot");
-    expect(text).toContain("never got more than 50 m from where they were unlocked");
-  });
-
-  it("shows 'Counting since … — not enough rentals yet (n of 200)' instead of 0% when the rate is withheld", () => {
-    const h = render({ ...stayedFields, stayed_rentals: 57, stayed: 2, stayed_rate: null });
-    const second = h.querySelector(".stats-headline--stayed");
-    expect(second?.querySelector(".stats-headline__value")).toBeNull();
-    expect(second?.textContent).not.toContain("%");
-    expect(h.querySelector(".stats-stayed-detail")?.textContent).toBe(
-      "Counting since October 8, 2026 — not enough rentals yet (57 of 200)",
-    );
-    expect(
-      stayedDetailText(payload({ ...stayedFields, stayed_rentals: 0, stayed: 0, stayed_rate: null })),
-    ).toContain("(0 of 200)");
-  });
-
-  it("renders a measured zero as 0.0%, not as 'not enough rentals'", () => {
-    const h = render({ ...stayedFields, stayed: 0, stayed_rate: 0 });
-    expect(h.querySelector(".stats-headline--stayed")?.textContent).toContain("0.0%");
-  });
-
-  it("draws nothing extra against an API that predates the counter", () => {
+describe("the story slot and cross-promotion", () => {
+  it("sits after the cards and before the cross-promotion", () => {
     const h = render();
-    expect(h.querySelector(".stats-headline--stayed")).toBeNull();
-    expect(h.querySelector(".stat-row__stayed")).toBeNull();
-    expect(h.textContent).not.toContain("Never left the spot");
+    const slot = h.querySelector('[data-role="story-host"]')!;
+    const cards = h.querySelector(".stat-cards")!;
+    const promo = h.querySelector(".stats-promo")!;
+    expect(cards.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(promo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.childNodes.length).toBe(0);
   });
 
-  it("adds the stayed figure to each model row, thin rows as a sentence", () => {
+  it("points each site at the other, safely", () => {
+    const link = (voice: StatsVoice) =>
+      render({}, voice).querySelector<HTMLAnchorElement>(".stats-promo a")!;
+    expect(link("rider").href).toContain("weseeyouveo.com");
+    expect(link("civic").href).toContain("scooter.fyi");
+    expect(link("rider").rel).toContain("noopener");
+    expect(link("rider").target).toBe("_blank");
+  });
+
+  it("says unavailable, and offers no story, when no card could be built", () => {
     const h = render({
-      ...stayedFields,
-      by_model: [
-        {
-          model: "Cosmo", rentals: 200_000, no_gos: 18_000, vehicles: 7_000, no_go_rate: 0.09,
-          stayed_rentals: 3_000, stayed: 60, stayed_rate: 0.02,
-        },
-        {
-          model: "Apollo", rentals: 9_463, no_gos: 523, vehicles: 983, no_go_rate: 0.0553,
-          stayed_rentals: 10, stayed: 1, stayed_rate: null,
-        },
-      ],
+      outcomes: null, fleet: null, rides: null, gather: null, dwell: null, equity: null, devices: null,
     });
-    const rows = h.querySelectorAll(".stat-row");
-    expect(rows[0].querySelector(".stat-row__stayed")?.textContent).toBe(
-      "Never left the spot: 2.0% — 60 of 3,000 rentals",
-    );
-    const thin = rows[1].querySelector(".stat-row__stayed");
-    expect(thin?.textContent).toBe("Never left the spot: not enough rentals yet (10 of 200)");
-    expect(thin?.classList.contains("stat-row__stayed--thin")).toBe(true);
-    // The no-go figure for the row is untouched.
-    expect(rows[1].textContent).toContain("5.5%");
+    expect(h.textContent).toContain("Stats are unavailable right now");
+    expect(h.querySelector('[data-role="story-host"]')).toBeNull();
+  });
+});
+
+describe("loading", () => {
+  /** A fetch stub that answers each endpoint from the fixtures, except the
+   *  ones named in `fail`. */
+  function stubFetch(fail: string[] = []) {
+    const routes: [string, unknown][] = [
+      ["/fleet/outcomes", outcomes()],
+      ["/devices/history/hourly", { days: 1, hours: [fleet()] }],
+      ["/analytics/rides", rides()],
+      ["/analytics/devices-by-region", gather()],
+      ["/analytics/dwell", dwell()],
+      ["/compliance/daily/latest", equity()],
+    ];
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (fail.some((f) => url.includes(f))) throw new Error("offline");
+      const hit = routes.find(([path]) => url.includes(path));
+      if (!hit) return new Response("{}", { status: 500 });
+      return new Response(JSON.stringify(hit[1]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it("renders the same stayed numbers under either voice", () => {
-    const figs = (v: StatsVoice) =>
-      Array.from(
-        render(stayedFields, v).querySelectorAll(
-          ".stats-headline__value, .stats-stayed-detail, .stat-row__stayed",
-        ),
-      )
-        .map((n) => n.textContent)
-        .join("|");
-    expect(figs("rider")).toBe(figs("civic"));
+  const renderLive = (hooks = {}, voice: StatsVoice = "rider") =>
+    renderFleetStats(host, voice, { now: () => NOW, devices: () => devices(), ...hooks });
+
+  const keys = () =>
+    Array.from(host.querySelectorAll<HTMLElement>(".stat-card")).map((c) => c.dataset.card);
+
+  it("fetches every endpoint in parallel and renders every card", async () => {
+    const spy = stubFetch();
+    await renderLive();
+    expect(keys()).toEqual(ALL_CARDS);
+    const urls = spy.mock.calls.map(([u]) => String(u));
+    expect(urls).toHaveLength(6);
+    // Dwell is asked for whole days inside the era only.
+    expect(urls.find((u) => u.includes("/analytics/dwell"))).toContain("days=3");
+    expect(urls.find((u) => u.includes("/analytics/rides"))).toContain("granularity=hour");
   });
 
-  it("keeps the stayed copy free of blame in both voices", () => {
-    const forbidden =
-      /\b(fail(s|ed|ing|ure)?|broken|neglect\w*|blame|refus\w+|abandon\w+|should|must|demand\w*|monopol\w+)\b/i;
-    for (const copy of Object.values(VOICES)) {
-      expect(`${copy.stayedLabel} ${copy.stayedExplainer("50 m")}`).not.toMatch(forbidden);
+  it("hides only the card whose fetch failed", async () => {
+    for (const [path, key] of [
+      ["/fleet/outcomes", "outcomes"],
+      ["/devices/history/hourly", "now"],
+      ["/analytics/rides", "rides"],
+      ["/analytics/devices-by-region", "gather"],
+      ["/analytics/dwell", "dwell"],
+      ["/compliance/daily/latest", "equity"],
+    ] as const) {
+      stubFetch([path]);
+      await renderLive();
+      expect(keys(), path).toEqual(ALL_CARDS.filter((k) => k !== key));
+      vi.restoreAllMocks();
     }
+  });
+
+  it("keeps the other cards when the map's feed throws", async () => {
+    stubFetch();
+    await renderLive({ devices: () => { throw new Error("no map"); } });
+    expect(keys()).toEqual(ALL_CARDS.filter((k) => k !== "range"));
+  });
+
+  it("renders the embed's voice without a range card", async () => {
+    stubFetch();
+    await renderFleetStats(host, "civic", { now: () => NOW });
+    expect(keys()).toEqual(ALL_CARDS.filter((k) => k !== "range"));
+    expect(host.querySelector(".stats-title")?.textContent).toBe(VOICES.civic.title);
+  });
+
+  it("hands the story slot over once the figures are on screen", async () => {
+    stubFetch();
+    const mountStory = vi.fn();
+    await renderLive({ mountStory });
+    expect(mountStory).toHaveBeenCalledTimes(1);
+    expect((mountStory.mock.calls[0][0] as HTMLElement).isConnected).toBe(true);
+  });
+
+  it("says unavailable, and asks for no story, when everything is offline", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const mountStory = vi.fn();
+    await renderFleetStats(host, "rider", { now: () => NOW, mountStory });
+    expect(host.textContent).toContain("Stats are unavailable right now");
+    expect(mountStory).not.toHaveBeenCalled();
   });
 });
