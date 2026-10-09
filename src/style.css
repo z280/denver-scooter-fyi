@@ -5083,6 +5083,22 @@ body.is-map-picking .ride-modal {
   opacity: 0.45;
   font-weight: 400;
 }
+/* Under the headline range: Veo's figure for comparison, what ours is, and the
+   stale-reading hint. Its own full-width row of the wrapping strip, quiet
+   enough that the headline stays the headline. */
+.device-popup__range-note {
+  flex-basis: 100%;
+  margin: -4px 0 0;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+.device-popup__fact-qual {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
 /* The control for the number beside it, so it reads as part of the fact rather
    than as another action competing with the buttons below. */
 .device-popup__action--inline {

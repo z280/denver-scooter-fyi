@@ -122,6 +122,7 @@ import {
   type RideType,
 } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
+import { renderFactsStrip } from "./range-facts.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 export type QualityFilter = "any" | "no-risk" | "ok-only";
@@ -1562,37 +1563,19 @@ export class Devices {
       // "Show on map" comes with the range figure rather than staying behind
       // the details modal: it is the control for the number beside it, and the
       // two were a tap apart for no reason.
+      // OUR RANGE IS THE HEADLINE, Veo's sits under it for comparison, and the
+      // circle is drawn at whichever figure the headline shows. See
+      // `range-facts.ts` for the measurement and the fallback rules.
       const batteryPct = asNumber(props.battery_percent);
-      const rangeMeters = asNumber(props.current_range_meters);
-      const factsStrip = ((): string => {
-        const facts: string[] = [];
-        if (batteryPct !== null) {
-          facts.push(
-            `<span class="device-popup__fact">${batteryPct < 25 ? "🪫" : "🔋"} ${batteryPct}%</span>`,
-          );
-        }
-        if (rangeMeters !== null) {
-          const showing = this.rangeCircleDeviceId === props.device_id;
-          facts.push(
-            `<span class="device-popup__fact">~${escapeHtml(formatRange(rangeMeters))} left</span>` +
-              `<button
-                 type="button"
-                 class="device-popup__action device-popup__action--inline"
-                 data-action="toggle-range"
-                 data-device="${escapeHtml(props.device_id)}"
-                 data-lng="${coords[0]}"
-                 data-lat="${coords[1]}"
-                 data-radius="${rangeMeters}"
-               >${showing ? "Hide on map" : "Show on map"}</button>`,
-          );
-        }
-        // No strip at all rather than an empty bar: a vehicle the feed told us
-        // nothing about should not get a rule across the card announcing it.
-        if (facts.length === 0) return "";
-        return `<div class="device-popup__facts">${facts.join(
-          `<span class="device-popup__fact-sep" aria-hidden="true">·</span>`,
-        )}</div>`;
-      })();
+      const factsStrip = renderFactsStrip({
+        batteryPercent: batteryPct,
+        ourRangeMeters: asNumber(props.estimated_range_meters),
+        veoRangeMeters: asNumber(props.current_range_meters),
+        batteryReading: props.battery_reading ?? null,
+        deviceId: props.device_id,
+        coords,
+        showing: this.rangeCircleDeviceId === props.device_id,
+      });
 
       // ---- The compact stats the popup shows (issue #18: 3-5 key stats), now
       // ordered by what a rider DECIDES on: Rating (only when the bar cannot
@@ -3342,7 +3325,13 @@ interface PopupProps {
   plate_suffix?: string | null;
   is_disabled?: boolean | string | null;
   is_reserved?: boolean | string | null;
+  /** Veo's own range estimate, from their feed. */
   current_range_meters?: number | string | null;
+  /** OUR range estimate: battery % × 364 m, measured from Denver discharges
+   *  (API `battery_model.usable_range_meters`). See range-facts.ts. */
+  estimated_range_meters?: number | string | null;
+  /** "fresh" | "stale" | "unknown" — "stale" once parked ≥ 1 h. */
+  battery_reading?: string | null;
   propulsion_type?: PropulsionType | string | null;
   vehicle_use_type?: string | null;
   vehicle_model_name?: string | null;

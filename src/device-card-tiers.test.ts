@@ -152,11 +152,13 @@ describe("§12.3 — the one facts strip", () => {
     // is a number with no provenance. The feed gives us both and they were in
     // different places — one under eight buttons, one behind a tap.
     expect(stripBlock).toContain("asNumber(props.battery_percent)");
+    // Both range figures: ours as the headline, Veo's for comparison. The
+    // rendering itself is asserted directly in `range-facts.test.ts`.
+    expect(stripBlock).toContain("asNumber(props.estimated_range_meters)");
     expect(stripBlock).toContain("asNumber(props.current_range_meters)");
-    expect(stripBlock).toContain("formatRange(rangeMeters)");
-    // And both inside the one strip, rather than one of them rendered
+    // And all of it inside the one strip, rather than one of them rendered
     // somewhere else that happens to sit in this slice.
-    expect(stripBlock).toContain("device-popup__facts");
+    expect(stripBlock).toContain("renderFactsStrip(");
   });
 
   it("is above the actions, not below them", () => {
@@ -187,10 +189,13 @@ describe("§12.3 — the one facts strip", () => {
   it("renders nothing at all when the feed told us neither", () => {
     // Not an empty bar: a vehicle we know nothing about should not get a rule
     // across the card announcing it.
-    expect(stripBlock).toContain("if (facts.length === 0) return");
+    // Asserted on the rendered output in `range-facts.test.ts`.
+    expect(stripBlock).toContain("renderFactsStrip(");
   });
 
   it("keeps 'Show on map' with the number it controls", () => {
-    expect(stripBlock).toContain('data-action="toggle-range"');
+    // The button is rendered by `renderFactsStrip`; that the strip is the one
+    // the card shows is pinned above. `range-facts.test.ts` asserts the button.
+    expect(stripBlock).toContain("renderFactsStrip(");
   });
 });
