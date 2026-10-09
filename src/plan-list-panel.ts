@@ -192,8 +192,8 @@ export function createPlanListPanel(
     // the same reason the cap note is: it answers a question somebody is
     // asking right now, looking at a list whose second row is cheaper than its
     // first.
-    if (v.idealSplitNote) {
-      lines.push({ text: v.idealSplitNote, cls: "planlist__note--quiet" });
+    if (v.priorityNote) {
+      lines.push({ text: v.priorityNote, cls: "planlist__note--quiet" });
     }
     lines.push({ text: v.estimateNote, cls: "planlist__note--quiet" });
     notes.replaceChildren(
