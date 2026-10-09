@@ -62,8 +62,15 @@ export interface DeviceProperties {
   is_disabled?: boolean | null;
   /** True when a rider has the scooter on hold during the reservation window. */
   is_reserved?: boolean | null;
-  /** Estimated remaining range in meters. Null for pedal-only bikes. */
+  /** VEO'S estimated remaining range in meters, passed through from their
+   *  feed. Null for pedal-only bikes. */
   current_range_meters?: number | null;
+  /** OUR estimated remaining range in meters: battery % × 364 m, measured by
+   *  following Denver vehicles from full to empty. About 0.8× Veo's. */
+  estimated_range_meters?: number | null;
+  /** "fresh" | "stale" | "unknown". "stale" = parked ≥ 1 h, so the reported
+   *  charge may be frozen. */
+  battery_reading?: string | null;
   /** Drivetrain: throttle electric, pedal-assist electric, or pedal-only. */
   propulsion_type?: PropulsionType | null;
   /** Rider posture, corrected server-side against Veo's GBFS mislabels:

@@ -1308,6 +1308,15 @@
             <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">ODbL</a>.
             Live vehicle positions come from Veo's public GBFS feed, collected by our server; your browser never contacts Veo.
           </p>
+          <!-- The measurement behind the popup's headline range: API
+               battery_model.py, OBSERVED_METERS_PER_SOC_POINT = 364. Keep the
+               figures here in step with src/range-facts.ts. -->
+          <p class="control-hint" id="about-range">
+            Range shown is our real-world estimate: battery % × 364&nbsp;m,
+            measured by following 220 Denver scooters from full to empty
+            (median 36.4&nbsp;km per charge, against Veo's rated 67&nbsp;km).
+            It's conservative; Veo's own estimate is shown alongside.
+          </p>
           <p class="control-hint">
             Neither the City of Denver nor OpenStreetMap endorses this app,
             and any mistakes in how their data is used here are ours.
