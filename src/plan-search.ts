@@ -147,6 +147,14 @@ export function buildContext(
     freeMinutesLeft: planningFreeMinutes(deps, rate),
     taxRate: deps.taxRate(),
     now: deps.now(),
+    // SAVINGS REACHES THE SEARCH, not just the sort. `route-priority.ts` can
+    // prefer a mid-way Equity Area swap among the plans that come back, but
+    // the pickup pool is ranked by progress toward the destination and
+    // truncated, so the mid-route vehicle that earns the discount on BOTH
+    // legs is usually not in the graph for it to prefer. This reserves slots
+    // for one. Off for every other priority: it spends part of a bounded
+    // budget, and a rider who asked for Simplicity is not served by it.
+    seekEquitySwaps: routePriority() === "savings",
     ...(deps.favorites ? { favorites: deps.favorites() } : {}),
     // NO `inRide`, which is correct for an initial search and WRONG for a
     // re-solve — and the difference is not cosmetic. With it, the search gains

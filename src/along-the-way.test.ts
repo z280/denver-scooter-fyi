@@ -1055,3 +1055,129 @@ describe("a requirement that binds EVERY leg, starter included", () => {
     expect(res.walkOnly).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Seeking out an Equity Area swap
+//
+// THE BUG THIS CLOSES. `route-priority.ts`'s Savings setting can prefer a
+// mid-way Equity Area swap among the plans this search returns, but it could
+// never conjure one, because the pickup pool is ranked by PROGRESS toward the
+// destination and truncated to `bounds.pickups`. The survivors cluster at the
+// far end of the trip, so the scooter standing in an area halfway along was
+// not ranked low — it was not in the graph. Reserving slots is the only lever
+// that changes what the search can see.
+// ---------------------------------------------------------------------------
+describe("rankPlans — the Equity Area hunt", () => {
+  const EQ = INSIDE_EQUITY_AREA;
+  const EQ_LNG_M = METERS_PER_DEG_LAT * Math.cos((EQ.lat * Math.PI) / 180);
+
+  /** Metres east/north of the verified in-area point, so the fixture's
+   *  geometry is anchored to a real polygon rather than to a rectangle we
+   *  invented — the same reason `withEquityAreas` loads the city's own file. */
+  const nearEq = (eastMeters: number, northMeters = 0) => ({
+    lat: EQ.lat + northMeters / METERS_PER_DEG_LAT,
+    lng: EQ.lng + eastMeters / EQ_LNG_M,
+  });
+
+  const FROM = nearEq(-2000);
+  const TO = nearEq(2000);
+
+  /** A starter by the rider, two vehicles bunched near the destination, and
+   *  one standing IN the area at the midpoint. With `pickups: 2` the two
+   *  near-destination vehicles win the pool on progress and the area vehicle
+   *  is squeezed out — which is the production case in miniature. */
+  const fleet = () => [
+    feature(nearEq(-1950), { device_id: "starter", vehicle_identifier: "starter" }),
+    feature(EQ, { device_id: "in-area", vehicle_identifier: "in-area" }),
+    feature(nearEq(1800), { device_id: "near-dest-1", vehicle_identifier: "near-dest-1" }),
+    feature(nearEq(1850), { device_id: "near-dest-2", vehicle_identifier: "near-dest-2" }),
+  ];
+
+  const eqCtx = (over: Partial<RankPlansContext> = {}) =>
+    ctx({
+      from: FROM,
+      to: { lat: TO.lat, lon: TO.lng },
+      bounds: { firstHops: 8, pickups: 2 },
+      ...over,
+    });
+
+  const everyVehicle = (res: { plans: TripPlan[]; backups: TripPlan[] }) =>
+    [...res.plans, ...res.backups].flatMap(vehicleSeq);
+
+  it("leaves the area vehicle out of the graph when nobody asked", async () => {
+    await withEquityAreas();
+    const res = rankPlans(fleet(), eqCtx());
+    expect(res.equityPickups).toBe(0);
+    // Not merely unchosen — unreachable. No plan, not even a backup, can ride
+    // a vehicle the selection never put in the pool.
+    expect(everyVehicle(res)).not.toContain("in-area");
+  });
+
+  it("reserves it a slot when the rider asked for Savings", async () => {
+    await withEquityAreas();
+    const res = rankPlans(fleet(), eqCtx({ seekEquitySwaps: true }));
+    expect(res.equityPickups).toBe(1);
+    expect(everyVehicle(res)).toContain("in-area");
+  });
+
+  it("earns the discount on BOTH legs of the swap it found", async () => {
+    // The whole point of a MID-WAY swap, and why it is worth spending a
+    // pickup slot on: `legRate` discounts a leg when EITHER endpoint is in an
+    // area, so a swap inside one pays off twice. A plan that merely ends in
+    // an area collects once.
+    await withEquityAreas();
+    const res = rankPlans(fleet(), eqCtx({ seekEquitySwaps: true }));
+    const through = [...res.plans, ...res.backups].find((p) =>
+      vehicleSeq(p).includes("in-area"),
+    )!;
+    expect(through).toBeTruthy();
+    const ridden = rideLegs(through);
+    expect(ridden.length).toBeGreaterThanOrEqual(2);
+    expect(ridden.every((l) => l.equityArea)).toBe(true);
+  });
+
+  it("spends the budget it was given, never more", async () => {
+    // `bounds.pickups` is a performance envelope the candidates response may
+    // narrow. Growing the pool to fit the hunt would be this module quietly
+    // overruling the server that set it.
+    await withEquityAreas();
+    const res = rankPlans(fleet(), eqCtx({ seekEquitySwaps: true }));
+    const pickedUp = new Set(everyVehicle(res));
+    pickedUp.delete("starter");
+    expect(pickedUp.size).toBeLessThanOrEqual(2);
+  });
+
+  it("does not hunt for a tier that gets no area discount", async () => {
+    // `legRate` hands the Access tier its own rate and never the area one, so
+    // there is no discount here to find and the slot would be spent on
+    // nothing.
+    await withEquityAreas();
+    const res = rankPlans(
+      fleet(),
+      eqCtx({ seekEquitySwaps: true, rate: rate("equity"), freeMinutesLeft: 0 }),
+    );
+    expect(res.equityPickups).toBe(0);
+  });
+
+  it("reports no hunt when the polygons are not loaded", () => {
+    // `isInEquityArea` is THREE-VALUED: null until the map loads. This file
+    // already carries a scar from reading that as "outside" — a test asserted
+    // the area rate while exercising the outside path. Null means WE COULD
+    // NOT LOOK, so nothing is reserved and nothing is claimed.
+    const res = rankPlans(fleet(), eqCtx({ seekEquitySwaps: true }));
+    expect(res.equityPickups).toBe(0);
+  });
+
+  it("does not displace the pool when there is nothing in an area", async () => {
+    await withEquityAreas();
+    const noArea = [
+      feature(nearEq(-1950), { device_id: "starter", vehicle_identifier: "starter" }),
+      feature(nearEq(1800), { device_id: "near-dest-1", vehicle_identifier: "near-dest-1" }),
+      feature(nearEq(1850), { device_id: "near-dest-2", vehicle_identifier: "near-dest-2" }),
+    ];
+    const hunted = rankPlans(noArea, eqCtx({ seekEquitySwaps: true }));
+    const plain = rankPlans(noArea, eqCtx());
+    expect(hunted.equityPickups).toBe(0);
+    expect(everyVehicle(hunted)).toEqual(everyVehicle(plain));
+  });
+});

@@ -89,6 +89,7 @@ function result(over: Partial<RankPlansResult> = {}): RankPlansResult {
     plans: [],
     backups: [],
     relaxed: [],
+    equityPickups: 0,
     riskTierOffered: false,
     walkOnly,
     capRelaxed: false,

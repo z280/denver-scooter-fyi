@@ -591,6 +591,23 @@ describe("the search hands the rider's answer to the list", () => {
     expect(fn.match(/deps\.fleet\(\)/g) ?? []).toHaveLength(1);
   });
 
+  it("asks the search to SEEK an Equity Area swap, not merely prefer one", () => {
+    // Without this the Savings setting can only choose among plans the search
+    // already found, and the pickup pool — ranked by progress and truncated —
+    // systematically omits the mid-route vehicle that earns the discount on
+    // both legs. The preference has to reach the candidate selection.
+    expect(search).toContain('seekEquitySwaps: routePriority() === "savings"');
+  });
+
+  it("asks for the hunt only under Savings", () => {
+    // It spends part of a bounded pickup budget. A rider who chose Simplicity
+    // is not served by giving up pool slots to chase a discount.
+    const line = search.slice(search.indexOf("seekEquitySwaps:"));
+    const firstLine = line.slice(0, line.indexOf("\n", 1));
+    expect(firstLine).toContain("savings");
+    expect(firstLine).not.toContain("true,");
+  });
+
   it("drops a vehicle with no usable coordinates rather than placing it at null island", () => {
     // (0, 0) is within 150 m of nothing in Denver, but it is within 150 m of
     // every OTHER vehicle we also defaulted, so a handful of broken features
