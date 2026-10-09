@@ -50,6 +50,7 @@ import {
   type RecentDest,
 } from "./ride-screen-dest.ts";
 import type { TripPlace, TripWheels } from "./pending-trip.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface HomeBarDeps {
   /** The live GPS fix, or null. Read-only — turning location ON is the top
@@ -198,7 +199,7 @@ export function createHomeBar(root: HTMLElement, deps: HomeBarDeps): HomeBarHand
   input.setAttribute("aria-label", PLACEHOLDER);
   markUndoFree(input);
 
-  const closeBtn = el("button", "home-bar__close", "✕");
+  const closeBtn = applyCloseFace(el("button", "home-bar__close"));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   closeBtn.addEventListener("click", () => collapse());

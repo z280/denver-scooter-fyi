@@ -5,6 +5,7 @@
 // that event would often silently do nothing on first visit. Instead we
 // always hand the rider our own platform-appropriate steps.
 import { track } from "./telemetry.ts";
+import { CLOSE_ICON_SVG } from "./close-icon.ts";
 
 const DISMISSED_KEY = "scooter-fyi-install-dismissed";
 const ICON_URL = "/icon-192.png";
@@ -76,7 +77,7 @@ function openInstructions(steps: string[]): void {
       <div class="install-modal__head">
         <img class="install-modal__icon" src="${ICON_URL}" width="36" height="36" alt="" />
         <h3 id="install-modal-title">Add to Home Screen</h3>
-        <button type="button" class="install-modal__close" aria-label="Close">&times;</button>
+        <button type="button" class="install-modal__close btn-close" aria-label="Close">${CLOSE_ICON_SVG}</button>
       </div>
       <ol class="install-modal__steps">
         ${steps.map((s) => `<li>${s}</li>`).join("")}
@@ -132,7 +133,7 @@ function showBanner(): void {
       <span>Add to your Home Screen for quick access</span>
     </div>
     <button type="button" class="install-banner__install">Install</button>
-    <button type="button" class="install-banner__close" aria-label="Dismiss">&times;</button>
+    <button type="button" class="install-banner__close btn-close" aria-label="Dismiss">${CLOSE_ICON_SVG}</button>
   `;
 
   document.body.appendChild(banner);

@@ -3,6 +3,8 @@
 // control. Fixes the "out of sight, out of mind" drawer problem — users
 // forget a filter is on and wonder why the map looks empty.
 
+import { applyCloseFace } from "./close-icon.ts";
+
 export interface Chip {
   /** Stable identity for the constraint (e.g. "device-type", "battery"). */
   id: string;
@@ -30,9 +32,9 @@ export class FilterChips {
 
       const clear = document.createElement("button");
       clear.type = "button";
-      clear.className = "chip__clear";
+      clear.className = "chip__clear btn-close--inline";
       clear.setAttribute("aria-label", `Clear filter: ${chip.label}`);
-      clear.textContent = "×";
+      applyCloseFace(clear);
       clear.addEventListener("click", chip.onClear);
 
       el.append(label, clear);

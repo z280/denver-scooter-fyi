@@ -53,6 +53,7 @@ import {
   type NamedSpec,
   type SpecStoreDeps,
 } from "./ride-spec-store.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface RideSpecPanelDeps {
   /** The Filters drawer's live state — `main.ts`'s `snapshotFilters`, the
@@ -270,7 +271,7 @@ export function wireRideSpecPanel(
 
     const header = el("div", "ranks-modal__head");
     header.append(el("h3", undefined, "🛴 My ideal scooter"));
-    const x = el("button", "ranks-modal__close", "×");
+    const x = applyCloseFace(el("button", "ranks-modal__close"));
     x.type = "button";
     x.setAttribute("aria-label", "Close");
     x.addEventListener("click", close);

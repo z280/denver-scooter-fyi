@@ -61,6 +61,7 @@ import { trapFocusWithin } from "./modal-focus-trap.ts";
 import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { markUndoFree } from "./ios-shake-undo.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -396,7 +397,7 @@ export function openConfirmFeatures(
   const head = el("div", `${ROOT_CLASS}__head`);
   const title = el("h3", undefined, "☑️ Confirm Features");
   title.id = "device-features-title";
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   head.append(title, closeBtn);

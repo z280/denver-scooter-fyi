@@ -48,6 +48,7 @@ import {
 } from "./api.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 import { TELEMETRY_EVENTS } from "./telemetry.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // Validated series palettes — scripts/validate_palette.js, six checks, both
@@ -389,7 +390,7 @@ export function openAnalyticsReport(
   emojiSpan.setAttribute("aria-hidden", "true");
   title.append(emojiSpan, document.createTextNode(titleText));
   title.id = "admin-analytics-title";
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   head.append(title, closeBtn);

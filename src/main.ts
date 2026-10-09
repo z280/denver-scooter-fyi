@@ -297,6 +297,7 @@ import {
   type OnboardingHooks,
 } from "./onboarding.ts";
 import { showTipOnce } from "./discovery-tips.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 function need<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -1317,7 +1318,7 @@ const buildRideOptionsPanel: RideOptionsPanelBuilder = (container, hooks) => {
   const nextBtn = document.createElement("button");
   nextBtn.type = "button";
   nextBtn.className = "login-btn";
-  nextBtn.textContent = "NEXT >>";
+  nextBtn.textContent = "Next ›";
   nextBtn.disabled = !hooks.canProceed;
   nextBtn.addEventListener("click", hooks.onNext);
   const usualsRow = panel.element.querySelector<HTMLElement>(".ride-settings__actions");
@@ -2193,9 +2194,16 @@ function wireOnboarding(): void {
   window.addEventListener("scooter:popup-open", (e) => {
     const tier = (e as CustomEvent<{ tier?: string }>).detail?.tier;
     if (tier === "risk") {
+      // Docked inside the card, under the verdict it explains. As a toast it
+      // floated over the card's own action buttons on a phone (Report,
+      // Details, Take Photo), which is the last place a tip may sit.
       showTipOnce(
         "high-risk",
         "This classification is based on failed starts, dwell time, rider reports, and other rideability signals.",
+        {
+          anchor: () =>
+            document.querySelector(".maplibregl-popup .device-popup__verdict"),
+        },
       );
     }
   });
@@ -2850,7 +2858,7 @@ function openIconLightbox(url: string, label: string): void {
   close.type = "button";
   close.className = "icon-lightbox__close";
   close.setAttribute("aria-label", "Close");
-  close.textContent = "×";
+  applyCloseFace(close);
   const big = document.createElement("img");
   big.className = "icon-lightbox__img";
   big.src = url;

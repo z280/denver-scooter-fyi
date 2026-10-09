@@ -14,6 +14,8 @@
 // Styled after the equity chip (the one thing on the map already asking to
 // be tapped), with three little fingers that tap in turn.
 
+import { applyCloseFace } from "./close-icon.ts";
+
 /** UI preference, not app state — same prefix family as the tips. */
 export const NUDGE_STORAGE_KEY = "scooter-fyi-triple-tap-nudge";
 
@@ -154,7 +156,7 @@ export class TripleTapNudge {
     close.type = "button";
     close.className = "triple-tap-nudge__close";
     close.setAttribute("aria-label", "Got it, don't show this again");
-    close.textContent = "×";
+    applyCloseFace(close, { onColor: true });
     close.addEventListener("click", () => this.dismiss());
 
     chip.append(taps, text, close);

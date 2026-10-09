@@ -29,6 +29,7 @@
 import jsQR from "jsqr";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
 import type { QrDetector } from "./qr-zxing.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 // BarcodeDetector isn't in TypeScript's DOM lib yet; declare the sliver we
 // use rather than pulling in a types package for one class.
@@ -196,7 +197,7 @@ export function openQrScanner(options: QrScannerOptions): () => void {
   const head = el("div", `${ROOT_CLASS}__head`);
   const title = el("h3", undefined, "📷 Scan the QR code");
   title.id = "qr-scan-title";
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close scanner");
   head.append(title, closeBtn);

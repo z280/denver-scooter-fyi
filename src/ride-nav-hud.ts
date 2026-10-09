@@ -80,6 +80,7 @@ import {
 import { distanceMeters } from "./locate.ts";
 import type { LngLatCoord } from "./polyline-encode.ts";
 import type { RideSessionRoute } from "./ride-session.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // Tunables (exported so tests can assert against them directly rather than
@@ -792,7 +793,7 @@ export function createNavHud(
   panelClose.type = "button";
   panelClose.className = "nav-hud__panel-close";
   panelClose.setAttribute("aria-label", "Close directions list");
-  panelClose.textContent = "×";
+  applyCloseFace(panelClose);
   panelHead.append(panelTitle, panelClose);
 
   const stepsList = document.createElement("ol");

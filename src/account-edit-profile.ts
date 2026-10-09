@@ -22,6 +22,7 @@
 // keyboard and lands at the top of the document has lost their place.
 
 import { trapFocusWithin } from "./modal-focus-trap.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface EditProfileModalDeps {
   /** The rows to show, in order. Built and owned by the caller. */
@@ -61,7 +62,7 @@ export function openEditProfileModal(deps: EditProfileModalDeps): () => void {
   const title = el("h3", undefined, "Edit Profile");
   title.id = "account-editprofile-title";
   card.setAttribute("aria-labelledby", title.id);
-  const closeBtn = el("button", "account-editprofile__close", "×");
+  const closeBtn = applyCloseFace(el("button", "account-editprofile__close"));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close Edit Profile");
   head.append(title, closeBtn);

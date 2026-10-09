@@ -116,6 +116,7 @@ import {
   type OptionDisableState,
 } from "./ride-option-cascades.ts";
 import { savesTracks } from "./track-preference.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 /** `${provider}` in the owner's copy — Veo today, written to be
  *  provider-parameterized (master plan, Part 0 preamble). Substituted only
@@ -586,7 +587,7 @@ export function openRideInfoModal(
   const head = el("div", "ranks-modal__head");
   const heading = el("h3", undefined, copy.title);
   heading.id = "ride-info-modal-title";
-  const closeBtn = el("button", "ranks-modal__close", "×");
+  const closeBtn = applyCloseFace(el("button", "ranks-modal__close"));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   head.append(heading, closeBtn);

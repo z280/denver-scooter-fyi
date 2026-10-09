@@ -64,6 +64,7 @@ import {
 } from "./ride-modal.ts";
 import { DEFAULT_COST_HUD } from "./ride-display-prefs.ts";
 import { savesTracks } from "./track-preference.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export type { RidePreflightChoices, RideStartIntent };
 
@@ -229,7 +230,7 @@ export function openRidePreflight(options: RidePreflightOptions): () => void {
   const head = el("div", `${ROOT_CLASS}__head`);
   const title = el("h3", undefined, "🧭 Use in Ride Mode");
   title.id = "ride-preflight-title";
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   head.append(title, closeBtn);

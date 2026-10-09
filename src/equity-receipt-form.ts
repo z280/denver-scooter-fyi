@@ -51,6 +51,7 @@ import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { plateFromQr } from "./qr-utility.ts";
 import { savedRatePlan, toApiRatePlan } from "./ride-cost.ts";
 import type { PickedPoint } from "./map-pick.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 /** Per image, matching the API's 413. */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -485,7 +486,7 @@ export function openEquityReceiptForm(deps: ReceiptFormDeps): () => void {
   const head = el("div", `${ROOT_CLASS}__head`);
   const title = el("h3", undefined, "Didn't get the discount?");
   title.id = "equity-receipt-title";
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   head.append(title, closeBtn);
