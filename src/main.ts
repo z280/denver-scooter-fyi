@@ -1614,7 +1614,7 @@ map.on("load", async () => {
     deviceNotifier.forget(claim.vehicleIdentifier);
     void requestMovedNotifications();
     toolsMine?.refresh();
-    return `We'll tell you if ${claim.vehicleName} moves before you get there.`;
+    return `We'll tell you if it moves before you get there.`;
   };
 
   devices.setClaimWatchHook((claim) => armDibsWatch(claim));
