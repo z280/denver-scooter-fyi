@@ -42,6 +42,7 @@ import {
   type RangeDevice,
   type StatsData,
   type StatsVoice,
+  attachComplianceDoor,
 } from "./fleet-stats.ts";
 
 // 20:30 MDT on Thursday, October 8, 2026. "Yesterday" is October 7.
@@ -581,5 +582,25 @@ describe("loading", () => {
     await renderFleetStats(host, "rider", { now: () => NOW, mountStory });
     expect(host.textContent).toContain("Stats are unavailable right now");
     expect(mountStory).not.toHaveBeenCalled();
+  });
+});
+
+describe("Equity compliance door (moved from Tools, 2026-10-09)", () => {
+  it("goes on the Equity Areas card when it rendered", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<div class="stat-cards"><section class="stat-card" data-card="equity"></section></div>';
+    const open = vi.fn();
+    attachComplianceDoor(root, open);
+    const btn = root.querySelector<HTMLButtonElement>('.stat-card[data-card="equity"] .stats-compliance-door');
+    expect(btn).not.toBeNull();
+    btn!.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+  it("still appears when the equity card is missing, so the drawer is never stranded", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<div class="stat-cards"><section class="stat-card" data-card="now"></section></div>';
+    attachComplianceDoor(root, vi.fn());
+    expect(root.querySelector(".stats-compliance-door")).not.toBeNull();
+    expect(root.querySelector('.stat-card .stats-compliance-door')).toBeNull();
   });
 });

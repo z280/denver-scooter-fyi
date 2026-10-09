@@ -752,8 +752,29 @@ export interface FleetStatsHooks {
    *  embed, which then shows no range card rather than pulling the whole
    *  feed (several MB) into somebody else's page for one median. */
   devices?(): readonly RangeDevice[] | null;
+  /** Open the Equity Compliance drawer. Equity compliance is a statistic,
+   *  so its door is here, not in Tools (owner, 2026-10-09). Absent in the
+   *  embed, which has no such drawer. */
+  openCompliance?(): void;
   /** Injectable clock, for tests. */
   now?(): Date;
+}
+
+/** The door to the Equity Compliance drawer: on the Equity Areas card when
+ *  that card rendered, otherwise after the cards, so a failed compliance
+ *  fetch never strands the drawer. */
+export function attachComplianceDoor(root: HTMLElement, open: () => void): void {
+  const btn = el("button", "preset-btn stats-compliance-door", "Equity compliance: daily status and calendar →");
+  btn.type = "button";
+  btn.addEventListener("click", open);
+  const card = root.querySelector<HTMLElement>('.stat-card[data-card="equity"]');
+  if (card) {
+    card.append(btn);
+    return;
+  }
+  const grid = root.querySelector<HTMLElement>(".stat-cards");
+  if (grid) grid.after(btn);
+  else root.append(btn);
 }
 
 async function settle<T>(p: Promise<T>): Promise<T | null> {
@@ -827,6 +848,7 @@ export async function renderFleetStats(
       devices,
     };
     root.replaceChildren(buildFleetStats(data, voice));
+    if (hooks.openCompliance) attachComplianceDoor(root, hooks.openCompliance);
     const storyHost = root.querySelector<HTMLElement>('[data-role="story-host"]');
     if (storyHost) hooks.mountStory?.(storyHost);
   } catch (err) {
@@ -836,6 +858,7 @@ export async function renderFleetStats(
     frag.append(el("h3", "stats-title", copy.title));
     frag.append(el("p", "stats-empty", copy.unavailable));
     root.replaceChildren(frag);
+    if (hooks.openCompliance) attachComplianceDoor(root, hooks.openCompliance);
   } finally {
     clearTimeout(timer);
   }

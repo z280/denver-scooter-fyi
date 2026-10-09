@@ -5340,6 +5340,15 @@ function wireDrawers(): void {
         // The range card reads the feed the map already holds: no second
         // download of the whole fleet for one median.
         devices: () => devices.allFeatures(),
+        // Equity compliance is a statistic: its drawer opens from here, not
+        // from Tools. The tab is offscreen by design (see index.html).
+        openCompliance: () => {
+          const tab = document.querySelector<HTMLButtonElement>(
+            '.drawer-tab[data-drawer="compliance"]',
+          );
+          if (!tab) throw new Error("compliance drawer tab missing");
+          tab.click();
+        },
       }).catch((e) => {
         console.error("fleet stats render failed", e);
       });
