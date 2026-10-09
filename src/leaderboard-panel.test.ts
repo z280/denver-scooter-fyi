@@ -406,3 +406,20 @@ describe("points table: tiered entries and growth awards (2026-10-06)", () => {
     expect(buildPointsScheduleHtml({ qr_scan: { points: 100 }, referral: { points: 100 } })).not.toMatch(/qr/i);
   });
 });
+
+describe("condition checks in Earning points (fleet reports Phase 3)", () => {
+  it("lists both condition-check awards at the server's values", () => {
+    const html = buildPointsScheduleHtml({
+      condition_check: { points: 10 },
+      condition_check_confirmed: { points: 40 },
+    });
+    expect(html).toContain("Check a reported scooter&#39;s condition (test ride)");
+    expect(html).toContain("Bonus when Veo&#39;s feed confirms that test ride");
+    expect(html).toContain("10 pts");
+    expect(html).toContain("40 pts");
+  });
+
+  it("drops the rows when an older API does not publish them", () => {
+    expect(buildPointsScheduleHtml({ referral: { points: 100 } })).not.toContain("condition");
+  });
+});

@@ -95,8 +95,26 @@ export interface DeviceProperties {
   range_rank_h3_9_peers?: number | null;
   range_rank_h3_10_peers?: number | null;
   // ----- Community quality signals.
-  /** True when the device has at least one open negative quality report. */
+  /** True while an uncleared negative report makes this vehicle high risk
+   *  (signed in, or anonymous under 24 h). A LABEL, never a reason to hide
+   *  the vehicle (owner, 2026-10-09). */
   has_negative_report?: boolean | null;
+  /** "high_risk" | "unknown" (only faded anonymous reports) | null. All four
+   *  `negative_report_*` fields, `latest_report` and `needs_condition_check`
+   *  are null when the server's detail query failed. Labels only. */
+  negative_report_risk?: "high_risk" | "unknown" | null;
+  /** Strongest uncleared type: inaccessible, not_found, not_rideable,
+   *  damaged, dead_battery. */
+  negative_report_reason?: string | null;
+  /** The not_rideable reason (flat_tire, …) or null. */
+  negative_report_reason_detail?: string | null;
+  negative_report_since?: string | null;
+  /** The most recent uncleared negative report, for the details tile. An
+   *  object on the raw path, a JSON string through MapLibre flattening —
+   *  `readLatestReport` in report-labels.ts reads both. */
+  latest_report?: unknown;
+  /** An uncleared rideability/inaccessible device report riders could check. */
+  needs_condition_check?: boolean | null;
   /** Server-assigned quality label (e.g. "low_quality", "ok"); free-form string. */
   quality_designation?: string | null;
   // ----- Reliability. The server now ships `reliability_tier` on the public
@@ -2606,3 +2624,94 @@ export async function removeAdmin(email: string): Promise<AdminWriteResult> {
 // rather than out of a shim nobody calls.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Condition checks (FLEET_REPORTS_PLAN §4.4; condition-check.ts is the UI)
+// ---------------------------------------------------------------------------
+
+export interface ConditionItem {
+  report_id: number;
+  report_type: string;
+  reason: string | null;
+  observed_at: string | null;
+  reported_at: string | null;
+  last_reconfirmed_at?: string | null;
+  reconfirm_count?: number;
+  own_report?: boolean;
+  auto_resolves?: boolean;
+}
+
+export interface ConditionPoints {
+  base: number;
+  feed_confirmed: number;
+  max: number;
+  eligible: boolean;
+  withheld_reason: string | null;
+}
+
+export interface ConditionsResponse {
+  vehicle_identifier: string;
+  as_of: string;
+  needs_condition_check: boolean | null;
+  conditions: ConditionItem[];
+  auto_resolves: ConditionItem[];
+  points: ConditionPoints;
+  feed_window_minutes: number;
+}
+
+export interface ConditionAnswer {
+  report_id: number;
+  still_a_problem: boolean;
+}
+
+export interface ConditionCheckBody {
+  answers: ConditionAnswer[];
+  test_ride: boolean;
+  feature_report_id?: number;
+  submitted_plate?: string;
+  qr_raw_value?: string;
+}
+
+export interface ConditionCheckResult {
+  check_id: number;
+  vehicle_identifier: string;
+  submitted_at: string;
+  test_ride: boolean;
+  discarded: boolean;
+  resolved: number[];
+  reconfirmed: number[];
+  found: number[];
+  stale: number[];
+  points_awarded: number;
+  points_pending: number;
+  points_withheld_reason: string | null;
+  feed_status: string | null;
+  feed_window_minutes: number;
+}
+
+export function fetchConditions(vid: string): Promise<ConditionsResponse> {
+  return authedFetchJSON<ConditionsResponse>(
+    `/api/v1/devices/${encodeURIComponent(vid)}/conditions`,
+  );
+}
+
+export function postConditionCheck(
+  vid: string,
+  body: ConditionCheckBody,
+): Promise<ConditionCheckResult> {
+  return authedFetchJSON<ConditionCheckResult>(
+    `/api/v1/devices/${encodeURIComponent(vid)}/condition-checks`,
+    { method: "POST", body },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scan-to-identify (FLEET_REPORTS_PLAN §2.7; qr-identify.ts is the caller)
+// ---------------------------------------------------------------------------
+
+/** `GET /api/v1/vehicles/resolve?qr=…&explain=true` — public. Throws
+ *  NoDataError on 404 (never tracked / ambiguous), ApiError otherwise. */
+export function fetchIdentify<T>(rawQr: string): Promise<T> {
+  return getJSON<T>(
+    `/api/v1/vehicles/resolve?qr=${encodeURIComponent(rawQr)}&explain=true`,
+  );
+}

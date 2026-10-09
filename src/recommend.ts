@@ -17,6 +17,7 @@ import {
   type LngLat,
 } from "./locate.ts";
 import { RELIABILITY_LABEL, type ReliabilityTier } from "./reliability.ts";
+import { reportRisk } from "./report-labels.ts";
 
 /** The interview's three ranking factors. All three always contribute;
  *  the one the rider picks just carries most of the weight. */
@@ -115,7 +116,9 @@ export function rankDevices(
     if (failed !== null && failed > 0) {
       warnings.push(`${failed} failed start${failed === 1 ? "" : "s"}`);
     }
-    if (truthy(p.has_negative_report)) warnings.push("negative report on file");
+    // A report is a LABEL: the vehicle stays in the list, carrying why.
+    const report = reportRisk(p);
+    if (report) warnings.push(report.phrase);
     if (tier === "risk") warnings.push("high risk");
 
     out.push({

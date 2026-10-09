@@ -1,11 +1,12 @@
-// The QR tool — one scan, two jobs, and a switch that says which.
+// The QR tool — one scan, three jobs, and a switch that says which.
 //
-// WHY ONE SCANNER AND NOT TWO BUTTONS. The two jobs ask for the same thing
+// WHY ONE SCANNER AND NOT TWO BUTTONS. The jobs ask for the same thing
 // (point the camera at the sticker) and differ only in what happens next, so
 // two buttons would be two camera flows to keep in step and two places for the
 // scan's failure sentences to drift apart. One scanner, one mode selector in
-// front of it, and the mode decides the outcome. It also leaves room: a third
-// job added here is a third segment, not a third flow.
+// front of it, and the mode decides the outcome. The third job — Identify
+// (docs/FLEET_REPORTS_PLAN.md §2.7) — arrived exactly that way: a third
+// segment, not a third flow.
 //
 // WHAT THE SCAN IS. The raw payload, verbatim, exactly as `qr-scan.ts`'s header
 // insists — this module parses nothing it does not have to.
@@ -18,7 +19,9 @@
 // and is reverse-resolved against the live device feed — `ride-deeplink.ts`'s `reversePlateLookup`, the index this app
 // already builds. Mode `features` parses nothing: the server resolves the scan
 // itself (`qr_raw_value` on the feature report), which is why that mode works
-// for a scooter missing from the feed and this one does not.
+// for a scooter missing from the feed and this one does not. Mode `identify`
+// sends the payload to the server too (`qr-identify.ts`), which is the only
+// thing that can name a vehicle the client's feed no longer carries.
 
 import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
@@ -28,7 +31,7 @@ import { applyCloseFace } from "./close-icon.ts";
 // The modes
 // ---------------------------------------------------------------------------
 
-export type QrUtilityMode = "features" | "ride";
+export type QrUtilityMode = "identify" | "features" | "ride";
 
 export interface QrUtilityModeSpec {
   mode: QrUtilityMode;
@@ -39,10 +42,18 @@ export interface QrUtilityModeSpec {
   detail: string;
 }
 
-/** Dial order is deliberate: Confirm Features first because it is the one a
- *  rider does standing still with nothing else in flight, and the ride mode
- *  second because what it does depends on a session the rider already has. */
+/** Dial order is deliberate. Identify first: it is the one a rider does
+ *  knowing nothing, with nothing in flight, and the only read-only mode of the
+ *  three (§4.2(4)). Confirm Features next — done standing still — and the ride
+ *  mode last because what it does depends on a session the rider already has. */
 export const QR_UTILITY_MODES: readonly QrUtilityModeSpec[] = [
+  {
+    mode: "identify",
+    glyph: "🔎",
+    label: "Identify",
+    detail:
+      "What is this scooter? Its reports, and why it isn't on your map if it isn't.",
+  },
   {
     mode: "features",
     glyph: "☑️",
@@ -67,9 +78,9 @@ export function modeSpec(mode: QrUtilityMode): QrUtilityModeSpec {
  *
  *  Wrapping rather than clamping — the opposite of `emoji-scale.ts`, and for
  *  the opposite reason. That one is a SCALE, where the ends mean something and
- *  arrowing off 😍 onto 😠 would be a wrong answer. These are two unordered
- *  jobs, so there is no "off the end" to protect: with two positions, clamping
- *  would simply make one arrow direction dead. */
+ *  arrowing off 😍 onto 😠 would be a wrong answer. These are unordered jobs,
+ *  so there is no "off the end" to protect: clamping would only make the
+ *  arrow at either end dead, and wrapping keeps every job one key away. */
 export function rotateMode(
   current: QrUtilityMode,
   delta: number,
@@ -138,6 +149,14 @@ export function plateFromQr(rawValue: string): string | null {
 // The modal
 // ---------------------------------------------------------------------------
 
+/** What an identify scan shows: a small card, and what the rider can do from
+ *  it. Built by the integrator (`qr-identify.ts` decides the words). */
+export interface QrIdentifyCard {
+  title: string;
+  lines: string[];
+  actions: { label: string; run(): void }[];
+}
+
 export interface QrUtilityDeps {
   /** The mode the switch starts on. Defaults to the first. */
   initialMode?: QrUtilityMode;
@@ -148,6 +167,10 @@ export interface QrUtilityDeps {
    *  what happened, or why nothing could. Resolving rather than throwing,
    *  because every outcome here is something to say rather than an error. */
   onRideScan(rawValue: string): Promise<string>;
+  /** A scan landed in `identify` mode. Resolves to the card to show — every
+   *  outcome is a card, failures included. Optional so a caller without it
+   *  simply gets no Identify segment's result (the segment says so). */
+  onIdentify?(rawValue: string): Promise<QrIdentifyCard>;
   /** Injected for tests; defaults to the real camera scanner. */
   scan?: typeof openQrScanner;
   onClose?(): void;
@@ -179,6 +202,7 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
   let closed = false;
   let busy = false;
   let status: string | null = null;
+  let idCard: QrIdentifyCard | null = null;
   const cleanupFns: (() => void)[] = [];
 
   const backdrop = el("div", ROOT_CLASS);
@@ -222,6 +246,7 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
     mode = next;
     // A new mode means the last mode's answer is no longer about anything.
     status = null;
+    idCard = null;
     render();
     if (refocus) {
       try {
@@ -234,7 +259,7 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
 
   // ---- The mode switch --------------------------------------------------
   //
-  // A segmented control, which is what this actually is: two unordered jobs,
+  // A segmented control, which is what this actually is: three unordered jobs,
   // one of them applied to whatever the camera reads next. It replaces a dial
   // whose pointer angle was the readout — a nice idea that asked a rider to
   // decode an angle when the thing they needed was the answer in words, and
@@ -326,7 +351,32 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
     }
     busy = true;
     status = null;
+    idCard = null;
     render();
+    if (mode === "identify") {
+      const identify =
+        deps.onIdentify ??
+        (async (): Promise<QrIdentifyCard> => ({
+          title: "Not available",
+          lines: ["Identify isn't available right now."],
+          actions: [],
+        }));
+      void identify(rawValue).then(
+        (c) => {
+          if (closed) return;
+          busy = false;
+          idCard = c;
+          render();
+        },
+        () => {
+          if (closed) return;
+          busy = false;
+          status = "Something went wrong reading that code — try scanning again.";
+          render();
+        },
+      );
+      return;
+    }
     void deps.onRideScan(rawValue).then(
       (message) => {
         if (closed) return;
@@ -351,7 +401,9 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
       prompt:
         mode === "features"
           ? "Scan the QR code on this scooter to confirm its features"
-          : "Scan the QR code on the scooter you're riding",
+          : mode === "identify"
+            ? "Scan the QR code on the scooter in front of you"
+            : "Scan the QR code on the scooter you're riding",
       onScan: (rawValue) => onScanned(rawValue),
     });
   }
@@ -369,6 +421,30 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
     scanBtn.disabled = busy;
     scanBtn.addEventListener("click", () => startScan());
     body.append(scanBtn);
+
+    if (idCard) {
+      const box = el("div", `${ROOT_CLASS}__identify`);
+      box.setAttribute("role", "status");
+      box.setAttribute("aria-live", "polite");
+      box.append(el("p", `${ROOT_CLASS}__identify-title`, idCard.title));
+      for (const line of idCard.lines) {
+        box.append(el("p", `${ROOT_CLASS}__identify-line`, line));
+      }
+      if (idCard.actions.length > 0) {
+        const row = el("div", `${ROOT_CLASS}__identify-actions`);
+        for (const a of idCard.actions) {
+          const b = el("button", "login-btn login-btn--secondary", a.label);
+          b.type = "button";
+          b.addEventListener("click", () => {
+            a.run();
+            close();
+          });
+          row.append(b);
+        }
+        box.append(row);
+      }
+      body.append(box);
+    }
 
     if (status) {
       const line = el("p", `${ROOT_CLASS}__status`, status);
@@ -428,6 +504,8 @@ export interface QrUtilityWiring {
   onConfirmFeatures: QrUtilityDeps["onConfirmFeatures"];
   /** Mode `ride`: the raw payload, for `handleQrRideScan` to act on. */
   onRideScan: QrUtilityDeps["onRideScan"];
+  /** Mode `identify`: the raw payload, for the server's identify lookup. */
+  onIdentify?: QrUtilityDeps["onIdentify"];
   /** Injected in tests; defaults to this module's own `openQrUtility`. */
   open?: (deps: QrUtilityDeps) => () => void;
 }
@@ -439,6 +517,7 @@ export function wireQrUtility(wiring: QrUtilityWiring): () => void {
     open({
       onConfirmFeatures: wiring.onConfirmFeatures,
       onRideScan: wiring.onRideScan,
+      onIdentify: wiring.onIdentify,
     });
   };
   wiring.button.addEventListener("click", onClick);

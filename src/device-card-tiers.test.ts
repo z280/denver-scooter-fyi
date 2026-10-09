@@ -20,6 +20,7 @@ import { readSource, withoutComments } from "../tests/helpers/source-text.ts";
 // naming the actions and the constants, so a raw scan would find `allow("ride")`
 // in a paragraph explaining `allow("ride")` and call the gate wired.
 const devicesSrc = withoutComments(readSource("src/devices.ts"));
+const panelSrc = withoutComments(readSource("src/report-device-panel.ts"));
 
 describe("the card consults the table rather than its own numbers", () => {
   it("has no proximity radius of its own at all", () => {
@@ -95,8 +96,11 @@ describe("blocked is a sentence, delivered by tap", () => {
 
 describe("the report chips", () => {
   it("still read their reason from data-blocked and stay tappable", () => {
-    expect(devicesSrc).toContain("const blocked = chip.dataset.blocked;");
-    expect(devicesSrc).toMatch(/reportBlockedAttr = reportBlockedReason/);
+    // The chips moved to report-device-panel.ts (fleet reports Phase 3); the
+    // card still hands them its one gate's reason.
+    expect(panelSrc).toContain("const blocked = chip.dataset.blocked;");
+    expect(panelSrc).toMatch(/blockedAttr = blockedReason/);
+    expect(devicesSrc).toMatch(/reportProblemHtml\(vid, reportBlockedReason\)/);
   });
 });
 

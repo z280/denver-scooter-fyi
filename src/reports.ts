@@ -8,10 +8,12 @@
 import { API_BASE } from "./api.ts";
 import { getAuth } from "./map-auth.js";
 
-/** The device-failure report types the API accepts (POST
- *  /api/v1/reports/device). `improperly_parked` is a parking-compliance
- *  report — it feeds the reports summary/export but, unlike the others, does
- *  NOT flip has_negative_report / reliability_tier server-side. */
+/** The device report types the API accepts (POST /api/v1/reports/device).
+ *
+ *  Every type but `improperly_parked` is a NEGATIVE report: it labels the
+ *  vehicle High risk until cleared (an anonymous one fades to Unknown risk
+ *  after 24 h). None of them hides a vehicle — owner, 2026-10-09.
+ *  `improperly_parked` is a report to Veo and changes no label. */
 export type DeviceReportType =
   /** Renamed from `failed_unlock` (scooter-fyi-api sql/037). Broader than "the
    *  unlock failed" — it is the rider's answer to "could you ride it?",
@@ -20,26 +22,48 @@ export type DeviceReportType =
   | "dead_battery"
   | "damaged"
   | "not_found"
+  /** You can SEE it but cannot reach it — fenced in, locked inside, private
+   *  property (sql/100). "It isn't where the map says" is `not_found`. */
+  | "inaccessible"
   | "improperly_parked";
 
 export interface DeviceReport {
   /** Stable per-vehicle HMAC (public). The API requires ≥16 chars. */
   vehicle_identifier: string;
   report_type: DeviceReportType;
+  /** `not_rideable` only: why (`acceleration` | `flat_tire` | `wheel` |
+   *  `lighting` | `seat` | `handlebar`), or one of the two decoys the picker
+   *  offers (`cannot_find`, `dead_battery`), which the SERVER re-files as
+   *  `not_found` / `dead_battery`. Omitted = unspecified. */
+  reason?: string;
+  /** When the rider noticed: a `YYYY-MM-DD` date (read as Denver) or a
+   *  timestamp. Omitted = now. The API 422s the future and > 30 days back. */
+  observed_at?: string;
   lat?: number;
   lng?: number;
 }
 
-/** One-tap device-failure report. Returns whether the API de-duped it
- *  against a recent identical report. Anonymous is allowed; a bearer token
- *  rides along when signed in. Throws on network/HTTP failure. */
+export interface DeviceReportResult {
+  deduped: boolean;
+  /** What the server filed it as. Differs from what was sent exactly when a
+   *  decoy was remapped; null/absent from an API that does not say. */
+  reportType?: string | null;
+  /** The decoy that caused a remap, or null/absent. */
+  remappedFromReason?: string | null;
+}
+
+/** File a device report. Anonymous is allowed; a bearer token rides along
+ *  when signed in. Throws `ReportHttpError` on a non-2xx (422 for a bad
+ *  reason or an out-of-range `observed_at`), or the network error. */
 export async function submitDeviceReport(
   report: DeviceReport,
-): Promise<{ deduped: boolean }> {
+): Promise<DeviceReportResult> {
   const body: Record<string, unknown> = {
     vehicle_identifier: report.vehicle_identifier,
     report_type: report.report_type,
   };
+  if (report.reason) body.reason = report.reason;
+  if (report.observed_at) body.observed_at = report.observed_at;
   // Field names must match the API's DeviceReportIn model (lat/lng). Sending
   // coords is what lets a report be regionalized in /reports/summary (which
   // skips rows with NULL lat/lng), so getting these keys right matters.
@@ -59,9 +83,20 @@ export async function submitDeviceReport(
     headers,
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Report failed (HTTP ${res.status})`);
-  const data = (await res.json()) as { deduped?: boolean };
-  return { deduped: data.deduped === true };
+  if (!res.ok) throw new ReportHttpError(res.status);
+  const data = (await res.json()) as {
+    deduped?: boolean;
+    report_type?: unknown;
+    remapped_from_reason?: unknown;
+  };
+  return {
+    deduped: data.deduped === true,
+    reportType: typeof data.report_type === "string" ? data.report_type : null,
+    remappedFromReason:
+      typeof data.remapped_from_reason === "string"
+        ? data.remapped_from_reason
+        : null,
+  };
 }
 
 // --- Device features -------------------------------------------------------

@@ -187,7 +187,7 @@ describe("the modal", () => {
   it("points the selected segment at the sentence that explains it", () => {
     // A radio announces its own label and nothing else, so the detail below
     // the switch has to be attached deliberately or it is never read out.
-    open();
+    open({ initialMode: "features" });
     const detail = root().querySelector(".qr-utility__mode-detail")!;
     expect(detail.id).toBeTruthy();
     expect(segment("features").getAttribute("aria-describedby")).toBe(detail.id);
@@ -220,7 +220,7 @@ describe("the modal", () => {
   });
 
   it("moves on the arrow keys, in both axes", () => {
-    open();
+    open({ initialMode: "features" });
     const press = (key: string) =>
       segments()
         .find((b) => b.getAttribute("aria-checked") === "true")!
@@ -235,7 +235,7 @@ describe("the modal", () => {
     press("ArrowDown");
     expect(segment("ride").getAttribute("aria-checked")).toBe("true");
     press("Home");
-    expect(segment("features").getAttribute("aria-checked")).toBe("true");
+    expect(segment(QR_UTILITY_MODES[0].mode).getAttribute("aria-checked")).toBe("true");
     press("End");
     expect(
       segment(QR_UTILITY_MODES[QR_UTILITY_MODES.length - 1].mode)
@@ -255,7 +255,7 @@ describe("the modal", () => {
   });
 
   it("keeps only the chosen segment in the tab order", () => {
-    open();
+    open({ initialMode: "features" });
     expect(segment("features").tabIndex).toBe(0);
     expect(segment("ride").tabIndex).toBe(-1);
     segment("ride").click();
@@ -264,7 +264,7 @@ describe("the modal", () => {
   });
 
   it("features mode hands the RAW payload on and gets out of the way", () => {
-    const { onConfirmFeatures, onRideScan } = open();
+    const { onConfirmFeatures, onRideScan } = open({ initialMode: "features" });
     scanBtn().click();
     // Two stacked dialogs is one too many: it closes before handing off.
     expect(document.querySelector(".qr-utility")).toBeNull();

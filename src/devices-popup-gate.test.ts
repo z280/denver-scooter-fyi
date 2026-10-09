@@ -968,20 +968,20 @@ describe("device popup — reporting a problem needs you to be there", () => {
     return m ? m[1] : null;
   };
 
-  it("offers all three chips, ungated, to a rider standing at the scooter", () => {
+  it("offers all four chips, ungated, to a rider standing at the scooter", () => {
     const html = openReportModal({ fix: NEAR });
-    expect(chips(html)).toHaveLength(3);
+    expect(chips(html)).toHaveLength(4);
     for (const c of chips(html)) expect(c).not.toContain("data-blocked");
     expect(gateNote(html)).toBeNull();
   });
 
-  it("still draws all three from across town — the feature has to be visible", () => {
+  it("still draws all four from across town — the feature has to be visible", () => {
     // The whole point of gating rather than hiding, and the one place this
     // deliberately differs from the parking block directly above it (which
     // disappears): somebody who learns the button exists is somebody who uses
     // it while standing in front of a broken scooter.
     const html = openReportModal({ fix: FAR });
-    expect(chips(html)).toHaveLength(3);
+    expect(chips(html)).toHaveLength(4);
   });
 
   it("warns, in words and before the tap, when the rider is too far", () => {

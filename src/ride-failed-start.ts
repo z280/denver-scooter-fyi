@@ -22,7 +22,7 @@
 //
 // The rider's own report is the signal that closes all three, and it already
 // has a pipeline: `POST /reports/device` with `not_rideable` flips
-// `has_negative_report` for 24 h, which overrides the tier outright. What it
+// `has_negative_report` (High risk until cleared, owner 2026-10-09). What it
 // did NOT have was a place to be given. The only button that sent one lived in
 // the device popup's report row — a surface a rider is not looking at while
 // standing over a scooter that will not turn on, three taps into a ride they
