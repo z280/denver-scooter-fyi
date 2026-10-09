@@ -8,9 +8,14 @@
 // disclosure is part of the feature rather than a nicety — see
 // `device-notify.ts`'s header for why this capability is gated at all.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { showDibsConfirmation } from "./dibs-certificate.ts";
+import {
+  openDibsCertificate,
+  setDibsSmsSettingsOpener,
+  showDibsConfirmation,
+} from "./dibs-certificate.ts";
+import { DIBS_SMS_KEY } from "./dibs-prefs.ts";
 import type { Dibs } from "./dibs.ts";
 
 function dibs(over: Partial<Dibs> = {}): Dibs {
@@ -62,5 +67,42 @@ describe("showDibsConfirmation's watch line", () => {
     expect(text.indexOf("You've got dibs")).toBeLessThan(
       text.indexOf("We'll tell you"),
     );
+  });
+});
+
+describe("the certificate's SMS link", () => {
+  const card = () => document.querySelector<HTMLElement>(".dibs-cert");
+  const link = () => document.querySelector<HTMLButtonElement>(".dibs-cert__sms-link");
+
+  afterEach(() => {
+    setDibsSmsSettingsOpener(null);
+    localStorage.removeItem(DIBS_SMS_KEY);
+    document.body.replaceChildren();
+  });
+
+  it("is absent until something can open the SMS switch", () => {
+    openDibsCertificate(dibs()).close();
+    openDibsCertificate(dibs());
+    expect(link()).toBeNull();
+  });
+
+  it("names the switch and says which way it is set", () => {
+    setDibsSmsSettingsOpener(() => {});
+    openDibsCertificate(dibs());
+    expect(link()?.textContent).toBe("Text me about this dib: turn SMS on or off");
+    expect(document.querySelector(".dibs-cert__sms-state")?.textContent).toBe("SMS alerts are off");
+    document.body.replaceChildren();
+    localStorage.setItem(DIBS_SMS_KEY, "1");
+    openDibsCertificate(dibs());
+    expect(document.querySelector(".dibs-cert__sms-state")?.textContent).toBe("SMS alerts are on");
+  });
+
+  it("closes the certificate and opens the switch", () => {
+    const open = vi.fn();
+    setDibsSmsSettingsOpener(open);
+    openDibsCertificate(dibs());
+    link()!.click();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(card()).toBeNull();
   });
 });

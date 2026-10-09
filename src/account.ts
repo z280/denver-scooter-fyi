@@ -22,7 +22,6 @@ import {
   type SavedPlace,
 } from "./api.ts";
 import { fetchSessionInfo, isAdminSession } from "./auth-session.ts";
-import { openAdminModal } from "./admin-modal.ts";
 import { signOut } from "./map-auth.js";
 import { sharedPlateIndex } from "./plates.ts";
 import { type RatePlanKey } from "./config.ts";
@@ -103,6 +102,9 @@ export interface AccountHandle {
   refresh(): void;
   /** Clear timers/listeners before the container is torn down or rebuilt. */
   dispose(): void;
+  /** This session just removed its own admin rights (the ⚙ Admin drawer's
+   *  Manage admins modal): drop the flag everywhere and the badge here. */
+  revokeAdmin?(): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -312,30 +314,11 @@ export function renderSignedInAccount(
       );
       badge.append(brow);
       if (info?.email) badge.append(el("p", "account-admin__email", info.email));
-      // 🛡️ Manage admins — the allowlist is a database table (API sql/021),
-      // and this is the first way to edit it without the GitHub-gated
-      // portal. Rendered inside the admin branch, so it exists only for
-      // someone the server has already called an admin; the endpoints
-      // behind it are require_admin regardless.
-      const manage = el("button", "account-admin__manage", "🛡️ Manage admins");
-      manage.type = "button";
-      manage.addEventListener("click", () =>
-        openAdminModal({
-          onAuthLost: () => deps.onAuthLost(),
-          // Removing your OWN row is the one action here that changes what
-          // this session may do. The server already knows — is_admin_email
-          // is evaluated per request — but the client's copy of "am I admin"
-          // is pushed once per token, so without this the rider keeps the
-          // proximity bypass and this very badge until they reload. Dropping
-          // the flag also re-gates any open device popup (see
-          // Devices.setAdminSession).
-          onAdminRevoked: () => {
-            deps.setAdminSession(false);
-            adminSlot.replaceChildren();
-          },
-        }),
+      // 🛡️ Manage admins moved to the ⚙ Admin drawer (2026-10-09), with
+      // every other admin control; the badge says where they went.
+      badge.append(
+        el("p", "account-admin__hint", "Admin tools are under ⚙ Admin in the menu."),
       );
-      badge.append(manage);
       adminSlot.append(badge);
     }
   });
@@ -1832,6 +1815,14 @@ export function renderSignedInAccount(
       // signed-in render key is the token alone — so nothing rebuilds when
       // the answer lands. This is how it gets through.
       phoneVerifyRow?.syncCapability();
+    },
+    revokeAdmin() {
+      // The server already knows (is_admin_email is evaluated per request);
+      // the client's copy is pushed once per token, so it is dropped here or
+      // the rider keeps the proximity bypass, the ⚙ Admin tab and this badge
+      // until they reload.
+      deps.setAdminSession(false);
+      adminSlot.replaceChildren();
     },
     dispose() {
       disposed = true;

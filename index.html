@@ -330,14 +330,34 @@
         </svg>
         <span class="drawer-tab__label">About</span>
       </button>
+      <!-- ⚙ Admin. In the markup for wireDrawers() (which collects tabs once at
+           boot), `hidden` until the server calls this session an admin, and
+           hidden again the moment it stops — admin-drawer.ts. Its drawer's
+           controls are built only for an admin. -->
+      <button
+        class="drawer-tab"
+        type="button"
+        data-drawer="admin"
+        aria-pressed="false"
+        aria-controls="drawer-admin"
+        title="Admin"
+        hidden
+      >
+        <!-- Gear -->
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+        <span class="drawer-tab__label">Admin</span>
+      </button>
       <!-- No Analysis tab. It applied a PRESET rather than opening a panel —
            resetting filters and iconography, forcing a choropleth, opening
            Equity Compliance — while looking identical to the tabs beside it
            that only open a drawer. Every side effect has since been removed
            as its own bug, and what remained was a mode wrapper around
            "open the compliance drawer", which is why that panel kept coming
-           back unasked. Equity Compliance is reached from the Tools drawer's
-           own named button now. -->
+           back unasked. Equity Compliance is reached from the Rider stats
+           drawer's Equity Areas card now. -->
     </nav>
 
     <!-- The Equity Compliance tab lives HERE, outside the tab strip, not
@@ -347,8 +367,8 @@
          that must never be in the menu should not be in the menu's markup.
 
          Still a real button, because wireDrawers() finds tabs with a
-         document-wide `.drawer-tab` query and the Tools drawer's "Open Equity
-         Compliance" button opens this drawer with a programmatic click. Out
+         document-wide `.drawer-tab` query and the Rider stats drawer's
+         Equity Areas card opens this drawer with a programmatic click. Out
          of the flow and out of the accessibility tree; nothing can reveal it
          by accident. -->
     <div class="offscreen-controls" aria-hidden="true">
@@ -974,37 +994,18 @@
         <button class="drawer-close" type="button" aria-label="Close Tools">&times;</button>
       </header>
       <div class="drawer-body">
-        <!-- My dibs. First in the drawer because it is the only thing here
-             that EXPIRES: everything below it will still be there in ten
-             minutes, and these will not. Hidden entirely when the rider
-             holds none — an empty "My dibs" heading is a permanent reminder
-             of a feature you are not using. Populated by wireMyDibs(). -->
-        <section class="control-group" id="tools-my-dibs"
-                 aria-labelledby="tools-my-dibs-label" hidden>
-          <h3 id="tools-my-dibs-label" class="control-label">My dibs</h3>
-          <ul class="my-dibs" id="my-dibs-list"></ul>
-        </section>
-
-        <!-- Watched scooters. Below My dibs because most of this list IS the
-             dibs list: a watch is armed as part of claiming a scooter while
-             building a route, and the only other way to get one is the offer
-             at the end of a ride.
-
-             THERE IS NO CONTROL HERE THAT STARTS A WATCH, and that is the
-             point rather than an omission — see src/device-notify.ts's
-             header. This section exists to show what is being watched and to
-             STOP it, which is the surface a rider needs when they want this
-             off. Populated by wireDeviceNotifyPanel(). -->
-        <section class="control-group" id="tools-notify-moved"
-                 aria-labelledby="tools-notify-moved-label">
-          <h3 id="tools-notify-moved-label" class="control-label">Watched scooters</h3>
-          <p class="finder-help">
-            Scooters you&rsquo;ve claimed or just ridden. We&rsquo;ll tell you
-            if one is ridden away &mdash; while the app is open, and only for
-            as long as your claim or your ride is recent.
-          </p>
-          <ul class="notify-moved" id="notify-moved-list"></ul>
-          <p class="finder-help" id="notify-moved-status" role="status" aria-live="polite" hidden></p>
+        <!-- Your dibs & watches: every claim and every move-watch, one row
+             per scooter, first in the drawer because these are the only
+             things here that EXPIRE. ✋ rows are dibs (tap: the certificate);
+             🔔 rows are watches with no claim under them (tap: the map). This
+             replaced two sections, My dibs and Watched scooters, which listed
+             most scooters twice. Built by tools-mine.ts. (Admins add watches
+             by plate from the ⚙ Admin drawer; they land here.) -->
+        <section class="control-group tools-mine" id="tools-mine"
+                 aria-labelledby="tools-mine-label">
+          <h3 id="tools-mine-label" class="control-label">Your dibs &amp; watches</h3>
+          <ul class="tools-mine__list" id="tools-mine-list"></ul>
+          <p class="finder-help" id="tools-mine-status" role="status" aria-live="polite" hidden></p>
         </section>
 
         <section class="control-group" aria-labelledby="finder-label">
@@ -1038,32 +1039,13 @@
           <ol id="cluster-list" class="cluster-list" aria-live="polite"></ol>
         </section>
 
-        <section class="control-group" aria-labelledby="qr-confirm-label">
-          <h3 id="qr-confirm-label" class="control-label">Confirm features by QR</h3>
-          <p class="control-hint">
-            Standing at a scooter? Answer the equipment survey and scan the QR
-            code on its deck — the scan tells us which scooter it is, no map
-            tapping required.
-          </p>
-          <button id="tools-confirm-qr" class="preset-btn" type="button">
-            📷 Scan &amp; confirm features
-          </button>
-        </section>
+        <!-- No "Confirm features by QR" here: the ribbon's Scan button does
+             that in its Features mode (qr-utility.ts). Removed 2026-10-09. -->
 
-        <section class="control-group" aria-labelledby="tools-compliance-label">
-          <h3 id="tools-compliance-label" class="control-label">Equity Compliance</h3>
-          <p class="control-hint">
-            Whether Veo hit the contract's 30% equity-area deployment target
-            — today's status, and a red/green calendar of this month and
-            last.
-          </p>
-          <button id="tools-open-compliance" class="preset-btn" type="button">
-            ✅ Open Equity Compliance
-          </button>
-          <button id="tools-compliance-calendar" class="preset-btn" type="button">
-            📅 Compliance calendar
-          </button>
-        </section>
+        <!-- No Equity Compliance here: it is a statistic, so it lives with the
+             Rider stats (the Equity Areas card opens the drawer). Moved
+             2026-10-09 at the owner's request. -->
+
 
         <section class="control-group" aria-labelledby="tools-devices-label">
           <h3 id="tools-devices-label" class="control-label">Devices over time</h3>
@@ -1076,33 +1058,25 @@
           </button>
         </section>
 
-        <!-- Admin-only: revealed by main.ts when the server calls this
-             session an admin; the analytics endpoints behind the buttons
-             are require_admin regardless. -->
-        <section
-          class="control-group"
-          id="tools-admin"
-          aria-labelledby="tools-admin-label"
-          hidden
-        >
-          <h3 id="tools-admin-label" class="control-label">Admin tools</h3>
-          <p class="control-hint">
-            Traffic analytics from the daily telemetry rollups — aggregate
-            only, same data as the admin dashboard.
-          </p>
-          <button id="tools-admin-traffic" class="preset-btn" type="button">
-            📈 Traffic overview
-          </button>
-          <button id="tools-admin-events" class="preset-btn" type="button">
-            📊 Events by day
-          </button>
-        </section>
 
         <p class="drawer-footnote">
           Data: <a href="https://data.scooter.fyi" rel="noopener">data.scooter.fyi</a>.
           Positions refresh every 90s.
         </p>
       </div>
+    </aside>
+
+    <!-- ---------- ⚙ Admin drawer (admin-drawer.ts) ----------
+         Every admin control in the app: watch a scooter by plate, manage
+         admins, the traffic analytics charts, and the server's own admin
+         panel. The body is EMPTY in the markup and filled only while the
+         server calls this session an admin. -->
+    <aside class="drawer" id="drawer-admin" aria-labelledby="drawer-admin-h" aria-hidden="true">
+      <header class="drawer-header">
+        <h2 class="drawer-title" id="drawer-admin-h">Admin</h2>
+        <button class="drawer-close" type="button" aria-label="Close Admin">&times;</button>
+      </header>
+      <div class="drawer-body" id="admin-panel"></div>
     </aside>
 
     <!-- ---------- Equity Compliance drawer ---------- -->
