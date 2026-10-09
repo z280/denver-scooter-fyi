@@ -72,6 +72,10 @@ export interface VoiceCopy {
   /** Label beside the raw count when the fleet is under the sample floor —
    *  the first thing on screen after a counter reset. */
   underFloorLabel: (rentals: string) => string;
+  /** Label on the second headline: the "never left the spot" rate. */
+  stayedLabel: string;
+  /** The one sentence that says how the two figures differ. */
+  stayedExplainer: (radius: string) => string;
   /** Label over the per-model breakdown. */
   modelsLabel: string;
   /** Shown when the feed came back with nothing counted. */
@@ -91,13 +95,17 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     title: "How often does a rental end where it began?",
     standfirst:
       "Every unlock we have counted, and how many ended back where they started. Useful before you tap one.",
-    // "ended where they began", not "never left the kerb": what is counted is
-    // END displacement (unlock point to drop point), so a ride that looped
-    // back to the same rack counts too. "Never left" describes a maximum and
-    // would overstate it; that wording waits for a maximum-distance counter
-    // (scooter-fyi-api rental_outcomes_hourly) to stand behind it.
+    // "ended where they began", not "never left": what is counted is END
+    // displacement (unlock point to drop point), so a ride that looped back
+    // to the same rack counts too. "Never left the spot" is the SECOND
+    // figure, backed by the maximum-distance counter (scooter-fyi-api#142),
+    // and only ever labels that one.
     headlineLabel: "of rentals ended where they began",
     underFloorLabel: (n) => `rentals ended where they began, of ${n} — too few for a rate yet`,
+    stayedLabel: "Never left the spot",
+    stayedExplainer: (r) =>
+      `The first figure includes riders who rode off and came back to the same spot; ` +
+      `this one counts only scooters that never got more than ${r} from where they were unlocked.`,
     modelsLabel: "By model",
     empty: "No rentals counted yet. This fills in as the fleet gets ridden.",
     unavailable: "Stats are unavailable right now. The map is unaffected.",
@@ -111,13 +119,17 @@ export const VOICES: Record<StatsVoice, VoiceCopy> = {
     title: "Rentals that ended where they began",
     standfirst:
       "Measured from Veo's own public feed: unlocks whose rental ended within the counting radius of where it started.",
-    // "ended where they began", not "never left the kerb": what is counted is
-    // END displacement (unlock point to drop point), so a ride that looped
-    // back to the same rack counts too. "Never left" describes a maximum and
-    // would overstate it; that wording waits for a maximum-distance counter
-    // (scooter-fyi-api rental_outcomes_hourly) to stand behind it.
+    // "ended where they began", not "never left": what is counted is END
+    // displacement (unlock point to drop point), so a ride that looped back
+    // to the same rack counts too. "Never left the spot" is the SECOND
+    // figure, backed by the maximum-distance counter (scooter-fyi-api#142),
+    // and only ever labels that one.
     headlineLabel: "of rentals ended where they began",
     underFloorLabel: (n) => `rentals ended where they began, of ${n} — too few for a rate yet`,
+    stayedLabel: "Never left the spot",
+    stayedExplainer: (r) =>
+      `The first figure includes riders who rode off and came back to the same spot; ` +
+      `this one counts only scooters that never got more than ${r} from where they were unlocked.`,
     modelsLabel: "By model",
     empty: "No rentals counted yet.",
     unavailable: "Stats are unavailable right now.",
@@ -174,6 +186,44 @@ export function windowText(data: FleetOutcomesResponse): string {
   return data.window;
 }
 
+/** An ISO instant as a Denver calendar date ("October 8, 2026"), or null. */
+function denverDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleDateString("en-US", {
+    timeZone: "America/Denver", day: "numeric", month: "long", year: "numeric",
+  });
+}
+
+/** True when the payload carries the "never left the spot" counter at all
+ *  (scooter-fyi-api#142). An older API sends none of the fields, and then the
+ *  second figure is simply not drawn — not drawn as zero. */
+export function hasStayed(data: FleetOutcomesResponse): boolean {
+  return typeof data.stayed_rentals === "number" && typeof data.stayed === "number";
+}
+
+/** "since October 8, 2026" for the stayed counter's own window, which opened
+ *  two days after the no-go counter's and must not borrow its date. */
+export function stayedWindowText(data: FleetOutcomesResponse): string {
+  const day = denverDate(data.stayed_counted_since);
+  return day ? `since ${day}` : "since the counter started";
+}
+
+/** The line under the stayed figure: sample, radius, window — the same three
+ *  disclosures the first figure carries. With the rate withheld it says
+ *  how far the count has to go instead of printing 0%. */
+export function stayedDetailText(data: FleetOutcomesResponse): string {
+  const n = formatCount(data.stayed_rentals ?? 0);
+  const radius = formatMeters(data.stayed_radius_meters ?? 50);
+  if (formatRate(data.stayed_rate ?? null) === null) {
+    const day = denverDate(data.stayed_counted_since);
+    const since = day ? `Counting since ${day}` : "Counting since the counter started";
+    return `${since} — not enough rentals yet (${n} of ${formatCount(data.min_rentals_for_rate)})`;
+  }
+  return `${formatCount(data.stayed ?? 0)} of ${n} rentals · within ${radius} · ${stayedWindowText(data)}`;
+}
+
 /** The provenance line. Not a footnote in the sense of "ignorable" — it is
  *  what makes the figure above it quotable, and it is built from the payload
  *  rather than hard-coded so it cannot drift from what was counted. */
@@ -186,7 +236,7 @@ export function provenanceText(data: FleetOutcomesResponse): string {
   );
 }
 
-function modelRow(m: FleetOutcomeModel, floor: number): HTMLElement {
+function modelRow(m: FleetOutcomeModel, floor: number, stayedLabel?: string): HTMLElement {
   const row = el("li", "stat-row");
   row.append(el("span", "stat-row__name", m.model));
 
@@ -209,6 +259,23 @@ function modelRow(m: FleetOutcomeModel, floor: number): HTMLElement {
         "span",
         "stat-row__sample",
         `${formatCount(m.no_gos)} of ${formatCount(m.rentals)} rentals`,
+      ),
+    );
+  }
+  if (typeof m.stayed_rentals === "number" && stayedLabel) {
+    // The second figure for the same model, on its own line under the first
+    // so the row reads "ended where began … / never left …" top to bottom.
+    const stayedRate = formatRate(m.stayed_rate ?? null);
+    const n = formatCount(m.stayed_rentals);
+    row.append(
+      el(
+        "span",
+        stayedRate === null
+          ? "stat-row__stayed stat-row__stayed--thin"
+          : "stat-row__stayed",
+        stayedRate === null
+          ? `${stayedLabel}: not enough rentals yet (${n} of ${formatCount(floor)})`
+          : `${stayedLabel}: ${stayedRate} — ${formatCount(m.stayed ?? 0)} of ${n} rentals`,
       ),
     );
   }
@@ -258,11 +325,42 @@ export function buildFleetStats(
 
   frag.append(el("p", "stats-provenance", provenanceText(data)));
 
+  if (hasStayed(data)) {
+    // The second headline: same shape as the first, so the two read as a
+    // pair, and the same disclosures (sample, radius, window) on its own
+    // line, because its window is its own.
+    const stayed = el("div", "stats-headline stats-headline--stayed");
+    const stayedRate = formatRate(data.stayed_rate ?? null);
+    if (stayedRate !== null) {
+      stayed.append(el("strong", "stats-headline__value", stayedRate));
+    }
+    stayed.append(el("span", "stats-headline__label", copy.stayedLabel));
+    frag.append(stayed);
+    frag.append(
+      el(
+        "p",
+        stayedRate === null
+          ? "stats-provenance stats-stayed-detail stats-stayed-detail--thin"
+          : "stats-provenance stats-stayed-detail",
+        stayedDetailText(data),
+      ),
+    );
+    frag.append(
+      el(
+        "p",
+        "stats-provenance stats-stayed-explainer",
+        copy.stayedExplainer(formatMeters(data.stayed_radius_meters ?? 50)),
+      ),
+    );
+  }
+
   if (data.by_model.length > 0) {
     frag.append(el("h4", "stats-subtitle", copy.modelsLabel));
     const list = el("ul", "stat-list");
     for (const m of data.by_model) {
-      list.append(modelRow(m, data.min_rentals_for_rate));
+      list.append(
+        modelRow(m, data.min_rentals_for_rate, hasStayed(data) ? copy.stayedLabel : undefined),
+      );
     }
     frag.append(list);
   }

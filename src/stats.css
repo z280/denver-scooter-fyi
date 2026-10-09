@@ -139,3 +139,27 @@
   padding-top: 14px;
   border-top: 1px solid var(--stats-border);
 }
+
+/* "Never left the spot": the second headline. Same type scale as the first so
+   the pair reads as two answers to related questions, with its own
+   disclosure line directly under it (its window is not the first figure's). */
+.stats-headline--stayed {
+  margin-top: 4px;
+}
+.stats-stayed-detail {
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+/* Under the floor the detail line IS the figure, so it reads as a sentence. */
+.stats-stayed-detail--thin {
+  font-style: italic;
+}
+.stat-row__stayed {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--stats-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stat-row__stayed--thin {
+  font-style: italic;
+}
