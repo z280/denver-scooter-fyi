@@ -124,7 +124,17 @@ export function installUndoFreeTyping(
   };
   const onFocusOut = (e: Event): void => {
     const field = e.target;
-    if (!isTextField(field)) return;
+    if (!isTextField(field)) {
+      // A number/date/time box (or a password) is edited by WebKit itself and
+      // can never be guarded, but it fills the same queue. None is reachable
+      // over the riding view today — the audit of 2026-10-09 converted or gated
+      // every one — so this is the net for the next one somebody adds to the
+      // device popup: clear behind it exactly as for an unguarded text field.
+      if (rideLive && isNativeEditedInput(field)) {
+        dropNativeUndoHistory({ keepFocus: true });
+      }
+      return;
+    }
     const state = focusState.get(field);
     focusState.delete(field);
     // SECOND SHOT AT THE QUEUE. Anything typed into a field this module does
@@ -376,6 +386,29 @@ function makeInputEvent(inputType: string, data: string | null): Event {
     // `input` notification — every listener in the app reads `.value`.
     return new Event("input", { bubbles: true });
   }
+}
+
+/** `<input type>`s WebKit edits itself that are not in `TEXTY_INPUT_TYPES`:
+ *  typed into (or spun) without a selection API we could drive, so they can
+ *  only ever be cleared behind, never guarded. Checkboxes, radios, ranges,
+ *  colour and file pickers are absent on purpose — they register no undo
+ *  entry. */
+const NATIVE_EDITED_INPUT_TYPES = new Set([
+  "number",
+  "date",
+  "time",
+  "datetime-local",
+  "month",
+  "week",
+  "password",
+]);
+
+function isNativeEditedInput(node: EventTarget | null): boolean {
+  return (
+    typeof HTMLInputElement !== "undefined" &&
+    node instanceof HTMLInputElement &&
+    NATIVE_EDITED_INPUT_TYPES.has(node.type)
+  );
 }
 
 function isTextField(node: EventTarget | null): node is TextField {

@@ -17,8 +17,10 @@
 // walking flow exists this is the one place to wire it.
 
 import { parseCorrection } from "./free-minutes-control.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import type { PlanListView, PlanRow } from "./plan-list.ts";
 import type { RidePriority } from "./recommend.ts";
+import { applyNativeNumericInput, sanitizeNumeric } from "./ride-keypad.ts";
 
 export interface PlanListPanelDeps {
   /** The rider picked a plan with a vehicle to walk to. */
@@ -236,14 +238,24 @@ export function createPlanListPanel(
       label.htmlFor = id;
       const input = el("input", "planlist__freeinput");
       input.id = id;
-      // `number` with bounds so a phone offers the numeric keypad and the
-      // browser refuses an impossible figure before we have to.
-      input.type = "number";
-      input.min = "0";
-      input.max = "60";
-      input.step = "1";
-      input.inputMode = "numeric";
+      // `text` + a numeric keypad, NOT `type="number"`. This list is the front
+      // door of a ride (choose a plan → the wizard → the HUD), and a number
+      // field is one WebKit edits itself: every digit lands in the page-wide
+      // undo queue, which iOS then offers back as "Undo Typing" on every bump of
+      // the deck (see `ios-shake-undo.ts`). The undo-free guard only works on
+      // text-like types, so this is the same trade the plate fields make
+      // (`ride-keypad.ts`). The bounds `type="number"` used to enforce were
+      // never the browser's job here anyway: `parseCorrection` clamps to 0–60
+      // and refuses non-numbers, and the `input` filter below keeps the box to
+      // digits as it is typed.
+      input.type = "text";
+      applyNativeNumericInput(input, { maxLength: 2 });
       input.placeholder = "min";
+      input.addEventListener("input", () => {
+        const clean = sanitizeNumeric(input.value, 2);
+        if (clean !== input.value) input.value = clean;
+      });
+      markUndoFree(input);
       const save = el("button", "planlist__freesave", "Use this");
       save.type = "button";
       const commit = (): void => {

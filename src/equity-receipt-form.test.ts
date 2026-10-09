@@ -418,6 +418,26 @@ describe("openEquityReceiptForm", () => {
       new Event("submit", { cancelable: true }),
     );
 
+  it("keeps every short typed figure out of the iOS undo queue", () => {
+    // Plate, minutes and the two costs are structured — no autocorrect to
+    // lose — so their edits are applied by script and never enter WebKit's
+    // page-wide undo queue (ios-shake-undo.ts). The date/time pickers cannot
+    // be guarded; equity-map.ts keeps the form shut while a ride is live.
+    open();
+    for (const id of [
+      "equity-receipt-plate",
+      "equity-receipt-minutes",
+      "equity-receipt-subtotal",
+      "equity-receipt-total",
+    ]) {
+      const input = q<HTMLInputElement>(`#${id}`);
+      expect(input.type, id).toBe("text");
+      expect(input.getAttribute("data-undo-free"), id).toBe("on");
+    }
+    expect(q<HTMLInputElement>("#equity-receipt-plate").inputMode).toBe("numeric");
+    expect(q<HTMLInputElement>("#equity-receipt-subtotal").inputMode).toBe("decimal");
+  });
+
   it("signed out, offers sign-in instead of the form", () => {
     const deps = open({ isSignedIn: () => false });
     expect(document.querySelector(".equity-receipt__form")).toBeNull();

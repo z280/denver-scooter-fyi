@@ -340,7 +340,7 @@ describe("the plan list panel", () => {
     expect(onCorrectFreeMinutes).toHaveBeenLastCalledWith(null);
   });
 
-  it("accepts Enter in the box, since that is what a number field invites", () => {
+  it("accepts Enter in the box, since that is what a numeric field invites", () => {
     const onCorrectFreeMinutes = vi.fn();
     const { root } = mount(
       view({
@@ -352,6 +352,39 @@ describe("the plan list panel", () => {
     input.value = "7";
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(onCorrectFreeMinutes).toHaveBeenCalledWith(7);
+  });
+
+  it("keeps the free-minutes box out of the iOS undo queue", () => {
+    // It was `type="number"`, which WebKit edits itself: every digit landed in
+    // the page-wide undo queue, and iOS offers that back as "Undo Typing" on
+    // every bump of the ride this list leads into (ios-shake-undo.ts). A text
+    // box with the numeric keypad can be undo-free; the bounds stay in JS.
+    const onCorrectFreeMinutes = vi.fn();
+    const { root } = mount(
+      view({
+        freeMinutes: { headline: "h", basisNote: "b", correctionLabel: "l", corrected: false },
+      }),
+      { onCorrectFreeMinutes },
+    );
+    const input = root.querySelector<HTMLInputElement>(".planlist__freeinput")!;
+    expect(input.type).toBe("text");
+    expect(input.getAttribute("data-undo-free")).toBe("on");
+    expect(input.getAttribute("inputmode")).toBe("numeric");
+    expect(input.getAttribute("pattern")).toBe("[0-9]*");
+    expect(input.maxLength).toBe(2);
+
+    // Digits only, as typed.
+    input.value = "4x5";
+    input.dispatchEvent(new Event("input"));
+    expect(input.value).toBe("45");
+
+    // The 0–60 bound `min`/`max` used to advertise is `parseCorrection`'s.
+    input.value = "99";
+    root.querySelector<HTMLButtonElement>(".planlist__freesave")!.click();
+    expect(onCorrectFreeMinutes).toHaveBeenLastCalledWith(60);
+    input.value = "0";
+    root.querySelector<HTMLButtonElement>(".planlist__freesave")!.click();
+    expect(onCorrectFreeMinutes).toHaveBeenLastCalledWith(0);
   });
 
   it("offers a way back to our estimate only once a correction is on record", () => {
