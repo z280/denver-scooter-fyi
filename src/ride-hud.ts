@@ -91,6 +91,7 @@ import type { NavHudManeuver } from "./ride-nav-hud.ts";
 import type { RideVoice } from "./ride-voice.ts";
 import type { RideRouteLineHandle } from "./ride-route-line.ts";
 import { trailCoordsFromBatches, type RideTrailHandle } from "./ride-trail.ts";
+import { CLOSE_ICON_SVG } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // F3: tracked-ride seams (frontend plan, `ride-hud.ts` module-map row + the
@@ -689,7 +690,7 @@ export class RideHud {
       <p class="hud-note hud-note--landscape">
         ${rotateIconMarkup("hud-hint-icon")}
         <span>Tip: the ride view works best in landscape.</span>
-        <button type="button" class="hud-hint-x" data-hud="dismiss-landscape-hint" aria-label="Dismiss tip">&times;</button>
+        <button type="button" class="hud-hint-x btn-close btn-close--inline" data-hud="dismiss-landscape-hint" aria-label="Dismiss tip">${CLOSE_ICON_SVG}</button>
       </p>`;
   }
 
@@ -1602,7 +1603,7 @@ export class RideHud {
         </div>
         <div id="hud-zone" class="hud-zone-badge" hidden>🏷️ ${EQUITY_INDICATOR_LABEL}</div>
         <div class="hud-rotate-badge">
-          <button type="button" class="hud-rotate-badge__close" data-hud="dismiss-landscape-hint" aria-label="Dismiss">&times;</button>
+          <button type="button" class="hud-rotate-badge__close btn-close btn-close--inline btn-close--on-color" data-hud="dismiss-landscape-hint" aria-label="Dismiss">${CLOSE_ICON_SVG}</button>
           ${rotateIconMarkup("hud-rotate-badge__icon")}
           <span class="hud-rotate-badge__text">Landscape works best</span>
         </div>

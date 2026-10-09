@@ -22,6 +22,7 @@
 
 import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { trapFocusWithin } from "./modal-focus-trap.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // The modes
@@ -189,7 +190,7 @@ export function openQrUtility(deps: QrUtilityDeps): () => void {
   const head = el("div", `${ROOT_CLASS}__head`);
   const title = el("h3", undefined, "Scan a scooter");
   title.id = `${ROOT_CLASS}-title`;
-  const closeBtn = el("button", `${ROOT_CLASS}__close`, "×");
+  const closeBtn = applyCloseFace(el("button", `${ROOT_CLASS}__close`));
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   closeBtn.addEventListener("click", () => close());

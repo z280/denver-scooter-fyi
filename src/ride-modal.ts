@@ -28,6 +28,7 @@
 // from each other until the stack gave out. They have to agree on which one is
 // in charge, and agreeing needs something shared.
 import { ownsFocusRecovery, registerFocusTrap } from "./modal-focus-trap.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 /** Owner's screen numbering. There is deliberately no Screen 5, and 2.5 is the
  *  Usuals picker — never renumber (master plan, Part 0 numbering note).
@@ -450,7 +451,7 @@ class RideModal {
     this.nextBtn.addEventListener("click", () => this.headerNext());
     const closeBtn = el("button", "ride-modal__close");
     closeBtn.type = "button";
-    closeBtn.textContent = "×";
+    applyCloseFace(closeBtn);
     closeBtn.setAttribute("aria-label", "Close ride setup");
     closeBtn.addEventListener("click", () => this.close("close-button"));
     const headerEnd = el("div", "ride-modal__header-end");

@@ -11,6 +11,7 @@
 import type { Locate, LngLat } from "./locate.ts";
 import type { RidePriority, RideTypeChoice } from "./recommend.ts";
 import { isAuthenticated } from "./map-auth.js";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface RideWizardHooks {
   /** Consent granted — apply the ride map preset (caller guards its own
@@ -171,7 +172,7 @@ export class RideWizard {
     const header = el("header", "ride-wizard__header");
     const h = el("h2", "ride-wizard__title", title);
     h.id = "ride-wizard-title";
-    const closeBtn = el("button", "ride-wizard__close", "×");
+    const closeBtn = applyCloseFace(el("button", "ride-wizard__close"));
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close Find wheels");
     closeBtn.addEventListener("click", () => this.exit());

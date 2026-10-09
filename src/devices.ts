@@ -123,6 +123,7 @@ import {
 } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
 import { renderFactsStrip } from "./range-facts.ts";
+import { CLOSE_ICON_SVG } from "./close-icon.ts";
 
 export type AreaFilter = IndexedFeature[] | null;
 export type QualityFilter = "any" | "no-risk" | "ok-only";
@@ -3998,7 +3999,7 @@ export function openFloatingModal(
     <div class="ranks-modal__card" role="dialog" aria-modal="true" aria-labelledby="ranks-modal-title">
       <div class="ranks-modal__head">
         <h3 id="ranks-modal-title">${escapeHtml(title)}</h3>
-        <button type="button" class="ranks-modal__close" aria-label="Close">×</button>
+        <button type="button" class="ranks-modal__close btn-close" aria-label="Close">${CLOSE_ICON_SVG}</button>
       </div>
       ${bodyHtml}
     </div>`;

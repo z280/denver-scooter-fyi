@@ -90,6 +90,7 @@ import { encodePolyline } from "./polyline-encode.ts";
 import { rideModalRoot } from "./ride-modal.ts";
 import type { RoutePreviewHandle } from "./route-preview.ts";
 import type { LngLatBoundsLike } from "maplibre-gl";
+import { applyCloseFace } from "./close-icon.ts";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -504,7 +505,7 @@ function buildLoadedScreen(
   const outsideCityEl = el("p", "ride-modal__hint ride-route-outside-city");
   outsideCityEl.hidden = true;
   const listEl = el("ol", "ride-options ride-route-list");
-  const nextBtn = el("button", "login-btn ride-route-next", "NEXT >>");
+  const nextBtn = el("button", "login-btn ride-route-next", "Next ›");
   nextBtn.type = "button";
   nextBtn.disabled = true;
   const controls = el("div", "ride-route-controls");
@@ -790,7 +791,7 @@ function buildLoadedScreen(
     }
 
     nextBtn.textContent =
-      readyCount === 0 && settled ? "Continue without navigation" : "NEXT >>";
+      readyCount === 0 && settled ? "Continue without navigation" : "Next ›";
     nextBtn.disabled =
       loadingProfiles || (readyCount === 0 && !settled) || (readyCount > 0 && selectedProfile === null);
     // The header Next mirrors the pane's own button — same enablement, and
@@ -900,7 +901,7 @@ function buildLoadedScreen(
     const head = el("div", "ranks-modal__head");
     const heading = el("h3", undefined, label);
     heading.id = "ride-route-info-title";
-    const closeBtn = el("button", "ranks-modal__close", "×");
+    const closeBtn = applyCloseFace(el("button", "ranks-modal__close"));
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     head.append(heading, closeBtn);

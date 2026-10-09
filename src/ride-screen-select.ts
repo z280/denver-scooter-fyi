@@ -876,7 +876,7 @@ function buildSelectScreen(
       usualsBtn.addEventListener("click", hooks.onUsuals);
       actions.append(usualsBtn);
     }
-    const nextBtn = el("button", "login-btn", "NEXT >>");
+    const nextBtn = el("button", "login-btn", "Next ›");
     nextBtn.type = "button";
     nextBtn.disabled = !hooks.canProceed;
     nextBtn.addEventListener("click", hooks.onNext);

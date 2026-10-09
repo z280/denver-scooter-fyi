@@ -27,6 +27,7 @@ import type { DibsAlert } from "./dibs-notify.ts";
 import { dibsSmsAlerts } from "./dibs-prefs.ts";
 import { fyiSvg, markSvg } from "./mark.ts";
 import { track } from "./telemetry.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface DibsCertificateHandle {
   close(): void;
@@ -55,7 +56,7 @@ export function openDibsCertificate(dibs: Dibs): DibsCertificateHandle {
   card.setAttribute("aria-modal", "true");
   card.setAttribute("aria-labelledby", "dibs-cert-title");
 
-  const close = el("button", "dibs-cert__close", "×");
+  const close = applyCloseFace(el("button", "dibs-cert__close"));
   close.type = "button";
   close.setAttribute("aria-label", "Close");
 
@@ -431,7 +432,7 @@ export function openDibsExplainer(): void {
   card.setAttribute("aria-modal", "true");
   card.setAttribute("aria-labelledby", "dibs-explain-title");
 
-  const close = el("button", "dibs-explain__close", "×");
+  const close = applyCloseFace(el("button", "dibs-explain__close"));
   close.type = "button";
   close.setAttribute("aria-label", "Close");
 

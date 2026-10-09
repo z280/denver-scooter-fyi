@@ -36,6 +36,7 @@ import {
   dibsMsLeft,
   type Dibs,
 } from "./dibs.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 export interface ArrivalVehicle {
   /** "Lunar 🐸 928" — the rider-facing identity, not a 16-hex id. */
@@ -115,7 +116,7 @@ export function createArrivalPanel(
   const sub = el("div", "arrival__sub");
   head.append(title, sub);
 
-  const close = el("button", "arrival__close", "×");
+  const close = applyCloseFace(el("button", "arrival__close"));
   close.type = "button";
   close.setAttribute("aria-label", "Cancel");
   close.addEventListener("click", () => deps.onCancel());

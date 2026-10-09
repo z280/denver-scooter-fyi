@@ -8,6 +8,7 @@ import type { FeatureFilterKey } from "./device-features.ts";
 import type { QualityFilter, RideType } from "./devices.ts";
 import { ALL_MODELS, type ModelKey } from "./model-catalog.ts";
 import { track } from "./telemetry.ts";
+import { applyCloseFace } from "./close-icon.ts";
 
 /** One saved filter set. `area` stores only the display selection
  *  (layer + subset) — polygons are re-resolved on load, because the live
@@ -245,7 +246,7 @@ export function wireFilterPresets(deps: FilterPresetDeps): void {
           busy = false;
         }
       });
-      const del = el("button", "preset-item__delete", "×");
+      const del = applyCloseFace(el("button", "preset-item__delete btn-close--inline"));
       del.type = "button";
       del.setAttribute("aria-label", `Delete preset ${preset.name}`);
       del.addEventListener("click", () => {
