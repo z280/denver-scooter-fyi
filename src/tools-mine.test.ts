@@ -265,6 +265,14 @@ describe("admin: add a scooter to watches by plate", () => {
     expect(adminHost.childElementCount).toBe(0);
   });
 
+  it("marks the plate field undo-free, so typing never arms iOS shake-to-undo", () => {
+    const { handle: h } = mount({ dibs: [], watches: [] });
+    h.setAdmin(true);
+    // ios-shake-undo.ts: a field without this leaves WebKit's undo queue
+    // non-empty, and iOS then offers "Undo Typing" on every bump of a ride.
+    expect(input().getAttribute("data-undo-free")).toBe("on");
+  });
+
   it("is built for an admin, and torn down again when that ends", () => {
     const { handle: h } = mount({ dibs: [], watches: [] });
     h.setAdmin(true);
@@ -387,3 +395,4 @@ describe("lookupPlate", () => {
     expect(await lookupPlate("X", async () => ({ vehicle_identifier: "nope" }))).toEqual({ kind: "not_found" });
   });
 });
+

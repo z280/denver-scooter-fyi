@@ -32,8 +32,9 @@ describe("the Tools drawer has no duplicates", () => {
     expect(tools).not.toMatch(/id="tools-compliance-calendar"/);
     // It lives inside the Equity Compliance drawer...
     expect(html).toMatch(/id="compliance-open-calendar"/);
-    // ...which Tools still opens, being the only door to it.
-    expect(tools).toMatch(/id="tools-open-compliance"/);
+    // ...and Tools no longer opens it: it is a statistic, reached from the
+    // Rider stats drawer's Equity Areas card (owner, 2026-10-09).
+    expect(tools).not.toMatch(/id="tools-open-compliance"/);
   });
 
   it("has one dibs-and-watches list instead of two overlapping ones", () => {

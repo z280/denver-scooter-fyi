@@ -356,8 +356,8 @@
            that only open a drawer. Every side effect has since been removed
            as its own bug, and what remained was a mode wrapper around
            "open the compliance drawer", which is why that panel kept coming
-           back unasked. Equity Compliance is reached from the Tools drawer's
-           own named button now. -->
+           back unasked. Equity Compliance is reached from the Rider stats
+           drawer's Equity Areas card now. -->
     </nav>
 
     <!-- The Equity Compliance tab lives HERE, outside the tab strip, not
@@ -367,8 +367,8 @@
          that must never be in the menu should not be in the menu's markup.
 
          Still a real button, because wireDrawers() finds tabs with a
-         document-wide `.drawer-tab` query and the Tools drawer's "Open Equity
-         Compliance" button opens this drawer with a programmatic click. Out
+         document-wide `.drawer-tab` query and the Rider stats drawer's
+         Equity Areas card opens this drawer with a programmatic click. Out
          of the flow and out of the accessibility tree; nothing can reveal it
          by accident. -->
     <div class="offscreen-controls" aria-hidden="true">
@@ -1042,20 +1042,10 @@
         <!-- No "Confirm features by QR" here: the ribbon's Scan button does
              that in its Features mode (qr-utility.ts). Removed 2026-10-09. -->
 
-        <section class="control-group" aria-labelledby="tools-compliance-label">
-          <h3 id="tools-compliance-label" class="control-label">Equity Compliance</h3>
-          <p class="control-hint">
-            Whether Veo hit the contract's 30% equity-area deployment target
-            — today's status, and a red/green calendar of this month and
-            last.
-          </p>
-          <!-- The ONLY way into the compliance drawer, so it stays. Its
-               calendar button does not: the drawer opens on today's status
-               with the calendar one button below it. -->
-          <button id="tools-open-compliance" class="preset-btn" type="button">
-            ✅ Open Equity Compliance
-          </button>
-        </section>
+        <!-- No Equity Compliance here: it is a statistic, so it lives with the
+             Rider stats (the Equity Areas card opens the drawer). Moved
+             2026-10-09 at the owner's request. -->
+
 
         <section class="control-group" aria-labelledby="tools-devices-label">
           <h3 id="tools-devices-label" class="control-label">Devices over time</h3>

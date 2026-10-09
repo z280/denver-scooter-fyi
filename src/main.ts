@@ -634,15 +634,6 @@ wireQrUtility({
 // tab still owns the drawer via wireDrawers, so opening it is one
 // programmatic click — which also closes the Tools drawer, exactly like a
 // visible tab switch would.
-need<HTMLButtonElement>("tools-open-compliance").addEventListener("click", () => {
-  // Hard-fail like need(): this button is the ONLY visible way into the
-  // compliance drawer now, so a silently-missing tab would strand it.
-  const tab = document.querySelector<HTMLButtonElement>(
-    '.drawer-tab[data-drawer="compliance"]',
-  );
-  if (!tab) throw new Error("compliance drawer tab missing from the ribbon");
-  tab.click();
-});
 // Public, unlike the admin reports below — the hourly fleet history is the
 // same aggregate count the map footer already shows, just over time.
 // The dibs certificate's "Text me about this dib: turn SMS on or off". The
@@ -3582,9 +3573,9 @@ function wireModes(): void {
   // Compliance drawer, which is why that panel kept coming back for a rider
   // who never asked for it.
   //
-  // Equity Compliance is still reachable, deliberately, from the Tools
-  // drawer's own "Open Equity Compliance" button — one named control, in the
-  // drawer about tools, that says what it opens.
+  // Equity Compliance is still reachable, deliberately, from the Rider stats
+  // drawer's Equity Areas card (it is a statistic, not a tool) — one named
+  // control that says what it opens.
   //
   // What is left is the only distinction this app ever actually had: riding,
   // or not.

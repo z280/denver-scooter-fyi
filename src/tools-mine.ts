@@ -47,6 +47,7 @@ import { dropDibs, loadDibs, type Dibs } from "./dibs.ts";
 import { distanceMeters, formatWalk, type LngLat } from "./locate.ts";
 import { countdownFor, formatCountdown } from "./my-dibs.ts";
 import { MAX_PLATE_LEN, normalizePlate } from "./plates.ts";
+import { markUndoFree } from "./ios-shake-undo.ts";
 import { track } from "./telemetry.ts";
 
 /** The two row icons. Exported so tests assert the glyph rather than restate
@@ -371,6 +372,9 @@ export function wireToolsMine(deps: ToolsMineDeps): ToolsMineHandle {
     input.spellcheck = false;
     input.maxLength = MAX_PLATE_LEN;
     input.placeholder = "e.g. 1234567";
+    // Plate fields never feed WebKit's undo queue: a queue left non-empty
+    // makes iOS offer "Undo Typing" on every bump of a ride (ios-shake-undo.ts).
+    markUndoFree(input);
     const add = el("button", "tools-mine__admin-add", "Add");
     add.type = "submit";
     row.append(input, add);
