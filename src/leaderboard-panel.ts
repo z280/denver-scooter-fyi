@@ -109,6 +109,8 @@ const SCHEDULE_GROUPS: { title: string; actions: [string, string][] }[] = [
       ["report_vehicle_issue", "Report a vehicle issue"],
       ["report_improper_parking", "Report improper parking"],
       ["report_not_found", "Report a device that isn't there"],
+      ["condition_check", "Check a reported scooter's condition (test ride)"],
+      ["condition_check_confirmed", "Bonus when Veo's feed confirms that test ride"],
     ],
   },
   {

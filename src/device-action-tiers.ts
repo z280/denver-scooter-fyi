@@ -129,8 +129,8 @@ export const ACTION_RULES: Record<DeviceAction, ActionRule> = {
     noFixHint: "Turn on your location to report bad parking.",
   },
   // A claim about whether it works — and the most consequential thing a rider
-  // can do from this card: it flips `has_negative_report`, which overrides the
-  // vehicle's reliability tier for 24 hours across the whole fleet.
+  // can do from this card: it labels the vehicle High risk for everybody until
+  // it is cleared (a 100 m+ move, a rider's test ride, or an admin).
   report_device: {
     tier: "at_the_vehicle",
     requiresSignIn: false,

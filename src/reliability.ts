@@ -4,6 +4,13 @@
 // starts and dwell time ride along on the authenticated endpoint today and
 // join the public payload when the API promotes them. Fewer signals just
 // means fewer devices leave the "ok" tier, never a wrong-side error.
+//
+// REPORTS LABEL, THEY NEVER HIDE (owner, 2026-10-09). A standing negative
+// report makes a scooter "High risk"; an anonymous one older than 24 h makes it
+// "Unknown risk". Both are a tier and a sentence here, and nothing more —
+// `report-labels.ts` owns the sentence.
+
+import { reportRisk, type ReportRiskSignals } from "./report-labels.ts";
 
 export type ReliabilityTier = "ok" | "unknown" | "risk";
 
@@ -31,7 +38,7 @@ export const RELIABILITY_LABEL: Record<ReliabilityTier, string> = {
 
 /** Subset of DeviceProperties the assessment reads. Values may arrive
  *  string-flattened when they ride through MapLibre feature properties. */
-export interface ReliabilitySignals {
+export interface ReliabilitySignals extends ReportRiskSignals {
   is_disabled?: boolean | string | null;
   /** 0-100 SoC. Server-supplied on the public payload, else derived in
    *  `annotateBatteryPercent` — which runs BEFORE this assessment, so the
@@ -151,8 +158,12 @@ export function assessReliability(
 
   // ---- high-risk checks run first, so a disabled scooter with failures
   // still surfaces as risk rather than hiding behind "unknown".
-  if (truthy(p.has_negative_report)) {
-    return { tier: "risk", reasons: ["negative report in the last 24h"] };
+  // A standing report (signed in, or anonymous under 24 h). The API's
+  // `has_negative_report` already applies the clearing rules (a 100 m+ move,
+  // plus a charge rise for a rideability report); we only say what it was.
+  const report = reportRisk(p);
+  if (report?.risk === "high_risk") {
+    return { tier: "risk", reasons: [report.phrase] };
   }
   if (failed !== null && failed >= 2) {
     return { tier: "risk", reasons: [`${failed} failed starts logged`] };
@@ -204,6 +215,14 @@ export function assessReliability(
     };
   }
 
+  // ---- an anonymous report over 24 h old: it fades to unknown, never back
+  // to "likely rideable" until something clears it. Placed after every risk
+  // rule, so it cannot mask a failed-start or dwell verdict, and before the
+  // other unknown rules, because it is the most specific thing to say.
+  if (report?.risk === "unknown") {
+    return { tier: "unknown", reasons: [report.phrase] };
+  }
+
   // ---- unknown: no state tracking, quality undefined, a near-empty
   // battery, a single uncorroborated failed start, or a milder
   // peer-relative dwell outlier.
@@ -251,6 +270,27 @@ export function assessReliability(
       ? [`idle ${formatIdle(idleHours)}`]
       : [];
   return { tier: "ok", reasons };
+}
+
+/** The verdict's words. Plain tier label, except when a REPORT is what sets
+ *  it — then the reason rides along: "High risk: reported not rideable (flat
+ *  tire)", "Unknown risk: reported inaccessible". Only when the report's own
+ *  risk matches the shown tier: a scooter that is high risk for failed starts
+ *  AND carries a faded anonymous report reads plain "High risk" (the failed
+ *  starts are its reason) rather than blaming the weaker signal. */
+export function reliabilityHeadline(
+  tier: ReliabilityTier,
+  p: ReportRiskSignals,
+): string {
+  const r = reportRisk(p);
+  if (
+    r &&
+    ((tier === "risk" && r.risk === "high_risk") ||
+      (tier === "unknown" && r.risk === "unknown"))
+  ) {
+    return `${RELIABILITY_LABEL[tier]}: ${r.phrase}`;
+  }
+  return RELIABILITY_LABEL[tier];
 }
 
 function truthy(v: unknown): boolean {

@@ -44,6 +44,7 @@ import { freeMinutesCopy, type FreeMinutesCopy } from "./free-minutes-control.ts
 import { formatCents } from "./ride-cost.ts";
 import type { MatchContext, RideSpec, SpecField } from "./ride-spec.ts";
 import { qualifiedVehicleName } from "./vehicle-name.ts";
+import { reportRisk } from "./report-labels.ts";
 
 /** Same vocabulary as the spec sheet's own field labels. Imported in spirit
  *  rather than in code: `ride-spec-panel.ts`'s copy is module-private and
@@ -329,7 +330,16 @@ function chipsFor(
   const first = rideLegs(plan)[0];
   const tier = first?.vehicle?.reliability_tier;
   if (tier === "risk" || tier === "high_risk") {
-    chips.push({ kind: "risk", text: "Flagged — may not unlock" });
+    // When a rider report is why, say which — "High risk: reported
+    // inaccessible" — rather than a generic flag.
+    const report = first?.vehicle ? reportRisk(first.vehicle) : null;
+    chips.push({
+      kind: "risk",
+      text:
+        report?.risk === "high_risk"
+          ? `High risk: ${report.phrase}`
+          : "Flagged — may not unlock",
+    });
   }
   const free = plan.legs.reduce((n, l) => n + l.freeMinutesUsed, 0);
   if (free > 0) {

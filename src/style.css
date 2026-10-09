@@ -11021,3 +11021,116 @@ button.dibs-cert__close.btn-close:hover {
      the circle. */
   min-height: 40px;
 }
+
+/* ---------- Fleet reports Phase 3 (docs/FLEET_REPORTS_PLAN.md) ---------- */
+/* Report modal: the selected chip, the follow-up questions under the chips
+   (Why not? / When did you notice?) and the one-line Inaccessible hint. */
+.device-popup__report-chip.is-on {
+  border-color: var(--fail);
+  color: var(--fail);
+  background: var(--bg-subtle);
+}
+.device-popup__report-chip--sub {
+  font-weight: 500;
+}
+.device-popup__report-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+.device-popup__report-step {
+  margin-top: 8px;
+}
+.device-popup__report-q + .device-popup__report-q {
+  margin-top: 8px;
+}
+.device-popup__report-q-label {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+/* The card's condition-check invitation: under the verdict bar, a full-width
+   line that reads as an offer, not as another verdict. */
+.device-popup__condition-invite {
+  appearance: none;
+  display: block;
+  width: calc(100% + 28px);
+  margin: 0 -14px;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+.device-popup__condition-invite:hover:not(.is-blocked) {
+  text-decoration: underline;
+}
+.device-popup__condition-invite.is-blocked {
+  opacity: 0.7;
+}
+.device-popup__last-report {
+  font-weight: 600;
+}
+/* Condition check, inside the Confirm Features modal. */
+.device-features__condition {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.device-features__cond {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+/* The question belongs to the report named above it, so no rule between. */
+.device-features__cond .device-features__row {
+  border-top: 0;
+  padding-top: 2px;
+}
+.device-features__cond-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.device-features__cond-points {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg);
+}
+/* QR tool, Identify mode: the card a scan produces. */
+.qr-utility__identify {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+.qr-utility__identify-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--fg);
+}
+.qr-utility__identify-line {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.qr-utility__identify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}

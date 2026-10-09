@@ -127,7 +127,9 @@ export function qrRideMessage(action: QrRideAction): string {
     case "unreadable":
       return "That doesn't look like a scooter's QR code. Try the sticker on the handlebar stem.";
     case "unknown_vehicle":
-      return `Plate ${action.plate} isn't in the live fleet right now — it may have just been picked up, or be out of the service area.`;
+      // Not a dead end any more: Identify asks the server, which can say
+      // whether it went missing, is gone for good, or is simply filtered out.
+      return `Plate ${action.plate} isn't in the live fleet right now — switch to Identify and scan again to see why.`;
   }
 }
 

@@ -48,6 +48,12 @@
 // plate oracle. The rider is told plainly what the plate is for, up front,
 // and finds out afterwards whether it earned anything.
 //
+// THEN, CONDITION (docs/FLEET_REPORTS_PLAN.md §4.4). A signed-in rider whose
+// plate checked out, on a scooter riders have reported, is asked whether they
+// will also confirm its condition — a test ride that can clear or reconfirm
+// the reports (`condition-check.ts`). The feature report's id is the check's
+// proof of presence, so nobody types the plate twice.
+//
 // House rules, as everywhere else in this program: `document.createElement`
 // only (never innerHTML), a `cleanupFns[]` teardown list, and a real focus
 // trap (`modal-focus-trap.ts`).
@@ -62,6 +68,12 @@ import { isQrScannerOpen, openQrScanner } from "./qr-scan.ts";
 import { markUndoFree } from "./ios-shake-undo.ts";
 import { ReportHttpError, submitDeviceFeatureReport } from "./reports.ts";
 import { applyCloseFace } from "./close-icon.ts";
+import { isAuthenticated } from "./map-auth.js";
+import {
+  fetchConditions,
+  mountConditionCheck,
+  postConditionCheck,
+} from "./condition-check.ts";
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -340,6 +352,16 @@ export interface ConfirmFeaturesOptions {
   loadSchedule?: typeof fetchPointsSchedule;
   /** Injected for tests; defaults to the real camera scanner. */
   scan?: typeof openQrScanner;
+  /** The device's `needs_condition_check`. `false` skips the condition step;
+   *  `true` or unknown (null/absent — e.g. the QR-identified flow, where no
+   *  map payload was on screen) offers it, and the fetched list decides. */
+  needsConditionCheck?: boolean | null;
+  /** Injected for tests; defaults to the stored session. The condition step
+   *  is signed-in only. */
+  signedIn?: () => boolean;
+  /** Injected for tests; default to the real condition-check calls. */
+  fetchConditions?: typeof fetchConditions;
+  postConditionCheck?: typeof postConditionCheck;
   /** Fires after a successful submission, with what the server actually
    *  paid. Lets the caller refresh its own copy of the device. */
   onSubmitted?(result: { plateValid: boolean; pointsAwarded: number }): void;
@@ -385,6 +407,8 @@ export function openConfirmFeatures(
   let schedule: PointsScheduleResponse | null = null;
   let statusLine: string | null = null;
   let done = false;
+  /** The landed feature report, for the condition step's proof of presence. */
+  let landed: { id: number; plateValid: boolean; vid: string | null } | null = null;
 
   const modelLabel = options.modelName?.trim() || "scooter";
 
@@ -647,10 +671,36 @@ export function openConfirmFeatures(
     });
   }
 
+  /** Offer the condition check? Signed in, a plate-valid report (the API's
+   *  proof of presence needs one) with an id to cite, a vehicle to check, and
+   *  not a scooter the map says has nothing standing. */
+  function conditionStepEligible(): boolean {
+    if (!landed || !landed.plateValid || landed.id <= 0 || !landed.vid) return false;
+    if (options.needsConditionCheck === false) return false;
+    return (options.signedIn ?? isAuthenticated)();
+  }
+
   function renderDone(): void {
     body.append(el("p", `${ROOT_CLASS}__stem`, "Thanks — logged."));
     if (statusLine) {
       body.append(el("p", `${ROOT_CLASS}__hint`, statusLine));
+    }
+    if (conditionStepEligible() && landed?.vid) {
+      const host = el("div", `${ROOT_CLASS}__condition-host`);
+      body.append(host);
+      cleanupFns.push(
+        mountConditionCheck(host, {
+          vehicleIdentifier: landed.vid,
+          featureReportId: landed.id,
+          qrRawValue: answers.qrRawValue ?? undefined,
+          schedule,
+          fetchConditions: options.fetchConditions,
+          postCheck: options.postConditionCheck,
+          onDone: close,
+        }),
+      );
+      host.querySelector<HTMLButtonElement>("button")?.focus();
+      return;
     }
     const actions = el("div", `${ROOT_CLASS}__actions`);
     const doneBtn = el("button", "login-btn", "Done");
@@ -690,6 +740,11 @@ export function openConfirmFeatures(
       if (closed) return;
       sending = false;
       done = true;
+      landed = {
+        id: result.id,
+        plateValid: result.plate_valid,
+        vid: result.vehicle_identifier ?? options.vehicleIdentifier ?? null,
+      };
       // When the scan resolved to a different scooter than the one the
       // rider tapped, the server attached the answers there — say so, or
       // the map refreshing the OTHER dot later reads as the report having

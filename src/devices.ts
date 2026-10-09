@@ -47,8 +47,12 @@ import {
   worstTier,
   RELIABILITY_COLOR,
   RELIABILITY_LABEL,
+  reliabilityHeadline,
   type ReliabilityTier,
 } from "./reliability.ts";
+import { latestReportLine, reportRiskNote } from "./report-labels.ts";
+import { reportProblemHtml, wireReportChips } from "./report-device-panel.ts";
+import { conditionInviteLine } from "./condition-check.ts";
 import {
   distanceMeters,
   formatWalk,
@@ -84,7 +88,6 @@ import {
   submitModelReport,
   submitDeviceReport,
   ReportHttpError,
-  type DeviceReportType,
 } from "./reports.ts";
 import {
   FEATURE_STATUS_LABEL,
@@ -713,9 +716,17 @@ export class Devices {
       paint: { "text-color": "#ffffff" },
     });
 
-    // Red halo behind any device with an open negative report. Filter
-    // accepts both real booleans and tile-encoded "true" strings since
-    // MapLibre may flatten the property on its way through clustering.
+    // A halo behind any device a rider report is labelling: red for a
+    // standing report (High risk), amber for an anonymous one over 24 h old
+    // (Unknown risk). A LABEL, never a filter on the points themselves — no
+    // report hides a scooter (owner, 2026-10-09). Accepts both real booleans
+    // and tile-encoded "true" strings since MapLibre may flatten the property
+    // on its way through clustering.
+    const flagged: maplibregl.ExpressionSpecification = [
+      "any",
+      ["==", ["get", "has_negative_report"], true],
+      ["==", ["get", "has_negative_report"], "true"],
+    ];
     this.map.addLayer({
       id: FLAG_LAYER,
       type: "circle",
@@ -723,15 +734,11 @@ export class Devices {
       filter: [
         "all",
         ["!", ["has", "point_count"]],
-        [
-          "any",
-          ["==", ["get", "has_negative_report"], true],
-          ["==", ["get", "has_negative_report"], "true"],
-        ],
+        ["any", flagged, ["==", ["get", "negative_report_risk"], "unknown"]],
       ],
       paint: {
         "circle-color": "rgba(0,0,0,0)",
-        "circle-stroke-color": "#c62828",
+        "circle-stroke-color": ["case", flagged, "#c62828", "#f5b400"],
         "circle-stroke-width": 2.5,
         "circle-stroke-opacity": 0.9,
         "circle-radius": [
@@ -1279,7 +1286,21 @@ export class Devices {
           qualityNote = `battery is healthy (quality "${quality}") — the doubt is whether it starts`;
         }
       }
-      const ratingNotes = [relReasons, qualityNote]
+      // A report-driven verdict carries its reason in the bar itself ("High
+      // risk: reported inaccessible"), so the reasons line would only repeat
+      // it — it says what the bar can't (e.g. "don't go in") instead.
+      const relHeadline = reliabilityHeadline(relTier, props);
+      const reportNote = reportRiskNote(props);
+      // A location report (inaccessible / not where the map says) is not a
+      // doubt about starting, so the battery-vs-start note would mislead.
+      const locationReport =
+        props.negative_report_reason === "inaccessible" ||
+        props.negative_report_reason === "not_found";
+      const ratingNotes = (
+        relHeadline !== RELIABILITY_LABEL[relTier]
+          ? [reportNote, locationReport ? "" : qualityNote]
+          : [relReasons, qualityNote]
+      )
         .filter(Boolean)
         .join(" · ");
 
@@ -1379,7 +1400,7 @@ export class Devices {
                   viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
                   aria-hidden="true">${VERDICT_ICON[relTier]}</svg>
-             <span class="device-popup__verdict-text">${escapeHtml(RELIABILITY_LABEL[relTier])}</span>
+             <span class="device-popup__verdict-text">${escapeHtml(relHeadline)}</span>
            </div>`;
 
       // Crowdsourced equipment (API sql/055). Read up here because BOTH the
@@ -1597,7 +1618,7 @@ export class Devices {
           `<dt>Rating</dt>
            <dd>
              <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
-             <strong>${escapeHtml(RELIABILITY_LABEL[relTier])}</strong>
+             <strong>${escapeHtml(relHeadline)}</strong>
              ${ratingNotes ? `<div class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</div>` : ""}
            </dd>`,
         );
@@ -1608,6 +1629,16 @@ export class Devices {
              <span class="device-popup__rel-dot" style="background:${RELIABILITY_COLOR[relTier]}" aria-hidden="true"></span>
              <span class="device-popup__rel-reasons">${escapeHtml(ratingNotes)}</span>
            </dd>`,
+        );
+      }
+      // THE MOST RECENT REPORT, on the tile itself (owner, 2026-10-09: "so
+      // users know if a ride was reported inaccessible"). Newest by when the
+      // rider saw it — not the strongest, which the bar already names. Absent
+      // entirely when none stands (or the server's detail query failed).
+      const lastReport = latestReportLine(props.latest_report);
+      if (lastReport) {
+        statRows.push(
+          `<dt>Report</dt><dd class="device-popup__last-report">${escapeHtml(lastReport)}</dd>`,
         );
       }
       {
@@ -1711,9 +1742,9 @@ export class Devices {
           `<dt>Quality</dt><dd><code>${escapeHtml(String(props.quality_designation))}</code> <span class="device-popup__hint">battery-range grade minus idle/failure demerits</span></dd>`,
         );
       }
-      if (asBool(props.has_negative_report)) {
+      if (relHeadline !== RELIABILITY_LABEL[relTier] || lastReport) {
         detailRows.push(
-          `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">Negative report on file</span></dd>`,
+          `<dt>Reports</dt><dd><span class="device-popup__status device-popup__status--flagged">${escapeHtml(relHeadline)}</span>${lastReport ? `<div class="device-popup__hint">${escapeHtml(lastReport)}</div>` : ""}</dd>`,
         );
       }
       const failedStarts = asNumber(props.number_failed_starts);
@@ -1770,11 +1801,11 @@ export class Devices {
       // WHY THESE CHIPS ARE GATED NOW, AND WHY THEY ARE STILL DRAWN.
       //
       // This is the most consequential thing a rider can do from this card. A
-      // `not_rideable` report flips `has_negative_report`, which overrides the
-      // vehicle's reliability tier for everybody — and since the API's
-      // signed-in rule landed, an accountable report holds until the scooter
-      // MOVES or comes back at a full charge rather than expiring after 24
-      // hours. A report filed from across the city now outlives the day it was
+      // negative report labels the vehicle High risk for everybody, and since
+      // the owner's 2026-10-09 rules a signed-in one holds until the scooter
+      // moves 100 m+ (and, for a rideability report, charges back up) — or a
+      // rider's condition check or an admin clears it — rather than expiring
+      // after 24 hours. A report filed from across the city now outlives the day it was
       // made. Until this change it could be filed from anywhere on earth, while
       // "report bad parking" — a complaint about something you can see — was
       // correctly gated at 100 m. The cheap action was gated and the expensive
@@ -1806,25 +1837,9 @@ export class Devices {
       // `aria-disabled`, never `disabled`: the chip has to stay focusable and
       // tappable so it can deliver its own reason. `is-blocked` is the same
       // class the other gated actions on this card use.
-      const reportBlockedAttr = reportBlockedReason
-        ? ` data-blocked="${escapeHtml(reportBlockedReason)}" aria-disabled="true"`
-        : "";
-      const reportGateNote = reportBlockedReason
-        ? `<p class="device-popup__report-gate">⚠️ ${escapeHtml(reportBlockedReason)}</p>`
-        : "";
-      const reportProblemBlock =
-        vid.length >= 16
-          ? `<div class="device-popup__report-device" data-vid="${escapeHtml(vid)}">
-               <span class="device-popup__report-device-label">Report a problem</span>
-               ${reportGateNote}
-               <div class="device-popup__report-chips">
-                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="not_rideable"${reportBlockedAttr}>🚫 Not rideable</button>
-                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="dead_battery"${reportBlockedAttr}>🪫 Dead battery</button>
-                 <button type="button" class="device-popup__report-chip${reportBlockedReason ? " is-blocked" : ""}" data-action="report-device" data-type="damaged"${reportBlockedAttr}>🛴 Damaged</button>
-               </div>
-               <p class="device-popup__report-device-status" role="status" aria-live="polite"></p>
-             </div>`
-          : "";
+      // Chips, the "Why not?" picker and the "When did you notice?" presets
+      // live in `report-device-panel.ts`.
+      const reportProblemBlock = reportProblemHtml(vid, reportBlockedReason);
 
       // "Report bad parking to Veo" — routes the complaint to the operator
       // responsible for repositioning it (Veo's public Zendesk form, deep-
@@ -1941,6 +1956,17 @@ export class Devices {
           : featuresGate.allowed
             ? `<button type="button" class="device-popup__actbtn device-popup__actbtn--features" data-action="confirm-features" data-status="${escapeHtml(featureStatus)}" aria-haspopup="dialog">☑️ Confirm Features</button>`
             : `<button type="button" class="device-popup__actbtn device-popup__actbtn--features is-blocked" data-action="features-blocked" aria-disabled="true" data-blocked="${escapeHtml(featuresGate.reason)}" title="${escapeHtml(featuresGate.reason)}">☑️ Confirm Features</button>`;
+      // THE CONDITION-CHECK INVITATION (FLEET_REPORTS_PLAN §4.4): riders have
+      // reported a problem a rider standing here could confirm or clear. It is
+      // an invitation, not a verdict — the bar above already says High risk —
+      // and it leads into ☑️ Confirm Features, whose plate step is the check's
+      // proof of presence. Same gate as that button, drawn either way.
+      const conditionInvite =
+        vid.length >= 16 && asBool(props.needs_condition_check)
+          ? featuresGate.allowed
+            ? `<button type="button" class="device-popup__condition-invite" data-action="condition-invite" aria-haspopup="dialog">🩺 ${escapeHtml(conditionInviteLine())}</button>`
+            : `<button type="button" class="device-popup__condition-invite is-blocked" data-action="condition-invite-blocked" aria-disabled="true" data-blocked="${escapeHtml(featuresGate.reason)}">🩺 ${escapeHtml(conditionInviteLine())}</button>`
+          : "";
       // Final row: rider-contributed photos of THIS scooter (API.md § Device
       // photos). Both endpoints need a bearer session — listing included, even
       // though the photos themselves are public objects — so signed out, both
@@ -2024,6 +2050,7 @@ export class Devices {
           `<div class="device-popup">
              ${headerBlock}
              ${verdictBlock}
+             ${conditionInvite}
              ${arrivalBlock}
              ${factsStrip}
              <div class="device-popup__body">
@@ -2149,9 +2176,15 @@ export class Devices {
       // phone never shows a tooltip, which was the whole of §12.1(c)'s bug.
       // Scoped to `.device-popup__actbtn` because the report chips have their own
       // live region directly under them and handle this themselves.
-      for (const btn of popupEl?.querySelectorAll<HTMLElement>(
-        ".device-popup__actbtn[data-blocked]",
-      ) ?? []) {
+      for (const btn of [
+        ...(popupEl?.querySelectorAll<HTMLElement>(
+          ".device-popup__actbtn[data-blocked]",
+        ) ?? []),
+        // The condition-check invitation shares Confirm Features' gate.
+        ...(popupEl?.querySelectorAll<HTMLElement>(
+          ".device-popup__condition-invite[data-blocked]",
+        ) ?? []),
+      ]) {
         btn.addEventListener("click", () => showHint(btn.dataset.blocked ?? ""));
       }
       // Tap a feature pill for the plain-English version. One shared line
@@ -2395,11 +2428,20 @@ export class Devices {
             onEntered: () => this.closePopup(),
           });
         });
-      // ☑️ Confirm Features — crowdsourced equipment (API sql/055).
+      // ☑️ Confirm Features — crowdsourced equipment (API sql/055) — and the
+      // condition-check invitation, which is the same flow with the condition
+      // step at the end.
       popupEl
-        ?.querySelector<HTMLButtonElement>('[data-action="confirm-features"]')
-        ?.addEventListener("click", () => {
+        ?.querySelectorAll<HTMLButtonElement>(
+          '[data-action="confirm-features"], [data-action="condition-invite"]',
+        )
+        .forEach((b) => b.addEventListener("click", () => {
           openConfirmFeatures({
+            needsConditionCheck:
+              props.needs_condition_check === null ||
+              props.needs_condition_check === undefined
+                ? null
+                : asBool(props.needs_condition_check),
             deviceId: props.device_id,
             vehicleIdentifier: vid,
             modelName: model ? model.name : props.vehicle_model_name
@@ -2415,7 +2457,7 @@ export class Devices {
             // be worse than the honest lag. The modal's own closing line
             // tells the rider it takes a few minutes.
           });
-        });
+        }));
       // 📷 / 🖼️ — device photos. Both open the same gallery modal; Take Photo
       // just arrives there with the file picker already firing, so the upload
       // lands in a view that shows what the scooter already has (and the
@@ -2562,8 +2604,8 @@ export class Devices {
     }
   }
 
-  /** Wire the ⚠️ Report modal's contents inside `root`: the one-tap
-   *  device-failure chips (POST /api/v1/reports/device) and the
+  /** Wire the ⚠️ Report modal's contents inside `root`: the device-report
+   *  chips (POST /api/v1/reports/device, `report-device-panel.ts`) and the
    *  "Report bad parking to Veo" anchor. The parking anchor opens Veo's
    *  Zendesk form (default nav, new tab) and ALSO fires an
    *  improperly_parked report to our own API, fire-and-forget — never
@@ -2575,61 +2617,7 @@ export class Devices {
     coords: [number, number],
     parkingInput: ParkingReportInput | null,
   ): void {
-    const reportChips = root?.querySelectorAll<HTMLButtonElement>(
-      '[data-action="report-device"]',
-    );
-    if (reportChips?.length) {
-      const dStatus = root?.querySelector<HTMLElement>(
-        ".device-popup__report-device-status",
-      );
-      const setDeviceStatus = (text: string, state?: "ok" | "error"): void => {
-        if (!dStatus) return;
-        dStatus.textContent = text;
-        dStatus.classList.toggle(
-          "device-popup__report-device-status--ok",
-          state === "ok",
-        );
-        dStatus.classList.toggle(
-          "device-popup__report-device-status--error",
-          state === "error",
-        );
-      };
-      reportChips.forEach((chip) => {
-        chip.addEventListener("click", () => {
-          // Blocked chips stay TAPPABLE on purpose — `aria-disabled`, never
-          // `disabled` — because a button that cannot be pressed can never
-          // deliver its own reason, and on a phone there is no tooltip to fall
-          // back to. The sentence is already on screen above the chips; this
-          // repeats it into the live region so a screen reader hears it at the
-          // moment of the tap rather than only on the way past.
-          const blocked = chip.dataset.blocked;
-          if (blocked) {
-            setDeviceStatus(blocked, "error");
-            return;
-          }
-          reportChips.forEach((c) => (c.disabled = true));
-          setDeviceStatus("Sending…");
-          submitDeviceReport({
-            vehicle_identifier: vid,
-            report_type: chip.dataset.type as DeviceReportType,
-            lat: coords[1],
-            lng: coords[0],
-          })
-            .then((res) => {
-              setDeviceStatus(
-                res.deduped
-                  ? "✓ Already flagged recently — thanks."
-                  : "✓ Reported. Thanks for the heads-up!",
-                "ok",
-              );
-            })
-            .catch(() => {
-              reportChips.forEach((c) => (c.disabled = false));
-              setDeviceStatus("Couldn't send — please try again.", "error");
-            });
-        });
-      });
-    }
+    wireReportChips(root, { vid, coords });
 
     const parkLink = root?.querySelector<HTMLAnchorElement>(
       '[data-action="report-parking"]',
@@ -3364,8 +3352,14 @@ interface PopupProps {
   range_rank_h3_8_peers?: number | string | null;
   range_rank_h3_9_peers?: number | string | null;
   range_rank_h3_10_peers?: number | string | null;
-  // quality flags
+  // quality flags — and the report label fields (labels only, never a filter)
   has_negative_report?: boolean | string | null;
+  negative_report_risk?: string | null;
+  negative_report_reason?: string | null;
+  negative_report_reason_detail?: string | null;
+  negative_report_since?: string | null;
+  latest_report?: unknown;
+  needs_condition_check?: boolean | string | null;
   quality_designation?: string | null;
   // crowdsourced equipment (API sql/055). `feature_status` is always on the
   // wire; `device_features` is null until somebody confirms the vehicle.

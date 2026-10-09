@@ -145,7 +145,13 @@ import { startWalkLeg, type WalkLegHandle } from "./walk-leg.ts";
 import { goneMessage, watchDevice, type DeviceWatchHandle } from "./device-watch.ts";
 import { createArrivalPanel, type ArrivalPanelHandle } from "./arrival-panel.ts";
 import { reportFailedStart } from "./ride-failed-start.ts";
-import { plateFromQr, wireQrUtility } from "./qr-utility.ts";
+import { plateFromQr, wireQrUtility, type QrIdentifyCard } from "./qr-utility.ts";
+import {
+  identifyScan,
+  identifyView,
+  type IdentifyAction,
+  type MapVisibility,
+} from "./qr-identify.ts";
 import { openQrScanner } from "./qr-scan.ts";
 import {
   qrRideAction,
@@ -636,6 +642,7 @@ wireQrUtility({
     });
   },
   onRideScan: (rawValue) => handleQrRideScan(rawValue),
+  onIdentify: (rawValue) => handleQrIdentify(rawValue),
 });
 // Equity Compliance moved off the ribbon into Tools: the (hidden) ribbon
 // tab still owns the drawer via wireDrawers, so opening it is one
@@ -3941,6 +3948,71 @@ function resolveScannedVehicle(plate: string): Promise<ScannedVehicle | null> {
  *  Every branch ends with the rider somewhere useful — a wizard, the HUD, or a
  *  sentence saying why not — because a camera they just pointed at a sticker is
  *  the least informative place in the app to be left standing. */
+/** Mode `identify` (FLEET_REPORTS_PLAN §2.7): ask the server what the sticker
+ *  names — on the map, missing or gone — and add the one reason only this
+ *  client knows: whether the rider's own filters hide it. Read-only. */
+async function handleQrIdentify(rawValue: string): Promise<QrIdentifyCard> {
+  const outcome = await identifyScan(rawValue);
+  const findFeature = (deviceId: string | null, vid: string) => {
+    const want = vid.toLowerCase();
+    return devices
+      .allFeatures()
+      .find(
+        (f) =>
+          (deviceId !== null && f.properties.device_id === deviceId) ||
+          String(f.properties.vehicle_identifier ?? "").toLowerCase() === want,
+      );
+  };
+  const view = identifyView(outcome, {
+    visibility(deviceId, vid): MapVisibility {
+      const feat = findFeature(deviceId, vid);
+      if (!feat) return "absent";
+      const id = feat.properties.device_id;
+      if (devices.visibleFeatures().some((f) => f.properties.device_id === id)) {
+        return "visible";
+      }
+      // Hidden, and none of the rider's chosen filters is the reason: the
+      // map's default "hide unavailable" is.
+      const p = feat.properties;
+      const unavailable =
+        String(p.is_disabled) === "true" || String(p.is_reserved) === "true";
+      return unavailable && filterSummary() === "" ? "unavailable" : "filtered";
+    },
+    filterSummary,
+  });
+  track("qr_utility", { mode: "identify", action: view.reason });
+  const show = (): void => {
+    if (outcome.kind !== "found") return;
+    const feat = findFeature(outcome.data.device_id, outcome.data.vehicle_identifier);
+    if (!feat) return;
+    const [lng, lat] = feat.geometry.coordinates;
+    devices.jumpToDevice(feat.properties.device_id, lng, lat);
+  };
+  const ACTION: Record<IdentifyAction, { label: string; run(): void }> = {
+    show: { label: "Show it on the map", run: show },
+    clear_filters: {
+      label: "Clear my filters and show it",
+      run: () => {
+        resetAllFilters();
+        show();
+      },
+    },
+    last_seen: {
+      label: "Show where it was last seen",
+      run: () => {
+        if (outcome.kind !== "found" || !outcome.data.last_seen) return;
+        const { lat, lon } = outcome.data.last_seen;
+        map.flyTo({ center: [lon, lat], zoom: 16 });
+      },
+    },
+  };
+  return {
+    title: view.title,
+    lines: view.lines,
+    actions: view.actions.map((a) => ACTION[a]),
+  };
+}
+
 async function handleQrRideScan(rawValue: string): Promise<string> {
   const plate = plateFromQr(rawValue);
   const vehicle = plate ? await resolveScannedVehicle(plate) : null;
