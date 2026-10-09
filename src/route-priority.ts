@@ -85,7 +85,7 @@ export const ROUTE_PRIORITY_OPTIONS: readonly RoutePriorityOption[] = [
   {
     value: "savings",
     label: "Savings",
-    hint: "Hunts for a swap inside an Equity Area so both legs bill at the discount — and will accept a longer ride to get it.",
+    hint: "Cheapest first, and among plans that cost about the same it hunts for a swap inside an Equity Area. Will accept a longer ride, never a bigger bill.",
   },
   {
     value: "flexibility",
@@ -371,11 +371,27 @@ function byPriority<T>(priority: RoutePriority, cheapest: number): Comparator<T>
         return quicker(a, b) || cheaper(a, b);
       };
 
-    // Money first, and TIME IS NOT IN THE KEY until the money is settled:
-    // "even if the total ride is a bit longer" is the rider declining exactly
-    // the trade the planner's own scalar makes. Within a tie, the plan that
-    // earns the discount on more of its riding — which is what a mid-way swap
-    // inside an area buys.
+    // MONEY IS PRIMARY AND THE EQUITY SHARE BREAKS ITS TIES — in that order,
+    // and the order is the whole design.
+    //
+    // The concession the rider offered was TIME: "even if the total ride is a
+    // bit longer". They did not offer money, and a Savings setting that picks
+    // the dearer plan has failed at the one thing its name promises. So time
+    // is out of the key until the money is settled — which is the planner's
+    // own scalar being declined, since generalised cost would take the
+    // quicker one — and price stays in front of the share.
+    //
+    // THE SHARE CANNOT BE PRIMARY, and the arithmetic is why. An Equity Area
+    // leg bills at $1 + 13¢/min against the resident's $1 + 25¢/min: the
+    // UNLOCK IS THE SAME. So a mid-way swap inside an area buys 12¢/min at
+    // the price of a second $1 unlock, and needs about 8.3 minutes of
+    // discounted riding just to break even. Below that the higher-equity plan
+    // is simply the more expensive one, and ranking it first would spend a
+    // rider's money chasing a discount that did not pay for itself.
+    //
+    // What the share IS for: two plans that cost about the same, where one
+    // swaps inside an area and one does not. That is the mid-way swap worth
+    // hunting for, and `TIE_CENTS` is where "about the same" is written down.
     case "savings":
       return (a, b) => {
         const t = tie(a, b);

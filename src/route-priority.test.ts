@@ -14,6 +14,7 @@ import {
   ROUTE_PRIORITY_KEY,
   ROUTE_PRIORITY_OPTIONS,
   SWAP_ALTERNATIVE_METERS,
+  TIE_CENTS,
   equityShare,
   meetsComfortCap,
   nonIdealShare,
@@ -424,6 +425,58 @@ describe("savings", () => {
     expect(orderByPriority([cheap, dear], "savings", { spec: COSMO }).rows[0].id).toBe(
       "cheap",
     );
+  });
+
+  it("refuses a bigger bill even when ALL of the riding is discounted", () => {
+    // The case this setting is most likely to meet, and the reason the equity
+    // share cannot be the primary key. An Equity Area leg bills at
+    // $1 + 13¢/min against the resident's $1 + 25¢/min — the unlock is the
+    // SAME — so a mid-way swap inside an area buys 12¢/min at the cost of a
+    // second $1 unlock, and needs ~8.3 min of discounted riding to break
+    // even. On a short hop it does not: here the fully-discounted two-scooter
+    // plan costs $1.20 more than the single undiscounted ride.
+    //
+    //   one scooter, 5 min, no discount:  100 + 5*25          = 225¢
+    //   two scooters, 5 min, discounted:  100 + 100 + 5*13    = 265¢ … plus
+    //                                      the second unlock's own minutes
+    const oneScooter = {
+      id: "one-scooter",
+      plan: plan([ride(300, "Cosmo")], 225),
+    };
+    const twoInArea = {
+      id: "two-in-area",
+      plan: plan(
+        [
+          ride(150, "Cosmo", { equityArea: true, id: "a" }),
+          ride(150, "Cosmo", { equityArea: true, id: "b" }),
+        ],
+        345,
+      ),
+    };
+    expect(equityShare(twoInArea.plan)).toBe(1);
+    expect(equityShare(oneScooter.plan)).toBe(0);
+    const o = orderByPriority([twoInArea, oneScooter], "savings", { spec: COSMO });
+    // 100% discounted riding and it still loses, because it costs the rider
+    // $1.20 more. A Savings setting that picked it would have failed at the
+    // one thing its name promises.
+    expect(o.rows[0].id).toBe("one-scooter");
+  });
+
+  it("takes the discounted swap when the bill is about the same", () => {
+    // The other half of the contract, and what the share is actually for.
+    const plain = { id: "plain", plan: plan([ride(600, "Cosmo")], 300) };
+    const inArea = {
+      id: "in-area",
+      plan: plan(
+        [
+          ride(300, "Cosmo", { equityArea: true, id: "a" }),
+          ride(300, "Cosmo", { equityArea: true, id: "b" }),
+        ],
+        300 + TIE_CENTS,
+      ),
+    };
+    const o = orderByPriority([plain, inArea], "savings", { spec: COSMO });
+    expect(o.rows[0].id).toBe("in-area");
   });
 });
 
