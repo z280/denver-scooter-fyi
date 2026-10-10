@@ -96,6 +96,25 @@ export const RISK_FALLBACK_WALK_SECONDS = 5 * 60;
  *  response or the call failed; otherwise `ctx.bounds` carries the server's. */
 export const DEFAULT_BOUNDS: SearchBounds = { firstHops: 8, pickups: 12 };
 
+/** How many pickup slots Savings reserves for vehicles standing inside an
+ *  Equity Area.
+ *
+ *  WHY A RESERVATION AND NOT A RANKING TWEAK. The pickup pool is the whole
+ *  reason a mid-way swap could not be found: it is ranked by PROGRESS toward
+ *  the destination and truncated to `bounds.pickups`, so the twelve survivors
+ *  cluster at the far end of the trip. A scooter standing in an Equity Area
+ *  halfway along is not merely ranked low, it is not in the graph — and
+ *  nothing downstream, no re-ordering and no cost shaping, can choose an edge
+ *  that was never generated. Reserving slots is the only lever that changes
+ *  what the search can SEE.
+ *
+ *  Four, inside the existing budget rather than on top of it. The budget is a
+ *  performance envelope the candidates response may set (`SearchBounds`), and
+ *  spending more of it than the server allowed would be this module quietly
+ *  overruling that. Four leaves eight for progress, which is still more than
+ *  most trips have useful pickups for. */
+export const EQUITY_PICKUP_QUOTA = 4;
+
 /** The Access Program's free hour, in whole minutes — the height of the
  *  state augmentation below. */
 export const FREE_MINUTE_BUDGET = 60;
@@ -217,6 +236,23 @@ export interface RankPlansContext {
   taxRate: number;
   favorites?: ReadonlySet<string>;
   exclude?: ReadonlySet<string>;
+  /** Hunt for a hand-off inside an Equity Area, by reserving pickup slots for
+   *  vehicles standing in one (`EQUITY_PICKUP_QUOTA`).
+   *
+   *  A SEARCH INPUT AND NOT A RANKING ONE. `route-priority.ts` can prefer a
+   *  mid-way Equity Area swap among the plans this returns, but it cannot
+   *  conjure one the pool never offered — and the pool, ranked by progress,
+   *  systematically omits exactly the mid-route vehicles that earn the
+   *  discount on BOTH legs. So the rider's Savings preference has to reach
+   *  the candidate selection, not just the sort.
+   *
+   *  Injected rather than read, like everything else here: the caller owns
+   *  the rider's preference, and a search that reads ambient state ranks
+   *  identical inputs differently run to run (§2.1).
+   *
+   *  Ignored for the Access tier, which `legRate` gives no area discount — its
+   *  rate already beats it. Hunting for one would spend the budget on nothing. */
+  seekEquitySwaps?: boolean;
   /** Null on an initial search; set on every re-solve (§3.2). */
   inRide?: InRideState | null;
   /** The evaluation instant, epoch ms. Required, and never defaulted to
@@ -256,6 +292,17 @@ export interface RankPlansResult {
    *  persistence round-trip and the API's own field list, so it is reported
    *  here and flagged rather than forced through in Phase 2. */
   capRelaxed: boolean;
+  /** Pickups the Equity Area hunt put into the graph that progress-ranking
+   *  alone would have omitted. Zero when the rider did not ask for the hunt,
+   *  when their tier gets no area discount, when the polygons are not loaded,
+   *  or when the pool already held every area vehicle there was.
+   *
+   *  Exposed so the behaviour is OBSERVABLE from outside. A hunt that quietly
+   *  changes which plans exist and reports nothing cannot be told apart from
+   *  one that silently stopped working — and this one's whole failure mode is
+   *  silence, since a missing candidate produces a plausible list rather than
+   *  an error. */
+  equityPickups: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +428,12 @@ interface Selection {
    *  inside the fixed five minutes, so the CAP was relaxed rather than rule 1
    *  (§2.1). */
   capRelaxed: boolean;
+  /** How many pickups the Equity Area hunt added that progress-ranking alone
+   *  would have left out. Zero when the hunt was off, found nothing, or the
+   *  polygons are not loaded — and reported rather than inferred, because
+   *  "we looked and the pool already had them" and "we never looked" produce
+   *  the same plans and are not the same fact. */
+  equityPickups: number;
 }
 
 function toCandidates(
@@ -468,10 +521,56 @@ function select(
   // not from the whole fleet: ranking the fleet by progress alone can leave
   // the spec-matching scooter out of the pool entirely, and then no plan ends
   // on one — which is the only thing the rider asked for.
-  const pickupList = nonRisky
+  const endable = nonRisky
     .filter(couldEndOn)
-    .sort((a, b) => a.toDestSeconds - b.toDestSeconds)
-    .slice(0, bounds.pickups);
+    .sort((a, b) => a.toDestSeconds - b.toDestSeconds);
+
+  // THE EQUITY HUNT. Progress-ranking is exactly what hides a mid-way swap:
+  // the survivors cluster at the far end of the trip, so the scooter standing
+  // in an Equity Area halfway along never enters the graph, and a preference
+  // for it downstream has nothing to choose. Reserving slots is the only
+  // lever that changes what the search can see.
+  //
+  // `isInEquityArea` is THREE-VALUED and the null matters. It answers null
+  // until the polygons load, and this file already has a scar from reading
+  // that as "outside" — `legRate` did, and a test asserting the area rate
+  // passed while exercising the outside path. Null here means WE COULD NOT
+  // LOOK, so nothing is reserved and `equityPickups` stays 0 rather than
+  // claiming a hunt that never happened.
+  //
+  // Access riders are excluded by the caller (`legRate` gives their tier no
+  // area discount), but the guard is repeated here so the rule survives a
+  // caller that forgets it.
+  const hunting = ctx.seekEquitySwaps === true && ctx.rate.key !== "equity";
+  const byProgress = endable.slice(0, bounds.pickups);
+  let pickupList = byProgress;
+  let equityPickups = 0;
+  if (hunting && endable.length > byProgress.length) {
+    // THE QUOTA IS A CEILING, NOT THE ONLY ONE. Capped against the pool it is
+    // displacing as well as against itself, and the arithmetic is why: with
+    // `pickups: 2` and four area vehicles, an uncapped reserve made the slice
+    // `byProgress.slice(0, 2 - 4)`, and a NEGATIVE end index counts from the
+    // end in JS, so it silently returned []. The pool came back four long
+    // against a budget of two, with every progress-ranked pickup evicted.
+    //
+    // `- 1` keeps one of them alive. The progress ranking is what lets a plan
+    // REACH the destination; a pool made entirely of midpoints can hand the
+    // rider off and then strand them. On the default budget of 12 this is not
+    // binding — the quota of 4 is — and it only does work on the narrow
+    // budgets a candidates response can set.
+    const room = Math.min(EQUITY_PICKUP_QUOTA, Math.max(0, byProgress.length - 1));
+    const chosen = new Set(byProgress);
+    const reserve = endable
+      .filter((c) => !chosen.has(c) && isInEquityArea(c.at.lng, c.at.lat) === true)
+      .slice(0, room);
+    if (reserve.length > 0) {
+      // Inside the budget, not on top of it: drop the WEAKEST progress-ranked
+      // entries to make room, so a server that narrowed `bounds.pickups` for
+      // performance still gets the pool size it asked for.
+      equityPickups = reserve.length;
+      pickupList = [...byProgress.slice(0, byProgress.length - reserve.length), ...reserve];
+    }
+  }
 
   const candidates: Candidate[] = [];
   const index = new Map<Candidate, number>();
@@ -489,7 +588,7 @@ function select(
   for (const c of firstHopList) firstHops.add(add(c));
   for (const c of pickupList) pickups.add(add(c));
 
-  return { candidates, firstHops, pickups, riskAdmitted, capRelaxed };
+  return { candidates, firstHops, pickups, riskAdmitted, capRelaxed, equityPickups };
 }
 
 // ---------------------------------------------------------------------------
@@ -598,7 +697,13 @@ function searchOnce(
   feats: GeoJSON.Feature<GeoJSON.Point, DeviceProperties>[],
   ctx: RankPlansContext,
   spec: RideSpec,
-): { plans: TripPlan[]; walkOnly: TripPlan; riskTierOffered: boolean; capRelaxed: boolean } {
+): {
+  plans: TripPlan[];
+  walkOnly: TripPlan;
+  riskTierOffered: boolean;
+  capRelaxed: boolean;
+  equityPickups: number;
+} {
   const dest: LngLat = { lat: ctx.to.lat, lng: ctx.to.lon };
   const all = toCandidates(feats, ctx);
 
@@ -934,6 +1039,7 @@ function searchOnce(
     walkOnly,
     riskTierOffered: sel.riskAdmitted,
     capRelaxed: sel.capRelaxed,
+    equityPickups: sel.equityPickups,
   };
 }
 
@@ -983,6 +1089,7 @@ export function rankPlans(
         riskTierOffered: result.riskTierOffered,
         walkOnly: result.walkOnly,
         capRelaxed: result.capRelaxed,
+        equityPickups: result.equityPickups,
       };
     }
   }
@@ -996,5 +1103,6 @@ export function rankPlans(
     riskTierOffered: false,
     walkOnly: empty,
     capRelaxed: false,
+    equityPickups: 0,
   };
 }
