@@ -58,14 +58,17 @@ const LINE = "equity-areas-line";
 
 /** The two strengths the overlay draws at.
  *
- *  MUTED is the default, and it is deliberately outline-forward: the line
- *  carries where the boundary is, and the fill is there only to say which side
- *  of it you are on. At 0.04 two overlapping areas still do not stack into
- *  something that hides the basemap, which is what the old 0.12 did.
+ *  FULL is the default now, and the owner's call. The discount written into
+ *  the contract — owed to anyone inside a line nobody can see — is the thing
+ *  this app exists to point at, and an area drawn so faintly that a rider
+ *  never registers it has pointed at nothing. The compliance question ("is
+ *  30% of the fleet in here?") is asked of the AREA, not of the streets, so
+ *  the wash is the useful rendering for it.
  *
- *  FULL is the previous look, kept for a rider actually studying coverage —
- *  the compliance question ("is 30% of the fleet in here?") is asked of the
- *  area, not of the streets, so there the wash is the useful rendering. */
+ *  MUTED is outline-forward and one tap away: the line carries where the
+ *  boundary is, and the fill is there only to say which side of it you are
+ *  on. At 0.04 two overlapping areas still do not stack into something that
+ *  hides the basemap, which is what the old 0.12 did. */
 const PAINT = {
   muted: { fill: 0.04, line: 0.45, width: 1 },
   full: { fill: 0.1, line: 0.9, width: 1.8 },
@@ -151,7 +154,9 @@ export class EquityAreaMap implements InspectSource {
   /** Default ON — see the header. */
   private overlayOn = true;
   /** Default MUTED — see `PAINT`. */
-  private muted = true;
+  // Agrees with `index.html`, which is the source of truth read at wire time.
+  // See `PAINT`: full is the default now.
+  private muted = false;
   /** The area the chip is currently showing, so a pan within one area
    *  doesn't rewrite the DOM on every frame. */
   private shownArea: string | null | undefined = undefined;
