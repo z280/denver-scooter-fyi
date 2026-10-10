@@ -82,10 +82,14 @@ export const ZONE_COLOR: Record<ZoneKind, string> = {
   outside_denver: "#8a8f98",
 };
 
-/** Muted is the default, for the same reason the equity overlay's is: these
- *  cover real area, and a rider needs to see the scooters through them. The
- *  LINE carries where the boundary is; the fill only says which side you are
- *  on. */
+/** FULL is the default now, and the owner's call: these are the city's own
+ *  slow, no-parking and no-ride zones, and a rule drawn so faintly that a
+ *  rider scrolls past it has not warned anybody. Muting stays one tap away
+ *  for somebody reading the streets rather than the rules.
+ *
+ *  Muted still favours the LINE over the fill, because that is what muting is
+ *  for: the line carries where the boundary is, and the fill only says which
+ *  side of it you are on. */
 const PAINT = {
   muted: { fill: 0.08, line: 0.5, width: 1.1 },
   full: { fill: 0.22, line: 0.95, width: 1.8 },
@@ -263,7 +267,11 @@ export function buildZoneInspectHtml(zones: readonly ZoneFeatureProps[]): string
 
 export class MicromobilityZones implements InspectSource {
   private layersAdded = false;
-  private muted = true;
+  // Agrees with `index.html`, which is the source of truth read at wire time.
+  // Left at `true` this field was a second, quieter answer to the same
+  // question, and the only thing keeping them consistent was that nobody
+  // constructed this class without the markup.
+  private muted = false;
   private visible: Record<ZoneGroup, boolean> = {
     rules: ZONE_GROUPS.rules.defaultOn,
     schools: ZONE_GROUPS.schools.defaultOn,

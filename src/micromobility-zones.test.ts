@@ -204,14 +204,23 @@ function visibleKinds(map: ReturnType<typeof fakeMap>): string[] {
 }
 
 describe("MicromobilityZones", () => {
-  it("starts with the rules on and the inferred layers off", () => {
+  it("starts with the rules on, at full strength, and the inferred layers off", () => {
     // The only overlay in the app that can stop somebody breaking a rule they
     // did not know about. The other two are land, not law.
+    //
+    // AND IT IS NOT MUTED. The owner's call: a rule drawn so faintly that a
+    // rider scrolls past it has not warned anybody. Muting is still one tap
+    // away for somebody reading the streets rather than the rules.
+    //
+    // This field agrees with `index.html`, which `wireMicromobilityZones`
+    // reads at wire time and which is the real product default. The two must
+    // not drift — a field saying "muted" under markup saying "not" is a
+    // second, quieter answer to the same question.
     const z = new MicromobilityZones(fakeMap() as never, serve());
     expect(z.isVisible("rules")).toBe(true);
     expect(z.isVisible("schools")).toBe(false);
     expect(z.isVisible("outside")).toBe(false);
-    expect(z.isMuted()).toBe(true);
+    expect(z.isMuted()).toBe(false);
   });
 
   it("draws every class from one source, coloured by the feature", () => {

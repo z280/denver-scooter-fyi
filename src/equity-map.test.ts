@@ -151,13 +151,18 @@ describe("EquityAreaMap", () => {
     return { eq, chip, map, openModal };
   }
 
-  it("is on and muted before anything touches it", () => {
-    // The default flipped: a boundary nobody can see explains nothing, and
-    // the discount inside it is the reason this app exists. Muted is what
-    // makes always-on bearable — see the module header.
+  it("is on and at full strength before anything touches it", () => {
+    // A boundary nobody can see explains nothing, and the discount inside it
+    // is the reason this app exists — so it has been always-on for a while.
+    // The owner's follow-up: always-on and muted is still half-invisible, so
+    // it now draws at full strength and muting is the option.
+    //
+    // This field agrees with `index.html`, which `wireEquityAreas` reads at
+    // wire time and which is the real product default. A field saying "muted"
+    // under markup saying "not" is a second, quieter answer to one question.
     const { eq } = setup();
     expect(eq.isOverlayVisible()).toBe(true);
-    expect(eq.isOverlayMuted()).toBe(true);
+    expect(eq.isOverlayMuted()).toBe(false);
   });
 
   it("builds the layers at the visibility it was asked for, not the default", async () => {

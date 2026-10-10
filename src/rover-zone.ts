@@ -36,6 +36,38 @@ const SRC = "rover-zone";
 const FILL = "rover-zone-fill";
 const LINE = "rover-zone-line";
 
+/** TEAL, AND NOT THE PURPLE IT USED TO BE.
+ *
+ *  It was `#7e57c2`, a lighter shade of the Equity Area's `#6a1b9a`. Two
+ *  purple washes over the same downtown blocks were already hard to tell
+ *  apart, and the Equity Area now draws at FULL strength by default, so the
+ *  one the rider is most likely to be looking at is the one that lost the
+ *  argument. Teal collides with nothing else on this map: the city's rule
+ *  zones are red, orange, yellow and grey, and the Equity Area is purple.
+ *
+ *  It also says something true. The rule zones are warnings, which is what
+ *  their red-to-yellow ramp means; the Rover area is not a warning at all,
+ *  it is where a thing is ALLOWED. A colour outside that ramp keeps it from
+ *  being read as one more restriction. */
+export const ROVER_ZONE_COLOR = "#00897b";
+
+/** The two strengths, matching `micromobility-zones.ts` and `equity-map.ts`.
+ *
+ *  MUTED IS WHAT SHIPS, and it is the counterweight to the other two coming
+ *  off mute. The Rover area is a fact about one vehicle in a fleet of
+ *  thousands — three-wheeled, seated, a small minority of what is on the map
+ *  — and it covers the whole of downtown. Drawn as loudly as the city's rules
+ *  it would be the biggest thing on screen for the riders it least concerns.
+ *
+ *  `full` is not wired to a control yet; it exists so that adding the "Muted
+ *  display" switch this section does not have — the other two do — is a
+ *  matter of passing a boolean, not of inventing a second look under
+ *  deadline. */
+const PAINT = {
+  muted: { fill: 0.06, line: 0.45, width: 1.4 },
+  full: { fill: 0.14, line: 0.9, width: 2 },
+} as const;
+
 /** How far either side of the line the answer is "ask Veo".
  *
  *  About half a block — enough to cover the one thing the specification does
@@ -262,7 +294,10 @@ export async function ensureRoverZoneLayers(
         id: FILL,
         type: "fill",
         source: SRC,
-        paint: { "fill-color": "#7e57c2", "fill-opacity": 0.1 },
+        paint: {
+          "fill-color": ROVER_ZONE_COLOR,
+          "fill-opacity": PAINT.muted.fill,
+        },
       },
       before,
     );
@@ -274,14 +309,18 @@ export async function ensureRoverZoneLayers(
         type: "line",
         source: SRC,
         paint: {
-          "line-color": "#7e57c2",
-          "line-width": 2,
+          "line-color": ROVER_ZONE_COLOR,
+          "line-width": PAINT.muted.width,
           // Solid now. It was dashed while the outline was our own guess at
           // downtown; the boundary is specified from Veo's map these days, so
           // drawing it tentatively would understate what we know. The residual
           // doubt — which side of each street — lives in the margin and the
           // copy, which is where a 20 m question belongs.
-          "line-opacity": 0.85,
+          //
+          // Muted carries the LINE and lets the fill go: the outline is where
+          // the useful information is, and the wash only says which side you
+          // are on.
+          "line-opacity": PAINT.muted.line,
         },
       },
       before,
