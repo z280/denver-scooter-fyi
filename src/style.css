@@ -2845,20 +2845,41 @@ body.is-map-picking .home-bar {
 .equity-receipt[hidden] {
   display: none;
 }
+/* Full-bleed on a phone, so this card's corners ARE the screen's corners:
+   it owns the safe-area insets on all four sides. The top and right ones are
+   published as --card-safe-* for the pinned × at the end of the file, which
+   cannot see the padding. The top inset is the one that bites today; the side
+   pair is here because a full-bleed card owns all four of its edges, not
+   because a phone currently hits it (every notched iPhone's LANDSCAPE width
+   clears the 600px branch below, where the overlay does the clearing, so in
+   portrait the side insets resolve to 0). A narrow viewport that does carry a
+   side inset — iPad split view, Stage Manager — then gets it right for free
+   rather than re-finding this bug. */
 .equity-receipt__card {
+  --card-safe-top: env(safe-area-inset-top);
+  --card-safe-right: env(safe-area-inset-right);
   width: 100%;
   max-height: 100%;
   overflow-y: auto;
   background: var(--bg-elev);
-  padding: calc(14px + env(safe-area-inset-top)) 16px
-    calc(16px + env(safe-area-inset-bottom));
+  padding: calc(14px + env(safe-area-inset-top))
+    calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
 }
 @media (min-width: 600px) {
   .equity-receipt {
     align-items: center;
     padding: 20px;
   }
+  /* A floating card again: the overlay's own 20px padding keeps it clear of
+     every edge, so the insets go back to the overlay's job and the × returns
+     to a flat 6px from the corner. Without this reset the × would hang the
+     inset's worth of pixels down INSIDE the card, well below its own corner,
+     on any notched device wide enough to land here. */
   .equity-receipt__card {
+    --card-safe-top: 0px;
+    --card-safe-right: 0px;
     width: min(440px, 94vw);
     max-height: 90vh;
     border-radius: var(--radius);
@@ -10997,6 +11018,19 @@ button.dibs-cert__close.btn-close:hover {
    the 44 px target inside the card's rounded corner with the 34 px face ~11 px
    from both edges. The ride wizard is excluded, as above: its × shares a row
    with Next. */
+/* --card-safe-top / --card-safe-right: 0 on every card that floats clear of
+   the screen edges (all of these but one), and the device's inset on a card
+   that runs EDGE TO EDGE, where the corner this × is pinned to IS the corner
+   of the screen. A card sets them in the same media branch that makes it
+   full-bleed and clears them where it becomes a floating card again, so the
+   breakpoint stays in one place. Why it matters: an absolutely positioned
+   child resolves `top` against the PADDING BOX, i.e. the card's own top edge,
+   so it ignores the `env(safe-area-inset-top)` the card put in its padding to
+   hold flowed content clear. At 6 px the 44 px target then lands entirely
+   inside a 59 px Dynamic Island strip, where iOS owns the taps and the page
+   never sees them: visible, and not pressable. Reported on an iPhone 14 Pro
+   Max and a 15 Pro Max, 2026-10-10 — the receipt sheet's × could not be hit
+   at all. ADDITIVE, not max(), like --float-top above. */
 .qr-scan__card .qr-scan__close.btn-close,
 .device-features__card .device-features__close.btn-close,
 .equity-receipt__card .equity-receipt__close.btn-close,
@@ -11004,8 +11038,8 @@ button.dibs-cert__close.btn-close:hover {
 .admin-analytics__card .admin-analytics__close.btn-close,
 .home-bar__sheet .home-bar__close.btn-close {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: calc(6px + var(--card-safe-top, 0px));
+  right: calc(6px + var(--card-safe-right, 0px));
   margin: 0;
   z-index: 1;
 }
